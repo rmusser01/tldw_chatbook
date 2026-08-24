@@ -52,6 +52,15 @@ from .source_operations import (
 )
 from .source_operation_store import SourceOperationConflictError
 from .source_readiness import normalize_server_readiness
+from .quick_notes import (
+    ResearchNoteConflictError,
+    ResearchNotePage,
+    ResearchNotePageRequest,
+    ResearchNoteSaveRequest,
+    ResearchQuickNote,
+    encode_note_keywords,
+    split_note_keywords,
+)
 
 
 _AUDITED_SERVICE_METHODS = {
@@ -76,6 +85,7 @@ _SOURCE_CAPABILITY_NAMES = (
     "set_selected_scope",
     "reorder_sources",
 )
+_NOTE_CAPABILITY_NAMES = ("list_notes", "get_note", "save_note", "delete_note")
 _RECOVERY_BY_REASON = {
     "server_not_configured": "Configure a server.",
     "server_profile_missing": "Choose or configure a server profile.",
@@ -309,9 +319,119 @@ class ServerResearchWorkspaceAdapter:
                     ),
                 )
             )
+            lifecycle.update(self._note_capabilities(context))
             return lifecycle
         lifecycle.update(self._project_source_capabilities(ref, projection, context))
+        lifecycle.update(self._note_capabilities(context))
         return lifecycle
+
+    async def list_notes(
+        self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest
+    ) -> ResearchNotePage:
+        context = self._context_for_ref(ref)
+        require_capability(self._note_capabilities(context), "list_notes")
+        if not isinstance(page, ResearchNotePageRequest):
+            raise TypeError("page must be ResearchNotePageRequest")
+        rows = await self._server_call(
+            self._service.list_workspace_notes(ref.workspace_id), context=context
+        )
+        if (
+            not isinstance(rows, list)
+            or len(rows) > MAX_RESEARCH_SELECTION_IDS
+            or any(not isinstance(row, Mapping) for row in rows)
+        ):
+            raise ValueError("Server workspace notes returned an invalid bounded owner")
+        if page.query:
+            search = getattr(self._service, "search_workspace_notes", None)
+            if not callable(search):
+                raise CapabilityUnavailableError(
+                    ResearchCapability(
+                        False,
+                        "server_capability_unavailable",
+                        "The selected server service cannot search workspace notes.",
+                        "server",
+                        recovery_action="Update the selected server or clear the search.",
+                        capability_revision=self._capability_revision(context),
+                    )
+                )
+            rows = await self._server_call(
+                search(ref.workspace_id, page.query, notes=rows), context=context
+            )
+            if (
+                not isinstance(rows, list)
+                or any(not isinstance(row, Mapping) for row in rows)
+                or len(rows) > MAX_RESEARCH_SELECTION_IDS
+            ):
+                raise ValueError("Server workspace note search returned invalid rows")
+        normalized = tuple(self._note_from_row(ref, row) for row in rows)
+        selected = normalized[page.offset : page.offset + page.limit]
+        return BoundedPageResult(
+            items=selected,
+            limit=page.limit,
+            offset=page.offset,
+            total=len(normalized),
+            has_more=page.offset + len(selected) < len(normalized),
+        )
+
+    async def get_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> ResearchQuickNote | None:
+        page = await self.list_notes(
+            ref,
+            ResearchNotePageRequest(limit=100, offset=0),
+        )
+        target = self._workspace_note_id(note_id)
+        for note in page.items:
+            if self._workspace_note_id(note.note_id) == target:
+                return note
+        if page.has_more:
+            context = self._context_for_ref(ref)
+            rows = await self._server_call(
+                self._service.list_workspace_notes(ref.workspace_id), context=context
+            )
+            for row in rows:
+                if self._workspace_note_id(row.get("id")) == target:
+                    return self._note_from_row(ref, row)
+        return None
+
+    async def save_note(
+        self, ref: QualifiedWorkspaceRef, request: ResearchNoteSaveRequest
+    ) -> ResearchQuickNote:
+        context = self._context_for_ref(ref)
+        require_capability(self._note_capabilities(context), "save_note")
+        if not isinstance(request, ResearchNoteSaveRequest):
+            raise TypeError("request must be ResearchNoteSaveRequest")
+        note_id = (
+            self._workspace_note_id(request.note_id)
+            if request.note_id is not None
+            else None
+        )
+        row = await self._server_call(
+            self._service.save_workspace_note(
+                workspace_id=ref.workspace_id,
+                note_id=note_id,
+                title=request.title,
+                content=request.content,
+                keywords=encode_note_keywords(request),
+                version=request.expected_version,
+            ),
+            context=context,
+            note_conflict=(ref, request.note_id or "new"),
+        )
+        if not isinstance(row, Mapping):
+            raise ValueError("Server workspace notes returned an invalid saved note")
+        note = self._note_from_row(ref, row)
+        if request.note_id is not None and note.note_id != request.note_id:
+            raise ValueError("Server returned a mismatched canonical note id")
+        return note
+
+    async def delete_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
+    ) -> bool:
+        context = self._context_for_ref(ref)
+        capability = self._note_capabilities(context)["delete_note"]
+        require_capability({"delete_note": capability}, "delete_note")
+        raise AssertionError("unreachable")
 
     async def list_sources(
         self,
@@ -1072,6 +1192,48 @@ class ServerResearchWorkspaceAdapter:
                 )
         return result
 
+    def _note_capabilities(self, context: Any) -> Mapping[str, ResearchCapability]:
+        revision = self._capability_revision(context)
+        unavailable = self._context_health_unavailable(context, revision=revision)
+        result: dict[str, ResearchCapability] = {}
+        for operation in _NOTE_CAPABILITY_NAMES:
+            if unavailable is not None:
+                result[operation] = unavailable
+                continue
+            if operation == "delete_note":
+                result[operation] = ResearchCapability(
+                    False,
+                    "version_precondition_unavailable",
+                    "This server cannot safely delete a Quick Note with a version check.",
+                    "server_workspace_notes",
+                    recovery_action="Delete it in a server client that exposes versioned delete.",
+                    capability_revision=revision,
+                )
+                continue
+            method = (
+                "save_workspace_note"
+                if operation == "save_note"
+                else "list_workspace_notes"
+            )
+            available = callable(getattr(self._service, method, None))
+            result[operation] = ResearchCapability(
+                available,
+                "available" if available else "server_capability_unavailable",
+                (
+                    "Available on the selected server."
+                    if available
+                    else f"The selected server service cannot {operation.replace('_', ' ')}."
+                ),
+                "server_workspace_notes",
+                recovery_action=(
+                    ""
+                    if available
+                    else "Update the selected server or choose another action."
+                ),
+                capability_revision=revision,
+            )
+        return result
+
     @staticmethod
     def _context_health_unavailable(
         context: Any, *, revision: str
@@ -1115,7 +1277,11 @@ class ServerResearchWorkspaceAdapter:
         return None
 
     async def _server_call(
-        self, operation: Awaitable[_ServerResult], *, context: Any
+        self,
+        operation: Awaitable[_ServerResult],
+        *,
+        context: Any,
+        note_conflict: tuple[QualifiedWorkspaceRef, str] | None = None,
     ) -> _ServerResult:
         try:
             return await operation
@@ -1146,6 +1312,8 @@ class ServerResearchWorkspaceAdapter:
                 )
             ) from exc
         except APIResponseError as exc:
+            if exc.status_code == 409 and note_conflict is not None:
+                raise ResearchNoteConflictError(*note_conflict) from exc
             permission_denied = exc.status_code == 403
             capability_missing = exc.status_code in {404, 405, 501}
             raise CapabilityUnavailableError(
@@ -1193,6 +1361,40 @@ class ServerResearchWorkspaceAdapter:
                     capability_revision=self._capability_revision(context),
                 )
             ) from exc
+
+    @staticmethod
+    def _workspace_note_id(value: object) -> int:
+        if type(value) is int and value > 0:
+            return value
+        if isinstance(value, str) and value.isascii() and value.isdigit():
+            normalized = int(value)
+            if normalized > 0 and str(normalized) == value:
+                return normalized
+        raise ValueError("Server workspace note id must be a positive integer")
+
+    @classmethod
+    def _note_from_row(
+        cls, ref: QualifiedWorkspaceRef, row: Mapping[str, Any]
+    ) -> ResearchQuickNote:
+        workspace_id = str(row.get("workspace_id") or "").strip()
+        if workspace_id != ref.workspace_id:
+            raise ValueError("Server returned a mismatched workspace note owner")
+        tags, message_ids, source_ids = split_note_keywords(
+            row.get("keywords")
+            if isinstance(row.get("keywords"), (list, tuple))
+            else row.get("keywords_json")
+        )
+        return ResearchQuickNote(
+            ref=ref,
+            note_id=str(cls._workspace_note_id(row.get("id"))),
+            title=str(row.get("title") or ""),
+            content=str(row.get("content") or ""),
+            tags=tags,
+            version=int(row.get("version") or 0),
+            updated_at=str(row.get("last_modified") or row.get("updated_at") or ""),
+            message_ids=message_ids,
+            source_ids=source_ids,
+        )
 
     @staticmethod
     def _capability_revision(context: Any) -> str:

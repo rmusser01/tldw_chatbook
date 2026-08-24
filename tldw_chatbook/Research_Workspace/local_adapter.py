@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.models import WorkspaceRecord
@@ -32,6 +33,15 @@ from .contracts import (
     SourceReadiness,
     WorkspaceDataSource,
     require_capability,
+)
+from .quick_notes import (
+    ResearchNoteConflictError,
+    ResearchNotePage,
+    ResearchNotePageRequest,
+    ResearchNoteSaveRequest,
+    ResearchQuickNote,
+    encode_note_keywords,
+    split_note_keywords,
 )
 from .source_operations import (
     CanonicalItemType,
@@ -73,6 +83,7 @@ _LOCAL_CAPABILITIES: Mapping[str, ResearchCapability] = {
     "get_readiness": _LOCAL_AVAILABLE,
     "set_selected_scope": _LOCAL_AVAILABLE,
 }
+_LOCAL_NOTE_CAPABILITIES = ("list_notes", "get_note", "save_note", "delete_note")
 
 
 def _page_bounds(limit: object, offset: object) -> tuple[int, int]:
@@ -109,6 +120,8 @@ class LocalResearchWorkspaceAdapter:
         association_scheduler: Any | None = None,
         operation_id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
+        notes_scope_service: Any | None = None,
+        notes_user_id: str = "",
     ) -> None:
         self._service = service
         self._id_factory = id_factory
@@ -119,6 +132,8 @@ class LocalResearchWorkspaceAdapter:
             lambda: f"source-operation-{uuid4().hex}"
         )
         self._now_factory = now_factory or _utc_now
+        self._notes_scope = notes_scope_service
+        self._notes_user_id = notes_user_id.strip()
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -238,7 +253,181 @@ class LocalResearchWorkspaceAdapter:
         self, ref: QualifiedWorkspaceRef
     ) -> Mapping[str, ResearchCapability]:
         self._require_local_ref(ref)
-        return _LOCAL_CAPABILITIES
+        capabilities = dict(_LOCAL_CAPABILITIES)
+        available = self._notes_scope is not None and bool(self._notes_user_id)
+        note_capability = (
+            _LOCAL_AVAILABLE
+            if available
+            else ResearchCapability(
+                available=False,
+                reason_code="local_notes_unavailable",
+                user_message="Local Quick Notes are unavailable.",
+                owner="local_notes",
+                recovery_action="Restart after Local Notes storage is available.",
+            )
+        )
+        capabilities.update(
+            {name: note_capability for name in _LOCAL_NOTE_CAPABILITIES}
+        )
+        return capabilities
+
+    async def list_notes(
+        self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest
+    ) -> ResearchNotePage:
+        self._require_local_ref(ref)
+        notes = self._require_notes_scope("list_notes")
+        if not isinstance(page, ResearchNotePageRequest):
+            raise TypeError("page must be ResearchNotePageRequest")
+        if not page.query:
+            memberships, total = await asyncio.to_thread(
+                self._service.list_workspace_note_memberships,
+                ref.workspace_id,
+                limit=page.limit,
+                offset=page.offset,
+            )
+            rows = tuple(
+                note
+                for note in await asyncio.gather(
+                    *(
+                        self._load_local_note(notes, ref, item.item_id)
+                        for item in memberships
+                    )
+                )
+                if note is not None
+            )
+            return BoundedPageResult(
+                items=rows,
+                limit=page.limit,
+                offset=page.offset,
+                total=total,
+                has_more=page.offset + len(memberships) < total,
+            )
+
+        # ponytail: the registry has no cross-database FTS join; scan finite
+        # membership pages only until this requested result window is known.
+        wanted = page.offset + page.limit + 1
+        matches: list[ResearchQuickNote] = []
+        membership_offset = 0
+        owner_total = 0
+        reached_end = False
+        while len(matches) < wanted and membership_offset <= 10_000:
+            memberships, owner_total = await asyncio.to_thread(
+                self._service.list_workspace_note_memberships,
+                ref.workspace_id,
+                limit=100,
+                offset=membership_offset,
+            )
+            loaded = await asyncio.gather(
+                *(
+                    self._load_local_note(notes, ref, item.item_id)
+                    for item in memberships
+                )
+            )
+            matches.extend(
+                note
+                for note in loaded
+                if note is not None and self._note_matches(note, page.query)
+            )
+            membership_offset += len(memberships)
+            reached_end = membership_offset >= owner_total
+            if reached_end or not memberships:
+                break
+        selected = tuple(matches[page.offset : page.offset + page.limit])
+        exact_total = len(matches) if reached_end else None
+        return BoundedPageResult(
+            items=selected,
+            limit=page.limit,
+            offset=page.offset,
+            total=exact_total,
+            has_more=len(matches) > page.offset + len(selected) or not reached_end,
+        )
+
+    async def get_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> ResearchQuickNote | None:
+        self._require_local_ref(ref)
+        notes = self._require_notes_scope("get_note")
+        if not await self._is_workspace_note(ref, str(note_id)):
+            return None
+        return await self._load_local_note(notes, ref, str(note_id))
+
+    async def save_note(
+        self, ref: QualifiedWorkspaceRef, request: ResearchNoteSaveRequest
+    ) -> ResearchQuickNote:
+        self._require_local_ref(ref)
+        notes = self._require_notes_scope("save_note")
+        if not isinstance(request, ResearchNoteSaveRequest):
+            raise TypeError("request must be ResearchNoteSaveRequest")
+        if request.note_id is not None and not await self._is_workspace_note(
+            ref, request.note_id
+        ):
+            raise ValueError("Local note is not associated with this workspace")
+        try:
+            row = await notes.save_note(
+                scope="local_note",
+                note_id=request.note_id,
+                title=request.title,
+                content=request.content,
+                keywords=encode_note_keywords(request),
+                version=request.expected_version,
+                user_id=self._notes_user_id,
+            )
+        except ConflictError as exc:
+            raise ResearchNoteConflictError(ref, request.note_id or "new") from exc
+        if not isinstance(row, Mapping):
+            raise ValueError("Local Notes returned an invalid saved note")
+        note = self._note_from_row(ref, row)
+        if request.note_id is None:
+            await asyncio.to_thread(
+                self._service.link_membership,
+                ref.workspace_id,
+                item_type="note",
+                item_id=note.note_id,
+                role="note",
+                title=note.title,
+            )
+        elif note.note_id != request.note_id:
+            raise ValueError("Local Notes returned a mismatched canonical note id")
+        return note
+
+    async def delete_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
+    ) -> bool:
+        self._require_local_ref(ref)
+        notes = self._require_notes_scope("delete_note")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("expected_version must be a positive integer")
+        if not await self._is_workspace_note(ref, str(note_id)):
+            raise ValueError("Local note is not associated with this workspace")
+        try:
+            deleted = await notes.delete_note(
+                scope="local_note",
+                note_id=str(note_id),
+                version=expected_version,
+                user_id=self._notes_user_id,
+            )
+        except ConflictError as exc:
+            raise ResearchNoteConflictError(ref, str(note_id)) from exc
+        if type(deleted) is not bool:
+            raise ValueError("Local Notes returned an invalid delete result")
+        if deleted:
+            memberships = await asyncio.to_thread(
+                self._service.get_item_memberships, "note", str(note_id)
+            )
+            await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        self._service.unlink_membership,
+                        membership.workspace_id,
+                        item_type="note",
+                        item_id=str(note_id),
+                        role="note",
+                    )
+                    for membership in memberships
+                    if membership.role == "note"
+                )
+            )
+        return deleted
 
     async def list_sources(
         self,
@@ -645,6 +834,77 @@ class LocalResearchWorkspaceAdapter:
                 )
             )
         return self._media_scope
+
+    def _require_notes_scope(self, capability_name: str) -> Any:
+        capabilities = {
+            name: (
+                _LOCAL_AVAILABLE
+                if self._notes_scope is not None and self._notes_user_id
+                else ResearchCapability(
+                    False,
+                    "local_notes_unavailable",
+                    "Local Quick Notes are unavailable.",
+                    "local_notes",
+                    recovery_action=("Restart after Local Notes storage is available."),
+                )
+            )
+            for name in _LOCAL_NOTE_CAPABILITIES
+        }
+        require_capability(capabilities, capability_name)
+        return self._notes_scope
+
+    async def _load_local_note(
+        self, notes: Any, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> ResearchQuickNote | None:
+        row = await notes.get_note_detail(
+            scope="local_note", note_id=note_id, user_id=self._notes_user_id
+        )
+        if row is None:
+            return None
+        if not isinstance(row, Mapping):
+            raise ValueError("Local Notes returned an invalid note")
+        keywords = row.get("keywords")
+        get_keywords = getattr(notes, "get_note_keywords", None)
+        if not isinstance(keywords, (list, tuple)) and callable(get_keywords):
+            keywords = await get_keywords(
+                scope="local_note", note_id=note_id, user_id=self._notes_user_id
+            )
+            row = {**row, "keywords": keywords}
+        return self._note_from_row(ref, row)
+
+    async def _is_workspace_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> bool:
+        memberships = await asyncio.to_thread(
+            self._service.get_item_memberships, "note", note_id
+        )
+        return any(
+            item.workspace_id == ref.workspace_id and item.role == "note"
+            for item in memberships
+        )
+
+    @staticmethod
+    def _note_from_row(
+        ref: QualifiedWorkspaceRef, row: Mapping[str, Any]
+    ) -> ResearchQuickNote:
+        tags, message_ids, source_ids = split_note_keywords(row.get("keywords"))
+        return ResearchQuickNote(
+            ref=ref,
+            note_id=str(row.get("id") or ""),
+            title=str(row.get("title") or ""),
+            content=str(row.get("content") or ""),
+            tags=tags,
+            version=int(row.get("version") or 0),
+            updated_at=str(row.get("last_modified") or row.get("updated_at") or ""),
+            message_ids=message_ids,
+            source_ids=source_ids,
+        )
+
+    @staticmethod
+    def _note_matches(note: ResearchQuickNote, query: str) -> bool:
+        needle = query.casefold()
+        haystack = " ".join((note.title, note.content, *note.tags)).casefold()
+        return needle in haystack
 
     @staticmethod
     def _matching_attach_intent(

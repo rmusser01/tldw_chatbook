@@ -24,6 +24,13 @@ from .contracts import (
     require_capability,
 )
 from .source_operations import ResearchSourceOperation
+from .quick_notes import (
+    ResearchNotePage,
+    ResearchNotePageRequest,
+    ResearchNoteSaveRequest,
+    ResearchQuickNote,
+    ResearchQuickNotesService,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +67,7 @@ class ResearchWorkspaceController:
         self, ports: Mapping[WorkspaceDataSource, ResearchWorkspacePort]
     ) -> None:
         self._ports = dict(ports)
+        self._quick_notes = ResearchQuickNotesService(self._ports)
         self._context_revision = 0
         self._catalog_generation = 0
         self._selected_data_source = WorkspaceDataSource.LOCAL
@@ -79,6 +87,8 @@ class ResearchWorkspaceController:
             "readiness": 0,
             "preview": 0,
             "selection": 0,
+            "notes_list": 0,
+            "note_editor": 0,
         }
         self._canonical_sources: dict[
             tuple[QualifiedWorkspaceRef, str], ResearchSourceSummary
@@ -92,6 +102,9 @@ class ResearchWorkspaceController:
         self._canonical_previews: dict[
             tuple[QualifiedWorkspaceRef, str], ResearchSourcePreview
         ] = {}
+        self._canonical_notes: dict[
+            tuple[QualifiedWorkspaceRef, str], ResearchQuickNote
+        ] = {}
         self.visible_workspace: ResearchWorkspaceSummary | None = None
         self.visible_source_page: ResearchSourcePage | None = None
         self.visible_catalog_page: BoundedPageResult[ResearchCatalogItem] | None = None
@@ -99,6 +112,8 @@ class ResearchWorkspaceController:
         self.visible_preview: ResearchSourcePreview | None = None
         self.visible_capabilities: Mapping[str, ResearchCapability] = {}
         self.desired_source_ids: tuple[str, ...] = ()
+        self.visible_note_page: ResearchNotePage | None = None
+        self.visible_note: ResearchQuickNote | None = None
 
     @property
     def context_revision(self) -> int:
@@ -301,6 +316,85 @@ class ResearchWorkspaceController:
             return False
         self.visible_capabilities = dict(result)
         return True
+
+    async def refresh_selected_notes(
+        self, *, query: str = "", limit: int = 20, offset: int = 0
+    ) -> bool:
+        """Refresh the selected owner note page behind a qualified fence."""
+
+        capture = self._capture_surface("notes_list")
+        result = await self._quick_notes.list_notes(
+            capture.context.ref,
+            ResearchNotePageRequest(query=query, limit=limit, offset=offset),
+        )
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_note_page = result
+        for note in result.items:
+            self._canonical_notes[(note.ref, note.note_id)] = note
+        return True
+
+    async def load_selected_note(self, note_id: str) -> bool:
+        """Load one canonical note without allowing late editor repaint."""
+
+        capture = self._capture_surface("note_editor")
+        result = await self._quick_notes.get_note(capture.context.ref, note_id)
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_note = result
+        if result is not None:
+            self._canonical_notes[(result.ref, result.note_id)] = result
+        return True
+
+    async def save_note(
+        self, ref: QualifiedWorkspaceRef, request: ResearchNoteSaveRequest
+    ) -> ResearchQuickNote:
+        """Save to an explicit captured owner even after visible navigation."""
+
+        note = await self._quick_notes.save_note(ref, request)
+        self._canonical_notes[(note.ref, note.note_id)] = note
+        return note
+
+    async def save_selected_note(
+        self, request: ResearchNoteSaveRequest
+    ) -> ResearchQuickNote | None:
+        """Save the editor draft and repaint only its captured generation."""
+
+        capture = self._capture_surface("note_editor")
+        note = await self.save_note(capture.context.ref, request)
+        if not self._is_current_surface(capture):
+            return None
+        self.visible_note = note
+        return note
+
+    async def delete_selected_note(self, note_id: str, expected_version: int) -> bool:
+        """Delete one versioned owner note without cross-context repaint."""
+
+        capture = self._capture_surface("note_editor")
+        self._surface_generations["notes_list"] += 1
+        deleted = await self.delete_note(capture.context.ref, note_id, expected_version)
+        if not self._is_current_surface(capture):
+            return False
+        if deleted:
+            if self.visible_note is not None and self.visible_note.note_id == note_id:
+                self.visible_note = None
+            self.visible_note_page = None
+        return deleted
+
+    async def delete_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
+    ) -> bool:
+        """Delete through one explicit captured owner without fallback."""
+
+        deleted = await self._quick_notes.delete_note(ref, note_id, expected_version)
+        if deleted:
+            self._canonical_notes.pop((ref, note_id), None)
+        return deleted
+
+    def canonical_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> ResearchQuickNote | None:
+        return self._canonical_notes.get((ref, note_id))
 
     async def require_workspace_capability(
         self, ref: QualifiedWorkspaceRef, capability_name: str
@@ -620,6 +714,8 @@ class ResearchWorkspaceController:
         self.visible_preview = None
         self.visible_capabilities = {}
         self.desired_source_ids = ()
+        self.visible_note_page = None
+        self.visible_note = None
 
     def _accept_selection_result(
         self,

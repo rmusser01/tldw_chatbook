@@ -1731,6 +1731,29 @@ class NotesScopeService:
                 return note
         return None
 
+    async def get_note_keywords(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        user_id: Optional[str] = None,
+    ) -> list[str]:
+        """Return canonical Local Note keyword text for one editor load."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Direct note keyword reads are Local Notes only.")
+        rows = self.local_notes_service.get_keywords_for_note(
+            self._require_user_id(user_id), str(note_id)
+        )
+        if not isinstance(rows, list):
+            raise ValueError("Local Notes returned invalid keywords.")
+        return [
+            str(row.get("keyword") or "").strip()
+            for row in rows
+            if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
+        ]
+
     async def load_workspace_context(
         self,
         *,

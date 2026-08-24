@@ -9,6 +9,12 @@ import re
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
+    from .quick_notes import (
+        ResearchNotePage,
+        ResearchNotePageRequest,
+        ResearchNoteSaveRequest,
+        ResearchQuickNote,
+    )
     from .source_operations import ResearchSourceOperation
 
 
@@ -635,3 +641,19 @@ class ResearchWorkspacePort(Protocol):
         ref: QualifiedWorkspaceRef,
         ordered_source_ids: tuple[str, ...],
     ) -> tuple[ResearchSourceSummary, ...]: ...
+
+    async def list_notes(
+        self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest
+    ) -> ResearchNotePage: ...
+
+    async def get_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> ResearchQuickNote | None: ...
+
+    async def save_note(
+        self, ref: QualifiedWorkspaceRef, request: ResearchNoteSaveRequest
+    ) -> ResearchQuickNote: ...
+
+    async def delete_note(
+        self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
+    ) -> bool: ...

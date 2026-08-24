@@ -545,17 +545,138 @@ _ResearchSourceReceiptSlot Static {
     color: $text-muted;
 }
 
+/* Task 5 Quick Notes: compact canonical owner editor inside Studio. */
+ResearchQuickNotesSection {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    margin-top: 1;
+    padding: 0 1 1 1;
+    background: $surface-darken-1;
+    border-left: solid $accent;
+}
+
+ResearchQuickNotesSection Horizontal {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
+
+ResearchQuickNotesSection Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface;
+    color: $text;
+}
+
+ResearchQuickNotesSection Button:focus {
+    border: none;
+    outline: none;
+    background: $primary;
+    color: $text;
+    text-style: bold underline;
+}
+
+#research-workspace-shell ResearchQuickNotesSection Button:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    background: $surface-darken-1;
+    color: $text-muted;
+    text-style: none;
+}
+
+#research-quick-notes-heading {
+    width: 1fr;
+    color: $accent;
+    text-style: bold;
+}
+
+#research-quick-note-count {
+    width: auto;
+    margin-right: 1;
+    color: $text-muted;
+}
+
+#research-quick-note-search,
+#research-quick-note-page {
+    width: 1fr;
+}
+
+#research-quick-note-list,
+#research-quick-note-title,
+#research-quick-note-tags {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface;
+}
+
+#research-quick-note-provenance-row,
+#research-quick-note-mode-row,
+#research-quick-note-actions {
+    margin-top: 1;
+}
+
+#research-quick-note-provenance,
+#research-quick-note-status,
+#research-quick-note-owner-limits {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+}
+
+#research-quick-note-status {
+    color: $text;
+}
+
+#research-quick-note-owner-limits {
+    background: $warning 15%;
+}
+
+#research-quick-note-body,
+#research-quick-note-preview {
+    width: 100%;
+    height: 10;
+    min-height: 5;
+    margin-top: 1;
+    padding: 0 1;
+    border: solid $surface-lighten-1;
+    background: $panel;
+}
+
+#research-quick-note-mode-row Button.is-active {
+    background: $primary-darken-1;
+    color: $text;
+    text-style: bold;
+}
+
+#research-workspace-shell.height-compact #research-quick-note-body,
+#research-workspace-shell.height-compact #research-quick-note-preview {
+    height: 6;
+}
+
 /* Add Sources and source inspector modals share the workbench visual world. */
 ResearchAddSourceModal,
 ResearchSourceInspectorModal,
-ResearchOverlayConflictModal {
+ResearchOverlayConflictModal,
+ResearchNoteConflictModal,
+ResearchNoteSwitchRecoveryModal {
     align: center middle;
     background: $background 70%;
 }
 
 #research-add-source-dialog,
 #research-source-inspector-dialog,
-#research-overlay-conflict-dialog {
+#research-overlay-conflict-dialog,
+#research-note-conflict-dialog,
+#research-note-switch-dialog {
     width: 90%;
     max-width: 110;
     height: 90%;
@@ -565,13 +686,19 @@ ResearchOverlayConflictModal {
     background: $panel;
 }
 
-#research-overlay-conflict-dialog {
+#research-overlay-conflict-dialog,
+#research-note-conflict-dialog,
+#research-note-switch-dialog {
     height: auto;
     max-width: 76;
 }
 
 #research-overlay-conflict-dialog Button,
-#research-overlay-conflict-dialog Static {
+#research-overlay-conflict-dialog Static,
+#research-note-conflict-dialog Button,
+#research-note-conflict-dialog Static,
+#research-note-switch-dialog Button,
+#research-note-switch-dialog Static {
     width: 100%;
     height: auto;
     min-height: 1;

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
@@ -23,6 +24,8 @@ from ...Research_Workspace import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
     ResearchPresentationOverlayStore,
+    ResearchNoteConflictError,
+    ResearchNoteSaveRequest,
     ResearchWorkspaceCatalogState,
     ResearchWorkspaceController,
     WorkspaceDataSource,
@@ -65,9 +68,14 @@ from ..Research_Workspace_Modules import (
     ResearchSourceAnnotationDraft,
     ResearchSourceInspectorModal,
     ResearchStudioRegion,
+    ResearchQuickNotesSection,
+    ResearchNoteConflictModal,
+    ResearchNoteSwitchRecoveryModal,
 )
 from ..Research_Workspace_Modules.pane_handle import ResearchSidePane
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Third_Party.textual_fspicker import FileSave
+from ...Utils.path_validation import validate_path_simple
 
 
 ResearchPaneName = Literal["sources", "chat", "studio"]
@@ -126,6 +134,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_committed_revisions: dict[QualifiedWorkspaceRef, int] = {}
         self._overlay_conflict_open = False
         self._overlay_fork_draft: tuple[object, ...] | None = None
+        self._quick_note_query = ""
+        self._quick_note_offset = 0
+        self._quick_note_lock = asyncio.Lock()
+        self._quick_note_switch_running = False
 
     def save_state(self) -> dict[str, object]:
         """Save Phase-1 authority, workspace intent, and responsive view state."""
@@ -263,10 +275,45 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     def select_data_source(
         self, message: ResearchHeaderRegion.DataSourceSelected
     ) -> None:
-        """Switch the whole catalog owner without reading the other authority."""
+        """Flush a dirty canonical note before changing the catalog owner."""
 
-        self.controller.select_data_source(message.data_source)
+        if (
+            message.data_source is self.controller.selected_data_source
+            or self._quick_note_switch_running
+        ):
+            return
+        self._quick_note_switch_running = True
+        self.run_worker(
+            self._switch_data_source_after_note_flush(message.data_source),
+            group="research-quick-note-owner-switch",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _switch_data_source_after_note_flush(
+        self, data_source: WorkspaceDataSource
+    ) -> None:
+        header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
+        buttons = tuple(header.query(".research-data-source-button"))
+        for button in buttons:
+            button.disabled = True
+        try:
+            async with self._quick_note_lock:
+                if not await self._flush_quick_note_before_owner_switch():
+                    return
+                self._apply_data_source_switch(data_source)
+        finally:
+            self._quick_note_switch_running = False
+            for button in buttons:
+                button.disabled = False
+
+    def _apply_data_source_switch(self, data_source: WorkspaceDataSource) -> None:
+        """Apply one already-authorized switch without reading another owner."""
+
+        self.controller.select_data_source(data_source)
         self._source_page_offset = 0
+        self._quick_note_offset = 0
+        self._quick_note_query = ""
         self._source_folders = ()
         self._source_annotations = ()
         self._overlay_generation += 1
@@ -275,14 +322,17 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.pane_preferences = ResearchPanePreferences()
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
-        header.sync_data_source(message.data_source)
+        header.sync_data_source(data_source)
         self.query_one("#research-workspace-selection", Static).update(
-            f"Loading {message.data_source.value.title()} research workspaces..."
+            f"Loading {data_source.value.title()} research workspaces..."
         )
         self.query_one("#research-sources-pane", ResearchSourcesRegion).clear_workspace(
-            authority=message.data_source.value.title(),
-            reason=f"Loading {message.data_source.value.title()} workspace sources...",
+            authority=data_source.value.title(),
+            reason=f"Loading {data_source.value.title()} workspace sources...",
         )
+        notes = self.query_one(ResearchQuickNotesSection)
+        notes.sync_workspace(None)
+        notes.show_recovery(f"Loading {data_source.value.title()} workspace notes...")
         self._start_catalog_refresh()
 
     @on(ResearchPaneModeStrip.Selected)
@@ -413,6 +463,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 authority=state.data_source.value.title(),
                 reason=state.recovery.user_message,
             )
+            notes = self.query_one(ResearchQuickNotesSection)
+            notes.sync_workspace(None)
+            notes.show_recovery(state.recovery.user_message)
             return
         if not state.workspaces:
             selection.update(
@@ -428,6 +481,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             ).clear_workspace(
                 authority=state.data_source.value.title(),
             )
+            notes = self.query_one(ResearchQuickNotesSection)
+            notes.sync_workspace(None)
+            notes.show_recovery("Create a Research workspace to use Quick Notes.")
             return
 
         intended_ref = self.controller.selected_ref
@@ -441,6 +497,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
         self.controller.select_workspace(workspace.ref)
         self._source_page_offset = 0
+        self._quick_note_offset = 0
+        self._quick_note_query = ""
         self._source_folders = ()
         self._source_annotations = ()
         selection.update(
@@ -458,7 +516,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         overlay_generation = self._overlay_generation
         overlay_capture = self.controller.capture_request()
         self._set_overlay_ref(workspace.ref)
+        self.query_one(ResearchQuickNotesSection).sync_workspace(workspace.ref)
         self._start_sources_refresh()
+        self._start_quick_notes_refresh()
         if self.overlay_store is None:
             return
         try:
@@ -485,6 +545,416 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._pane_preferences_ref = workspace.ref
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         self._start_sources_refresh()
+
+    def _start_quick_notes_refresh(
+        self, *, expected_ref: QualifiedWorkspaceRef | None = None
+    ) -> None:
+        if (
+            self.controller.selected_ref is None
+            or not self.is_mounted
+            or (
+                expected_ref is not None
+                and expected_ref != self.controller.selected_ref
+            )
+        ):
+            return
+        self.run_worker(
+            self._refresh_quick_notes(expected_ref=expected_ref),
+            group="research-workspace-quick-notes",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _refresh_quick_notes(
+        self, *, expected_ref: QualifiedWorkspaceRef | None = None
+    ) -> None:
+        capture = self.controller.capture_request()
+        if expected_ref is not None and capture.ref != expected_ref:
+            return
+        section = self.query_one(ResearchQuickNotesSection)
+        section.show_recovery(
+            f"Loading {capture.ref.data_source.value.title()} workspace notes..."
+        )
+        port = self.controller.port_for_data_source(capture.ref.data_source)
+        if port is None:
+            section.show_recovery("Quick Notes owner is unavailable.")
+            return
+        try:
+            capabilities = await port.capabilities(capture.ref)
+            if not self.controller.is_current_request(capture):
+                return
+            section.sync_capabilities(capabilities)
+            accepted = await self.controller.refresh_selected_notes(
+                query=self._quick_note_query,
+                limit=20,
+                offset=self._quick_note_offset,
+            )
+            if not accepted or self.controller.visible_note_page is None:
+                return
+        except CapabilityUnavailableError as exc:
+            if self.controller.is_current_request(capture):
+                section.show_recovery(
+                    f"{exc.capability.user_message} "
+                    f"{exc.capability.recovery_action}".strip()
+                )
+            return
+        except (
+            TypeError,
+            ValueError,
+            RuntimeError,
+            TLDWAPIError,
+            httpx.HTTPError,
+        ) as exc:
+            if self.controller.is_current_request(capture):
+                logger.warning(
+                    "Research Quick Notes refresh failed: {}", type(exc).__name__
+                )
+                section.show_recovery(
+                    "Quick Notes could not be loaded from the selected owner. Retry."
+                )
+            return
+        section.sync_page(self.controller.visible_note_page)
+        section.show_recovery(
+            "No notes in this workspace. Create a Quick Note."
+            if not self.controller.visible_note_page.items
+            else "Choose a note and Load, or create a new one."
+        )
+
+    async def _flush_quick_note_before_owner_switch(self) -> bool:
+        """Save one non-empty dirty editor to its exact captured owner."""
+
+        section = self.query_one(ResearchQuickNotesSection)
+        if not section.has_nonempty_dirty_draft:
+            return True
+        while True:
+            try:
+                ref, request = section.capture_save_request()
+                saved = await self.controller.save_note(ref, request)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Research Quick Note owner-switch flush failed: {}",
+                    type(exc).__name__,
+                )
+                action = await self.app.push_screen_wait(
+                    ResearchNoteSwitchRecoveryModal()
+                )
+                if action == "retry":
+                    continue
+                if action == "discard":
+                    section.discard_for_switch()
+                    return True
+                section.show_recovery("Authority switch cancelled; draft retained.")
+                return False
+            else:
+                if section.editor_ref == saved.ref == self.controller.selected_ref:
+                    section.sync_note(saved)
+                return True
+
+    def _run_quick_note_action(self, action: Awaitable[Any], *, group: str) -> None:
+        self.run_worker(
+            self._guard_quick_note_action(action),
+            group=group,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _guard_quick_note_action(self, action: Awaitable[Any]) -> None:
+        try:
+            async with self._quick_note_lock:
+                await action
+        except asyncio.CancelledError:
+            raise
+        except CapabilityUnavailableError as exc:
+            self.query_one(ResearchQuickNotesSection).show_recovery(
+                f"{exc.capability.user_message} "
+                f"{exc.capability.recovery_action}".strip()
+            )
+        except (
+            TypeError,
+            ValueError,
+            RuntimeError,
+            TLDWAPIError,
+            httpx.HTTPError,
+        ) as exc:
+            logger.warning("Research Quick Note action failed: {}", type(exc).__name__)
+            self.query_one(ResearchQuickNotesSection).show_recovery(
+                "Quick Note action failed. The editor draft is retained; retry."
+            )
+
+    @on(ResearchQuickNotesSection.SearchRequested)
+    def search_quick_notes(
+        self, message: ResearchQuickNotesSection.SearchRequested
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+        self._quick_note_query = message.query
+        self._quick_note_offset = 0
+        self._start_quick_notes_refresh(expected_ref=message.ref)
+
+    @on(ResearchQuickNotesSection.PageRequested)
+    def page_quick_notes(
+        self, message: ResearchQuickNotesSection.PageRequested
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+        self._quick_note_offset = max(0, self._quick_note_offset + message.delta * 20)
+        self._start_quick_notes_refresh(expected_ref=message.ref)
+
+    @on(ResearchQuickNotesSection.LoadRequested)
+    def load_quick_note(self, message: ResearchQuickNotesSection.LoadRequested) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+        self._run_quick_note_action(
+            self._load_quick_note_after_flush(message.ref, message.note_id),
+            group="research-quick-note-load",
+        )
+
+    async def _load_quick_note_after_flush(
+        self, ref: QualifiedWorkspaceRef, note_id: str
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if ref != section.editor_ref or ref != self.controller.selected_ref:
+            return
+        if not await self._flush_quick_note_before_owner_switch():
+            return
+        if ref != section.editor_ref or ref != self.controller.selected_ref:
+            return
+        accepted = await self.controller.load_selected_note(note_id)
+        if not accepted:
+            return
+        note = self.controller.visible_note
+        section = self.query_one(ResearchQuickNotesSection)
+        if note is None:
+            section.show_recovery("That note is no longer in this workspace.")
+            return
+        section.sync_note(note)
+
+    @on(ResearchQuickNotesSection.NewRequested)
+    def create_quick_note(self, message: ResearchQuickNotesSection.NewRequested) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+        self._run_quick_note_action(
+            self._new_quick_note_after_flush(message.ref),
+            group="research-quick-note-new",
+        )
+
+    async def _new_quick_note_after_flush(self, ref: QualifiedWorkspaceRef) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if ref != section.editor_ref or ref != self.controller.selected_ref:
+            return
+        if await self._flush_quick_note_before_owner_switch() and (
+            ref == section.editor_ref == self.controller.selected_ref
+        ):
+            section.new_draft()
+
+    @on(ResearchQuickNotesSection.SaveRequested)
+    def save_quick_note(self, message: ResearchQuickNotesSection.SaveRequested) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+        self._run_quick_note_action(
+            self._save_quick_note(message.ref, message.request),
+            group="research-quick-note-save",
+        )
+
+    async def _save_quick_note(
+        self, ref: QualifiedWorkspaceRef, request: ResearchNoteSaveRequest
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if ref != section.editor_ref or ref != self.controller.selected_ref:
+            return
+        try:
+            saved = await self.controller.save_note(ref, request)
+        except ResearchNoteConflictError:
+            action = await self.app.push_screen_wait(ResearchNoteConflictModal())
+            if action == "reload" and request.note_id is not None:
+                accepted = await self.controller.load_selected_note(request.note_id)
+                if accepted and self.controller.visible_note is not None:
+                    section.sync_note(self.controller.visible_note)
+                return
+            if action != "copy":
+                section.show_recovery("Conflict unresolved; editor draft retained.")
+                return
+            saved = await self.controller.save_note(
+                ref,
+                ResearchNoteSaveRequest(
+                    title=request.title,
+                    content=request.content,
+                    tags=request.tags,
+                    message_ids=request.message_ids,
+                    source_ids=request.source_ids,
+                ),
+            )
+        if section.editor_ref == saved.ref == self.controller.selected_ref:
+            section.sync_note(saved)
+        self._quick_note_offset = 0
+        self._start_quick_notes_refresh()
+
+    @on(ResearchQuickNotesSection.DeleteRequested)
+    def delete_quick_note(
+        self, message: ResearchQuickNotesSection.DeleteRequested
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+
+        def confirmed(accepted: bool | None) -> None:
+            if (
+                accepted
+                and message.ref == section.editor_ref
+                and message.ref == self.controller.selected_ref
+            ):
+                self._run_quick_note_action(
+                    self._delete_quick_note(
+                        message.ref, message.note_id, message.expected_version
+                    ),
+                    group="research-quick-note-delete",
+                )
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Delete Quick Note?",
+                message=(
+                    "This deletes the canonical note from its selected owner and "
+                    "removes the workspace association."
+                ),
+                confirm_label="Delete note",
+            ),
+            callback=confirmed,
+        )
+
+    async def _delete_quick_note(
+        self,
+        ref: QualifiedWorkspaceRef,
+        note_id: str,
+        expected_version: int,
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if ref != section.editor_ref or ref != self.controller.selected_ref:
+            return
+        try:
+            deleted = await self.controller.delete_note(ref, note_id, expected_version)
+        except ResearchNoteConflictError:
+            action = await self.app.push_screen_wait(ResearchNoteConflictModal())
+            if action == "reload":
+                accepted = await self.controller.load_selected_note(note_id)
+                if accepted and self.controller.visible_note is not None:
+                    self.query_one(ResearchQuickNotesSection).sync_note(
+                        self.controller.visible_note
+                    )
+            elif action == "copy":
+                ref, request = section.capture_save_request()
+                saved = await self.controller.save_note(
+                    ref,
+                    ResearchNoteSaveRequest(
+                        title=request.title,
+                        content=request.content,
+                        tags=request.tags,
+                        message_ids=request.message_ids,
+                        source_ids=request.source_ids,
+                    ),
+                )
+                section.sync_note(saved)
+            return
+        if ref != section.editor_ref or ref != self.controller.selected_ref:
+            return
+        if deleted:
+            section.new_draft()
+            self._quick_note_offset = 0
+            self._start_quick_notes_refresh()
+
+    @on(ResearchQuickNotesSection.CaptureSourcesRequested)
+    def capture_quick_note_sources(
+        self, message: ResearchQuickNotesSection.CaptureSourcesRequested
+    ) -> None:
+        section = self.query_one(ResearchQuickNotesSection)
+        if (
+            message.ref != section.editor_ref
+            or message.ref != self.controller.selected_ref
+        ):
+            return
+        source_ids = self.controller.desired_source_ids
+        if not source_ids:
+            section.show_recovery(
+                "Select workspace sources before capturing provenance."
+            )
+            return
+        section.set_source_provenance(source_ids)
+
+    @on(ResearchQuickNotesSection.DownloadRequested)
+    def download_quick_note(
+        self, message: ResearchQuickNotesSection.DownloadRequested
+    ) -> None:
+        self._run_quick_note_action(
+            self._download_quick_note(message), group="research-quick-note-download"
+        )
+
+    async def _download_quick_note(
+        self, message: ResearchQuickNotesSection.DownloadRequested
+    ) -> None:
+        safe_title = (
+            "".join(
+                character
+                for character in (message.title.strip() or "quick-note")
+                if character.isalnum() or character in {" ", "-", "_"}
+            ).rstrip()
+            or "quick-note"
+        )
+        selected_path = await self.app.push_screen_wait(
+            FileSave(
+                location=str(Path.home()),
+                title="Download Quick Note as Markdown",
+                default_file=f"{safe_title}.md",
+            )
+        )
+        if selected_path is None:
+            return
+        try:
+            target = validate_path_simple(selected_path, require_exists=False)
+        except ValueError:
+            self.query_one(ResearchQuickNotesSection).show_recovery(
+                "The selected download path is invalid. Choose another path."
+            )
+            return
+        tag_line = ", ".join(message.tags)
+        document = f"# {message.title or 'Quick note'}\n\n"
+        if tag_line:
+            document += f"Tags: {tag_line}\n\n"
+        document += message.content
+        try:
+            await asyncio.to_thread(Path(target).write_text, document, encoding="utf-8")
+        except (OSError, UnicodeError):
+            self.query_one(ResearchQuickNotesSection).show_recovery(
+                "Quick Note download failed. Choose another path and retry."
+            )
+            return
+        self.query_one(ResearchQuickNotesSection).show_recovery(
+            "Quick Note downloaded as Markdown."
+        )
 
     def _start_sources_refresh(self) -> None:
         if self.controller.selected_ref is None or not self.is_mounted:

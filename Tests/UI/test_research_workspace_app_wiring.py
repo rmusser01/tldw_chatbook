@@ -98,6 +98,7 @@ def _unmounted_app(
     app.workspace_registry_service = local_service
     app.server_notes_workspace_service = server_service
     app.server_context_provider = server_context_provider
+    app.notes_scope_service = None
     return app
 
 
@@ -118,6 +119,8 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
         server_service=first_server,
         server_context_provider=first_provider,
     )
+    first_notes = object()
+    app.notes_scope_service = first_notes
     monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
 
     first = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
@@ -127,6 +130,8 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
         WorkspaceDataSource.SERVER
     )
     assert first_local_port._service is first_local
+    assert first_local_port._notes_scope is first_notes
+    assert first_local_port._notes_user_id
     assert first_server_port._service is first_server
     assert first_server_port._context_provider is first_provider
     assert first.overlay_store.path == tmp_path / "research_workspace_overlay.json"
@@ -138,6 +143,8 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
     app.workspace_registry_service = second_local
     app.server_notes_workspace_service = second_server
     app.server_context_provider = second_provider
+    second_notes = object()
+    app.notes_scope_service = second_notes
 
     second = app._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
@@ -147,6 +154,10 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
     assert (
         second.controller.port_for_data_source(WorkspaceDataSource.LOCAL)._service
         is second_local
+    )
+    assert (
+        second.controller.port_for_data_source(WorkspaceDataSource.LOCAL)._notes_scope
+        is second_notes
     )
     assert (
         second.controller.port_for_data_source(WorkspaceDataSource.SERVER)._service

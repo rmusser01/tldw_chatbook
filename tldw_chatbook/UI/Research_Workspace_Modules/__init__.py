@@ -14,6 +14,11 @@ from .source_inspector import (
 )
 from .overlay_conflict_modal import ResearchOverlayConflictModal
 from .studio_region import ResearchStudioRegion
+from .quick_notes_section import ResearchQuickNotesSection
+from .quick_note_modals import (
+    ResearchNoteConflictModal,
+    ResearchNoteSwitchRecoveryModal,
+)
 from .workspace_menu import ResearchPaneModeStrip, ResearchWorkspaceMenu
 
 __all__ = [
@@ -31,5 +36,8 @@ __all__ = [
     "ResearchSourceInspectorModal",
     "ResearchOverlayConflictModal",
     "ResearchStudioRegion",
+    "ResearchQuickNotesSection",
+    "ResearchNoteConflictModal",
+    "ResearchNoteSwitchRecoveryModal",
     "ResearchWorkspaceMenu",
 ]

@@ -346,6 +346,10 @@ async def test_server_projects_audited_lifecycle_from_real_context_shape() -> No
         "get_readiness",
         "set_selected_scope",
         "reorder_sources",
+        "list_notes",
+        "get_note",
+        "save_note",
+        "delete_note",
     }
     lifecycle_names = {
         "list",

@@ -10384,6 +10384,8 @@ class TldwCli(
                 media_scope_service=media_scope_service,
                 operation_store=operation_store,
                 association_scheduler=association_scheduler,
+                notes_scope_service=getattr(self, "notes_scope_service", None),
+                notes_user_id=CLI_APP_CLIENT_ID,
             )
         server_service = getattr(self, "server_notes_workspace_service", None)
         server_context_provider = getattr(self, "server_context_provider", None)
