@@ -4697,6 +4697,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if local_read_is_active:
                 self.run_worker(self._load_items(), exclusive=True, group="wc_items")
             else:
+                self._request_surface_refresh(self._SURFACE_READER)
                 self._loaded_items = []
                 self._selected_content_item = None
                 self._selected_content_page_key = None

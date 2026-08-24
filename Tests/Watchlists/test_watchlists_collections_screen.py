@@ -486,6 +486,96 @@ async def test_failed_switch_to_local_keeps_recovery_mounted_and_actionable() ->
         assert "Failed to load watchlist items." in str(app.notify.call_args.args[0])
 
 
+@pytest.mark.asyncio
+async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
+    monkeypatch,
+) -> None:
+    controller = AsyncMock()
+    controller.get_overview_data = AsyncMock(return_value={})
+    local_row = {
+        "id": "local:watchlist_item:8",
+        "item_id": 8,
+        "title": "Local row before server switch",
+        "status": "read",
+        "url": "https://example.com/8",
+        "created_at": "2026-08-23T12:00:00+00:00",
+    }
+    controller.list_items = AsyncMock(return_value=[local_row])
+    controller.get_item_content = AsyncMock(return_value="Local reader body")
+    controller.check_all = AsyncMock(return_value={"checked": 0, "failed": []})
+    app = _build_test_app()
+    bundle = app.watchlist_bundle_service
+    count_spies = []
+    for name in (
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(bundle, name))
+        monkeypatch.setattr(bundle, name, spy)
+        count_spies.append(spy)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        screen._controller = controller
+
+        assert screen.active_section == "items"
+        assert screen.runtime_backend == "local"
+        await screen._load_items()
+        screen.post_message(ItemSelected(local_row))
+        assert await _wait_until(
+            pilot, lambda: screen._selected_content_item is local_row
+        )
+        await pilot.pause()
+
+        selector = screen.query_one("#watchlists-backend-select")
+        assert [
+            item["title"]
+            for item in screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ).items
+        ] == ["Local row before server switch"]
+        assert screen.query("#watchlists-content-pane")
+        assert not screen.query("#watchlists-read-local-only")
+
+        controller.list_items.reset_mock()
+        controller.get_item_content.reset_mock()
+        controller.check_all.reset_mock()
+        for spy in count_spies:
+            spy.reset_mock()
+
+        selector.value = "server"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-read-local-only"))
+        )
+
+        assert screen.active_section == "items"
+        assert screen.runtime_backend == "server"
+        assert selector.value == "server"
+        assert selector.disabled is True
+        assert not screen.query("#watchlists-content-pane")
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+        assert screen._selected_content_item is None
+
+        screen.post_message(ItemsFilterChanged("unread", "server query"))
+        screen.action_refresh_all()
+        await screen._load_tree_data().wait()
+        await pilot.pause(0.5)
+        await host.workers.wait_for_complete()
+
+        controller.list_items.assert_not_awaited()
+        controller.get_item_content.assert_not_awaited()
+        controller.check_all.assert_not_awaited()
+        for spy in count_spies:
+            spy.assert_not_called()
+
+
 # --- Task 7: scope-driven scoped rows, with real seeded data ---------------
 #
 # Tests/UI/test_watchlists_destination_shell.py's own scope tests run
