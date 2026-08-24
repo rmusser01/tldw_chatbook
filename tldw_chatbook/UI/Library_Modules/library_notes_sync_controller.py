@@ -42,6 +42,8 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
     RuntimeConflictReceipt,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
+    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
+    NotesSyncActionKind,
     NotesSyncDirection,
     NotesSyncOperationState,
 )
@@ -973,7 +975,12 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        action_ids = tuple(action.action_id for action in plan.safe_actions)
+        action_ids = tuple(
+            action.action_id
+            for action in plan.safe_actions
+            if action.kind in NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
+            or action.kind is NotesSyncActionKind.NO_CHANGE
+        )
         selections = self._current_selections()
         try:
             result = await self._runtime.apply_reviewed(

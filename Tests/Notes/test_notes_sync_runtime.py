@@ -2323,6 +2323,26 @@ async def test_manual_apply_accepts_reviewed_no_change_rows_without_executing_th
 
 
 @pytest.mark.asyncio
+async def test_manual_apply_rejects_unknown_safe_action_ids(tmp_path: Path) -> None:
+    observed = _input()
+    adapter = _Adapter([observed] * 3)
+    owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
+    await owner.start()
+    adapter.executor.executed.clear()
+    reviewed = await owner.check_root("root-1")
+
+    with pytest.raises(ValueError, match="reviewed_action_mismatch"):
+        await owner.apply_reviewed(
+            "root-1",
+            reviewed.observation_token,
+            ("unknown-action",),
+        )
+
+    assert adapter.executor.executed == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_automatic_hint_applies_only_a_safe_direction_authorized_action(
     tmp_path: Path,
 ) -> None:

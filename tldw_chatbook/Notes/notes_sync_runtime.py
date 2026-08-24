@@ -54,6 +54,7 @@ from tldw_chatbook.Notes.notes_sync_coordinator import (
     RootAdmissionState,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
+    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncAction,
     NotesSyncActionKind,
     NotesSyncBindingState,
@@ -96,15 +97,8 @@ from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
 
 CUTOVER_MARKER = "notes-sync-cutover-v1"
-_AUTOMATIC_ACTIONS = frozenset(
-    {
-        NotesSyncActionKind.CREATE_NOTE,
-        NotesSyncActionKind.UPDATE_NOTE,
-        NotesSyncActionKind.CREATE_FILE,
-        NotesSyncActionKind.UPDATE_FILE,
-    }
-)
-_EXECUTABLE_ACTIONS = _AUTOMATIC_ACTIONS
+_AUTOMATIC_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
+_EXECUTABLE_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
 _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
 _OBSERVATION_BUNDLE_LIMIT = 8
 _DISPLAY_LABEL_MAX_CHARS = 160

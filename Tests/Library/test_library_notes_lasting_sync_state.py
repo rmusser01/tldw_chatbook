@@ -19,7 +19,11 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictSelection,
     NotesSyncConflictChoice,
 )
-from tldw_chatbook.Notes.notes_sync_models import NotesSyncAction, NotesSyncActionKind
+from tldw_chatbook.Notes.notes_sync_models import (
+    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
+    NotesSyncAction,
+    NotesSyncActionKind,
+)
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     DeletionGroup,
     ManagedPlacementEffect,
@@ -33,6 +37,15 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 
 
 TOKEN = "a" * 64
+
+
+def test_manual_apply_action_kind_contract_is_exact() -> None:
+    assert NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS == {
+        NotesSyncActionKind.CREATE_NOTE,
+        NotesSyncActionKind.UPDATE_NOTE,
+        NotesSyncActionKind.CREATE_FILE,
+        NotesSyncActionKind.UPDATE_FILE,
+    }
 
 
 def test_setup_defaults_to_bidirectional_and_requires_name_folder_and_local_scope() -> (

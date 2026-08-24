@@ -16,6 +16,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     eligible_conflict_reason,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
+    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncActionKind,
     normalize_notes_sync_relative_path,
     validate_notes_sync_digest,
@@ -784,13 +785,7 @@ def _apply_blocker(
     ):
         return LastingSyncApplyBlocker.UNSUPPORTED_ATTENTION
     if not any(
-        action.kind
-        in {
-            NotesSyncActionKind.CREATE_NOTE,
-            NotesSyncActionKind.UPDATE_NOTE,
-            NotesSyncActionKind.CREATE_FILE,
-            NotesSyncActionKind.UPDATE_FILE,
-        }
+        action.kind in NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
         for action in plan.safe_actions
     ) and not any(
         selection.choice is not NotesSyncConflictChoice.SKIP for selection in selections

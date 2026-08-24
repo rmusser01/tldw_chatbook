@@ -434,6 +434,7 @@ async def test_mixed_no_change_and_real_action_counts_only_the_real_action() -> 
         safe_actions=(
             NotesSyncAction("act-noop", NotesSyncActionKind.NO_CHANGE, "bind-1"),
             NotesSyncAction("act-real", NotesSyncActionKind.UPDATE_NOTE, "bind-2"),
+            NotesSyncAction("act-move", NotesSyncActionKind.MOVE_FILE, "bind-3"),
         ),
         attention=(),
         skips=(),

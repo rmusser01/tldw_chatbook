@@ -243,9 +243,11 @@ Staging a choice changes only controller memory and the current presentation.
 It updates the existing status line to `Choice staged. No changes yet.` and does
 not issue a notification.
 
-**Apply reviewed** sends all existing safe-action IDs plus all staged conflict
-choices. Skip is transmitted as reviewed intent so the result can count remaining
-attention, but it creates no operation and no history row.
+**Apply reviewed** sends only IDs whose kinds are admitted by the runtime's
+manual-Apply contract, plus exact reviewed `NO_CHANGE` IDs needed for restart
+validation, and all staged conflict choices. Blocked kinds such as `MOVE_FILE`
+remain unsubmitted. Skip is transmitted as reviewed intent so the result can
+count remaining attention, but it creates no operation and no history row.
 
 The runtime first acquires the root mutation lock. While holding it and before
 mutation, it:
@@ -266,15 +268,15 @@ authority checks after acquisition. This prevents reviewed apply, automatic
 work, recovery, and Undo from deriving contradictory requests concurrently even
 when their durable operation IDs differ.
 
-Unselected and skipped content conflicts do not block safe actions or selected
-content resolutions. Automatic reconciliation is unchanged and still blocks on
-any attention.
+Unselected and skipped content conflicts do not block runtime-admitted safe
+actions or selected content resolutions. Automatic reconciliation is unchanged
+and still blocks on any attention.
 
-Execution order is deterministic: existing safe actions retain their stable
-plan order, followed by selected conflicts ordered by binding ID. Each item is
-independently durable. A non-terminal result stops later work and produces an
-honest partial receipt; already completed items are not described as rolled
-back.
+Execution order is deterministic: submitted runtime-admitted safe actions
+retain their stable plan order, followed by selected conflicts ordered by
+binding ID. Each item is independently durable. A non-terminal result stops
+later work and produces an honest partial receipt; already completed items are
+not described as rolled back.
 
 When all attempted items are terminal, the runtime performs a fresh
 reconciliation. Remaining conflicts keep the root in **Needs attention**.
@@ -502,9 +504,10 @@ preserving scroll and focus.
 Paging preserves selections. New checks, stale results, Back, root changes, and
 controller remounts clear selections and expanded content.
 
-The pinned Apply button is enabled when there is at least one safe action or one
-mutating conflict selection and no non-conflict blocker. Skip alone does not
-enable it. Disabled tooltips name the exact blocker.
+The pinned Apply button is enabled when there is at least one runtime-admitted
+executable safe action or one mutating conflict selection and no non-conflict
+blocker. `NO_CHANGE`, `MOVE_FILE`, and Skip alone do not enable it. Disabled
+tooltips name the exact blocker.
 
 After successful subset apply:
 
@@ -589,7 +592,7 @@ and object representations.
 
 - Keep file and Keep note in bidirectional and both one-way directions;
 - direction override is one occurrence and does not mutate root direction;
-- Skip plus safe actions applies only the reviewed subset;
+- Skip plus runtime-admitted safe actions applies only the reviewed subset;
 - unresolved conflicts remain Needs attention;
 - deletion, pause, managed placement, activation, capability, and root-level
   skips remain blocking;

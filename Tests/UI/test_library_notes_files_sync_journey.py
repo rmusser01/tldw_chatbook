@@ -103,6 +103,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationAttention,
     ReconciliationAttentionKind,
     ReconciliationPlan,
+    plan_reconciliation,
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncRuntimeOwner,
@@ -284,6 +285,53 @@ def test_notes_guide_uses_only_shipped_sync_action_labels() -> None:
         label not in normalized
         for label in ("Check folder", "Review attention", "Sync now")
     )
+
+
+@pytest.mark.asyncio
+async def test_real_runtime_applies_admitted_safe_action_beside_blocked_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _runtime_input()
+    base_plan = plan_reconciliation(observed)
+    update = base_plan.safe_actions[0]
+    move = NotesSyncAction(
+        "blocked-move",
+        NotesSyncActionKind.MOVE_FILE,
+        update.binding_id,
+    )
+    mixed_plan = replace(base_plan, safe_actions=(move, update))
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.notes_sync_runtime.plan_reconciliation",
+        lambda _observed: mixed_plan,
+    )
+    adapter = _RuntimeAdapter([observed] * 4)
+    owner, _, _ = _runtime_owner(
+        store=_runtime_store(tmp_path),
+        admitted=True,
+        adapter=adapter,
+    )
+    await owner.start()
+    adapter.executor.executed.clear()
+    controller = LibraryNotesSyncController(
+        runtime=owner,
+        import_controller=SimpleNamespace(begin_selection=lambda: None),
+    )
+    try:
+        await controller.check_root("root-1")
+        reviewed = controller.snapshot.review
+        assert reviewed.can_apply is True
+
+        await controller.apply_reviewed("root-1", reviewed.observation_token)
+
+        assert [action.kind for action in adapter.executor.executed] == [
+            NotesSyncActionKind.UPDATE_NOTE
+        ]
+        assert controller.snapshot.phase == "receipt"
+        assert controller.snapshot.receipt_line.startswith("1 applied")
+        assert "invalid review" not in controller.snapshot.status_line
+    finally:
+        await owner.shutdown()
 
 
 def test_live_verifier_is_a_checked_in_isolated_entry_point(tmp_path: Path) -> None:

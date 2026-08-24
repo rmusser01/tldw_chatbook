@@ -293,7 +293,7 @@ git commit -m "feat(notes): compare sync conflicts under fresh authority"
 
 - [x] **Step 1: Write RED subset-apply tests**
 
-Cover bidirectional plus both one-way directions, occurrence-only overrides, Skip plus safe actions, all non-content blockers, deterministic safe-then-binding order, 30-day recovery, terminal refresh, and honest partial stop.
+Cover bidirectional plus both one-way directions, occurrence-only overrides, Skip plus runtime-admitted safe actions, all non-content blockers, deterministic safe-then-binding order, 30-day recovery, terminal refresh, and honest partial stop.
 
 ```python
 @pytest.mark.parametrize("choice", [KEEP_FILE, KEEP_NOTE])
@@ -327,7 +327,7 @@ Keep `NotesSyncActionKind.UPDATE_NOTE/UPDATE_FILE` as the executor action. Add a
 
 - [x] **Step 4: Implement narrow manual admission**
 
-Under the root lock, rebuild exact authority. Reject any deletion group, deletion attention, pause, managed placement, capability/root skip, activation review, unknown/duplicate/cross-root selection, or ineligible reason before recovery admission. Build selected requests before releasing the private bundle. Skip builds nothing. Execute existing safe actions in plan order, then selected conflicts ordered by binding ID.
+Under the root lock, rebuild exact authority. Reject any deletion group, deletion attention, pause, managed placement, capability/root skip, activation review, unknown/duplicate/cross-root selection, or ineligible reason before recovery admission. Build selected requests before releasing the private bundle. Skip builds nothing. Validate exact reviewed `NO_CHANGE` IDs without executing them; execute only runtime-admitted safe actions in plan order, then selected conflicts ordered by binding ID.
 
 - [x] **Step 5: Preserve automatic behavior**
 
@@ -884,16 +884,20 @@ Expected: exact TASK-97 is Done with all nine ACs checked, the worktree is clean
   control labels. The narrow fixes require one of the runtime's four manually
   executable safe action kinds or a non-Skip conflict choice, skip label
   authority when no eligible conflict exists, and keep persisted-root history
-  reachable while its paged read reports empty or unavailable state. The transient
-  history probe was deleted from the runtime, controller port, and snapshot.
-- The corrected exact 12-file matrix passed: **744 passed, 8 warnings in
-  171.88s**. The
+  reachable while its paged read reports empty or unavailable state. The
+  transient history probe was deleted from the runtime, controller port, and
+  snapshot.
+  Controller submission includes only those four kinds plus exact reviewed
+  `NO_CHANGE` IDs; blocked kinds never cross the manual-Apply boundary.
+- The corrected exact 12-file matrix passed: **747 passed, 8 warnings in
+  168.93s**. The
   focused private-SQLite owner/backup, legacy cutover/startup, privacy, and
   unsupported-write governance nodes passed within that matrix; the earlier
   isolated governance rerun was **10 passed, 7 warnings in 19.55s**.
 - Ruff check and format, compileall, CSS generation, and `git diff --check`
   passed. The exact MyPy command reports the same pre-existing **144 errors in
   5 files** at the Task 8 starting SHA `96c502cdd`; this closeout adds none.
+  The new shared action-kind contract module passes its standalone MyPy check.
 - Live UAT redirected `HOME`, all XDG roots, `TLDW_CONFIG_PATH`, and
   `[paths].data_dir` into one disposable profile, disabled model-catalog and
   model-network activity, and seeded only scratch authorities. Wide and 60x20
@@ -904,7 +908,10 @@ Expected: exact TASK-97 is Done with all nine ACs checked, the worktree is clean
 - Cumulative merge-base review found and fixed the restarted mixed-plan defect,
   the inaccurate draft-doc encryption claim, and the follow-up P2s above. The
   final spec gate aligned `MOVE_FILE` with the runtime's intentional manual
-  rejection and caught one line-wrapped obsolete action label.
+  rejection and caught one line-wrapped obsolete action label. The final
+  exact-head gate then caught mixed `MOVE_FILE` plus admitted work crossing the
+  boundary; the shared four-kind contract now filters blocked IDs while
+  retaining exact reviewed `NO_CHANGE` IDs for restart validation.
   Correctness, privacy, recovery, restart truth, focus/keyboard reachability,
   and plan/spec compliance have no remaining P0-P2 findings. The full ponytail
   pass retained the joined fixture helpers as test boundary setup, added no

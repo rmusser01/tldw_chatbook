@@ -126,6 +126,16 @@ class NotesSyncActionKind(StrEnum):
     PAUSE = "pause"
 
 
+NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS = frozenset(
+    {
+        NotesSyncActionKind.CREATE_NOTE,
+        NotesSyncActionKind.UPDATE_NOTE,
+        NotesSyncActionKind.CREATE_FILE,
+        NotesSyncActionKind.UPDATE_FILE,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class NotesSyncSerializationProfile:
     """Byte-representation facts required for a lossless text round trip."""
@@ -274,6 +284,7 @@ class NotesSyncRecoveryAdmission:
 
 
 __all__ = [
+    "NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS",
     "NotesSyncAction",
     "NotesSyncActionKind",
     "NotesSyncBindingState",
