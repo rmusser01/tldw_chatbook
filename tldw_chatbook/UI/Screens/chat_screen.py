@@ -3180,11 +3180,15 @@ class ChatScreen(BaseAppScreen):
                 None,
             )
             if authority_summary is not None:
+                authority_rows = tuple(
+                    (escape_markup(label), escape_markup(value))
+                    for label, value in authority_summary.contextual_help_rows()
+                )
                 shortcut_groups = (
                     *shortcut_groups,
                     (
                         "What happens if I send now?",
-                        authority_summary.contextual_help_rows(),
+                        authority_rows,
                     ),
                 )
         if isinstance(self.app.focused, ConsoleWorkspaceTree):
@@ -10878,7 +10882,10 @@ class ChatScreen(BaseAppScreen):
             child.styles.display = "none"
 
     def _current_console_rail_state(
-        self, *, available_columns: int | None = None
+        self,
+        *,
+        available_columns: int | None = None,
+        inspector_state: ConsoleInspectorState | None = None,
     ) -> ConsoleRailState:
         """Build the current effective rail state from mounted Console context."""
         resolved_available_columns = (
@@ -10888,7 +10895,8 @@ class ChatScreen(BaseAppScreen):
         )
         pending_launch = self._pending_console_launch_context
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        inspector_state = self._build_console_inspector_state(pending_launch)
+        if inspector_state is None:
+            inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = (
             self._workspace._build_console_workspace_context_state()
         )
@@ -17352,7 +17360,9 @@ class ChatScreen(BaseAppScreen):
             and self._console_chatbook_action_available()
         )
         if rail_state is None:
-            rail_state = self._current_console_rail_state()
+            rail_state = self._current_console_rail_state(
+                inspector_state=inspector_state
+            )
         self._sync_console_rail_visibility_if_changed(rail_state)
         # Cost-ticker PR3 (task-5): deliberately OUTSIDE the
         # `control_state_changed or workbench_state_changed` guard above

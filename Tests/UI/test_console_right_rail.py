@@ -887,13 +887,14 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
         inspector = screen.query_one(
             "#console-run-inspector-state", ConsoleRunInspector
         )
-        rail_state = screen._current_console_rail_state()
         snapshot = screen._build_console_inspector_state(
             screen._pending_console_launch_context
         )
         builds: list[object] = []
         summary_states: list[object] = []
         inspector_states: list[object] = []
+        rail_states: list[object] = []
+        build_rail_state = screen._build_console_rail_state
         monkeypatch.setattr(
             screen,
             "_build_console_inspector_state",
@@ -901,13 +902,23 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
         )
         monkeypatch.setattr(summary, "sync_state", summary_states.append)
         monkeypatch.setattr(inspector, "sync_state", inspector_states.append)
+        monkeypatch.setattr(
+            screen,
+            "_build_console_rail_state",
+            lambda **kwargs: (
+                rail_states.append(kwargs["inspector_state"])
+                or build_rail_state(**kwargs)
+            ),
+        )
 
-        screen._sync_console_control_bar(rail_state)
+        screen._sync_console_control_bar()
 
         assert builds == [snapshot]
         assert summary_states == [snapshot]
         assert inspector_states == [snapshot]
+        assert rail_states == [snapshot]
         assert summary_states[0] is inspector_states[0]
+        assert inspector_states[0] is rail_states[0]
 
 
 @pytest.mark.asyncio
@@ -932,6 +943,96 @@ async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
         assert "What happens if I send now?" in rendered
         for label, value in expected:
             assert f"{label}: {value}" in rendered
+
+
+@pytest.mark.asyncio
+async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        summary.sync_state(
+            ConsoleInspectorState(
+                rows=(
+                    ConsoleDisplayRow("Workspace", "[bold]literal[/bold]"),
+                    ConsoleDisplayRow("Selected conversation", "Chat"),
+                    ConsoleDisplayRow("Provider", "ready", status="ready"),
+                )
+            )
+        )
+        summary.focus()
+        await pilot.pause()
+        await screen.action_show_workbench_help()
+        await pilot.pause()
+
+        panel = pilot.app.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = panel.query_one("#workbench-help-body", Static)
+        assert "[bold]literal[/bold]" in body.render().plain
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
+    monkeypatch,
+) -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        toggle = inspector.query_one("#console-inspector-more-toggle", Button)
+        boundaries = rail._mounted_boundaries()
+        expected_section_id = "selected-conversation"
+        assert expected_section_id in {
+            section.section_id for section, _header in boundaries
+        }
+        toggle.focus()
+        await pilot.pause()
+        assert pilot.app.focused is toggle
+        recovered: list[str | None] = []
+        recover_focus = inspector._on_more_focus_removed
+        monkeypatch.setattr(
+            inspector,
+            "_on_more_focus_removed",
+            lambda section_id: (
+                recovered.append(section_id) or recover_focus(section_id)
+            ),
+        )
+
+        rows = tuple(
+            row
+            for row in inspector.state.rows
+            if row.label not in {"Tools", "Approvals", "Artifacts"}
+        ) + (
+            ConsoleDisplayRow("Tools", "1 ready"),
+            ConsoleDisplayRow("Approvals", "1 pending", status="blocked"),
+            ConsoleDisplayRow("Artifacts", "Chatbook available"),
+        )
+        inspector.sync_state(replace(inspector.state, rows=rows))
+        for _ in range(4):
+            await pilot.pause()
+
+        assert not list(inspector.query("#console-inspector-more-toggle"))
+        focused = pilot.app.focused
+        assert focused is not None
+        assert recovered == [expected_section_id]
+        assert rail.inspector_active(focused)
+        assert focused.id == "console-inspector-rail-body"
+        assert focused.id not in {
+            "console-inspector-tools-heading",
+            "console-inspector-approvals-heading",
+            "console-inspector-artifacts-heading",
+            "console-native-transcript",
+            "console-native-composer",
+        }
 
 
 @pytest.mark.asyncio

@@ -917,6 +917,14 @@ class ConsoleInspectorRail(Vertical):
             self._pending_focus_recoveries.pop(section_id, None)
             self._recover_focus_incident(section_id, incident)
 
+    def _recover_keyed_boundary_focus(self, section_id: str | None) -> None:
+        """Focus a captured boundary after Textual commits recompose fallback."""
+
+        self._recover_focus_incident(
+            section_id or "",
+            _FocusRecoveryIncident(target_id=None, target_index=None),
+        )
+
     def _paint_scroll_owner(self, focused: Widget | None) -> None:
         active_header: Widget | None = None
         outer_active = bool(
@@ -1155,6 +1163,7 @@ class ConsoleInspectorRail(Vertical):
                     ownership_policy=self._ownership_policy,
                     reported_unknown_fingerprints=(self._reported_unknown_fingerprints),
                     on_reconcile=self.request_outer_reconcile,
+                    on_more_focus_removed=self._recover_keyed_boundary_focus,
                     more_open=self._inspector_more_open,
                     id="console-run-inspector-state",
                 )

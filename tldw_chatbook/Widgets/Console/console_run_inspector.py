@@ -152,6 +152,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         ownership_policy: InspectorOwnershipPolicy = InspectorOwnershipPolicy.STRICT,
         reported_unknown_fingerprints: set[tuple[str, ...]] | None = None,
         on_reconcile: Callable[[], None] | None = None,
+        on_more_focus_removed: Callable[[str | None], None] | None = None,
         more_open: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -166,6 +167,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             else set()
         )
         self._on_reconcile = on_reconcile
+        self._on_more_focus_removed = on_more_focus_removed
         self._more_open = more_open
         self._report_unowned_content(ownership)
         self.styles.height = "auto"
@@ -196,6 +198,21 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         structural_change = self._structural_key(
             previous, previous_ownership
         ) != self._structural_key(state, ownership)
+        _previous_promoted, previous_more = self._group_projection(previous_ownership)
+        _promoted, more = self._group_projection(ownership)
+        focused = self.app.focused if self.is_mounted else None
+        recover_removed_more_focus = False
+        more_focus_section_id = None
+        if (
+            structural_change
+            and previous_more
+            and not more
+            and isinstance(focused, Widget)
+            and focused.id == "console-inspector-more-toggle"
+            and self._on_more_focus_removed is not None
+        ):
+            recover_removed_more_focus = True
+            more_focus_section_id = self._next_ordinary_section_after_more(ownership)
         focus_snapshot = (
             self._conditional_focus_snapshot(previous_ownership)
             if structural_change
@@ -209,6 +226,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             self.recompose_count += 1
             self.refresh(recompose=True)
             self.call_after_refresh(self._request_sections_reconcile)
+            if recover_removed_more_focus:
+                self.call_after_refresh(
+                    self._on_more_focus_removed,
+                    more_focus_section_id,
+                )
             if focus_snapshot is not None:
                 self.call_after_refresh(
                     self._recover_conditional_focus, *focus_snapshot
@@ -548,6 +570,23 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     @staticmethod
     def _section_id(owner: str) -> str:
         return owner.lower().replace(" ", "-")
+
+    @classmethod
+    def _next_ordinary_section_after_more(
+        cls, ownership: InspectorOwnedContent
+    ) -> str | None:
+        after_conditional_block = False
+        for owner, _heading_id, _labels in _ROW_GROUPS:
+            if owner == "Source Readiness":
+                after_conditional_block = True
+                continue
+            if not after_conditional_block or owner in _CONDITIONAL_OWNERS:
+                continue
+            if cls._rows_for(ownership, owner) or any(
+                action.enabled for action in ownership.actions_for(owner)
+            ):
+                return cls._section_id(owner)
+        return None
 
     def _request_sections_reconcile(self) -> None:
         """Settle every changed local body before invalidating the rail owner."""
