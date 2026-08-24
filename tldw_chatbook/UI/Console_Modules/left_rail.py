@@ -799,10 +799,16 @@ class ConsoleLeftRail(Vertical):
                 self._ensure_focus_recovery(section_id)
             elif section_id not in self._pending_focus_recoveries:
                 self._record_section_focus(section_id, target)
+            # The Tree captured a stable key before focus-triggered reflow, so
+            # unlike ordinary controls this press is safe to reveal immediately.
+            stable_tree_press = (
+                isinstance(target, ConsoleWorkspaceTree)
+                and target._pressed_node_key is not None
+            )
             self.activate_section(
                 section_id,
-                request_reconcile=False,
-                deliberate_reveal=False,
+                request_reconcile=stable_tree_press,
+                deliberate_reveal=stable_tree_press,
             )
             self.call_after_refresh(
                 self._finish_focus_activation,
@@ -863,10 +869,13 @@ class ConsoleLeftRail(Vertical):
             isinstance(ancestor, DestinationRailSectionHeader)
             for ancestor in target.ancestors
         )
+        # Preserve the same early-reveal contract when MouseDown reaches the
+        # rail before Textual's descendant-focus notification.
+        stable_tree_press = isinstance(target, ConsoleWorkspaceTree)
         self.activate_section(
             section_id,
-            request_reconcile=False,
-            deliberate_reveal=False,
+            request_reconcile=stable_tree_press,
+            deliberate_reveal=stable_tree_press,
         )
 
     def on_mouse_up(self, event: MouseUp) -> None:

@@ -1004,7 +1004,8 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         workspace_header_y = rail.query_one(
             "#console-rail-section-header-workspace"
         ).virtual_region.y
-        rail.query_one("#console-left-rail-body").scroll_to(
+        outer = rail.query_one("#console-left-rail-body", VerticalScroll)
+        outer.scroll_to(
             y=max(0, workspace_header_y - 3),
             animate=False,
             immediate=True,
@@ -1014,17 +1015,31 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         click_y = workspace_line - int(tree.scroll_y)
         assert 0 <= click_y < tree.content_region.height
         pressed_key = "workspace:workspace-1"
-        old_tree_y = tree.region.y
+        old_tree_y = tree.content_region.y
+        old_outer_scroll_y = outer.scroll_y
+        pressed_coordinate = (
+            tree.content_region.x + 4,
+            tree.content_region.y + click_y,
+        )
 
-        assert await pilot.click(tree, offset=(4, click_y))
+        assert await pilot.mouse_down(offset=pressed_coordinate)
         await _settle(pilot, passes=8)
+
+        assert tree._pressed_node_key == pressed_key
+        assert rail._active_section_id == "workspace"
+        assert outer.scroll_y != old_outer_scroll_y
+        assert tree.content_region.y != old_tree_y
+        await pilot._post_mouse_events(
+            [MouseUp, Click],
+            offset=pressed_coordinate,
+            button=1,
+        )
+        await _settle(pilot, passes=4)
 
         assert tree.cursor_node is not None
         assert tree.cursor_node.data.key == pressed_key
         assert workspace_requests == []
         assert conversation_requests == []
-        assert rail._active_section_id == "workspace"
-        assert tree.region.y != old_tree_y
 
         new_click_y = int(workspace._line) - int(tree.scroll_y)
         assert await pilot.click(tree, offset=(4, new_click_y), times=2)

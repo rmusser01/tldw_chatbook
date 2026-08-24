@@ -1431,7 +1431,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         copy = self._workspace_tree_selection_copy(self._workspace_tree_context_data)
         context.update(copy)
         width = max(0, context.content_region.width)
-        context.tooltip = copy if width and cell_len(copy) > width else None
+        context.tooltip = Text(copy) if width and cell_len(copy) > width else None
 
     def _workspace_tree_context_is_markable(self, data: Any | None) -> bool:
         """Return whether ``data`` may expose the contextual star action."""

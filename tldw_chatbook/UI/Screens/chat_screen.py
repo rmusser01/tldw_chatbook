@@ -3159,7 +3159,9 @@ class ChatScreen(BaseAppScreen):
                 context_data = None
             else:
                 context_data = tray._workspace_tree_context_data
-            label = str(getattr(context_data, "raw_label", "") or "Workspace tree")
+            label = escape_markup(
+                str(getattr(context_data, "raw_label", "") or "Workspace tree")
+            )
             shortcut_groups = (
                 *shortcut_groups,
                 (

@@ -446,7 +446,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         ):
             self._pressed_node_key = None
             self._last_pointer_click_key = None
-            self._post_context_changed()
+            self.post_message(WorkspaceTreeFocusRecoveryRequested())
         self._update_tooltip()
 
     def render_label(
@@ -488,14 +488,17 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         return max(1, self.size.width - guide_cells)
 
     def _untruncated_visible_label(self, node: TreeNode[WorkspaceTreeNodeData]) -> str:
-        """Return the marker-bearing literal label measured for truncation."""
+        """Return the complete literal label measured for truncation."""
 
+        toggle = (
+            self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE
+        ) if node.allow_expand else ""
         marker = (
             ("| " if ascii_glyph_mode() else "▌ ")
             if node is self.cursor_node
             else "  "
         )
-        return f"{marker}{node.label.plain}"
+        return f"{toggle}{marker}{node.label.plain}"
 
     @property
     def preferred_expanded_workspace_ids(self) -> frozenset[str]:
@@ -728,7 +731,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def _on_mouse_down(self, event: events.MouseDown) -> None:
         """Capture the pressed node before an owning rail may reflow."""
 
-        event.prevent_default()
+        # Keep MouseDown bubbling so the owning rail may reveal this section.
+        # Native Tree MouseDown only brokers metadata; Click remains suppressed
+        # below because this widget owns selection and activation semantics.
         self._pressed_node_key = None
         meta = event.style.meta
         line = meta.get("line")
@@ -752,7 +757,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             node = self._node_for_stable_key(pressed_key)
             if node is None:
                 self._last_pointer_click_key = None
-                self._post_context_changed()
+                if pressed_key is not None:
+                    self.post_message(WorkspaceTreeFocusRecoveryRequested())
                 return
             data = node.data
             if data is None or not data.selectable:
@@ -931,17 +937,22 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def _update_tooltip(self) -> None:
         line = self.hover_line if self.hover_line >= 0 else self.cursor_line
         node = self.get_node_at_line(line)
+        tooltip_plain = getattr(self.tooltip, "plain", self.tooltip)
         if (
             self.hover_line >= 0
             and self.tooltip is not None
-            and (node is None or node.data is None or node.data.raw_label != self.tooltip)
+            and (
+                node is None
+                or node.data is None
+                or node.data.raw_label != tooltip_plain
+            )
         ):
             self.hover_line = -1
             line = self.cursor_line
             node = self.get_node_at_line(line)
         data = node.data if node is not None else None
         self.tooltip = (
-            data.raw_label
+            Text(data.raw_label)
             if data is not None
             and cell_len(self._untruncated_visible_label(node))
             > self._available_label_cells(node)

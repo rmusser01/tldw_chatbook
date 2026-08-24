@@ -8,8 +8,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from textual.content import Content
 from textual.widgets import Button, Input, Static
+from textual.widgets._tooltip import Tooltip
 
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -541,12 +543,49 @@ async def test_workspace_tree_selection_context_tooltip_only_when_clipped() -> N
         context = app.query_one("#console-workspace-tree-selection-context", Static)
         full_copy = f"Selected: {long_label} · Enter open"
         assert context.region.height == 1
-        assert context.tooltip == full_copy
+        assert isinstance(context.tooltip, Text)
+        assert context.tooltip.plain == full_copy
 
         await pilot.resize_terminal(90, 20)
         await pilot.pause()
         context = app.query_one("#console-workspace-tree-selection-context", Static)
         assert context.tooltip is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_tree_selection_context_renders_markup_label_literally() -> (
+    None
+):
+    state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
+    raw = "[bold]abc"
+
+    class TestApp(ConsolidatedCSSApp):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+        def compose(self):
+            yield ConsoleWorkspaceContextTray(
+                state,
+                show_heading=False,
+                content="workspace",
+                id="console-workspaces-context",
+            )
+
+    app = TestApp()
+    app.TOOLTIP_DELAY = 0.01
+    async with app.run_test(size=(28, 20), tooltips=True) as pilot:
+        tray = app.query_one(ConsoleWorkspaceContextTray)
+        tray.sync_workspace_tree_context(
+            WorkspaceTreeNodeData.workspace("workspace-1", raw)
+        )
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        assert raw in str(context.render())
+
+        assert await pilot.hover(context)
+        await pilot.pause(0.05)
+        tooltip = app.screen.get_child_by_type(Tooltip)
+        assert tooltip.display is True
+        assert raw in str(tooltip.render())
 
 
 @pytest.mark.asyncio
@@ -596,6 +635,44 @@ async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
             "Right",
         ):
             assert gesture in rendered
+
+
+@pytest.mark.asyncio
+async def test_console_f1_renders_markup_looking_selected_label_literally() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    raw = "[bold]abc"
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        rail = console.query_one("#console-left-rail")
+        rail.sync_workspace_context(
+            replace(
+                _base_grouped_workspace_state(),
+                workspace_tree=(
+                    WorkspaceTreeWorkspace(
+                        workspace_id="workspace-1",
+                        label=raw,
+                        conversations=(),
+                        next_cursor=None,
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+        tree = console.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.workspace_nodes["workspace-1"])
+        tree.focus()
+        await pilot.pause()
+
+        await console.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen_stack[-1]
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = panel.query_one("#workbench-help-body", Static)
+        assert raw in str(body.render())
 
 
 @pytest.mark.asyncio

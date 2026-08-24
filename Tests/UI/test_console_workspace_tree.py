@@ -10,6 +10,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.events import Click
 from textual.widgets import Input, Tree
+from textual.widgets._tooltip import Tooltip
 
 import tldw_chatbook.Widgets.Console.console_workspace_tree as tree_module
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
@@ -419,11 +420,49 @@ async def test_truncation_tooltip_uses_cell_width_and_clears_after_growth() -> N
 
         tree.move_cursor(tree.workspace_nodes["long"])
         await pilot.pause()
-        assert tree.tooltip == raw_long
+        assert isinstance(tree.tooltip, Text)
+        assert tree.tooltip.plain == raw_long
 
         tree.styles.width = 96
         await pilot.pause()
         assert tree.tooltip is None
+
+
+@pytest.mark.asyncio
+async def test_collapsed_workspace_tooltip_counts_disclosure_glyph() -> None:
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (_workspace("w", "abcde"),),
+        expanded_workspace_ids=set(),
+    )
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(40, 12)) as pilot:
+        tree.styles.width = 10
+        await pilot.pause()
+        tree.move_cursor(tree.workspace_nodes["w"])
+        await pilot.pause()
+
+        assert isinstance(tree.tooltip, Text)
+        assert tree.tooltip.plain == "abcde"
+
+
+@pytest.mark.asyncio
+async def test_tree_tooltip_renders_markup_looking_label_literally() -> None:
+    raw = "[bold]abc"
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection((_workspace("w", raw),), expanded_workspace_ids=set())
+    app = _TreeHarness(tree)
+    app.TOOLTIP_DELAY = 0.01
+
+    async with app.run_test(size=(40, 12), tooltips=True) as pilot:
+        tree.styles.width = 10
+        await pilot.pause()
+        assert await pilot.hover(tree, offset=(4, 0))
+        await pilot.pause(0.05)
+
+        tooltip = app.screen.get_child_by_type(Tooltip)
+        assert tooltip.display is True
+        assert raw in str(tooltip.render())
 
 
 @pytest.mark.asyncio
@@ -444,7 +483,8 @@ async def test_hover_tooltip_clears_when_projection_reflows_hovered_line() -> No
         old = tree.workspace_nodes["old"]
         tree.hover_line = int(old._line)
         await pilot.pause()
-        assert tree.tooltip == old_raw
+        assert isinstance(tree.tooltip, Text)
+        assert tree.tooltip.plain == old_raw
 
         tree.sync_projection(
             (_workspace("replacement", "Fits"),),
@@ -847,6 +887,48 @@ async def test_removing_final_selectable_node_requests_owning_section_recovery()
         assert tree.can_focus is False
 
 
+@pytest.mark.asyncio
+async def test_disappearing_pressed_key_requests_keyed_focus_recovery() -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tree.move_cursor(tree.workspace_nodes["w1"])
+        tree._pressed_node_key = "workspace:w2"
+        tree._last_pointer_click_key = "workspace:w2"
+
+        tree.sync_projection(
+            (_workspace("w1", "One", ("c1", "First")),),
+            expanded_workspace_ids={"w1"},
+        )
+        await pilot.pause()
+
+        assert tree._pressed_node_key is None
+        assert tree._last_pointer_click_key is None
+        assert sum(
+            isinstance(message, WorkspaceTreeFocusRecoveryRequested)
+            for message in app.messages
+        ) == 1
+        assert not any(
+            isinstance(
+                message,
+                (WorkspaceTreeWorkspaceSelected, WorkspaceTreeConversationSelected),
+            )
+            for message in app.messages
+        )
+
+        tree._pressed_node_key = "workspace:gone"
+        tree._last_pointer_click_key = "workspace:gone"
+        await tree._on_click(
+            Click(tree, 4, 0, 0, 0, 1, False, False, False, chain=1)
+        )
+        await pilot.pause()
+        assert sum(
+            isinstance(message, WorkspaceTreeFocusRecoveryRequested)
+            for message in app.messages
+        ) == 2
+
+
 def test_search_expansion_snapshot_restores_exactly_without_persistence_messages() -> (
     None
 ):
@@ -946,7 +1028,8 @@ def test_cursor_and_hover_publish_full_raw_tooltip() -> None:
     node._line = 0
     tree.cursor_line = 0
     tree.watch_cursor_line(-1, 0)
-    assert tree.tooltip == raw
+    assert isinstance(tree.tooltip, Text)
+    assert tree.tooltip.plain == raw
 
 
 def test_node_data_kinds_are_explicit() -> None:
