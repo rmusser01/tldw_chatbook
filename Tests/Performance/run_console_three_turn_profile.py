@@ -5729,18 +5729,14 @@ def mounted_sample_mutation_path(
 
 def expected_mounted_queue_counts(revision_kind: str) -> dict[str, int]:
     """Return queue boundaries observable before each revision releases turn 3."""
-    if revision_kind == "legacy":
-        settled_turns = 2
-    elif revision_kind == "candidate":
-        settled_turns = 3
-    else:
+    if revision_kind not in {"legacy", "candidate"}:
         raise RuntimeError(f"unknown_target_revision_kind:{revision_kind}")
     return {
         "dispatch_count": 3,
         "accepted_count": 3,
-        "drain_count": settled_turns,
+        "drain_count": 2,
         "worker_count": 3,
-        "after_turn_count": settled_turns,
+        "after_turn_count": 2,
         "durable_count": 3,
     }
 

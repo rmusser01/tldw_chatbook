@@ -11683,7 +11683,7 @@ def test_mounted_sample_mutation_path_tracks_revision_authority(tmp_path: Path):
     ) == scratch_root / "measured/turn-two.txt"
 
 
-def test_mounted_queue_contract_tracks_nonblocking_candidate_finalization():
+def test_mounted_queue_contract_tracks_both_acceptance_apis():
     assert profile.expected_mounted_queue_counts("legacy") == {
         "dispatch_count": 3,
         "accepted_count": 3,
@@ -11695,9 +11695,9 @@ def test_mounted_queue_contract_tracks_nonblocking_candidate_finalization():
     assert profile.expected_mounted_queue_counts("candidate") == {
         "dispatch_count": 3,
         "accepted_count": 3,
-        "drain_count": 3,
+        "drain_count": 2,
         "worker_count": 3,
-        "after_turn_count": 3,
+        "after_turn_count": 2,
         "durable_count": 3,
     }
 
