@@ -382,6 +382,8 @@ def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None
 class LocalWatchlistsService:
     """Thin adapter over `SubscriptionsDB` for the shared watchlists seam."""
 
+    CREATE_FORM_SOURCE_TYPES = ("rss", "atom", "url")
+
     #: TASK-2305. Every local run read goes through this projection, so a run
     #: arrives already knowing which source produced it and which watchlists
     #: that source belongs to. `local_watchlist_runs` stores only a
@@ -625,8 +627,8 @@ class LocalWatchlistsService:
         return normalized[int(offset) : int(offset) + int(limit)]
 
     async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        db = self._db()
         local_type = self._local_type_for_source_type(payload.get("source_type"))
+        db = self._db()
         source = str(
             payload.get("url")
             or payload.get("source")
