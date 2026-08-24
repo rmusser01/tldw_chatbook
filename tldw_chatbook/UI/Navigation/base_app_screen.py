@@ -454,11 +454,22 @@ class BaseAppScreen(Screen):
             await flush()
 
     async def reconcile_persona_buddy_view(self) -> bool:
-        """Reconcile one generation; return whether no current view remains."""
+        """Reconcile one generation; return whether no current view remains.
 
-        from ...Widgets.Persona_Widgets.persona_buddy_widget import (  # noqa: PLC0415
-            PersonaBuddyWidget,
-        )
+        TASK-21123 (partial): the ``PersonaBuddyWidget`` import lives at the
+        one branch that constructs the widget, NOT at the top of this method.
+        Every screen mount and every screen recompose reaches this reconcile,
+        including with the Buddy disabled (the default), and importing that
+        widget pulls ``Persona_Buddy.controller`` ->
+        ``Persona_Visual.repository``/``runtime`` -> ``PIL`` -- 10 modules /
+        ~6.9k LOC, plus 10 PIL modules on the routes that do not already carry
+        them. This coroutine runs ON the event loop (``run_worker`` without
+        ``thread=True``), right after first paint, so the import blocked the
+        loop for ~25 ms on Home and Settings for a feature that was off.
+        ``app.py``'s ``persona_buddy_controller`` docstring already claimed
+        the disabled early-out was free of that cost; with the import moved,
+        it is.
+        """
 
         async with self._persona_buddy_reconcile_lock:
             controller = getattr(self.app_instance, "persona_buddy_controller", None)
@@ -498,6 +509,13 @@ class BaseAppScreen(Screen):
                 current.resume_resolution()
                 self.sync_persona_buddy_reconciled_state()
                 return False
+
+            # Only reached when the Buddy is enabled, open, has a selection
+            # and no view is mounted yet -- the one branch that needs the
+            # widget class (and therefore the Persona_Visual/PIL chain).
+            from ...Widgets.Persona_Widgets.persona_buddy_widget import (  # noqa: PLC0415
+                PersonaBuddyWidget,
+            )
 
             self._persona_buddy_view_generation += 1
             generation = self._persona_buddy_view_generation

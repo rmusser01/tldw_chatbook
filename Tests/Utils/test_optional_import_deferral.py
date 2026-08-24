@@ -440,3 +440,147 @@ print(json.dumps({"imported": SwarmUIClient is not None}))
     )
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload["imported"]
+
+
+# --- 4. Persona Buddy reconcile: no widget/PIL import while disabled -------
+#
+# TASK-21123 (partial). `BaseAppScreen.reconcile_persona_buddy_view` runs on
+# EVERY screen mount, screen resume and screen recompose, as a coroutine on
+# the event loop (`run_worker` with no `thread=True`) right after first
+# paint. Importing `persona_buddy_widget` pulls
+# `Persona_Buddy.controller` -> `Persona_Visual.repository`/`runtime` ->
+# `PIL`. On routes that do not already carry PIL (Home, Settings) that was a
+# measured ~25 ms of loop-blocking work per process for a feature that is
+# off by default.
+
+_BUDDY_DISABLED_SNIPPET = """
+import asyncio
+import json
+import sys
+import types
+
+# The production import route: a screen module, then the base screen that
+# owns the reconcile. Neither may drag the Buddy widget in on its own.
+import tldw_chatbook.UI.Screens.home_screen  # noqa: F401
+from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+
+BUDDY_WIDGET = "tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget"
+BUDDY_CONTROLLER = "tldw_chatbook.Persona_Buddy.controller"
+VISUAL_RUNTIME = "tldw_chatbook.Persona_Visual.runtime"
+
+
+def _resident():
+    return {
+        "buddy_widget": BUDDY_WIDGET in sys.modules,
+        "buddy_controller": BUDDY_CONTROLLER in sys.modules,
+        "visual_runtime": VISUAL_RUNTIME in sys.modules,
+        "pil": sorted(m for m in sys.modules if m == "PIL" or m.startswith("PIL.")),
+    }
+
+
+class _Screen:
+    \"\"\"Duck-typed stand-in exercising the real reconcile coroutine.
+
+    A real Textual screen is deliberately NOT used: building one imports
+    enough of the app that the sys.modules assertion below would stop
+    measuring this code path. Every attribute the coroutine touches on the
+    disabled path is provided here.
+    \"\"\"
+
+    def __init__(self, controller):
+        self.app_instance = types.SimpleNamespace(persona_buddy_controller=controller)
+        self._persona_buddy_reconcile_lock = asyncio.Lock()
+        self._persona_buddy_view = None
+        self._persona_buddy_view_generation = 0
+        self.is_attached = True
+        self.synced = 0
+
+    @property
+    def app(self):
+        return self
+
+    @property
+    def screen(self):
+        return self
+
+    def is_persona_buddy_confirmed_unavailable(self, controller, snapshot):
+        return False
+
+    def sync_persona_buddy_reconciled_state(self):
+        self.synced += 1
+
+
+class _DisabledController:
+    \"\"\"A controller whose snapshot reports the feature switched off.\"\"\"
+
+    def snapshot(self):
+        return types.SimpleNamespace(enabled=False, open=False, selection=None)
+
+
+async def _main():
+    results = {"before": _resident(), "cases": {}}
+    # Case A: no controller at all -- what app.py's lazy property returns for
+    # a profile whose preferences leave the Buddy disabled.
+    # Case B: a controller exists but its snapshot says disabled -- the
+    # feature was turned off at runtime.
+    for name, controller in (("no_controller", None), ("disabled", _DisabledController())):
+        screen = _Screen(controller)
+        returned = await BaseAppScreen.reconcile_persona_buddy_view(screen)
+        results["cases"][name] = {
+            "returned": returned,
+            "synced": screen.synced,
+            "resident": _resident(),
+        }
+    print(json.dumps(results))
+
+
+asyncio.run(_main())
+"""
+
+
+def test_persona_buddy_reconcile_imports_nothing_while_disabled(
+    tmp_path: Path,
+) -> None:
+    """A disabled-Buddy reconcile must not import the widget, or PIL.
+
+    Runs in a fresh interpreter: `sys.modules` is process-global, so an
+    earlier test that imported the Persona widgets would give a false pass
+    in-process.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    result = _run_isolated_python(tmp_path, _BUDDY_DISABLED_SNIPPET)
+    assert result.returncode == 0, (
+        f"the disabled Buddy reconcile raised in an isolated subprocess:\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+
+    before = payload["before"]
+    assert not before["buddy_widget"], (
+        "importing home_screen + base_app_screen already pulls the Persona "
+        "Buddy widget -- this guard can no longer measure the reconcile"
+    )
+    assert before["pil"] == [], (
+        f"PIL is already resident before the reconcile runs: {before['pil']}"
+    )
+
+    for name, case in payload["cases"].items():
+        assert case["returned"] is True, f"{name}: reconcile did not report torn down"
+        assert case["synced"] == 1, f"{name}: screen-local sync hook was skipped"
+        resident = case["resident"]
+        assert not resident["buddy_widget"], (
+            f"{name}: reconcile imported {'persona_buddy_widget'} with the "
+            "Buddy disabled -- the import is running before the enabled check"
+        )
+        assert not resident["buddy_controller"], (
+            f"{name}: reconcile imported Persona_Buddy.controller while disabled"
+        )
+        assert not resident["visual_runtime"], (
+            f"{name}: reconcile imported Persona_Visual.runtime while disabled"
+        )
+        assert resident["pil"] == [], (
+            f"{name}: reconcile pulled PIL onto the event loop while the "
+            f"Buddy is disabled: {resident['pil']}"
+        )
