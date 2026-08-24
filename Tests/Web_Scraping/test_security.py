@@ -133,27 +133,56 @@ class TestPathTraversalPrevention:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
-    def test_cookie_db_path_validation(self):
-        """Test that cookie database paths are not vulnerable to traversal."""
-        dangerous_paths = [
+    @pytest.mark.parametrize(
+        "hostile_domain",
+        (
             "../../../etc/passwd",
             "..\\..\\..\\windows\\system32\\config\\sam",
             "/etc/passwd",
             "C:\\Windows\\System32\\config\\SAM",
-        ]
+        ),
+    )
+    def test_caller_input_never_reaches_the_cookie_database_path(self, hostile_domain):
+        """The domain argument cannot steer which file is opened.
 
-        with patch("os.path.expanduser") as mock_expand:
-            with patch("os.path.exists") as mock_exists:
-                for dangerous_path in dangerous_paths:
-                    mock_expand.return_value = dangerous_path
-                    mock_exists.return_value = True
+        This replaces a test that could not fail. The previous version patched
+        `os.path.expanduser` to return `/etc/passwd`, called the function inside
+        `try: ... except Exception: pass`, and asserted nothing -- so it passed
+        whether or not the traversal was prevented, and would have passed if the
+        function had opened the file. Its premise was also not a threat model:
+        an attacker who can patch `expanduser` does not need a cookie bug.
 
-                    # The function should not access arbitrary paths
-                    try:
-                        get_chrome_cookies("example.com")
-                    except Exception:
-                        # Expected to fail, but should not access the dangerous path
-                        pass
+        The real property is narrower and actually checkable. `get_chrome_cookies`
+        derives both paths from platform literals, and the caller's `domain_name`
+        reaches only a parameterized `LIKE` query -- so no caller input should
+        appear in any path it opens.
+
+        Observed at the `open` call for the Local State file, which every
+        platform branch reaches unconditionally before any decryption. Patched in
+        the module's own namespace rather than `builtins`, so unrelated opens by
+        pytest or the logger are not captured, and made to raise so no real Chrome
+        profile is read on a developer machine.
+        """
+        attempted: list[str] = []
+
+        def recording_open(path, *args, **kwargs):
+            attempted.append(str(path))
+            raise FileNotFoundError(path)
+
+        with patch(
+            "tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner.open",
+            recording_open,
+            create=True,
+        ):
+            with pytest.raises(Exception):
+                get_chrome_cookies(hostile_domain)
+
+        assert attempted, (
+            "the function opened nothing, so this test observed nothing -- if the "
+            "Local State read moved, this assertion is no longer a check"
+        )
+        leaked = [path for path in attempted if hostile_domain in path]
+        assert not leaked, f"caller input reached a filesystem path: {leaked}"
 
 
 class TestAPIKeySecurity:
