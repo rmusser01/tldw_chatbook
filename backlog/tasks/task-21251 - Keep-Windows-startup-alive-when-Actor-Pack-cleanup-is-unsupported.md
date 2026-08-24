@@ -4,7 +4,7 @@ title: Keep Windows startup alive when Actor Pack cleanup is unsupported
 status: In Progress
 assignee: []
 created_date: '2026-08-24 00:09'
-updated_date: '2026-08-24 00:43'
+updated_date: '2026-08-24 02:41'
 labels:
   - bug
   - actor-packs
@@ -48,9 +48,11 @@ Reason: This routine boot bug fix preserves ADR-074’s existing fail-closed aut
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the minimal fail-closed startup guard: usable but unverified private staging now makes Actor Pack startup sweeping a non-destructive no-op, while unusable staging still fails and verified cleanup behavior remains unchanged. Added one focused regression test proving unverified staging is neither enumerated nor read and its candidate remains intact.
 
-Verification on 2026-08-23: PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Actor_Packs/test_actor_pack_import.py -q -> 24 passed, 0 skipped, 0 deselected, pytest exit 0; PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Actor_Packs -q -> 202 passed, 0 skipped, 0 deselected, pytest exit 0. Each run reported 1 RequestsDependencyWarning from the existing requests dependency version mismatch. Each run also emitted 94 post-summary PytestWarning cleanup messages while retrying immutable temporary directories; these teardown warnings were non-failures and both commands exited 0.
+Prior passing evidence on 2026-08-23: the Actor Pack import module run (`PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Actor_Packs/test_actor_pack_import.py -q`) passed 24/24 tests; the Actor Pack package run (`PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Actor_Packs -q`) passed 202/202 tests. Both commands exited 0. Each run reported one existing RequestsDependencyWarning and non-failing post-summary cleanup warnings for leftover pytest temporary directories.
 
-Static and patch checks: compileall -q for tldw_chatbook/Actor_Packs/importer.py and Tests/Actor_Packs/test_actor_pack_import.py exited 0; git diff --check origin/dev...HEAD exited 0. Scope review confirmed the functional diff is one focused test plus the minimal early-return guard, with no app.py, archive, schema, dependency, or config changes.
+Fresh current-HEAD evidence on 2026-08-23: startup selection (`PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Actor_Packs/test_actor_pack_import.py -q -k startup_sweep`) passed 2 tests with 22 deselected; Ruff format check reported `2 files already formatted`; Ruff lint reported `All checks passed!`; exact command `PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q tldw_chatbook/Actor_Packs/importer.py Tests/Actor_Packs/test_actor_pack_import.py` exited 0; `git diff --check origin/dev...HEAD` exited 0. The startup selection also emitted the existing RequestsDependencyWarning and non-failing post-summary cleanup warnings for leftover pytest temporary directories.
 
-ADR required: no; ADR-074 remains governing. Lessons: no new general lesson; the incident is specific to the documented platform split.
+Repository-wide verification limitation: `PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q` produced no terminal result after roughly 100 minutes and was interrupted. This is neither a pass nor a failure and is the sole reason TASK-21251 remains In Progress.
+
+Scope review confirmed the functional diff is one focused test plus the minimal early-return guard, with no app.py, archive, schema, dependency, or config changes. ADR required: no; ADR-074 remains governing. Lessons: no new general lesson; the incident is specific to the documented platform split.
 <!-- SECTION:NOTES:END -->
