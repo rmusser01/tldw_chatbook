@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +24,104 @@ TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
+FLEET_TASK0_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
+FLEET_TASK0_BASE_SCREEN_LINES = 20_428
+FLEET_TASK0_BASE_METHODS = 653
+FLEET_TASK0_DEFINITION_LINES = 421
+FLEET_TASK0_MAX_SCREEN_LINES = 20_007
+FLEET_TASK0_MAX_METHODS = 637
+FLEET_FINAL_REBASE_BASE = "02cd80b33004305765b5cd91b3d264aa3664596e"
+FLEET_FINAL_REBASE_BASE_SCREEN_LINES = 20_486
+FLEET_FINAL_REBASE_BASE_METHODS = 656
+FLEET_FINAL_REBASE_DEFINITION_LINES = 421
+FLEET_FINAL_REBASE_MAX_SCREEN_LINES = 20_065
+FLEET_FINAL_REBASE_MAX_METHODS = 640
+FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS = frozenset(
+    {
+        "_console_inspector_active",
+        "_request_console_context_allocation_reconcile",
+        "_request_console_live_work_reconcile",
+    }
+)
+TASK_3070_9_DESIGN_BASE = "0da426e1e4c2846f13671690b8f981f72e673359"
+TASK_3070_9_TASK0_IMPLEMENTATION_BASE = "ede2162143331e324c44832ff6a3910e1185cf58"
+TASK_3070_9_TASK0_BASE_SCREEN_LINES = 19_995
+TASK_3070_9_TASK0_BASE_METHODS = 640
+TASK_3070_9_DEFINITION_LINES = 328
+TASK_3070_9_TASK0_MAX_SCREEN_LINES = 19_667
+TASK_3070_9_TASK0_MAX_METHODS = 632
+TASK_3070_9_FINAL_DELIVERY_BASE = "a2c09daa81935dbc59cf487b96128a729d843382"
+TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES = 20_250
+TASK_3070_9_FINAL_DELIVERY_BASE_METHODS = 641
+TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES = 328
+TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES = 19_922
+TASK_3070_9_FINAL_DELIVERY_MAX_METHODS = 633
+TASK_3070_9_FAMILY_SHA256 = (
+    "3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee"
+)
+TASK_3070_9_FAMILY_NAMES = (
+    "_first_chat_defaults_match",
+    "_current_first_chat_defaults",
+    "eligible_console_first_chat_session_id",
+    "_release_first_chat_claim",
+    "_log_first_chat_handoff_exception",
+    "_resync_console_after_first_chat_rollback",
+    "_resync_mounted_console_after_first_chat_rollback",
+    "consume_pending_console_first_chat_intent",
+)
+FIRST_CHAT_CONTROLLER_CALLBACKS = frozenset(
+    {
+        "screen_mounted_accessor",
+        "first_chat_presentation_snapshot",
+        "apply_first_chat_control_selection",
+        "restore_first_chat_focus",
+    }
+)
+FIRST_CHAT_PRESENTATION_ATTRIBUTES = frozenset(
+    {
+        "_screen_mounted_accessor",
+        "_first_chat_presentation_snapshot_fn",
+        "_apply_first_chat_control_selection_fn",
+        "_restore_first_chat_focus_fn",
+    }
+)
+FLEET_CONTROLLER_CALLBACKS = frozenset(
+    {
+        "pending_handoffs_accessor",
+        "ensure_chat_store",
+        "ensure_chat_controller",
+        "activate_workspace_for_session",
+        "switch_chat_session",
+        "schedule_native_console_sync",
+        "ensure_agent_bridge",
+        "wire_wake_coordinator",
+        "seed_wake_from_marks",
+        "retry_wake_soon",
+        "wake_has_pending",
+        "wake_delivering_conversation_id",
+        "displayed_composer_draft_accessor",
+        "screen_displayed_accessor",
+        "screen_mounted_accessor",
+        "active_session_id_accessor",
+        "chat_sessions_accessor",
+        "defer_on_message_pump",
+        "start_transcript_sync_timer",
+        "transcript_sync_timer_active",
+        "sync_native_console_ui",
+        "create_interval",
+        "record_timer_created",
+        "record_timer_stopped",
+        "chat_controller_available",
+        "fleet_has_unsettled_children",
+        "run_marker_for_session",
+        "fleet_teardown_split",
+        "leave_runtime",
+        "stage_teardown_notices",
+        "fleet_unseen_revision_accessor",
+        "read_fleet_unseen_ids",
+        "clear_fleet_unseen",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -209,21 +309,25 @@ WAVE6_GROUPS = {
                 "_console_world_book_inspector_actions",
                 "_console_library_rag_scope_label",
                 "_stage_console_library_rag_launch",
-                "_maybe_auto_retrieve_for_send",
                 "_apply_console_rag_settings_choice",
                 "_resolve_console_library_rag_scope",
                 "_apply_console_library_rag_search_outcome",
+            }
+        ),
+        delegates=frozenset(
+            {
+                "_execute_console_library_rag_search",
+            }
+        ),
+        deleted=frozenset(
+            {
+                "_maybe_auto_retrieve_for_send",
                 "_rag_service_still_initializing",
                 "_notify_console_auto_rag_scope_empty",
                 "_notify_auto_rag_degraded",
                 "_notify_console_auto_rag",
                 "_clear_console_auto_rag_placeholder",
-            }
-        ),
-        delegates=frozenset(
-            {
                 "_persist_console_rag_auto_retrieve_on_send",
-                "_execute_console_library_rag_search",
             }
         ),
         raw_lines=992,
@@ -457,7 +561,6 @@ DELEGATE_BINDINGS = {
     "_console_command_generate_video": "_dispatch_console_command",
     "_console_command_stream_video": "_dispatch_console_command",
     "on_console_workspace_conversation_search_changed": "@on",
-    "_persist_console_rag_auto_retrieve_on_send": "_open_console_rag_settings",
     "_execute_console_library_rag_search": "_run_console_library_rag_from_visible_action",
     "_console_command_skills": "_dispatch_console_command",
     "handle_console_skill_install_decided": "@on",
@@ -500,18 +603,27 @@ def _source_at_revision(revision: str, path: Path) -> str:
 
 
 def _methods_from_class(class_node: ast.ClassDef) -> dict[str, ast.AST]:
-    return {
-        node.name: node
+    return {node.name: node for node in _method_definitions(class_node)}
+
+
+def _method_definitions(
+    class_node: ast.ClassDef,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return every direct method definition in source order."""
+    return [
+        node
         for node in class_node.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    ]
+
+
+def _method_name_counts(class_node: ast.ClassDef) -> Counter[str]:
+    """Count direct method definitions without collapsing duplicate names."""
+    return Counter(node.name for node in _method_definitions(class_node))
 
 
 def _method_count(class_node: ast.ClassDef) -> int:
-    return sum(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for node in class_node.body
-    )
+    return len(_method_definitions(class_node))
 
 
 def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
@@ -521,6 +633,14 @@ def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
 
 def _span(node: ast.AST) -> int:
     return node.end_lineno - node.lineno + 1  # type: ignore[attr-defined]
+
+
+def _executable_span(method: ast.AST) -> int:
+    """Return a method's source span without its optional docstring."""
+    span = _span(method)
+    if ast.get_docstring(method) is not None:
+        span -= _span(method.body[0])
+    return span
 
 
 def _is_property(node: ast.AST) -> bool:
@@ -990,7 +1110,7 @@ def _has_real_delegate_binding(
 
 
 def _assert_no_dom_access(methods: object) -> None:
-    assert not any(_calls_query_one(node) for node in methods)  # type: ignore[arg-type]
+    assert not any(_calls_dom_query(node) for node in methods)  # type: ignore[arg-type]
 
 
 def _assert_skill_dead_tokens_absent(sources: dict[str, str]) -> None:
@@ -1016,7 +1136,7 @@ def _assert_delegate_contract(
 ) -> None:
     assert _has_real_delegate_binding(screen_methods, method_name)
     if complete:
-        assert _span(screen_methods[method_name]) <= 5
+        assert _executable_span(screen_methods[method_name]) <= 5
 
 
 def _assigns_attribute(path: Path, attribute: str) -> bool:
@@ -1152,8 +1272,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         )
         if complete:
             residue = group.delegates | group.stays
-            assert sum(_span(screen_methods[item]) for item in residue) <= (
-                group.residue_lines
+            assert (
+                sum(_executable_span(screen_methods[item]) for item in residue)
+                <= group.residue_lines
             )
             for method_name in group.delegates:
                 _assert_delegate_contract(screen_methods, method_name, complete=True)
@@ -1187,6 +1308,57 @@ def test_browser_family_has_completed_workspace_ownership() -> None:
     )
     assert not (group.delegates & target_methods.keys())
     assert group.delegates <= screen_methods.keys()
+
+
+@pytest.mark.unit
+def test_auto_speak_family_has_completed_hands_free_ownership() -> None:
+    """Require the two moves and three bounded delegates to have final owners."""
+    group = WAVE6_GROUPS["auto_speak"]
+    target_path = _REPO_ROOT / group.target_path
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+
+    assert target_path.exists(), "ConsoleHandsFreeController module is missing"
+    target_methods = _methods(target_path, group.target_class)
+    assert not (group.moved & screen_methods.keys()), (
+        "auto-speak methods still owned by ChatScreen: "
+        f"{sorted(group.moved & screen_methods.keys())}"
+    )
+    assert group.moved <= target_methods.keys()
+    assert group.delegates <= screen_methods.keys()
+    assert group.delegates <= target_methods.keys()
+    for name in group.delegates:
+        method = screen_methods[name]
+        _assert_delegate_contract(screen_methods, name, complete=False)
+        docstring = ast.get_docstring(method)
+        assert docstring is not None and "Args:" in docstring
+        docstring_statement, *executable_body = method.body
+        assert isinstance(docstring_statement, ast.Expr)
+        assert isinstance(docstring_statement.value, ast.Constant)
+        assert isinstance(docstring_statement.value.value, str)
+        assert _span(method) - _span(docstring_statement) <= 5
+        assert len(executable_body) == 2
+        stop_statement, delegate_statement = executable_body
+        assert isinstance(stop_statement, ast.Expr)
+        assert isinstance(stop_statement.value, ast.Call)
+        assert isinstance(stop_statement.value.func, ast.Attribute)
+        assert isinstance(stop_statement.value.func.value, ast.Name)
+        assert stop_statement.value.func.value.id == "event"
+        assert stop_statement.value.func.attr == "stop"
+        assert isinstance(delegate_statement, ast.Expr)
+        assert isinstance(delegate_statement.value, ast.Call)
+        assert isinstance(delegate_statement.value.func, ast.Attribute)
+        assert delegate_statement.value.func.attr == name
+        owner = delegate_statement.value.func.value
+        assert isinstance(owner, ast.Attribute)
+        assert isinstance(owner.value, ast.Name)
+        assert owner.value.id == "self"
+        assert owner.attr == group.owner_name
+        target_docstring = ast.get_docstring(target_methods[name])
+        assert target_docstring is not None and "Args:" in target_docstring
+    _assert_no_dom_access(
+        target_methods[name]
+        for name in group.moved | group.delegates | {"_sync_hands_free_switch"}
+    )
 
 
 @pytest.mark.unit
@@ -1348,7 +1520,6 @@ def test_skill_dead_surface_oracle_is_non_vacuous() -> None:
 @pytest.mark.parametrize(
     ("method_name", "awaited"),
     [
-        ("_persist_console_rag_auto_retrieve_on_send", False),
         ("_execute_console_library_rag_search", True),
     ],
 )
@@ -1497,7 +1668,7 @@ def test_wave6_projection_clears_both_ratchet_overages() -> None:
     assert raw_lines == 4_640
     assert residue_lines + DESCRIPTOR_LINE_BUDGET == 119
     assert raw_lines - residue_lines - DESCRIPTOR_LINE_BUDGET == 4_521
-    assert removed_methods == 131
+    assert removed_methods == 132
     assert 4_521 > LINE_OVERAGE
     assert removed_methods > METHOD_OVERAGE
 
@@ -1683,6 +1854,7 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
         "actor_scope_accessor",
         "manual_reaction_key",
         "resolve_visual_identity",
+        "resolve_historical_visual_identity",
         "ensure_console_image_view",
         "console_image_default_mode",
         "is_mounted",
@@ -1693,6 +1865,765 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
     assert init.args.kwarg is None
     assert "_screen" not in _self_assignments(controller)
     assert not any(_calls_dom_query(method) for method in methods.values())
+
+
+def _assert_first_chat_ownership_multiplicity(
+    screen_class: ast.ClassDef,
+    target_class: ast.ClassDef,
+) -> None:
+    """Require zero screen and exactly one controller definition per method."""
+    group = WAVE6_GROUPS["first_chat"]
+    screen_counts = _method_name_counts(screen_class)
+    target_counts = _method_name_counts(target_class)
+    screen_owners = {
+        name: screen_counts[name] for name in group.moved if screen_counts[name]
+    }
+    target_multiplicity = {
+        name: target_counts[name] for name in group.moved if target_counts[name] != 1
+    }
+    assert not screen_owners, (
+        f"first-chat methods still owned by ChatScreen: {screen_owners}"
+    )
+    assert not target_multiplicity, (
+        f"first-chat controller methods must occur exactly once: {target_multiplicity}"
+    )
+
+
+def _assert_first_chat_revision_state_ownership(
+    screen_class: ast.ClassDef,
+    target_class: ast.ClassDef,
+) -> None:
+    """Reject every screen-side revision-state shim, including class proxies."""
+    state_name = "_first_chat_handoff_notified_revision"
+
+    def assigned_names(target: ast.AST) -> set[str]:
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.List, ast.Tuple)):
+            return set().union(*(assigned_names(item) for item in target.elts))
+        if isinstance(target, ast.Starred):
+            return assigned_names(target.value)
+        return set()
+
+    screen_class_members: set[str] = set()
+    for node in screen_class.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            screen_class_members.add(node.name)
+        elif isinstance(node, ast.Assign):
+            screen_class_members.update(
+                set().union(*(assigned_names(target) for target in node.targets))
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            screen_class_members.add(node.target.id)
+
+    assert state_name not in screen_class_members, (
+        f"first-chat revision-state shim remains on ChatScreen: {state_name}"
+    )
+    assert state_name not in _self_assignments(screen_class), (
+        f"first-chat revision state remains on ChatScreen: {state_name}"
+    )
+    assert state_name in _self_assignments(target_class), (
+        f"first-chat revision state missing from controller: {state_name}"
+    )
+
+
+def _assert_first_chat_presentation_callback_usage(
+    methods: dict[str, ast.AST],
+) -> None:
+    """Require the moved policy family to consume every presentation edge."""
+    called = {
+        node.func.attr
+        for method in methods.values()
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self"
+        and node.func.attr in FIRST_CHAT_PRESENTATION_ATTRIBUTES
+    }
+    missing = FIRST_CHAT_PRESENTATION_ATTRIBUTES - called
+    assert not missing, f"first-chat presentation callbacks unused: {sorted(missing)}"
+
+
+def _assert_first_chat_method_boundaries(
+    methods: dict[str, ast.AST],
+) -> None:
+    """Reject DOM queries and direct screen/sibling-controller reach-through."""
+    dom_offenders = {
+        name for name, method in methods.items() if _calls_dom_query(method)
+    }
+    assert not dom_offenders, (
+        f"first-chat controller methods query DOM: {sorted(dom_offenders)}"
+    )
+
+    forbidden_owners = frozenset(
+        {
+            "_screen",
+            "_workspace",
+            "_fleet",
+            "_agent",
+            "_image",
+            "_video",
+            "_retrieval",
+            "_skill",
+            "_character",
+            "_dictation",
+            "_hands_free",
+            "_message",
+            "_prompts",
+            "_prompt_queue",
+        }
+    )
+    sibling_offenders = {
+        name: sorted(_self_owner_accesses(method, forbidden_owners))
+        for name, method in methods.items()
+        if _self_owner_accesses(method, forbidden_owners)
+    }
+    assert not sibling_offenders, (
+        "first-chat controller methods reach screen/sibling owners: "
+        f"{sibling_offenders}"
+    )
+
+    presentation_names = frozenset({"focus", "focused", "is_attached", "is_mounted"})
+
+    def direct_presentation_accesses(method: ast.AST) -> set[str]:
+        return {
+            node.attr
+            for node in ast.walk(method)
+            if isinstance(node, ast.Attribute)
+            and (
+                node.attr in presentation_names
+                or (
+                    node.attr == "app"
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "self"
+                )
+            )
+        }
+
+    presentation_offenders = {
+        name: sorted(direct_presentation_accesses(method))
+        for name, method in methods.items()
+        if direct_presentation_accesses(method)
+    }
+    assert not presentation_offenders, (
+        "first-chat controller methods access presentation directly: "
+        f"{presentation_offenders}"
+    )
+
+
+@pytest.mark.unit
+def test_first_chat_family_has_completed_controller_ownership() -> None:
+    """Require the exact eight-method family and revision state on Session."""
+    group = WAVE6_GROUPS["first_chat"]
+    target_path = _REPO_ROOT / group.target_path
+
+    assert target_path.exists(), "ConsoleSessionController module is missing"
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    _, target_class = _class_node(target_path, group.target_class)
+    _assert_first_chat_ownership_multiplicity(screen_class, target_class)
+    _assert_first_chat_revision_state_ownership(screen_class, target_class)
+
+
+@pytest.mark.unit
+def test_first_chat_controller_has_only_named_non_dom_dependencies() -> None:
+    """Lock first-chat policy behind narrow, presentation-only callbacks."""
+    group = WAVE6_GROUPS["first_chat"]
+    _, controller = _class_node(
+        _REPO_ROOT / group.target_path,
+        group.target_class,
+    )
+    methods = _methods_from_class(controller)
+    missing = group.moved - methods.keys()
+    assert not missing, f"first-chat controller methods missing: {sorted(missing)}"
+    moved_methods = {name: methods[name] for name in group.moved}
+    _assert_first_chat_method_boundaries(moved_methods)
+    _assert_first_chat_presentation_callback_usage(moved_methods)
+
+    init = methods["__init__"]
+    assert isinstance(init, ast.FunctionDef)
+    assert init.args.vararg is None
+    assert init.args.kwarg is None
+    keyword_arguments = {argument.arg for argument in init.args.kwonlyargs}
+    assert FIRST_CHAT_CONTROLLER_CALLBACKS <= keyword_arguments
+    callback_annotations = {
+        argument.arg: ast.unparse(argument.annotation)
+        for argument in init.args.kwonlyargs
+        if argument.arg in FIRST_CHAT_CONTROLLER_CALLBACKS
+        and argument.annotation is not None
+    }
+    assert callback_annotations == {
+        "screen_mounted_accessor": "Callable[[], bool]",
+        "first_chat_presentation_snapshot": (
+            "Callable[[], tuple[Any, Any, object | None]]"
+        ),
+        "apply_first_chat_control_selection": "Callable[[Any, Any], None]",
+        "restore_first_chat_focus": "Callable[[object | None], None]",
+    }
+    stored_callbacks = {
+        (target.attr, node.value.id)
+        for node in ast.walk(init)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    }
+    assert {
+        ("_screen_mounted_accessor", "screen_mounted_accessor"),
+        (
+            "_first_chat_presentation_snapshot_fn",
+            "first_chat_presentation_snapshot",
+        ),
+        (
+            "_apply_first_chat_control_selection_fn",
+            "apply_first_chat_control_selection",
+        ),
+        ("_restore_first_chat_focus_fn", "restore_first_chat_focus"),
+    } <= stored_callbacks
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in FIRST_CHAT_CONTROLLER_CALLBACKS
+        for node in ast.walk(init)
+    ), "first-chat presentation callbacks must be stored, not called, at wiring time"
+
+
+@pytest.mark.unit
+def test_first_chat_task_ratchet_is_earned() -> None:
+    """Require immutable design/Task 0 provenance and the earned move ceiling."""
+    group = WAVE6_GROUPS["first_chat"]
+    design_source = _source_at_revision(TASK_3070_9_DESIGN_BASE, _SCREEN_PATH)
+    design_class = _class_node_from_source(
+        design_source,
+        "ChatScreen",
+        _SCREEN_PATH,
+    )
+    task0_source = _source_at_revision(
+        TASK_3070_9_TASK0_IMPLEMENTATION_BASE,
+        _SCREEN_PATH,
+    )
+    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
+    final_base_source = _source_at_revision(
+        TASK_3070_9_FINAL_DELIVERY_BASE,
+        _SCREEN_PATH,
+    )
+    final_base_class = _class_node_from_source(
+        final_base_source,
+        "ChatScreen",
+        _SCREEN_PATH,
+    )
+    current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
+
+    def family_nodes(
+        owner: ast.ClassDef,
+    ) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+        return [
+            node
+            for node in owner.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in group.moved
+        ]
+
+    design_family = family_nodes(design_class)
+    task0_family = family_nodes(task0_class)
+    final_base_family = family_nodes(final_base_class)
+    design_counts = _method_name_counts(design_class)
+    task0_counts = _method_name_counts(task0_class)
+    final_base_counts = _method_name_counts(final_base_class)
+    current_counts = _method_name_counts(current_class)
+    design_normalized = [
+        ast.dump(node, include_attributes=False) for node in design_family
+    ]
+    task0_normalized = [
+        ast.dump(node, include_attributes=False) for node in task0_family
+    ]
+    final_base_normalized = [
+        ast.dump(node, include_attributes=False) for node in final_base_family
+    ]
+    design_digest = hashlib.sha256("\n".join(design_normalized).encode()).hexdigest()
+    task0_digest = hashlib.sha256("\n".join(task0_normalized).encode()).hexdigest()
+    final_base_digest = hashlib.sha256(
+        "\n".join(final_base_normalized).encode()
+    ).hexdigest()
+
+    assert group.source_revision == POST_IMAGE_IMPLEMENTATION_BASE
+    assert group.raw_lines == TASK_3070_9_DEFINITION_LINES
+    assert frozenset(TASK_3070_9_FAMILY_NAMES) == group.moved
+    assert tuple(node.name for node in design_family) == TASK_3070_9_FAMILY_NAMES
+    assert tuple(node.name for node in task0_family) == TASK_3070_9_FAMILY_NAMES
+    assert tuple(node.name for node in final_base_family) == TASK_3070_9_FAMILY_NAMES
+    assert all(
+        design_counts[name] == task0_counts[name] == final_base_counts[name] == 1
+        for name in group.moved
+    )
+    assert sum(_span(node) for node in design_family) == TASK_3070_9_DEFINITION_LINES
+    assert sum(_span(node) for node in task0_family) == TASK_3070_9_DEFINITION_LINES
+    assert (
+        sum(_span(node) for node in final_base_family)
+        == TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
+    )
+    assert design_normalized == task0_normalized == final_base_normalized
+    assert (
+        design_digest == task0_digest == final_base_digest == TASK_3070_9_FAMILY_SHA256
+    )
+    assert len(design_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
+    assert _method_count(design_class) == TASK_3070_9_TASK0_BASE_METHODS
+    assert len(task0_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
+    assert _method_count(task0_class) == TASK_3070_9_TASK0_BASE_METHODS
+    assert TASK_3070_9_TASK0_MAX_SCREEN_LINES == (
+        TASK_3070_9_TASK0_BASE_SCREEN_LINES - TASK_3070_9_DEFINITION_LINES
+    )
+    assert TASK_3070_9_TASK0_MAX_METHODS == (
+        TASK_3070_9_TASK0_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
+    )
+    assert (
+        len(final_base_source.splitlines())
+        == TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
+    )
+    assert _method_count(final_base_class) == TASK_3070_9_FINAL_DELIVERY_BASE_METHODS
+    assert TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES == (
+        TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
+        - TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
+    )
+    assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS == (
+        TASK_3070_9_FINAL_DELIVERY_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
+    )
+    assert (
+        TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES - TASK_3070_9_TASK0_MAX_SCREEN_LINES
+        == 255
+    )
+    assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS - TASK_3070_9_TASK0_MAX_METHODS == 1
+    assert not any(current_counts[name] for name in group.moved), (
+        "first-chat task methods returned to ChatScreen: "
+        f"{sorted(name for name in group.moved if current_counts[name])}"
+    )
+    assert (
+        len(current_source.splitlines()) <= TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES
+    )
+    assert _method_count(current_class) <= TASK_3070_9_FINAL_DELIVERY_MAX_METHODS
+
+
+@pytest.mark.unit
+def test_first_chat_move_oracles_are_non_vacuous() -> None:
+    """Prove every first-chat ownership and boundary oracle rejects a mutant."""
+    target_source = "class ConsoleSessionController:\n" + "".join(
+        f"    def {name}(self): return None\n" for name in TASK_3070_9_FAMILY_NAMES
+    )
+    target_class = ast.parse(target_source).body[0]
+    assert isinstance(target_class, ast.ClassDef)
+
+    screen_owner_mutant = ast.parse(
+        "class ChatScreen:\n    def _first_chat_defaults_match(self): return True\n"
+    ).body[0]
+    assert isinstance(screen_owner_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="still owned by ChatScreen"):
+        _assert_first_chat_ownership_multiplicity(
+            screen_owner_mutant,
+            target_class,
+        )
+
+    target_methods = _methods_from_class(target_class)
+    dom_mutant = dict(target_methods)
+    dom_mutant["_current_first_chat_defaults"] = ast.parse(
+        "def _current_first_chat_defaults(self): return self.query_one('#provider')"
+    ).body[0]
+    with pytest.raises(AssertionError, match="query DOM"):
+        _assert_first_chat_method_boundaries(dom_mutant)
+
+    sibling_mutant = dict(target_methods)
+    sibling_mutant["eligible_console_first_chat_session_id"] = ast.parse(
+        "def eligible_console_first_chat_session_id(self): "
+        "return self._workspace.active_session_id"
+    ).body[0]
+    with pytest.raises(AssertionError, match="screen/sibling owners"):
+        _assert_first_chat_method_boundaries(sibling_mutant)
+
+    callback_complete = dict(target_methods)
+    callback_complete["_current_first_chat_defaults"] = ast.parse(
+        "def _current_first_chat_defaults(self):\n"
+        "    return (\n"
+        "        self._screen_mounted_accessor(),\n"
+        "        self._first_chat_presentation_snapshot_fn(),\n"
+        "        self._apply_first_chat_control_selection_fn(None, None),\n"
+        "        self._restore_first_chat_focus_fn(None),\n"
+        "    )\n"
+    ).body[0]
+    _assert_first_chat_presentation_callback_usage(callback_complete)
+    callback_omission_mutant = dict(callback_complete)
+    callback_omission_mutant["_current_first_chat_defaults"] = ast.parse(
+        "def _current_first_chat_defaults(self):\n"
+        "    return (\n"
+        "        self._screen_mounted_accessor(),\n"
+        "        self._first_chat_presentation_snapshot_fn(),\n"
+        "        self._apply_first_chat_control_selection_fn(None, None),\n"
+        "    )\n"
+    ).body[0]
+    with pytest.raises(AssertionError, match="presentation callbacks unused"):
+        _assert_first_chat_presentation_callback_usage(callback_omission_mutant)
+
+    direct_focus_mutant = dict(target_methods)
+    direct_focus_mutant["_resync_console_after_first_chat_rollback"] = ast.parse(
+        "def _resync_console_after_first_chat_rollback(self, token):\n"
+        "    if token.is_mounted:\n"
+        "        token.focus()\n"
+    ).body[0]
+    with pytest.raises(AssertionError, match="access presentation directly"):
+        _assert_first_chat_method_boundaries(direct_focus_mutant)
+
+    duplicate_target = ast.parse(
+        target_source
+        + "    def consume_pending_console_first_chat_intent(self): return True\n"
+    ).body[0]
+    empty_screen = ast.parse("class ChatScreen:\n    pass\n").body[0]
+    assert isinstance(duplicate_target, ast.ClassDef)
+    assert isinstance(empty_screen, ast.ClassDef)
+    with pytest.raises(AssertionError, match="exactly once"):
+        _assert_first_chat_ownership_multiplicity(empty_screen, duplicate_target)
+
+    target_with_revision_state = ast.parse(
+        "class ConsoleSessionController:\n"
+        "    def __init__(self):\n"
+        "        self._first_chat_handoff_notified_revision = None\n"
+    ).body[0]
+    revision_property_mutant = ast.parse(
+        "class ChatScreen:\n"
+        "    @property\n"
+        "    def _first_chat_handoff_notified_revision(self):\n"
+        "        return self._session._first_chat_handoff_notified_revision\n"
+    ).body[0]
+    assert isinstance(target_with_revision_state, ast.ClassDef)
+    assert isinstance(revision_property_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="revision-state shim"):
+        _assert_first_chat_revision_state_ownership(
+            revision_property_mutant,
+            target_with_revision_state,
+        )
+
+
+def _assert_fleet_ownership_contract(
+    screen_methods: dict[str, ast.AST],
+    target_methods: dict[str, ast.AST],
+) -> None:
+    """Require the reviewed fleet family to have one controller owner."""
+    group = WAVE6_GROUPS["fleet"]
+    missing = group.moved - target_methods.keys()
+    assert not missing, (
+        f"fleet methods missing from ConsoleFleetLifecycleController: {sorted(missing)}"
+    )
+    duplicates = group.moved & screen_methods.keys()
+    assert not duplicates, (
+        f"fleet methods still owned by ChatScreen: {sorted(duplicates)}"
+    )
+
+
+def _assert_fleet_ownership_multiplicity(
+    screen_class: ast.ClassDef,
+    target_class: ast.ClassDef,
+) -> None:
+    """Require zero screen and exactly one controller definition per fleet name."""
+    group = WAVE6_GROUPS["fleet"]
+    screen_counts = _method_name_counts(screen_class)
+    target_counts = _method_name_counts(target_class)
+    screen_duplicates = {
+        name: screen_counts[name] for name in group.moved if screen_counts[name]
+    }
+    target_multiplicity = {
+        name: target_counts[name] for name in group.moved if target_counts[name] != 1
+    }
+    assert not screen_duplicates, (
+        f"fleet methods still owned by ChatScreen: {screen_duplicates}"
+    )
+    assert not target_multiplicity, (
+        f"fleet controller methods must occur exactly once: {target_multiplicity}"
+    )
+
+
+def _assert_fleet_method_boundaries(methods: dict[str, ast.AST]) -> None:
+    """Reject DOM access and direct screen/sibling handles."""
+    dom_offenders = {
+        name for name, method in methods.items() if _calls_dom_query(method)
+    }
+    assert not dom_offenders, (
+        f"fleet controller methods query DOM: {sorted(dom_offenders)}"
+    )
+    composer_widget_offenders = {
+        name
+        for name, method in methods.items()
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "draft_text"
+            for node in ast.walk(method)
+        )
+    }
+    assert not composer_widget_offenders, (
+        "fleet controller methods reach composer widgets: "
+        f"{sorted(composer_widget_offenders)}"
+    )
+
+    forbidden_owners = frozenset(
+        {
+            "screen",
+            "_screen",
+            "app",
+            "_app",
+            "app_instance",
+            "_app_instance",
+            "controller",
+            "_controller",
+            "_console_chat_controller",
+            "wake",
+            "_wake",
+            "fleet_wake",
+            "_fleet_wake",
+            "_workspace",
+            "_session",
+            "_agent",
+            "_image",
+            "_video",
+            "_retrieval",
+            "_skill",
+            "_character",
+            "_dictation",
+            "_hands_free",
+            "_message",
+            "_prompts",
+            "_prompt_queue",
+        }
+    )
+    sibling_offenders = {
+        name: sorted(_self_owner_accesses(method, forbidden_owners))
+        for name, method in methods.items()
+        if _self_owner_accesses(method, forbidden_owners)
+    }
+    assert not sibling_offenders, (
+        f"fleet controller methods reach screen/sibling owners: {sibling_offenders}"
+    )
+
+
+def _assert_fleet_controller_boundary(controller: ast.ClassDef) -> None:
+    """Require exact named callbacks and reject DOM/sibling capabilities."""
+    methods = _methods_from_class(controller)
+    group = WAVE6_GROUPS["fleet"]
+    expected_methods = group.moved | {"prepare_session_run_markers"}
+    assert _method_name_counts(controller) == Counter(
+        {name: 1 for name in expected_methods | {"__init__"}}
+    )
+
+    init = methods["__init__"]
+    assert isinstance(init, ast.FunctionDef)
+    assert not init.args.posonlyargs
+    assert [argument.arg for argument in init.args.args] == ["self"]
+    assert {argument.arg for argument in init.args.kwonlyargs} == (
+        FLEET_CONTROLLER_CALLBACKS
+    )
+    assert init.args.kw_defaults == [None] * len(init.args.kwonlyargs)
+    assert init.args.vararg is None
+    assert init.args.kwarg is None
+    callback_annotations = {
+        argument.arg: ast.unparse(argument.annotation)
+        for argument in init.args.kwonlyargs
+        if argument.annotation is not None
+    }
+    assert callback_annotations.keys() == FLEET_CONTROLLER_CALLBACKS
+    assert not {
+        name: annotation
+        for name, annotation in callback_annotations.items()
+        if "Callable[...," in annotation
+    }, "fleet constructor callbacks must have explicit arity"
+
+    expected_assignments = {
+        *(f"_{name}" for name in FLEET_CONTROLLER_CALLBACKS),
+        "_console_fleet_survivor_timer",
+        "_console_fleet_unseen_cache",
+    }
+    assert _self_assignments(controller) == expected_assignments
+    stored_callbacks = {
+        (target.attr, node.value.id)
+        for node in ast.walk(init)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    }
+    assert stored_callbacks == {
+        (f"_{name}", name) for name in FLEET_CONTROLLER_CALLBACKS
+    }
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in FLEET_CONTROLLER_CALLBACKS
+        for node in ast.walk(init)
+    )
+    _assert_fleet_method_boundaries(methods)
+    assert methods.keys() - {"__init__"} == expected_methods
+
+
+@pytest.mark.unit
+def test_fleet_family_has_completed_controller_ownership() -> None:
+    """Require all 16 fleet lifecycle methods solely on the controller."""
+    group = WAVE6_GROUPS["fleet"]
+    target_path = _REPO_ROOT / group.target_path
+
+    assert target_path.exists(), "ConsoleFleetLifecycleController module is missing"
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    _, target_class = _class_node(target_path, group.target_class)
+    screen_methods = _methods_from_class(screen_class)
+    target_methods = _methods_from_class(target_class)
+    _assert_fleet_ownership_contract(screen_methods, target_methods)
+    _assert_fleet_ownership_multiplicity(screen_class, target_class)
+
+    replacement_helpers = {
+        "_displayed_console_composer_draft",
+        "_console_screen_is_displayed",
+    }
+    assert not (replacement_helpers & screen_methods.keys()), (
+        "ChatScreen gained replacement fleet helpers: "
+        f"{sorted(replacement_helpers & screen_methods.keys())}"
+    )
+
+
+@pytest.mark.unit
+def test_fleet_controller_has_only_named_non_dom_dependencies() -> None:
+    """Lock the fleet owner behind its reviewed callback-only boundary."""
+    group = WAVE6_GROUPS["fleet"]
+    _, controller = _class_node(_REPO_ROOT / group.target_path, group.target_class)
+
+    _assert_fleet_controller_boundary(controller)
+
+
+@pytest.mark.unit
+def test_fleet_task_ratchet_is_earned() -> None:
+    """Require the immutable Task 0 and frozen final-rebase ratchets."""
+    group = WAVE6_GROUPS["fleet"]
+    task0_source = _source_at_revision(FLEET_TASK0_IMPLEMENTATION_BASE, _SCREEN_PATH)
+    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
+    task0_methods = _methods_from_class(task0_class)
+    task0_counts = _method_name_counts(task0_class)
+    final_source = _source_at_revision(FLEET_FINAL_REBASE_BASE, _SCREEN_PATH)
+    final_class = _class_node_from_source(final_source, "ChatScreen", _SCREEN_PATH)
+    final_methods = _methods_from_class(final_class)
+    final_counts = _method_name_counts(final_class)
+    current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    current_counts = _method_name_counts(current_class)
+
+    assert len(task0_source.splitlines()) == FLEET_TASK0_BASE_SCREEN_LINES
+    assert _method_count(task0_class) == FLEET_TASK0_BASE_METHODS
+    assert group.moved <= task0_methods.keys()
+    assert sum(_span(task0_methods[name]) for name in group.moved) == (
+        FLEET_TASK0_DEFINITION_LINES
+    )
+    assert len(group.moved) == 16
+
+    assert len(final_source.splitlines()) == FLEET_FINAL_REBASE_BASE_SCREEN_LINES
+    assert _method_count(final_class) == FLEET_FINAL_REBASE_BASE_METHODS
+    assert group.moved <= final_methods.keys()
+    assert sum(_span(final_methods[name]) for name in group.moved) == (
+        FLEET_FINAL_REBASE_DEFINITION_LINES
+    )
+    assert all(task0_counts[name] == final_counts[name] == 1 for name in group.moved)
+    multiplicity_delta = {
+        name: final_counts[name] - task0_counts[name]
+        for name in task0_counts.keys() | final_counts.keys()
+        if final_counts[name] != task0_counts[name]
+    }
+    assert multiplicity_delta == {
+        name: 1 for name in FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS
+    }
+    assert [
+        ast.dump(task0_methods[name], include_attributes=False)
+        for name in sorted(group.moved)
+    ] == [
+        ast.dump(final_methods[name], include_attributes=False)
+        for name in sorted(group.moved)
+    ]
+
+    assert FLEET_TASK0_MAX_SCREEN_LINES == (
+        FLEET_TASK0_BASE_SCREEN_LINES - FLEET_TASK0_DEFINITION_LINES
+    )
+    assert FLEET_TASK0_MAX_METHODS == FLEET_TASK0_BASE_METHODS - len(group.moved)
+    assert FLEET_FINAL_REBASE_MAX_SCREEN_LINES == (
+        FLEET_FINAL_REBASE_BASE_SCREEN_LINES - FLEET_FINAL_REBASE_DEFINITION_LINES
+    )
+    assert FLEET_FINAL_REBASE_MAX_METHODS == (
+        FLEET_FINAL_REBASE_BASE_METHODS - len(group.moved)
+    )
+    assert not any(current_counts[name] for name in group.moved), (
+        "fleet task methods returned to ChatScreen: "
+        f"{sorted(name for name in group.moved if current_counts[name])}"
+    )
+    assert len(current_source.splitlines()) <= FLEET_FINAL_REBASE_MAX_SCREEN_LINES, (
+        "fleet task screen-line ratchet remains RED: "
+        f"{len(current_source.splitlines())} > {FLEET_FINAL_REBASE_MAX_SCREEN_LINES}"
+    )
+    assert _method_count(current_class) <= FLEET_FINAL_REBASE_MAX_METHODS, (
+        "fleet task method ratchet remains RED: "
+        f"{_method_count(current_class)} > {FLEET_FINAL_REBASE_MAX_METHODS}"
+    )
+
+
+@pytest.mark.unit
+def test_fleet_move_oracles_are_non_vacuous() -> None:
+    """Prove fleet ownership, DOM, and sibling checks reject exact mutants."""
+    group = WAVE6_GROUPS["fleet"]
+    target_methods = {
+        name: ast.parse(f"def {name}(self): return None").body[0]
+        for name in group.moved
+    }
+    screen_mutant = ast.parse(
+        "class ChatScreen:\n"
+        "    def _console_fleet_survivors_live(self):\n"
+        "        return True\n"
+    ).body[0]
+    assert isinstance(screen_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="still owned by ChatScreen"):
+        _assert_fleet_ownership_contract(
+            _methods_from_class(screen_mutant),
+            target_methods,
+        )
+
+    duplicate_name = "_console_fleet_survivors_live"
+    controller_duplicate_mutant = ast.parse(
+        "class ConsoleFleetLifecycleController:\n"
+        + "".join(
+            f"    def {name}(self): return None\n" for name in sorted(group.moved)
+        )
+        + f"    def {duplicate_name}(self): return True\n"
+    ).body[0]
+    assert isinstance(controller_duplicate_mutant, ast.ClassDef)
+    empty_screen_mutant = ast.parse("class ChatScreen:\n    pass\n").body[0]
+    assert isinstance(empty_screen_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="exactly once"):
+        _assert_fleet_ownership_multiplicity(
+            empty_screen_mutant,
+            controller_duplicate_mutant,
+        )
+
+    controller_mutant = ast.parse(
+        "class ConsoleFleetLifecycleController:\n"
+        "    def leaked_dom(self):\n"
+        "        return self.query_one('#composer')\n"
+        "    def sibling_reach_through(self):\n"
+        "        return self._workspace._poke_console_wake_retry()\n"
+        "    def leaked_composer_widget(self):\n"
+        "        return self._displayed_composer_draft_accessor().draft_text()\n"
+    ).body[0]
+    assert isinstance(controller_mutant, ast.ClassDef)
+    mutant_methods = _methods_from_class(controller_mutant)
+    with pytest.raises(AssertionError, match="query DOM"):
+        _assert_fleet_method_boundaries({"leaked_dom": mutant_methods["leaked_dom"]})
+
+    with pytest.raises(AssertionError, match="screen/sibling owners"):
+        _assert_fleet_method_boundaries(
+            {"sibling_reach_through": mutant_methods["sibling_reach_through"]}
+        )
+
+    with pytest.raises(AssertionError, match="composer widgets"):
+        _assert_fleet_method_boundaries(
+            {"leaked_composer_widget": mutant_methods["leaked_composer_widget"]}
+        )
 
 
 @pytest.mark.unit
@@ -1821,6 +2752,8 @@ class Sample:
             _assert_delegate_contract(sample_methods, "delegate", complete=True)
         with pytest.raises(AssertionError):
             _assert_no_dom_access(sample_methods.values())
+        with pytest.raises(AssertionError):
+            _assert_no_dom_access([sample_methods["touches_dom_collection"]])
         DELEGATE_BINDINGS["delegate"] = "missing_caller"
         with pytest.raises(AssertionError):
             _assert_delegate_contract(sample_methods, "delegate", complete=False)

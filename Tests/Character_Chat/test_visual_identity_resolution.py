@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,111 @@ def test_operational_states_map_to_pack_keys(
     assert result.resolved_expression_key == expected_key
     assert result.resolution_source == "pack_operational"
     assert result.fallback_reason == "none"
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_key"),
+    [("happy", "happy"), ("custom:smug", "custom:smug")],
+)
+def test_live_explicit_states_map_to_pack_keys(
+    db: CharactersRAGDB,
+    user_data_dir: Path,
+    state: str,
+    expected_key: str,
+) -> None:
+    character_id = _add_character(db)
+    _activate(db, user_data_dir, character_id, ("neutral", expected_key))
+
+    result = _resolve(db, user_data_dir, character_id, state)
+
+    assert result.requested_expression_key == expected_key
+    assert result.resolved_expression_key == expected_key
+    assert result.resolution_source == "pack_explicit"
+    assert result.fallback_reason == "none"
+
+
+def test_history_resolves_exact_recorded_asset_after_active_pack_changes(
+    db: CharactersRAGDB, user_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    character_id = _add_character(db)
+    old = _activate(db, user_data_dir, character_id, ("neutral", "happy"))
+    old_asset = next(
+        asset for asset in old["assets"] if asset["expression_key"] == "happy"
+    )
+    old_bytes = (
+        user_data_dir / "visual_identities" / old_asset["storage_relpath"]
+    ).read_bytes()
+    _activate(db, user_data_dir, character_id, ("neutral", "sad"))
+    transaction_calls = 0
+    original_transaction = db.transaction
+
+    @contextmanager
+    def tracked_transaction():
+        nonlocal transaction_calls
+        transaction_calls += 1
+        with original_transaction() as connection:
+            yield connection
+
+    monkeypatch.setattr(db, "transaction", tracked_transaction)
+
+    result = visual_identity.resolve_historical_visual_identity(
+        db,
+        actor_id=character_id,
+        pack_id=old["pack"]["id"],
+        pack_version_id=old["version"]["id"],
+        expression_key="happy",
+        expression_id=None,
+        asset_id=old_asset["id"],
+        user_data_dir=user_data_dir,
+    )
+
+    assert result.resolution_source == "history_immutable"
+    assert result.fallback_reason == "none"
+    assert result.pack_id == old["pack"]["id"]
+    assert result.pack_version_id == old["version"]["id"]
+    assert result.asset_id == old_asset["id"]
+    assert result.resolved_expression_key == "happy"
+    assert result.image_bytes == old_bytes
+    assert transaction_calls == 1
+
+
+def test_history_fails_closed_when_recorded_identity_is_inconsistent(
+    db: CharactersRAGDB, user_data_dir: Path
+) -> None:
+    character_id = _add_character(db)
+    activated = _activate(db, user_data_dir, character_id, ("neutral", "happy"))
+    asset = next(
+        item for item in activated["assets"] if item["expression_key"] == "happy"
+    )
+
+    result = visual_identity.resolve_historical_visual_identity(
+        db,
+        actor_id=character_id,
+        pack_id=activated["pack"]["id"],
+        pack_version_id=activated["version"]["id"],
+        expression_key="sad",
+        expression_id=None,
+        asset_id=asset["id"],
+        user_data_dir=user_data_dir,
+    )
+
+    assert result.resolution_source == "placeholder"
+    assert result.fallback_reason == "history_unavailable"
+    assert result.image_bytes is None
+
+    invalid_expression_id = visual_identity.resolve_historical_visual_identity(
+        db,
+        actor_id=character_id,
+        pack_id=activated["pack"]["id"],
+        pack_version_id=activated["version"]["id"],
+        expression_key="happy",
+        expression_id="server-expression-id",
+        asset_id=asset["id"],
+        user_data_dir=user_data_dir,
+    )
+
+    assert invalid_expression_id.resolution_source == "placeholder"
+    assert invalid_expression_id.fallback_reason == "history_unavailable"
 
 
 def test_unknown_manual_falls_through_to_requested_operational(

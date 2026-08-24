@@ -291,7 +291,7 @@ def test_promotion_writes_every_node_including_off_path_branches(tmp_path):
             content="hi there",
             persist=True,
         )
-        regenerated_reply = store.create_sibling(
+        store.create_sibling(
             original_reply.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="hi again",
@@ -362,7 +362,7 @@ def test_promotion_preserves_persisted_parent_child_structure(tmp_path):
         branch_a = store.append_message(
             session.id, role=ConsoleMessageRole.ASSISTANT, content="A2a", persist=True
         )
-        branch_b = store.create_sibling(
+        store.create_sibling(
             branch_a.id, role=ConsoleMessageRole.ASSISTANT, content="A2b", persist=True
         )
 
@@ -572,41 +572,30 @@ def test_failed_promotion_restores_the_held_rag_scope(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
-def test_promotion_restores_ephemeral_flag_if_persist_returns_none_unexpectedly(
+def test_atomic_promotion_ignores_instance_shadowed_first_persistence_method(
     tmp_path, monkeypatch
 ):
-    """Defensive: an unexpected None from persist_session_if_needed must not
-    silently leave the session non-ephemeral with no persisted conversation.
-
-    That state is exactly what the docstring warns about -- a failed save
-    that silently starts persisting on the next send. Nothing in
-    ``persist_session_if_needed`` reaches this today (its only None-return
-    branches are already ruled out once ``ephemeral`` is cleared and
-    ``self.persistence`` is known non-None), so this test forces the case
-    directly to prove the rollback still fires if a future change ever adds
-    one.
-    """
+    """An instance shadow cannot divert promotion into partial legacy writes."""
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         session = store.create_session(title="Temporary chat", ephemeral=True)
         _run_a_chat(store, session.id)
 
-        # Explicit signature, not **kwargs: production gained the keyword-only
-        # `strict_roleplay_context` in 86f74db93 and this stub silently raised
-        # TypeError one frame early, so the test stopped reaching the
-        # None-return branch it exists to cover. An explicit signature keeps
-        # failing loudly on the next change rather than absorbing it.
+        shadow_calls = 0
+
         def _returns_none(session_id, *, strict_roleplay_context=False):
+            nonlocal shadow_calls
+            shadow_calls += 1
             return None
 
         monkeypatch.setattr(store, "persist_session_if_needed", _returns_none)
 
-        with pytest.raises(RuntimeError):
-            store.promote_ephemeral_session(session.id)
+        conversation_id = store.promote_ephemeral_session(session.id)
 
-        assert session.ephemeral is True
-        assert session.persisted_conversation_id is None
-        assert _row_counts(db) == (0, 0)
+        assert shadow_calls == 0
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id == conversation_id
+        assert _row_counts(db) == (1, 2)
     finally:
         db.close()

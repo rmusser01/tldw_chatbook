@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -12,8 +15,11 @@ from pathlib import Path
 from types import MappingProxyType
 from weakref import WeakValueDictionary
 
+from loguru import logger
+
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes import notes_device_state_schema
+from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncBindingState,
     NotesSyncDirection,
@@ -126,6 +132,105 @@ _OPERATION_TRANSITIONS: Mapping[
     }
 )
 _SETTING_KEYS = frozenset({"cutover_marker", "recovery_capacity"})
+_CONFLICT_SUBSTAGES = (
+    "recovery_admitted",
+    "folders_established",
+    "copy_created",
+    "placement_created",
+    "copy_verified",
+    "bound_note_updated",
+    "file_reverified",
+    "binding_updated",
+    "verified",
+)
+_CONFLICT_SUBSTAGE_STATES = {
+    "recovery_admitted": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "folders_established": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "copy_created": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "placement_created": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "copy_verified": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "bound_note_updated": NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+    "file_reverified": NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+    "binding_updated": NotesSyncOperationState.BINDING_UPDATED,
+    "verified": NotesSyncOperationState.VERIFIED,
+}
+_CONFLICT_OPAQUE_ID_CAPACITY = 256
+_CONFLICT_VERSION_CAPACITY = 20
+_UNDO_SUBSTAGES = (
+    "recovery_admitted",
+    "authority_restored",
+    "opposite_verified",
+    "binding_updated",
+    "copy_cleanup_complete",
+    "verified",
+)
+_RECOVERY_ENVELOPE_SUBSTAGE_FIELDS = {
+    "resolve_keep_both": frozenset({"conflict_substage", "conflict_substage_padding"}),
+    "undo_resolution": frozenset({"undo_substage", "undo_substage_padding"}),
+}
+_RECOVERY_ENVELOPE_KINDS = frozenset(
+    {"resolve_keep_file", "resolve_keep_note", "resolve_keep_both", "undo_resolution"}
+)
+
+
+def notes_sync_recovery_envelope_digest(
+    kind: str,
+    payload: bytes,
+    metadata: bytes,
+) -> str:
+    """Digest one immutable recovery envelope independently of its row.
+
+    Args:
+        kind: Supported recovery operation kind.
+        payload: Immutable recovery payload bytes.
+        metadata: UTF-8 JSON metadata bytes.
+
+    Returns:
+        The hexadecimal SHA-256 digest for the canonical envelope.
+
+    Raises:
+        NotesDeviceStateError: If the kind is unsupported or the metadata is
+            not a valid JSON object.
+        TypeError: If ``payload`` or ``metadata`` is not bytes.
+    """
+
+    if kind not in _RECOVERY_ENVELOPE_KINDS:
+        raise NotesDeviceStateError("The recovery envelope kind is invalid.")
+    if type(payload) is not bytes or type(metadata) is not bytes:
+        raise TypeError("recovery payload and metadata must be bytes.")
+    try:
+        decoded = json.loads(metadata.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise NotesDeviceStateError("The recovery envelope is corrupt.") from None
+    if not isinstance(decoded, dict):
+        raise NotesDeviceStateError("The recovery envelope is corrupt.")
+    for field in _RECOVERY_ENVELOPE_SUBSTAGE_FIELDS.get(kind, ()):
+        decoded.pop(field, None)
+    canonical = json.dumps(
+        decoded,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = hashlib.sha256()
+    digest.update(b"tldw.notes-sync.recovery-envelope.v1\0")
+    for value in (kind.encode("ascii"), payload, canonical):
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+    return digest.hexdigest()
+
+
+def _require_recovery_envelope_anchor(
+    kind: str,
+    payload: bytes,
+    metadata: bytes,
+    anchor: object,
+) -> None:
+    if (
+        type(anchor) is not str
+        or notes_sync_recovery_envelope_digest(kind, payload, metadata) != anchor
+    ):
+        raise NotesDeviceStateError("The recovery envelope authority changed.")
 
 
 def _now() -> int:
@@ -311,6 +416,31 @@ class NotesSyncRecoveryRecord:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncResolutionHistoryRecord:
+    """Private durable facts for one conflict-resolution history row."""
+
+    operation_id: str
+    binding_id: str
+    kind: str
+    state: NotesSyncOperationState
+    reason_code: str | None
+    completed_at: int | None
+    updated_at: int
+    recovery_expires_at: int | None
+    undo_state: NotesSyncOperationState | None
+    undo_reason_code: str | None
+
+    @property
+    def undone(self) -> bool:
+        """Return whether the deterministic linked Undo completed."""
+
+        return self.undo_state is NotesSyncOperationState.COMPLETED
+
+    def __repr__(self) -> str:
+        return "NotesSyncResolutionHistoryRecord(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class NotesSyncLegacyMigrationRecord:
     """Bounded record for one later legacy-migration review."""
 
@@ -419,13 +549,35 @@ class NotesDeviceStateError(RuntimeError):
 
 
 class NotesDeviceStateStore:
-    """Own the sole private connection and transaction seam for notes.sync_state."""
+    """Own the sole private connection and transaction seam for notes.sync_state.
+
+    Connection model (task-21101): each thread that uses the store holds ONE
+    long-lived connection created on first use (``threading.local``), rather
+    than opening a fresh connection per operation. The held connection runs
+    ``journal_mode=WAL`` + ``synchronous=NORMAL`` with ``isolation_level=None``
+    (true autocommit; transactions are the explicit ``BEGIN``/``BEGIN
+    IMMEDIATE`` issued by :meth:`transaction`), and the schema census
+    (``initialize_notes_device_schema``) runs once per connection lifetime --
+    at open -- not per transaction. WAL is only adopted after the census has
+    proven the database is this owner's: a refused foreign database is never
+    modified.
+
+    Thread affinity: the store is reached from the UI thread and from
+    ``asyncio.to_thread`` worker pools. ``check_same_thread=False`` is safe
+    here because thread-local storage guarantees each connection is used only
+    by its creating thread; the one cross-thread touch is :meth:`close`, which
+    sqlite3 permits. Call :meth:`close` only after in-flight operations have
+    quiesced; a closed store transparently re-opens on next use.
+    """
 
     def __init__(self, database_path: str | Path) -> None:
         self._database_path = Path(database_path)
         self._operation_locks: WeakValueDictionary[str, asyncio.Lock] = (
             WeakValueDictionary()
         )
+        self._thread_local = threading.local()
+        self._connections_guard = threading.Lock()
+        self._connections: list[sqlite3.Connection] = []
 
     def __repr__(self) -> str:
         return "NotesDeviceStateStore(<private>)"
@@ -445,38 +597,110 @@ class NotesDeviceStateStore:
         *,
         read_only: bool = False,
         must_exist: bool = False,
+        **connection_options: object,
     ) -> sqlite3.Connection:
         connection = connect_private_sqlite(
             "notes.sync_state",
             self._database_path,
             read_only=read_only,
             must_exist=must_exist,
+            **connection_options,
         )
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    def _open_schema_ready_connection(self) -> sqlite3.Connection:
+        """Open, census-validate, and WAL-configure one held connection."""
+
+        connection = self._connect(
+            check_same_thread=False,
+            isolation_level=None,
+        )
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                notes_device_state_schema.initialize_notes_device_schema(connection)
+            except BaseException:
+                connection.rollback()
+                raise
+            connection.commit()
+            # journal_mode is persisted in the database file, so WAL is
+            # adopted only AFTER the census proved the database is this
+            # owner's; a refused foreign database must stay byte-identical.
+            # synchronous is per-connection and must be reapplied per open;
+            # NORMAL is app-crash-safe under WAL and drops the per-commit
+            # fsync that made receipt-heavy imports pay FULL's price.
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = NORMAL")
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    def _get_connection(self) -> sqlite3.Connection:
+        connection = getattr(self._thread_local, "connection", None)
+        if connection is not None:
+            return connection
+        connection = self._open_schema_ready_connection()
+        self._thread_local.connection = connection
+        with self._connections_guard:
+            self._connections.append(connection)
+        return connection
+
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        """Yield one writable connection inside a schema-ready transaction."""
+        """Yield this thread's schema-ready held connection in one transaction."""
 
-        connection = self._connect()
+        connection = self._get_connection()
         try:
             connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
-            notes_device_state_schema.initialize_notes_device_schema(connection)
             yield connection
             connection.commit()
-        except Exception:
-            connection.rollback()
+        except BaseException:
+            try:
+                connection.rollback()
+            except Exception as rollback_error:
+                # A rollback can itself fail (e.g. shutdown close()d the
+                # held connection under us); that secondary error must not
+                # mask the original one. Type name only: no private values.
+                logger.debug(
+                    "Notes device store rollback failed after a transaction "
+                    "error: {}",
+                    type(rollback_error).__name__,
+                )
             raise
-        finally:
-            connection.close()
+
+    def close(self) -> None:
+        """Close every held connection; the store re-arms on next use.
+
+        Best-effort and callable from any thread; callers must let in-flight
+        operations quiesce first.
+        """
+
+        with self._connections_guard:
+            connections = tuple(self._connections)
+            self._connections.clear()
+            self._thread_local = threading.local()
+        for connection in connections:
+            try:
+                connection.close()
+            except Exception:
+                continue
 
     def initialize(self) -> None:
         """Atomically initialize or migrate this isolated private owner."""
 
         try:
-            with self.transaction(immediate=True):
-                pass
+            if getattr(self._thread_local, "connection", None) is None:
+                # A fresh connection runs the schema census as it opens.
+                self._get_connection()
+            else:
+                # A repeated initialize() keeps its tamper-detection
+                # contract: re-run the census on the held connection.
+                with self.transaction(immediate=True) as connection:
+                    notes_device_state_schema.initialize_notes_device_schema(
+                        connection
+                    )
         except notes_device_state_schema.NotesDeviceSchemaError as error:
             message = str(error)
             if message.startswith("Unsupported"):
@@ -901,6 +1125,107 @@ class NotesDeviceStateStore:
             ).fetchall()
         return tuple(self._binding_from_row(row) for row in rows)
 
+    def active_binding_note_ids(
+        self,
+        root_id: str,
+        *,
+        exclude_binding_id: str | None = None,
+    ) -> tuple[str, ...]:
+        """Return this root's active binding note ids, ordered by binding id.
+
+        The private executor projects managed folder memberships from this set
+        many times per reviewed operation. Reading it through
+        :meth:`list_bindings` hydrated one full ``NotesSyncBindingRecord`` --
+        thirteen columns, a nested serialization profile and an enum coercion
+        -- for every binding of the root, including the ones the caller then
+        discarded; measured on a 1,000-binding root that hydration was 88% of
+        a 15 ms read (TASK-21129). The predicate here is served entirely by
+        ``idx_notes_sync_bindings_root(root_id, state, binding_id)``, which
+        also supplies the ordering, so no temporary B-tree sort is built.
+
+        This is a private projection for owner-side reconciliation, not a
+        public summary: it deliberately carries no
+        :func:`validate_notes_sync_opaque_id` fail-closed check, exactly like
+        the :meth:`list_bindings` read it replaces. ``list_binding_summaries``
+        keeps that contract because it feeds surfaces outside this owner.
+
+        Args:
+            root_id: The opaque sync root whose active bindings to project.
+            exclude_binding_id: An optional binding to omit, for callers that
+                reconcile the set as it will be *without* one binding.
+
+        Returns:
+            tuple[str, ...]: Note ids of the matching active bindings, ordered
+            by binding id.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if exclude_binding_id is not None:
+            validate_notes_sync_opaque_id(
+                exclude_binding_id, field_name="exclude_binding_id"
+            )
+        statement = (
+            "SELECT note_id FROM notes_sync_bindings "
+            "WHERE root_id = ? AND state = 'active'"
+        )
+        parameters: tuple[str, ...] = (root_id,)
+        if exclude_binding_id is not None:
+            statement += " AND binding_id != ?"
+            parameters += (exclude_binding_id,)
+        statement += " ORDER BY binding_id"
+        with self.transaction() as connection:
+            rows = connection.execute(statement, parameters).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def has_binding_for_note_or_path(
+        self,
+        root_id: str,
+        *,
+        note_scope_id: str,
+        note_id: str,
+        relative_path: str,
+    ) -> bool:
+        """Report whether any binding of this root already claims note or path.
+
+        The executor's new-candidate authority guard asks this question before
+        every admitted stage; it used to answer it by materializing every
+        binding of the root and running a Python ``any(...)`` over them. The
+        predicate is the same one, pushed into SQL with ``LIMIT 1`` so a match
+        stops the scan (TASK-21129).
+
+        Every compared column is ``TEXT NOT NULL`` with the default BINARY
+        collation, so SQL equality here is the same byte comparison Python
+        ``==`` performed. The three predicate values are search terms rather
+        than identifiers -- callers legitimately pass ``""`` for an absent
+        note or file side -- so they are parameterized but not validated as
+        opaque ids; a stored value can never be empty (the table's length
+        checks), so an empty term matches nothing, as before.
+
+        Args:
+            root_id: The opaque sync root to search within.
+            note_scope_id: The candidate note's scope, or ``""`` when absent.
+            note_id: The candidate note id, or ``""`` when absent.
+            relative_path: The candidate normalized path, or ``""``.
+
+        Returns:
+            bool: True when some binding of this root, in any state, already
+            claims that note identity or that relative path.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM notes_sync_bindings
+                WHERE root_id = ?
+                      AND ((note_scope_id = ? AND note_id = ?)
+                           OR normalized_relative_path = ?)
+                LIMIT 1
+                """,
+                (root_id, note_scope_id, note_id, relative_path),
+            ).fetchone()
+        return row is not None
+
     def list_binding_summaries(
         self,
         root_id: str,
@@ -1017,6 +1342,9 @@ class NotesDeviceStateStore:
         *,
         capacity_bytes: int,
         now: int | None = None,
+        retention_ns: int | None = None,
+        required_source_operation_id: str | None = None,
+        required_source_expires_after: int | None = None,
     ) -> NotesSyncRecoveryAdmission:
         """Atomically reserve recovery capacity and persist mutation intent."""
 
@@ -1038,10 +1366,45 @@ class NotesDeviceStateStore:
             now = _now()
         elif type(now) is not int or now <= 0:
             raise ValueError("now must be positive.")
+        if retention_ns is not None and (
+            type(retention_ns) is not int or retention_ns <= 0
+        ):
+            raise ValueError("retention_ns must be positive.")
+        if (required_source_operation_id is None) != (
+            required_source_expires_after is None
+        ):
+            raise ValueError("source operation and expiry precondition must be paired.")
+        if required_source_operation_id is not None:
+            validate_notes_sync_opaque_id(
+                required_source_operation_id,
+                field_name="required_source_operation_id",
+            )
+            if (
+                type(required_source_expires_after) is not int
+                or required_source_expires_after <= 0
+            ):
+                raise ValueError("required_source_expires_after must be positive.")
+        if operation.kind in _RECOVERY_ENVELOPE_KINDS:
+            _require_recovery_envelope_anchor(
+                operation.kind,
+                recovery.payload,
+                recovery.metadata,
+                operation.expected_file_digest,
+            )
 
         required = len(recovery.payload) + len(recovery.metadata)
-        timestamp = _now()
         with self.transaction(immediate=True) as connection:
+            if required_source_operation_id is not None:
+                source = connection.execute(
+                    "SELECT recovery.expires_at FROM notes_sync_recovery AS recovery "
+                    "JOIN notes_sync_operations AS operation "
+                    "ON operation.operation_id = recovery.operation_id "
+                    "WHERE recovery.operation_id = ? "
+                    "AND operation.state = 'completed'",
+                    (required_source_operation_id,),
+                ).fetchone()
+                if source is None or source[0] <= required_source_expires_after:
+                    raise NotesDeviceStateError("undo_expired")
             existing_operation = connection.execute(
                 """
                 SELECT root_id, binding_id, kind, state, reason_code,
@@ -1053,7 +1416,8 @@ class NotesDeviceStateStore:
             ).fetchone()
             existing_recovery = connection.execute(
                 """
-                SELECT recovery_id, operation_id, payload, metadata, expires_at
+                SELECT recovery_id, operation_id, payload, metadata,
+                       expires_at, created_at
                 FROM notes_sync_recovery WHERE operation_id = ?
                 """,
                 (operation.operation_id,),
@@ -1069,12 +1433,21 @@ class NotesDeviceStateStore:
                     operation.expected_note_version,
                     operation.expected_file_digest,
                 )
-                exact_recovery = existing_recovery == (
+                exact_recovery = existing_recovery[:4] == (
                     recovery.recovery_id,
                     recovery.operation_id,
                     recovery.payload,
                     recovery.metadata,
-                    recovery.expires_at,
+                ) and (
+                    (
+                        retention_ns is None
+                        and existing_recovery[4] == recovery.expires_at
+                    )
+                    or (
+                        retention_ns is not None
+                        and type(existing_recovery[5]) is int
+                        and existing_recovery[4] == existing_recovery[5] + retention_ns
+                    )
                 )
                 if not exact_operation or not exact_recovery:
                     raise NotesDeviceStateError(
@@ -1129,6 +1502,7 @@ class NotesDeviceStateStore:
                     raise NotesDeviceStateError(
                         "A journal operation and its binding must use the same root."
                     )
+            timestamp = _now()
             connection.execute(
                 """
                 INSERT INTO notes_sync_operations (
@@ -1163,7 +1537,11 @@ class NotesDeviceStateStore:
                     recovery.operation_id,
                     recovery.payload,
                     recovery.metadata,
-                    recovery.expires_at,
+                    (
+                        recovery.expires_at
+                        if retention_ns is None
+                        else timestamp + retention_ns
+                    ),
                     timestamp,
                 ),
             )
@@ -1181,6 +1559,89 @@ class NotesDeviceStateStore:
             required_bytes=required,
             available_bytes=available,
         )
+
+    def checkpoint_resolution_post_authority(
+        self,
+        operation_id: str,
+        authority_digest: str,
+        *,
+        expected_metadata_length: int,
+    ) -> None:
+        """Seal one completed resolution's exact post-authority digest."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_digest(authority_digest, field_name="authority_digest")
+        if type(expected_metadata_length) is not int or expected_metadata_length <= 0:
+            raise ValueError("expected_metadata_length must be positive.")
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT operation.kind, operation.state, operation.expected_file_digest, "
+                "recovery.payload, recovery.metadata "
+                "FROM notes_sync_operations AS operation "
+                "JOIN notes_sync_recovery AS recovery "
+                "ON recovery.operation_id = operation.operation_id "
+                "WHERE operation.operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError("The resolution recovery does not exist.")
+            kind, state, anchor, payload, metadata = row
+            if (
+                kind
+                not in {
+                    "resolve_keep_file",
+                    "resolve_keep_note",
+                    "resolve_keep_both",
+                }
+                or state not in {"verified", "completed"}
+                or type(payload) is not bytes
+                or type(metadata) is not bytes
+                or len(metadata) != expected_metadata_length
+            ):
+                raise NotesDeviceStateError("The resolution recovery is corrupt.")
+            _require_recovery_envelope_anchor(kind, payload, metadata, anchor)
+            try:
+                decoded = json.loads(metadata.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NotesDeviceStateError(
+                    "The resolution recovery is corrupt."
+                ) from None
+            current = decoded.get("resolution_post_authority_digest")
+            padding = decoded.get("resolution_post_authority_digest_padding")
+            if (
+                type(current) is not str
+                or type(padding) is not str
+                or current not in {"", authority_digest}
+                or padding != " " * (64 - len(current))
+            ):
+                raise NotesDeviceStateError("The resolution authority is corrupt.")
+            if current == authority_digest:
+                return
+            decoded["resolution_post_authority_digest"] = authority_digest
+            decoded["resolution_post_authority_digest_padding"] = ""
+            replacement = json.dumps(
+                decoded,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(replacement) != expected_metadata_length:
+                raise NotesDeviceStateError("The resolution recovery length drifted.")
+            replacement_anchor = notes_sync_recovery_envelope_digest(
+                kind, payload, replacement
+            )
+            changed = connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? "
+                "WHERE operation_id = ? AND metadata = ?",
+                (replacement, operation_id, metadata),
+            ).rowcount
+            anchored = connection.execute(
+                "UPDATE notes_sync_operations SET expected_file_digest = ?, "
+                "updated_at = ? WHERE operation_id = ? AND expected_file_digest = ?",
+                (replacement_anchor, _now(), operation_id, anchor),
+            ).rowcount
+            if changed != 1 or anchored != 1:
+                raise NotesDeviceStateError("The resolution authority is stale.")
 
     def find_operation(self, operation_id: str) -> NotesSyncOperationRecord | None:
         """Return one operation, distinguishing absence from store failure."""
@@ -1245,6 +1706,79 @@ class NotesDeviceStateStore:
             for row in rows
         )
 
+    def list_resolution_history(
+        self,
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[NotesSyncResolutionHistoryRecord, ...]:
+        """Return one bounded newest-first page of reviewed resolutions."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be non-negative.")
+        if now is not None and (type(now) is not int or now <= 0):
+            raise ValueError("now must be positive.")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, binding_id, kind, state, reason_code,
+                       updated_at
+                FROM notes_sync_operations
+                WHERE root_id = ?
+                  AND kind IN (
+                    'resolve_keep_file', 'resolve_keep_note', 'resolve_keep_both'
+                  )
+                ORDER BY updated_at DESC, operation_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (root_id, limit, offset),
+            ).fetchall()
+            result: list[NotesSyncResolutionHistoryRecord] = []
+            for row in rows:
+                operation_id, binding_id, kind, state, reason_code, updated_at = row
+                undo_id = linked_undo_operation_id(root_id, operation_id)
+                undo = connection.execute(
+                    "SELECT state, reason_code FROM notes_sync_operations "
+                    "WHERE operation_id = ? AND root_id = ? "
+                    "AND kind = 'undo_resolution'",
+                    (undo_id, root_id),
+                ).fetchone()
+                recovery = connection.execute(
+                    "SELECT expires_at FROM notes_sync_recovery WHERE operation_id = ?",
+                    (operation_id,),
+                ).fetchone()
+                operation_state = NotesSyncOperationState(state)
+                result.append(
+                    NotesSyncResolutionHistoryRecord(
+                        operation_id=operation_id,
+                        binding_id=binding_id,
+                        kind=kind,
+                        state=operation_state,
+                        reason_code=reason_code,
+                        completed_at=(
+                            updated_at
+                            if operation_state is NotesSyncOperationState.COMPLETED
+                            else None
+                        ),
+                        updated_at=updated_at,
+                        recovery_expires_at=(
+                            recovery[0] if recovery is not None else None
+                        ),
+                        undo_state=(
+                            NotesSyncOperationState(undo[0])
+                            if undo is not None
+                            else None
+                        ),
+                        undo_reason_code=(undo[1] if undo is not None else None),
+                    )
+                )
+        return tuple(result)
+
     def transition_operation(
         self,
         operation_id: str,
@@ -1269,6 +1803,271 @@ class NotesDeviceStateStore:
             ).rowcount
         if changed != 1:
             raise NotesDeviceStateError("The requested operation transition is stale.")
+        return self.get_operation(operation_id)
+
+    def advance_conflict_substage(
+        self,
+        *,
+        operation_id: str,
+        recovery_id: str,
+        expected_operation_state: NotesSyncOperationState,
+        expected_substage: str,
+        next_substage: str,
+        expected_payload_digest: str,
+        expected_metadata_length: int,
+        folder_authority: tuple[str, int, str, int] | None = None,
+        copy_authority: tuple[str, int] | None = None,
+        placement_authority: tuple[str, int] | None = None,
+    ) -> NotesSyncOperationRecord:
+        """Advance one exact Keep-both checkpoint without growing recovery."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(recovery_id, field_name="recovery_id")
+        validate_notes_sync_digest(
+            expected_payload_digest, field_name="expected_payload_digest"
+        )
+        if type(expected_operation_state) is not NotesSyncOperationState:
+            raise TypeError("expected_operation_state must be an operation state.")
+        if type(expected_metadata_length) is not int or expected_metadata_length <= 0:
+            raise ValueError("expected_metadata_length must be positive.")
+        try:
+            stage_index = _CONFLICT_SUBSTAGES.index(expected_substage)
+        except ValueError:
+            raise NotesDeviceStateError("The conflict substage is corrupt.") from None
+        if (
+            stage_index + 1 >= len(_CONFLICT_SUBSTAGES)
+            or _CONFLICT_SUBSTAGES[stage_index + 1] != next_substage
+        ):
+            raise NotesDeviceStateError(
+                "The requested conflict substage transition is not allowed."
+            )
+        if expected_substage == "recovery_admitted":
+            if type(folder_authority) is not tuple or len(folder_authority) != 4:
+                raise NotesDeviceStateError("The folder authority is corrupt.")
+            parent_id, parent_version, child_id, child_version = folder_authority
+            validate_notes_sync_opaque_id(parent_id, field_name="parent_folder_id")
+            validate_notes_sync_opaque_id(child_id, field_name="child_folder_id")
+            if any(
+                type(version) is not int
+                or version < 0
+                or len(str(version)) > _CONFLICT_VERSION_CAPACITY
+                for version in (parent_version, child_version)
+            ):
+                raise NotesDeviceStateError("The folder authority is corrupt.")
+        elif folder_authority is not None:
+            raise NotesDeviceStateError("The folder authority is corrupt.")
+        if expected_substage == "folders_established":
+            if type(copy_authority) is not tuple or len(copy_authority) != 2:
+                raise NotesDeviceStateError("The copy authority is corrupt.")
+            copy_note_id, copy_version = copy_authority
+            validate_notes_sync_opaque_id(copy_note_id, field_name="copy_note_id")
+            if (
+                type(copy_version) is not int
+                or copy_version < 0
+                or len(str(copy_version)) > _CONFLICT_VERSION_CAPACITY
+            ):
+                raise NotesDeviceStateError("The copy authority is corrupt.")
+        elif copy_authority is not None:
+            raise NotesDeviceStateError("The copy authority is corrupt.")
+        if expected_substage == "copy_created":
+            if type(placement_authority) is not tuple or len(placement_authority) != 2:
+                raise NotesDeviceStateError("The placement authority is corrupt.")
+            placement_id, placement_version = placement_authority
+            validate_notes_sync_opaque_id(placement_id, field_name="placement_id")
+            if (
+                type(placement_version) is not int
+                or placement_version < 0
+                or len(str(placement_version)) > _CONFLICT_VERSION_CAPACITY
+            ):
+                raise NotesDeviceStateError("The placement authority is corrupt.")
+        elif placement_authority is not None:
+            raise NotesDeviceStateError("The placement authority is corrupt.")
+        expected_current_state = _CONFLICT_SUBSTAGE_STATES[expected_substage]
+        if expected_substage == "file_reverified":
+            expected_current_state = NotesSyncOperationState.BINDING_UPDATED
+        if expected_operation_state is not expected_current_state:
+            raise NotesDeviceStateError("The conflict substage state is corrupt.")
+        next_state = _CONFLICT_SUBSTAGE_STATES[next_substage]
+        longest = max(map(len, _CONFLICT_SUBSTAGES))
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT operation.kind, operation.state, operation.expected_file_digest, "
+                "recovery.payload, "
+                "recovery.metadata FROM notes_sync_operations AS operation "
+                "JOIN notes_sync_recovery AS recovery "
+                "ON recovery.operation_id = operation.operation_id "
+                "WHERE operation.operation_id = ? AND recovery.recovery_id = ?",
+                (operation_id, recovery_id),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError(
+                    "The requested conflict recovery does not exist."
+                )
+            kind, state, anchor, payload, metadata = row
+            if (
+                kind != "resolve_keep_both"
+                or state != expected_operation_state.value
+                or type(payload) is not bytes
+                or type(metadata) is not bytes
+                or len(metadata) != expected_metadata_length
+                or hashlib.sha256(payload).hexdigest() != expected_payload_digest
+            ):
+                raise NotesDeviceStateError("The conflict recovery is corrupt.")
+            _require_recovery_envelope_anchor(kind, payload, metadata, anchor)
+            try:
+                decoded = json.loads(metadata.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NotesDeviceStateError(
+                    "The conflict recovery is corrupt."
+                ) from None
+            expected_padding = " " * (longest - len(expected_substage))
+            if (
+                not isinstance(decoded, dict)
+                or decoded.get("conflict_substage") != expected_substage
+                or decoded.get("conflict_substage_padding") != expected_padding
+                or decoded.get("recovery_payload_digest") != expected_payload_digest
+            ):
+                raise NotesDeviceStateError("The conflict substage is corrupt.")
+            for prefix in ("conflict_parent", "conflict_root"):
+                folder_id = decoded.get(f"{prefix}_actual_folder_id")
+                folder_id_padding = decoded.get(f"{prefix}_actual_folder_id_padding")
+                version = decoded.get(f"{prefix}_actual_folder_version")
+                version_padding = decoded.get(f"{prefix}_actual_folder_version_padding")
+                if (
+                    type(folder_id) is not str
+                    or type(folder_id_padding) is not str
+                    or type(version) is not str
+                    or type(version_padding) is not str
+                    or folder_id_padding
+                    != " " * (_CONFLICT_OPAQUE_ID_CAPACITY - len(folder_id))
+                    or version_padding
+                    != " " * (_CONFLICT_VERSION_CAPACITY - len(version))
+                ):
+                    raise NotesDeviceStateError("The folder authority is corrupt.")
+            copy_version_value = decoded.get("conflict_copy_note_version")
+            copy_version_padding = decoded.get("conflict_copy_note_version_padding")
+            placement_id_value = decoded.get("conflict_placement_membership_id")
+            placement_id_padding = decoded.get(
+                "conflict_placement_membership_id_padding"
+            )
+            placement_version_value = decoded.get("conflict_placement_version")
+            placement_version_padding = decoded.get(
+                "conflict_placement_version_padding"
+            )
+            if (
+                type(copy_version_value) is not str
+                or type(copy_version_padding) is not str
+                or type(placement_id_value) is not str
+                or type(placement_id_padding) is not str
+                or type(placement_version_value) is not str
+                or type(placement_version_padding) is not str
+                or copy_version_padding
+                != " " * (_CONFLICT_VERSION_CAPACITY - len(copy_version_value))
+                or placement_id_padding
+                != " " * (_CONFLICT_OPAQUE_ID_CAPACITY - len(placement_id_value))
+                or placement_version_padding
+                != " " * (_CONFLICT_VERSION_CAPACITY - len(placement_version_value))
+            ):
+                raise NotesDeviceStateError("The effect authority is corrupt.")
+            copy_checkpointed = bool(copy_version_value)
+            placement_checkpointed = bool(
+                placement_id_value and placement_version_value
+            )
+            try:
+                parsed_copy_version = int(copy_version_value or "0")
+                parsed_placement_version = int(placement_version_value or "0")
+                if placement_id_value:
+                    validate_notes_sync_opaque_id(
+                        placement_id_value,
+                        field_name="placement_id",
+                    )
+            except (TypeError, ValueError):
+                raise NotesDeviceStateError(
+                    "The effect authority is corrupt."
+                ) from None
+            if (
+                (copy_version_value and str(parsed_copy_version) != copy_version_value)
+                or parsed_copy_version < 0
+                or (placement_version_value and not placement_id_value)
+                or (placement_id_value and not placement_version_value)
+                or (
+                    placement_version_value
+                    and str(parsed_placement_version) != placement_version_value
+                )
+                or parsed_placement_version < 0
+                or copy_checkpointed
+                != (stage_index >= _CONFLICT_SUBSTAGES.index("copy_created"))
+                or placement_checkpointed
+                != (stage_index >= _CONFLICT_SUBSTAGES.index("placement_created"))
+            ):
+                raise NotesDeviceStateError("The effect authority is corrupt.")
+            if folder_authority is not None:
+                for prefix, folder_id, version in (
+                    ("conflict_parent", parent_id, parent_version),
+                    ("conflict_root", child_id, child_version),
+                ):
+                    decoded[f"{prefix}_actual_folder_id"] = folder_id
+                    decoded[f"{prefix}_actual_folder_id_padding"] = " " * (
+                        _CONFLICT_OPAQUE_ID_CAPACITY - len(folder_id)
+                    )
+                    encoded_version = str(version)
+                    decoded[f"{prefix}_actual_folder_version"] = encoded_version
+                    decoded[f"{prefix}_actual_folder_version_padding"] = " " * (
+                        _CONFLICT_VERSION_CAPACITY - len(encoded_version)
+                    )
+            if copy_authority is not None:
+                if decoded.get("conflict_copy_note_id") != copy_note_id:
+                    raise NotesDeviceStateError("The copy authority is corrupt.")
+                encoded_version = str(copy_version)
+                decoded["conflict_copy_note_version"] = encoded_version
+                decoded["conflict_copy_note_version_padding"] = " " * (
+                    _CONFLICT_VERSION_CAPACITY - len(encoded_version)
+                )
+            if placement_authority is not None:
+                decoded["conflict_placement_membership_id"] = placement_id
+                decoded["conflict_placement_membership_id_padding"] = " " * (
+                    _CONFLICT_OPAQUE_ID_CAPACITY - len(placement_id)
+                )
+                encoded_version = str(placement_version)
+                decoded["conflict_placement_version"] = encoded_version
+                decoded["conflict_placement_version_padding"] = " " * (
+                    _CONFLICT_VERSION_CAPACITY - len(encoded_version)
+                )
+            decoded["conflict_substage"] = next_substage
+            decoded["conflict_substage_padding"] = " " * (longest - len(next_substage))
+            replacement = json.dumps(
+                decoded,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(replacement) != expected_metadata_length:
+                raise NotesDeviceStateError("The conflict recovery length drifted.")
+            replacement_anchor = notes_sync_recovery_envelope_digest(
+                kind, payload, replacement
+            )
+            updated = connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? "
+                "WHERE recovery_id = ? AND operation_id = ? AND metadata = ?",
+                (replacement, recovery_id, operation_id, metadata),
+            ).rowcount
+            advanced = connection.execute(
+                "UPDATE notes_sync_operations SET state = ?, reason_code = NULL, "
+                "expected_file_digest = ?, updated_at = ? WHERE operation_id = ? "
+                "AND state = ? AND expected_file_digest = ?",
+                (
+                    next_state.value,
+                    replacement_anchor,
+                    _now(),
+                    operation_id,
+                    expected_operation_state.value,
+                    anchor,
+                ),
+            ).rowcount
+            if updated != 1 or advanced != 1:
+                raise NotesDeviceStateError(
+                    "The conflict substage transition is stale."
+                )
         return self.get_operation(operation_id)
 
     def mark_operation_attention(
@@ -1297,6 +2096,118 @@ class NotesDeviceStateStore:
             )
         return self.get_operation(operation_id)
 
+    def advance_undo_substage(
+        self,
+        *,
+        operation_id: str,
+        recovery_id: str,
+        expected_substage: str,
+        next_substage: str,
+        expected_metadata_length: int,
+        restored_authority_digest: str | None = None,
+    ) -> None:
+        """Replace one padded linked-Undo checkpoint without changing capacity."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(recovery_id, field_name="recovery_id")
+        if type(expected_metadata_length) is not int or expected_metadata_length <= 0:
+            raise ValueError("expected_metadata_length must be positive.")
+        try:
+            index = _UNDO_SUBSTAGES.index(expected_substage)
+        except ValueError:
+            raise NotesDeviceStateError("The Undo substage is corrupt.") from None
+        if (
+            index + 1 >= len(_UNDO_SUBSTAGES)
+            or _UNDO_SUBSTAGES[index + 1] != next_substage
+        ):
+            raise NotesDeviceStateError(
+                "The requested Undo substage transition is not allowed."
+            )
+        if expected_substage == "recovery_admitted":
+            if restored_authority_digest is None:
+                raise NotesDeviceStateError("The restored Undo authority is required.")
+            validate_notes_sync_digest(
+                restored_authority_digest,
+                field_name="restored_authority_digest",
+            )
+        elif restored_authority_digest is not None:
+            raise NotesDeviceStateError("The restored Undo authority is unexpected.")
+        longest = max(map(len, _UNDO_SUBSTAGES))
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT operation.kind, operation.expected_file_digest, "
+                "recovery.payload, recovery.metadata "
+                "FROM notes_sync_operations AS operation "
+                "JOIN notes_sync_recovery AS recovery "
+                "ON recovery.operation_id = operation.operation_id "
+                "WHERE operation.operation_id = ? AND recovery.recovery_id = ?",
+                (operation_id, recovery_id),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError("The linked Undo recovery does not exist.")
+            kind, anchor, payload, metadata = row
+            if (
+                kind != "undo_resolution"
+                or type(payload) is not bytes
+                or type(metadata) is not bytes
+                or len(metadata) != expected_metadata_length
+            ):
+                raise NotesDeviceStateError("The linked Undo recovery is corrupt.")
+            _require_recovery_envelope_anchor(kind, payload, metadata, anchor)
+            try:
+                decoded = json.loads(metadata.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NotesDeviceStateError(
+                    "The linked Undo recovery is corrupt."
+                ) from None
+            if (
+                not isinstance(decoded, dict)
+                or decoded.get("undo_payload_digest")
+                != hashlib.sha256(payload).hexdigest()
+                or decoded.get("undo_substage") != expected_substage
+                or decoded.get("undo_substage_padding")
+                != " " * (longest - len(expected_substage))
+            ):
+                raise NotesDeviceStateError("The linked Undo substage is corrupt.")
+            restored = decoded.get("restored_authority_digest")
+            restored_padding = decoded.get("restored_authority_digest_padding")
+            if (
+                type(restored) is not str
+                or type(restored_padding) is not str
+                or restored_padding != " " * (64 - len(restored))
+                or (expected_substage == "recovery_admitted" and restored != "")
+                or (expected_substage != "recovery_admitted" and len(restored) != 64)
+            ):
+                raise NotesDeviceStateError("The restored Undo authority is corrupt.")
+            if restored_authority_digest is not None:
+                decoded["restored_authority_digest"] = restored_authority_digest
+                decoded["restored_authority_digest_padding"] = ""
+            decoded["undo_substage"] = next_substage
+            decoded["undo_substage_padding"] = " " * (longest - len(next_substage))
+            replacement = json.dumps(
+                decoded,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(replacement) != expected_metadata_length:
+                raise NotesDeviceStateError("The linked Undo recovery length drifted.")
+            replacement_anchor = notes_sync_recovery_envelope_digest(
+                kind, payload, replacement
+            )
+            changed = connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? "
+                "WHERE recovery_id = ? AND operation_id = ? AND metadata = ?",
+                (replacement, recovery_id, operation_id, metadata),
+            ).rowcount
+            anchored = connection.execute(
+                "UPDATE notes_sync_operations SET expected_file_digest = ?, "
+                "updated_at = ? WHERE operation_id = ? AND expected_file_digest = ?",
+                (replacement_anchor, _now(), operation_id, anchor),
+            ).rowcount
+            if changed != 1 or anchored != 1:
+                raise NotesDeviceStateError("The linked Undo substage is stale.")
+
     def mark_operation_partial_attention(
         self,
         operation_id: str,
@@ -1320,14 +2231,27 @@ class NotesDeviceStateStore:
         with self.transaction(immediate=True) as connection:
             current = connection.execute(
                 """
-                SELECT length(metadata) FROM notes_sync_recovery
-                WHERE recovery_id = ? AND operation_id = ?
+                SELECT operation.kind, operation.expected_file_digest,
+                       recovery.payload, recovery.metadata
+                FROM notes_sync_operations AS operation
+                JOIN notes_sync_recovery AS recovery
+                  ON recovery.operation_id = operation.operation_id
+                WHERE recovery.recovery_id = ? AND operation.operation_id = ?
                 """,
                 (recovery_id, operation_id),
             ).fetchone()
             if current is None:
                 raise NotesDeviceStateError(
                     "The requested recovery record does not exist."
+                )
+            kind, anchor, payload, current_metadata = current
+            replacement_anchor = anchor
+            if kind in _RECOVERY_ENVELOPE_KINDS:
+                _require_recovery_envelope_anchor(
+                    kind, payload, current_metadata, anchor
+                )
+                replacement_anchor = notes_sync_recovery_envelope_digest(
+                    kind, payload, metadata
                 )
             used = int(
                 connection.execute(
@@ -1337,24 +2261,26 @@ class NotesDeviceStateStore:
                     """
                 ).fetchone()[0]
             )
-            if used - int(current[0]) + len(metadata) > capacity_bytes:
+            if used - len(current_metadata) + len(metadata) > capacity_bytes:
                 raise NotesDeviceStateError(
                     "The private recovery capacity cannot admit cleanup authority."
                 )
             updated = connection.execute(
                 """
                 UPDATE notes_sync_recovery SET metadata = ?
-                WHERE recovery_id = ? AND operation_id = ?
+                WHERE recovery_id = ? AND operation_id = ? AND metadata = ?
                 """,
-                (metadata, recovery_id, operation_id),
+                (metadata, recovery_id, operation_id, current_metadata),
             ).rowcount
             fenced = connection.execute(
                 """
                 UPDATE notes_sync_operations
-                SET state = 'needs_attention', reason_code = ?, updated_at = ?
+                SET state = 'needs_attention', reason_code = ?,
+                    expected_file_digest = ?, updated_at = ?
                 WHERE operation_id = ? AND state != 'completed'
+                  AND expected_file_digest IS ?
                 """,
-                (selected_reason, _now(), operation_id),
+                (selected_reason, replacement_anchor, _now(), operation_id, anchor),
             ).rowcount
             if updated != 1 or fenced != 1:
                 raise NotesDeviceStateError(
@@ -1706,6 +2632,7 @@ __all__ = [
     "NotesSyncOperationRecord",
     "NotesSyncRecoveryRecord",
     "NotesSyncRecoveryAdmission",
+    "NotesSyncResolutionHistoryRecord",
     "NotesSyncRootRecord",
     "NotesSyncRootSummary",
     "NotesSyncStoreSetting",

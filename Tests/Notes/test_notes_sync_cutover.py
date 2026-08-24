@@ -927,6 +927,113 @@ def test_production_app_opens_both_restart_cutover_fences() -> None:
     assert _dotted_name(process_gate) == "self._instance_lock_status.acquired"
 
 
+def test_production_app_builds_the_lasting_runtime_off_the_import_path() -> None:
+    """TASK-21108: the runtime is built lazily, never in ``__init__``.
+
+    Constructing the owner is what imported ``Notes/notes_sync_runtime`` and
+    ``Notes/notes_sync_legacy`` (15 modules) at ``import tldw_chatbook.app``.
+    Both imports now live inside ``_construct_notes_sync_runtime_owner``,
+    which the ``notes_sync_runtime_owner`` property calls on first access. The
+    residency half of this guard is
+    ``Tests/Packaging/test_app_import_diet_closure.py``; this half pins the
+    structure that produces it.
+    """
+    path = _PRODUCTION / "app.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    # Scoped to TldwCli's OWN method bodies: app.py defines 13 `__init__`
+    # methods across its command providers, helper apps and classes nested
+    # inside TldwCli methods, so neither a module-wide lookup nor an
+    # `ast.walk` of the class picks the right one (both land on a nested
+    # class's `__init__` and assert nothing).
+    app_class = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "TldwCli"
+    )
+    functions = {
+        node.name: node
+        for node in app_class.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    # `_construct_`, not `_build_`: see the method's own docstring -- a
+    # `_build_...` wrapper would match the endswith() fence above.
+    builder = functions["_construct_notes_sync_runtime_owner"]
+    builds = [
+        node
+        for node in ast.walk(builder)
+        if isinstance(node, ast.Call)
+        and _dotted_name(node.func).endswith("build_notes_sync_runtime_owner")
+    ]
+    assert len(builds) == 1
+
+    deferred = {
+        (node.module, alias.name)
+        for node in ast.walk(builder)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert ("Notes.notes_sync_runtime", "build_notes_sync_runtime_owner") in deferred
+    assert ("Notes.notes_sync_legacy", "legacy_sync_directory_configured") in deferred
+
+    # Neither module may be imported at app module scope any more.
+    module_scope_imports = {
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert "Notes.notes_sync_runtime" not in module_scope_imports
+    assert "Notes.notes_sync_legacy" not in module_scope_imports
+    assert "tldw_chatbook.Notes.notes_sync_runtime" not in module_scope_imports
+    assert "tldw_chatbook.Notes.notes_sync_legacy" not in module_scope_imports
+
+    init = functions["__init__"]
+    assert not [
+        node
+        for node in ast.walk(init)
+        if isinstance(node, ast.Call)
+        and _dotted_name(node.func).endswith(
+            ("build_notes_sync_runtime_owner", "build_notes_sync_legacy_migrator")
+        )
+    ], "TldwCli.__init__ must not build the lasting-sync runtime"
+
+
+def test_lasting_runtime_property_builds_once_and_accepts_a_double() -> None:
+    """TASK-21108: the lazy property memoizes, and assignment still works.
+
+    Tests install runtime doubles with ``app.notes_sync_runtime_owner = ...``;
+    replacing the eager attribute with a property would silently break that
+    if the setter were dropped.
+    """
+    import threading
+
+    from tldw_chatbook.app import TldwCli
+
+    class _Host:
+        notes_sync_runtime_owner = TldwCli.notes_sync_runtime_owner
+
+        def __init__(self) -> None:
+            self._notes_sync_runtime_owner = None
+            self._notes_sync_runtime_owner_lock = threading.Lock()
+            self.builds = 0
+
+        def _construct_notes_sync_runtime_owner(self) -> object:
+            self.builds += 1
+            return SimpleNamespace(tag="built")
+
+    host = _Host()
+    assert host.builds == 0, "the property must not build before first access"
+    first = host.notes_sync_runtime_owner
+    second = host.notes_sync_runtime_owner
+    assert first is second
+    assert host.builds == 1
+
+    double = SimpleNamespace(tag="double")
+    host.notes_sync_runtime_owner = double
+    assert host.notes_sync_runtime_owner is double
+    assert host.builds == 1
+
+
 def test_missing_lasting_runtime_has_no_legacy_fallback() -> None:
     screen = (_PRODUCTION / "UI" / "Screens" / "library_screen.py").read_text(
         encoding="utf-8"
@@ -936,3 +1043,146 @@ def test_missing_lasting_runtime_has_no_legacy_fallback() -> None:
     assert "NotesSyncEngine" not in screen
     assert "NotesSyncService" not in screen
     assert "sync_service" not in screen
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_start_defers_without_creating_the_state_db(
+    tmp_path: Path,
+) -> None:
+    """TASK-21112: a zero-profile boot must not create notes-sync state."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    migrations: list[str] = []
+    coordinator = _Coordinator()
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: migrations.append("migrated"),
+        coordinator=coordinator,
+        adapter=_Adapter(),
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=lambda: False,
+    )
+
+    await owner.start()
+
+    assert not (tmp_path / "sync.sqlite3").exists()
+    assert (owner.snapshot().status, owner.snapshot().next_action) == (
+        "not_configured",
+        "none",
+    )
+    assert migrations == []
+    assert coordinator.calls == 0
+    with pytest.raises(RuntimeError, match="cutover"):
+        await owner.activate_root("root-1", authorization=None)
+
+    await owner.shutdown()
+
+    assert not (tmp_path / "sync.sqlite3").exists()
+    assert owner.snapshot().status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_forced_start_brings_up_a_previously_deferred_runtime(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    migrations: list[str] = []
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: migrations.append("migrated"),
+        coordinator=_SetupCoordinator(),
+        adapter=_SetupAdapter(),
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=lambda: False,
+    )
+
+    await owner.start()
+    assert owner.snapshot().status == "not_configured"
+    assert not (tmp_path / "sync.sqlite3").exists()
+
+    await owner.start(force=True)
+
+    assert (tmp_path / "sync.sqlite3").exists()
+    assert migrations == ["migrated"]
+    assert owner.snapshot().status == "active"
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_review_setup_live_starts_a_deferred_runtime(tmp_path: Path) -> None:
+    """Activating the first root at runtime brings the machinery up on demand."""
+
+    from tldw_chatbook.Notes.notes_sync_models import NotesSyncDirection
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        NotesSyncRuntimeOwner,
+    )
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    adapter = _SetupAdapter()
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=_SetupCoordinator(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=lambda: False,
+    )
+    await owner.start()
+    assert owner.snapshot().status == "not_configured"
+
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Research",
+            canonical_path=str(tmp_path / "research"),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+
+    assert owner.snapshot().status == "active"
+    assert (tmp_path / "sync.sqlite3").exists()
+    result = await owner.activate_root(review.root_id, review.observation_token)
+    assert result.accepted is True
+    assert store.get_root(review.root_id).state.value == "active"
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_start_evidence_probe_failure_fails_open_and_starts(
+    tmp_path: Path,
+) -> None:
+    """A broken probe must never silently disable a configured user's sync."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    def broken_probe() -> bool:
+        raise RuntimeError("private probe failure")
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=_Coordinator(),
+        adapter=_Adapter(),
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=broken_probe,
+    )
+
+    await owner.start()
+
+    assert owner.snapshot().status == "active"
+    assert (tmp_path / "sync.sqlite3").exists()
+    await owner.shutdown()

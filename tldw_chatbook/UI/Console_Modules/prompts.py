@@ -110,6 +110,7 @@ from loguru import logger
 from ..Navigation.pending_handoff_store import HandoffChannel
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from ...Chat.console_command_grammar import CommandParse
+from ...Utils.fts5_match_forms import quote_fts5_prefix
 from ...Chat.console_provider_endpoints import safe_endpoint_display
 from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
 from ...Library.library_prompts_state import classify_prompt_save_error
@@ -1176,8 +1177,7 @@ class ConsolePromptsController:
         ``library_fts_query._quote_fts_term``), so user text can never break
         out of the quoted phrase to inject MATCH operators.
         """
-        escaped = text.replace('"', '""')
-        return f'"{escaped}"*'
+        return quote_fts5_prefix(text)
 
     async def _console_prompt_search(self, query: str) -> list:
         """Bounded FTS prompt search bound to the active scope service.

@@ -1,8 +1,8 @@
-"""Pure display state for the Console grouped conversation browser."""
+"""Pure display state for the Console Default/unassigned conversation browser."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import total_ordering
 from typing import Iterable, Mapping, Protocol
@@ -360,14 +360,14 @@ def build_console_conversation_browser_state(
     subagent_counts: Mapping[str, int] | None = None,
     now: datetime | None = None,
 ) -> ConsoleConversationBrowserState:
-    """Build a deterministic grouped conversation browser snapshot.
+    """Build the deterministic flat Default/unassigned browser snapshot.
 
     Args:
         rows: Input rows from the eventual controller layer. The builder does
             not query services or mutate UI preferences.
-        active_workspace_id: Workspace id that should be expanded by default.
-        group_collapse_preferences: Tri-state collapse preferences where a
-            missing key means use the builder default.
+        active_workspace_id: Retained compatibility input; ownership no longer
+            depends on the active named workspace.
+        group_collapse_preferences: Flat Chats collapse preference mapping.
         query: Search text matched against row title, workspace, status, and
             scope copy.
         marks_available: Whether local star state is available for rendering.
@@ -382,7 +382,7 @@ def build_console_conversation_browser_state(
         now: Reference time for computing relative age labels. Defaults to now.
 
     Returns:
-        Grouped, capped, immutable display state.
+        Flat, capped, immutable display state with one Chats section.
     """
 
     preferences = dict(group_collapse_preferences or {})
@@ -392,91 +392,17 @@ def build_console_conversation_browser_state(
     safe_result_limit = max(1, int(result_limit))
     safe_group_row_limit = max(0, int(group_row_limit))
     reference_now = now or datetime.now(timezone.utc)
-    prepared_rows = tuple(_normalize_input_row(row, now=reference_now) for row in rows)
+    all_prepared_rows = _dedupe_rows(
+        _normalize_input_row(row, now=reference_now) for row in rows
+    )
+    prepared_rows = tuple(row for row in all_prepared_rows if _belongs_to_chats(row))
     filtered_rows = tuple(
         row
         for row in prepared_rows
         if not query_active or _row_matches(row, normalized_query)
     )
 
-    starred_rows = _dedupe_rows(
-        row for row in filtered_rows if row.starred and bool(row.conversation_id)
-    )
-    workspace_rows_by_group: dict[str, list[ConsoleConversationBrowserInputRow]] = {}
-    workspace_labels: dict[str, str] = {}
-    chat_rows: list[ConsoleConversationBrowserInputRow] = []
-
-    for row in filtered_rows:
-        if _belongs_to_chats(row):
-            chat_rows.append(row)
-            continue
-        workspace_id = _text_or_none(row.workspace_id)
-        if workspace_id is None:
-            chat_rows.append(row)
-            continue
-        group_id = f"workspace:{workspace_id}"
-        workspace_rows_by_group.setdefault(group_id, []).append(row)
-        workspace_labels.setdefault(group_id, row.workspace_label or workspace_id)
-
-    sorted_starred_rows = _sort_starred_rows(starred_rows)
-    starred_section = _build_row_section(
-        section_id="starred",
-        label="Starred",
-        rows=sorted_starred_rows,
-        # TASK-2154.3 (LY-04): an empty section default-collapses to a quiet
-        # single-line header (same default Chats already used) instead of
-        # announcing "No starred conversations." before any user intent.
-        # Expanding it still shows the empty copy; an active query
-        # force-expands only when the section has matches (see
-        # `_build_row_section`).
-        preference_collapsed=_resolve_collapsed(
-            preferences,
-            "section:starred",
-            default_collapsed=not bool(sorted_starred_rows),
-        ),
-        query_active=query_active,
-        group_row_limit=safe_group_row_limit,
-        empty_copy="No starred conversations.",
-        counts=counts,
-    )
-    workspace_groups = _build_workspace_groups(
-        rows_by_group=workspace_rows_by_group,
-        labels=workspace_labels,
-        active_workspace_id=_text_or_none(active_workspace_id),
-        preferences=preferences,
-        query_active=query_active,
-        group_row_limit=safe_group_row_limit,
-        counts=counts,
-    )
-    workspaces_preference_collapsed = _resolve_collapsed(
-        preferences,
-        "section:workspaces",
-        # TASK-2154.3 (LY-04): same empty-default-collapse as Starred/Chats.
-        default_collapsed=not bool(workspace_groups),
-    )
-    # TASK-2154.3 (LY-04): an active query always expands the section, so a
-    # no-match search keeps "No workspace conversations." as its feedback
-    # (the pre-2154.3 default did the same by never default-collapsing).
-    workspaces_collapsed = workspaces_preference_collapsed and not query_active
-    workspaces_section = ConsoleConversationBrowserSection(
-        section_id="workspaces",
-        label="Workspaces",
-        collapsed=workspaces_collapsed,
-        groups=workspace_groups,
-        count=sum(group.count for group in workspace_groups),
-        hidden_count=(
-            sum(group.count for group in workspace_groups)
-            if workspaces_collapsed
-            else sum(group.hidden_count for group in workspace_groups)
-        ),
-        empty_copy="No workspace conversations.",
-        # TASK-912 AC#1: `_most_urgent_run_marker` duck-types on `.run_marker`,
-        # so passing the groups themselves (each already the most-urgent glyph
-        # among ITS full pre-cap rows) yields the most-urgent glyph across the
-        # whole section without re-walking every row.
-        run_marker=_most_urgent_run_marker(workspace_groups),
-    )
-    chat_input_rows = _sort_normal_rows(_dedupe_rows(chat_rows))
+    chat_input_rows = _sort_normal_rows(filtered_rows)
     chat_preference_collapsed = _resolve_collapsed(
         preferences,
         "section:chats",
@@ -489,11 +415,11 @@ def build_console_conversation_browser_state(
         preference_collapsed=chat_preference_collapsed,
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
-        empty_copy="No chats.",
+        empty_copy="No Default or unassigned conversations. Named-workspace conversations are under Workspaces.",
         counts=counts,
     )
 
-    sections = (starred_section, workspaces_section, chats_section)
+    sections = (chats_section,)
     effective_total_count = (
         _safe_non_negative_int(result_total_count)
         if result_total_count is not None
@@ -773,9 +699,10 @@ def _dedupe_rows(
     seen: set[str] = set()
     deduped: list[ConsoleConversationBrowserInputRow] = []
     for row in rows:
-        if row.row_key in seen:
+        stable_id = str(row.conversation_id or row.row_key or "")
+        if stable_id in seen:
             continue
-        seen.add(row.row_key)
+        seen.add(stable_id)
         deduped.append(row)
     return tuple(deduped)
 
@@ -783,17 +710,62 @@ def _dedupe_rows(
 def _sort_normal_rows(
     rows: tuple[ConsoleConversationBrowserInputRow, ...],
 ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-    return tuple(
-        sorted(
-            rows,
-            key=lambda row: (
-                not row.selected,
-                ReverseKey(row.updated_sort),
-                row.title.casefold(),
-                row.row_key,
+    return tuple(sorted(rows, key=console_conversation_starred_recency_sort_key))
+
+
+def console_conversation_starred_recency_sort_key(
+    row: object,
+) -> tuple[bool, "ReverseKey", str, str]:
+    """Return the one starred-first, recency-descending conversation key."""
+    stable_id = str(
+        getattr(row, "conversation_id", "") or getattr(row, "row_key", "") or ""
+    )
+    return (
+        not bool(getattr(row, "starred", False)),
+        ReverseKey(str(getattr(row, "updated_sort", "") or "")),
+        str(getattr(row, "title", "") or "").casefold(),
+        stable_id,
+    )
+
+
+def overlay_console_conversation_markers(
+    rows: Iterable[ConsoleConversationBrowserInputRow],
+    *,
+    starred_ids: Iterable[str],
+    selected_conversation_id: str | None,
+    run_markers: Mapping[str, str],
+) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    """Overlay current keyed markers while retaining every unchanged row object."""
+    starred = {str(conversation_id) for conversation_id in starred_ids}
+    selected_id = str(selected_conversation_id or "").strip()
+    markers = {str(key): str(value or "") for key, value in run_markers.items()}
+    overlaid: list[ConsoleConversationBrowserInputRow] = []
+    for row in rows:
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id:
+            overlaid.append(row)
+            continue
+        values = (
+            conversation_id in starred,
+            conversation_id == selected_id,
+            (
+                markers[conversation_id]
+                if conversation_id in markers
+                else row.run_marker
             ),
         )
-    )
+        if values == (row.starred, row.selected, row.run_marker):
+            overlaid.append(row)
+            continue
+        overlaid.append(
+            replace(
+                row,
+                starred=values[0],
+                selected=values[1],
+                run_marker=values[2],
+            )
+        )
+    return tuple(overlaid)
 
 
 def _sort_starred_rows(
@@ -896,9 +868,7 @@ def _capped_hidden_count(
     collapsed groups), so summing it across expanded sections yields exactly the
     silently-dropped total.
     """
-    return sum(
-        section.hidden_count for section in sections if not section.collapsed
-    )
+    return sum(section.hidden_count for section in sections if not section.collapsed)
 
 
 def _build_status_copy(

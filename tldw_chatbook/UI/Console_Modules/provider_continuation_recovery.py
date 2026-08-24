@@ -27,6 +27,7 @@ class ProviderContinuationRecoveryState:
     mode: str
     impact: str
     replay_available: bool = False
+    actions_enabled: bool = True
 
 
 def provider_continuation_recovery_state(
@@ -60,6 +61,8 @@ def provider_continuation_recovery_state(
             version,
             "ambiguous",
             "A tool may already have run. Resume is blocked to avoid repeating a side effect; discard this interrupted run to continue.",
+            False,
+            message.provider_continuation_actions_enabled,
         )
     if message.provider_continuation_remote:
         impact = (
@@ -78,6 +81,7 @@ def provider_continuation_recovery_state(
             "remote",
             message.provider_continuation_warning or impact,
             replay_available,
+            message.provider_continuation_actions_enabled,
         )
     impact = (
         "The provider paused while tools may not have finished. Resume after reviewing "
@@ -94,6 +98,7 @@ def provider_continuation_recovery_state(
         "local",
         message.provider_continuation_warning or impact,
         replay_available,
+        message.provider_continuation_actions_enabled,
     )
 
 
@@ -197,9 +202,13 @@ class ProviderContinuationRecoveryCallout(Vertical):
         resume.display = state.mode == "local"
         take_over.display = state.mode == "remote"
         discard.display = state.mode != "notice"
-        resume.disabled = self._busy or not state.replay_available
-        take_over.disabled = self._busy or not state.replay_available
-        discard.disabled = self._busy
+        resume.disabled = (
+            self._busy or not state.actions_enabled or not state.replay_available
+        )
+        take_over.disabled = (
+            self._busy or not state.actions_enabled or not state.replay_available
+        )
+        discard.disabled = self._busy or not state.actions_enabled
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
@@ -210,7 +219,7 @@ class ProviderContinuationRecoveryCallout(Vertical):
         }
         action = action_by_id.get(event.button.id or "")
         state = self.recovery_state
-        if action is None or self._busy or state is None:
+        if action is None or self._busy or state is None or not state.actions_enabled:
             return
         event.stop()
         self._busy = True
@@ -299,10 +308,7 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
     def compose(self) -> ComposeResult:
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
-            top=False,
-            # TASK-17651: the workspace grid's own bottom border is the
-            # bottom stack's single separator; the region ends flush.
-            bottom=False,
+            edges=(),
         )
         with transcript_region:
             yield ProviderContinuationRecoveryCallout(

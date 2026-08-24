@@ -6,11 +6,14 @@ import asyncio
 import hashlib
 import sqlite3
 import time
+import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
 from tldw_chatbook.Notes.note_import_discovery import (
@@ -22,10 +25,25 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
     NotesSyncOperationRecord,
+    NotesSyncResolutionHistoryRecord,
     NotesSyncRootRecord,
     NotesSyncStoreSetting,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictApplyResult,
+    ConflictComparison,
+    ConflictHistoryRow,
+    ConflictReceipt,
+    ConflictSelection,
+    NotesSyncConflictChoice,
+    build_conflict_comparison,
+    conflict_copies_folder_id,
+    conflict_copy_note_id,
+    conflict_resolution_operation_id,
+    conflict_root_folder_id,
+    eligible_conflict_reason,
+)
 from tldw_chatbook.Notes.notes_sync_authority import (
     NotesScopeSyncAuthority,
     NotesSyncAuthorityError,
@@ -36,17 +54,24 @@ from tldw_chatbook.Notes.notes_sync_coordinator import (
     RootAdmissionState,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
+    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncAction,
     NotesSyncActionKind,
     NotesSyncBindingState,
     NotesSyncDirection,
     NotesSyncOperationState,
     NotesSyncRootState,
+    normalize_notes_sync_relative_path,
     validate_notes_sync_opaque_id,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
+    CONFLICT_RECOVERY_RETENTION_NS,
+    NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
+    NotesSyncExecutionResult,
     NotesSyncExecutor,
+    NotesSyncKeepBothAuthority,
+    NotesSyncUndoProjection,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
@@ -60,8 +85,11 @@ from tldw_chatbook.Notes.notes_sync_legacy import (
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
+    ReconciliationAttention,
+    ReconciliationAttentionKind,
     ReconciliationInput,
     ReconciliationPlan,
+    _observation_token,
     assert_review_current,
     plan_reconciliation,
 )
@@ -69,17 +97,11 @@ from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
 
 CUTOVER_MARKER = "notes-sync-cutover-v1"
-_AUTOMATIC_ACTIONS = frozenset(
-    {
-        NotesSyncActionKind.CREATE_NOTE,
-        NotesSyncActionKind.UPDATE_NOTE,
-        NotesSyncActionKind.CREATE_FILE,
-        NotesSyncActionKind.UPDATE_FILE,
-    }
-)
-_EXECUTABLE_ACTIONS = _AUTOMATIC_ACTIONS
+_AUTOMATIC_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
+_EXECUTABLE_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
 _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
 _OBSERVATION_BUNDLE_LIMIT = 8
+_DISPLAY_LABEL_MAX_CHARS = 160
 _DURABLE_BLOCKED_STATUS = MappingProxyType(
     {
         "activation_recovery_required": ("needs_attention", "review_settings"),
@@ -97,6 +119,7 @@ _RUNTIME_STATUSES = frozenset(
         "changes_available",
         "failed",
         "needs_attention",
+        "not_configured",
         "offline",
         "partial",
         "passive",
@@ -184,6 +207,103 @@ class NotesSyncControlResult:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RuntimeConflictReceipt:
+    """Fresh, bounded display projection for one active receipt."""
+
+    operation_id: str
+    item_label: str
+    choice: NotesSyncConflictChoice
+    state: str
+    undo_available: bool
+    undo_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        ConflictReceipt(
+            self.operation_id,
+            self.choice,
+            self.state,
+            self.undo_available,
+            self.undo_reason,
+        )
+        _validate_item_label(self.item_label)
+
+    def __repr__(self) -> str:
+        return "RuntimeConflictReceipt(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeConflictLabel:
+    """Bounded identity label for one currently eligible conflict."""
+
+    binding_id: str
+    note_title: str
+    relative_path: str
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
+        if (
+            type(self.note_title) is not str
+            or not self.note_title
+            or len(self.note_title) > _DISPLAY_LABEL_MAX_CHARS
+            or "\n" in self.note_title
+            or "\r" in self.note_title
+        ):
+            raise ValueError("note_title must be bounded single-line text")
+        object.__setattr__(
+            self,
+            "relative_path",
+            normalize_notes_sync_relative_path(self.relative_path),
+        )
+
+    def __repr__(self) -> str:
+        return "RuntimeConflictLabel(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeConflictHistoryRow:
+    """Fresh, bounded display projection for one durable history row."""
+
+    operation_id: str
+    item_label: str
+    choice: NotesSyncConflictChoice
+    state: str
+    completed_at: str | None
+    updated_at: str
+    undo_available: bool
+    undo_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        ConflictHistoryRow(
+            self.operation_id,
+            self.choice,
+            self.state,
+            self.completed_at,
+            self.updated_at,
+            self.undo_available,
+            self.undo_reason,
+        )
+        _validate_item_label(self.item_label)
+
+    def __repr__(self) -> str:
+        return "RuntimeConflictHistoryRow(<private>)"
+
+
+def _validate_item_label(value: str) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _DISPLAY_LABEL_MAX_CHARS
+        or "\n" in value
+        or "\r" in value
+    ):
+        raise ValueError("item_label must be bounded single-line text")
+
+
+def _ignore_operation_stage(_state: NotesSyncOperationState) -> None:
+    return None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class NotesSyncRootSetup:
     """Private local-root configuration used only for review and activation."""
 
@@ -249,6 +369,14 @@ class _RuntimeAdapter(Protocol):
         action: NotesSyncAction,
     ) -> object: ...
 
+    async def build_conflict_execution_request(
+        self,
+        root: NotesSyncRootRecord,
+        observations: ReconciliationInput,
+        plan: ReconciliationPlan,
+        selection: ConflictSelection,
+    ) -> object: ...
+
     def executor_for(
         self,
         root: NotesSyncRootRecord,
@@ -259,6 +387,20 @@ class _RuntimeAdapter(Protocol):
     async def create_root_folder(self, display_name: str) -> tuple[str, object]: ...
 
     async def rollback_root_folder(self, receipt: object) -> None: ...
+
+    async def build_conflict_comparison(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_id: str,
+    ) -> ConflictComparison: ...
+
+    async def build_conflict_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeConflictLabel, ...]: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -590,8 +732,145 @@ class _ProductionRuntimeAdapter:
             ),
         )
 
+    async def build_conflict_execution_request(
+        self,
+        root: NotesSyncRootRecord,
+        observations: ReconciliationInput,
+        plan: ReconciliationPlan,
+        selection: ConflictSelection,
+    ) -> NotesSyncExecutionRequest:
+        """Build one occurrence-only reviewed conflict request."""
+
+        action_kind = {
+            NotesSyncConflictChoice.KEEP_FILE: NotesSyncActionKind.UPDATE_NOTE,
+            NotesSyncConflictChoice.KEEP_NOTE: NotesSyncActionKind.UPDATE_FILE,
+            NotesSyncConflictChoice.KEEP_BOTH: NotesSyncActionKind.UPDATE_NOTE,
+        }.get(selection.choice)
+        if action_kind is None:
+            raise ValueError("conflict_choice_not_executable")
+        operation_id = conflict_resolution_operation_id(
+            root.root_id,
+            selection.binding_id,
+            plan.observation_token,
+            selection.choice,
+        )
+        action = NotesSyncAction(
+            action_id=operation_id,
+            kind=action_kind,
+            binding_id=selection.binding_id,
+            reason_code="reviewed_conflict_resolution",
+        )
+        request = await self.build_execution_request(root, observations, plan, action)
+        keep_both: NotesSyncKeepBothAuthority | None = None
+        if selection.choice is NotesSyncConflictChoice.KEEP_BOTH:
+            binding = self._bundles.get(plan.observation_token, {}).get(
+                selection.binding_id
+            )
+            if binding is None or binding.note is None:
+                raise RuntimeError("private_conflict_authority_missing")
+            if root.logical_folder_id is None:
+                raise RuntimeError("folder_owner_missing")
+            logical_folder = await self._service.get_note_folder_by_id_for_sync(
+                scope=ScopeType.LOCAL_NOTE,
+                folder_id=root.logical_folder_id,
+                include_deleted=True,
+                user_id=self._user_id,
+            )
+            if logical_folder is None or logical_folder.deleted:
+                raise RuntimeError("folder_owner_missing")
+            keep_both = NotesSyncKeepBothAuthority(
+                parent_folder_id=conflict_copies_folder_id(root.note_scope_id),
+                parent_folder_name="Conflict copies",
+                root_folder_id=conflict_root_folder_id(
+                    root.note_scope_id, root.root_id
+                ),
+                root_folder_name=logical_folder.name,
+                copy_note_id=conflict_copy_note_id(
+                    root.root_id,
+                    selection.binding_id,
+                    plan.observation_token,
+                ),
+                copy_title=binding.note.title,
+            )
+        override_needed = (
+            action_kind is NotesSyncActionKind.UPDATE_NOTE
+            and root.direction is NotesSyncDirection.NOTES_TO_FOLDER
+        ) or (
+            action_kind is NotesSyncActionKind.UPDATE_FILE
+            and root.direction is NotesSyncDirection.FOLDER_TO_NOTES
+        )
+        return replace(
+            request,
+            operation_id=operation_id,
+            recovery_id=f"recovery-{operation_id}",
+            recovery_expires_at=time.time_ns() + CONFLICT_RECOVERY_RETENTION_NS,
+            journal_kind=f"resolve_{selection.choice.value}",
+            keep_both=keep_both,
+            direction_override=(
+                NotesSyncDirectionOverride(
+                    review_id=operation_id,
+                    action_kind=action_kind,
+                    observation_token=plan.observation_token,
+                )
+                if override_needed
+                else None
+            ),
+        )
+
     def release_observation(self, observation_token: str) -> None:
         self._bundles.pop(observation_token, None)
+
+    async def build_conflict_comparison(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_id: str,
+    ) -> ConflictComparison:
+        """Project one live private binding into a bounded comparison."""
+
+        binding = self._bundles.get(plan.observation_token, {}).get(binding_id)
+        if binding is None or binding.note is None or binding.file is None:
+            raise RuntimeError("private_comparison_authority_missing")
+        if binding.record.root_id != root.root_id:
+            raise RuntimeError("comparison_root_mismatch")
+        return build_conflict_comparison(
+            binding_id=binding_id,
+            title=binding.note.title,
+            relative_path=binding.file.observation.relative_path,
+            note_text=binding.note.content,
+            file_text=binding.file.text,
+            note_version=binding.note.version,
+            note_updated_at=binding.note.updated_at,
+            file_modified_ns=binding.file.reviewed_state.mtime_ns,
+        )
+
+    async def build_conflict_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        """Project titles and root-relative paths without diffing content."""
+
+        bundle = self._bundles.get(plan.observation_token, {})
+        labels: list[RuntimeConflictLabel] = []
+        for binding_id in binding_ids:
+            binding = bundle.get(binding_id)
+            if (
+                binding is None
+                or binding.note is None
+                or binding.file is None
+                or binding.record.root_id != root.root_id
+            ):
+                raise RuntimeError("private_label_authority_missing")
+            labels.append(
+                RuntimeConflictLabel(
+                    binding_id,
+                    " ".join(binding.note.title.split())[:_DISPLAY_LABEL_MAX_CHARS],
+                    binding.file.observation.relative_path,
+                )
+            )
+        return tuple(labels)
 
     def executor_for(
         self,
@@ -627,6 +906,7 @@ class NotesSyncRuntimeOwner:
         file_notes_binding: Callable[[], object | None] = lambda: None,
         cutover_admitted: bool,
         profile_process_is_sole: bool,
+        start_evidence: Callable[[], bool] | None = None,
     ) -> None:
         if type(cutover_admitted) is not bool:
             raise TypeError("cutover_admitted must be a private boolean.")
@@ -634,6 +914,8 @@ class NotesSyncRuntimeOwner:
             raise TypeError("profile_process_is_sole must be a private boolean.")
         if not callable(migrate_legacy) or not callable(watcher_factory):
             raise TypeError("runtime factories must be callable.")
+        if start_evidence is not None and not callable(start_evidence):
+            raise TypeError("start_evidence must be callable when provided.")
         self._store = store
         self._migrate_legacy = migrate_legacy
         self._coordinator_source = coordinator
@@ -642,6 +924,8 @@ class NotesSyncRuntimeOwner:
         self._file_notes_binding = file_notes_binding
         self._cutover_admitted = cutover_admitted
         self._profile_process_is_sole = profile_process_is_sole
+        self._start_evidence = start_evidence
+        self._start_deferred = False
         self._coordinator: object | None = None
         self._watcher: object | None = None
         self._watcher_task: asyncio.Task[None] | None = None
@@ -659,10 +943,29 @@ class NotesSyncRuntimeOwner:
         self._setup_reviews: dict[str, _SetupReview] = {}
         self._root_status: dict[str, NotesSyncRootRuntimeSnapshot] = {}
         self._root_paths: dict[str, str] = {}
+        self._mutation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._active_receipts: dict[
+            str,
+            OrderedDict[
+                str,
+                tuple[str, NotesSyncConflictChoice],
+            ],
+        ] = {}
         self._status = "starting"
         self._next_action = "wait"
         self._admission_open = False
         self._closing = False
+
+    def _mutation_lock(self, root_id: str) -> asyncio.Lock:
+        """Return the one live in-process mutation lock for a root."""
+
+        lock = self._mutation_locks.get(root_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._mutation_locks[root_id] = lock
+        return lock
 
     def snapshot(self) -> NotesSyncRuntimeSnapshot:
         """Return the current path-free UI projection."""
@@ -673,16 +976,321 @@ class NotesSyncRuntimeOwner:
             tuple(self._root_status[key] for key in sorted(self._root_status)),
         )
 
-    async def start(self) -> None:
-        """Initialize once and remain inert unless both cutover gates match."""
+    def _remember_conflict_receipt(
+        self,
+        root_id: str,
+        binding_id: str,
+        operation_id: str,
+        choice: NotesSyncConflictChoice,
+    ) -> None:
+        """Retain one current-runtime receipt, superseding the same item."""
 
-        if self._start_task is None:
-            self._start_task = asyncio.create_task(
-                self._start_once(), name="notes_sync_runtime_start"
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        if (
+            type(choice) is not NotesSyncConflictChoice
+            or choice is NotesSyncConflictChoice.SKIP
+        ):
+            raise TypeError("choice must be a mutating NotesSyncConflictChoice")
+        receipts = self._active_receipts.setdefault(root_id, OrderedDict())
+        for prior_id, (prior_binding, _prior_choice) in tuple(receipts.items()):
+            if prior_binding == binding_id and prior_id != operation_id:
+                receipts.pop(prior_id)
+        receipts[operation_id] = (binding_id, choice)
+        receipts.move_to_end(operation_id)
+        while len(receipts) > 100:
+            receipts.popitem(last=False)
+
+    async def active_conflict_receipts(
+        self, root_id: str
+    ) -> tuple[RuntimeConflictReceipt, ...]:
+        """Return fresh bounded receipts retained by this process."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        retained = tuple(self._active_receipts.get(root_id, OrderedDict()).items())
+        if not retained:
+            return ()
+        try:
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            executor = cast(
+                NotesSyncExecutor,
+                self._adapter.executor_for(root, after_stage=_ignore_operation_stage),
             )
-        await asyncio.shield(self._start_task)
+        except Exception:
+            executor = None
+        projected: list[RuntimeConflictReceipt] = []
+        for operation_id, retained_value in retained:
+            projection = await self._inspect_resolution_undo(
+                executor, root_id, operation_id
+            )
+            current = self._active_receipts.get(root_id)
+            if current is None or current.get(operation_id) != retained_value:
+                continue
+            if projection.state == "undone" or projection.undo_reason == "Undone":
+                current.pop(operation_id, None)
+                continue
+            _binding_id, choice = retained_value
+            projected.append(
+                RuntimeConflictReceipt(
+                    operation_id=operation_id,
+                    item_label=self._resolution_item_label(operation_id, projection),
+                    choice=choice,
+                    state=projection.state,
+                    undo_available=projection.undo_available,
+                    undo_reason=projection.undo_reason,
+                )
+            )
+        return tuple(projected)
 
-    async def _start_once(self) -> None:
+    def dismiss_conflict_receipt(self, root_id: str, operation_id: str) -> None:
+        """Dismiss one process-local receipt without changing durable history."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        receipts = self._active_receipts.get(root_id)
+        if receipts is not None:
+            receipts.pop(operation_id, None)
+
+    async def undo_resolution(
+        self,
+        root_id: str,
+        source_operation_id: str,
+    ) -> NotesSyncExecutionResult:
+        """Run one durable linked Undo under the root mutation authority."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(
+            source_operation_id, field_name="source_operation_id"
+        )
+        task = self._admit_task(root_id)
+        try:
+            async with self._mutation_lock(root_id):
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.root_id != root_id:
+                    raise RuntimeError("root_authority_mismatch")
+                if root.state is not NotesSyncRootState.ACTIVE:
+                    raise RuntimeError("sync_root_not_active")
+                self._require_authority(root_id, "write")
+
+                def require_write(_state: object) -> None:
+                    self._require_authority(root_id, "write")
+
+                executor = cast(
+                    NotesSyncExecutor,
+                    self._adapter.executor_for(
+                        root,
+                        after_stage=require_write,
+                    ),
+                )
+                result = await executor.undo_resolution(root_id, source_operation_id)
+                self._require_authority(root_id, "write")
+                if type(result) is not NotesSyncExecutionResult:
+                    raise RuntimeError("invalid_execution_result")
+                if result.state is NotesSyncOperationState.COMPLETED:
+                    self.dismiss_conflict_receipt(root_id, source_operation_id)
+                    fresh = await self._fresh_authority(root)
+                    self._reviews[root_id] = fresh.plan
+                    await self._publish_post_apply_status(root_id, fresh.plan)
+                return result
+        finally:
+            self._finish_task(root_id, task)
+
+    async def resolution_history(
+        self,
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        """Return one durable page decorated from fresh private authority."""
+
+        current_time = time.time_ns() if now is None else now
+        records = await asyncio.to_thread(
+            self._store.list_resolution_history,
+            root_id,
+            limit=limit,
+            offset=offset,
+            now=current_time,
+        )
+        choices = {
+            "resolve_keep_file": NotesSyncConflictChoice.KEEP_FILE,
+            "resolve_keep_note": NotesSyncConflictChoice.KEEP_NOTE,
+            "resolve_keep_both": NotesSyncConflictChoice.KEEP_BOTH,
+        }
+        try:
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            executor = cast(
+                NotesSyncExecutor,
+                self._adapter.executor_for(root, after_stage=_ignore_operation_stage),
+            )
+        except Exception:
+            executor = None
+        projected: list[RuntimeConflictHistoryRow] = []
+        for record in records:
+            fallback = self._history_fallback_projection(record, current_time)
+            projection = await self._inspect_resolution_undo(
+                executor,
+                root_id,
+                record.operation_id,
+                now=current_time,
+                fallback=fallback,
+            )
+            projected.append(
+                RuntimeConflictHistoryRow(
+                    operation_id=record.operation_id,
+                    item_label=self._resolution_item_label(
+                        record.operation_id, projection
+                    ),
+                    choice=choices[record.kind],
+                    state=projection.state,
+                    completed_at=(
+                        self._history_timestamp(record.completed_at)
+                        if record.completed_at is not None
+                        else None
+                    ),
+                    updated_at=self._history_timestamp(record.updated_at),
+                    undo_available=projection.undo_available,
+                    undo_reason=projection.undo_reason,
+                )
+            )
+        return tuple(projected)
+
+    async def _inspect_resolution_undo(
+        self,
+        executor: NotesSyncExecutor | None,
+        root_id: str,
+        operation_id: str,
+        *,
+        now: int | None = None,
+        fallback: NotesSyncUndoProjection | None = None,
+    ) -> NotesSyncUndoProjection:
+        if executor is not None:
+            try:
+                projection = await executor.inspect_resolution_undo(
+                    root_id, operation_id, now=now
+                )
+                if isinstance(projection, NotesSyncUndoProjection):
+                    return projection
+                return NotesSyncUndoProjection(
+                    projection.undo_available,
+                    projection.undo_reason,
+                    projection.state,
+                    projection.note_title,
+                    projection.relative_path,
+                )
+            except Exception:
+                pass
+        return fallback or NotesSyncUndoProjection(
+            False,
+            "Unavailable",
+            "unavailable",
+            None,
+            None,
+        )
+
+    @staticmethod
+    def _history_fallback_projection(
+        record: NotesSyncResolutionHistoryRecord, current_time: int
+    ) -> NotesSyncUndoProjection:
+        if record.undone:
+            return NotesSyncUndoProjection(False, "Undone", "undone", None, None)
+        if record.undo_state is not None:
+            return NotesSyncUndoProjection(
+                False,
+                (
+                    "Changed since resolution"
+                    if record.undo_reason_code == "changed_since_resolution"
+                    else "Unavailable"
+                ),
+                record.undo_state.value,
+                None,
+                None,
+            )
+        if (
+            record.recovery_expires_at is None
+            or record.recovery_expires_at <= current_time
+        ):
+            return NotesSyncUndoProjection(
+                False, "Undo expired", record.state.value, None, None
+            )
+        return NotesSyncUndoProjection(
+            False,
+            "Unavailable",
+            record.state.value,
+            None,
+            None,
+        )
+
+    @staticmethod
+    def _resolution_item_label(
+        operation_id: str, projection: NotesSyncUndoProjection
+    ) -> str:
+        title = (
+            " ".join(projection.note_title.split())
+            if type(projection.note_title) is str
+            else ""
+        )
+        try:
+            relative_path = (
+                normalize_notes_sync_relative_path(projection.relative_path)
+                if projection.relative_path is not None
+                else ""
+            )
+        except (TypeError, ValueError):
+            relative_path = ""
+        label = " — ".join(value for value in (title, relative_path) if value)
+        return label[:_DISPLAY_LABEL_MAX_CHARS] or operation_id[:8]
+
+    @staticmethod
+    def _history_timestamp(value: int) -> str:
+        return datetime.fromtimestamp(value / 1_000_000_000, UTC).isoformat()
+
+    async def start(self, *, force: bool = False) -> None:
+        """Initialize once and remain inert unless both cutover gates match.
+
+        TASK-21112: when a ``start_evidence`` probe was supplied and reports
+        no configured lasting sync, the start defers inert (status
+        ``not_configured``) without opening — or creating — the state
+        database. ``force=True`` re-arms exactly one full start after such a
+        deferral; it is how first-time setup brings the machinery up at
+        runtime. A completed non-deferred start is never re-run.
+        """
+
+        while True:
+            if self._start_task is None:
+                self._start_task = asyncio.create_task(
+                    self._start_once(force=force), name="notes_sync_runtime_start"
+                )
+            task = self._start_task
+            await asyncio.shield(task)
+            if not force or self._closing:
+                return
+            if self._start_deferred:
+                # Deferred boot start: re-arm one full start.
+                if self._start_task is task:
+                    self._start_task = None
+                continue
+            if self._start_task is not task:
+                # A concurrent forced caller re-armed; await its start too.
+                continue
+            return
+
+    async def _start_once(self, *, force: bool = False) -> None:
+        self._start_deferred = False
+        if not force and self._start_evidence is not None:
+            try:
+                configured = bool(await asyncio.to_thread(self._start_evidence))
+            except Exception:
+                # Fail open: a broken probe must never silently disable a
+                # configured user's sync. Starting is the safe direction.
+                configured = True
+            if not configured:
+                self._start_deferred = True
+                self._status = "not_configured"
+                self._next_action = "none"
+                return
         try:
             await asyncio.to_thread(self._store.initialize)
             marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
@@ -888,6 +1496,18 @@ class NotesSyncRuntimeOwner:
         *,
         automatic: bool,
     ) -> ReconciliationPlan:
+        if automatic:
+            lock = self._mutation_lock(root.root_id)
+            async with lock:
+                return await self._reconcile_locked(root, automatic=True)
+        return await self._reconcile_locked(root, automatic=False)
+
+    async def _reconcile_locked(
+        self,
+        root: NotesSyncRootRecord,
+        *,
+        automatic: bool,
+    ) -> ReconciliationPlan:
         lease = self._leases.get(root.root_id)
         if lease is None or not getattr(lease, "authoritative", False):
             raise RuntimeError("root_lease_required")
@@ -913,7 +1533,7 @@ class NotesSyncRuntimeOwner:
             await self._publish(root.root_id, "needs_attention", "review_changes")
             return plan
         if automatic and selected:
-            await self._execute(root, authority, selected)
+            await self._execute_locked(root, authority, selected)
         elif selected:
             await self._publish(root.root_id, "changes_available", "review_changes")
         else:
@@ -932,6 +1552,25 @@ class NotesSyncRuntimeOwner:
                 return "offline", "reconnect_folder"
             return "unsupported", "review_settings"
         return None
+
+    async def _publish_post_apply_status(
+        self,
+        root_id: str,
+        plan: ReconciliationPlan,
+    ) -> bool:
+        """Publish one freshly observed post-mutation plan classification."""
+
+        blocked = self._blocked_plan_status(plan)
+        if blocked is not None:
+            self._blocked_roots.add(root_id)
+            await self._publish(root_id, *blocked)
+            return True
+        self._blocked_roots.discard(root_id)
+        if any(action.kind in _EXECUTABLE_ACTIONS for action in plan.safe_actions):
+            await self._publish(root_id, "changes_available", "review_changes")
+        else:
+            await self._publish(root_id, "up_to_date", "sync_now")
+        return False
 
     async def _review_candidate(self, root: NotesSyncRootRecord) -> ReconciliationPlan:
         """Build a complete mutation-free plan for a pending or migrated root."""
@@ -962,6 +1601,11 @@ class NotesSyncRuntimeOwner:
             raise TypeError("setup must be a NotesSyncRootSetup")
         if setup.note_scope_id != ScopeType.LOCAL_NOTE.value:
             raise ValueError("setup note scope must be local_note")
+        # TASK-21112: setting up the first root is explicit feature use, so a
+        # boot-deferred (unconfigured) runtime is brought up here on demand.
+        # For an already-started runtime this awaits the memoized start task
+        # and has no side effects.
+        await self.start(force=True)
         self._require_cutover("setup-review")
         matching_root_id = next(
             (
@@ -975,39 +1619,35 @@ class NotesSyncRuntimeOwner:
             if root_id != matching_root_id:
                 await self.abandon_setup(root_id)
         root_id = matching_root_id or str(uuid4())
-        root = NotesSyncRootRecord(
-            root_id=root_id,
-            note_scope_id=setup.note_scope_id,
-            logical_folder_id=None,
-            canonical_path=setup.canonical_path,
-            direction=setup.direction,
-            state=NotesSyncRootState.PENDING,
-        )
-        self._root_paths[root_id] = setup.canonical_path
-        if matching_root_id is None and not await self._ensure_lease(root):
-            self._root_paths.pop(root_id, None)
-            raise RuntimeError("root_lease_unavailable")
+        task = self._register_task(root_id)
         try:
-            plan = await self._review_candidate(root)
-        except Exception:
-            await self._release_setup_authority(root_id)
-            raise
-        self._setup_reviews[root_id] = _SetupReview(setup, plan)
-        return plan
+            root = NotesSyncRootRecord(
+                root_id=root_id,
+                note_scope_id=setup.note_scope_id,
+                logical_folder_id=None,
+                canonical_path=setup.canonical_path,
+                direction=setup.direction,
+                state=NotesSyncRootState.PENDING,
+            )
+            self._root_paths[root_id] = setup.canonical_path
+            if matching_root_id is None and not await self._ensure_lease(root):
+                self._root_paths.pop(root_id, None)
+                raise RuntimeError("root_lease_unavailable")
+            try:
+                plan = await self._review_candidate(root)
+            except Exception:
+                await self._release_setup_authority(root_id)
+                raise
+            self._setup_reviews[root_id] = _SetupReview(setup, plan)
+            return plan
+        finally:
+            self._finish_task(root_id, task)
 
     async def abandon_setup(self, root_id: str) -> None:
         """Release one unpersisted setup review and its provisional lease."""
 
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
-        if not any(
-            root_id in owner
-            for owner in (
-                self._setup_reviews,
-                self._leases,
-                self._admissions,
-                self._root_paths,
-            )
-        ):
+        if root_id not in self._setup_reviews:
             return
         await self._release_setup_authority(root_id)
 
@@ -1105,52 +1745,364 @@ class NotesSyncRuntimeOwner:
             self._start_watcher()
         return plan
 
+    async def conflict_labels(
+        self,
+        root_id: str,
+        observation_token: str,
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        """Return exact bounded labels under current reviewed authority."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        task = self._admit_task(root_id)
+        observed_token: str | None = None
+        try:
+            setup_review = self._setup_reviews.get(root_id)
+            reviewed = (
+                setup_review.plan
+                if setup_review is not None
+                else self._reviews.get(root_id)
+            )
+            if reviewed is None or reviewed.observation_token != observation_token:
+                raise ValueError("stale_review")
+            if setup_review is not None:
+                setup = setup_review.setup
+                root = NotesSyncRootRecord(
+                    root_id=root_id,
+                    note_scope_id=setup.note_scope_id,
+                    logical_folder_id=None,
+                    canonical_path=setup.canonical_path,
+                    direction=setup.direction,
+                    state=NotesSyncRootState.PENDING,
+                )
+            else:
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.state is not NotesSyncRootState.ACTIVE:
+                    raise RuntimeError("sync_root_not_active")
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            self._require_authority(root_id, "plan")
+            observations = await self._adapter.observe_root(root)
+            observed_token = _observation_token(observations)
+            plan = plan_reconciliation(observations)
+            self._require_authority(root_id, "plan")
+            if observations.root_id != root_id or plan.root_id != root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            if plan.observation_token != observation_token or plan != reviewed:
+                raise ValueError("stale_review")
+            eligible = self._eligible_conflicts(plan)
+            binding_ids = tuple(sorted(eligible))
+            labels = await self._adapter.build_conflict_labels(root, plan, binding_ids)
+            if (
+                type(labels) is not tuple
+                or any(type(label) is not RuntimeConflictLabel for label in labels)
+                or tuple(label.binding_id for label in labels) != binding_ids
+            ):
+                raise RuntimeError("invalid_conflict_label_projection")
+            return labels
+        finally:
+            if observed_token is not None:
+                release = getattr(self._adapter, "release_observation", None)
+                if callable(release):
+                    release(observed_token)
+            self._finish_task(root_id, task)
+
+    async def compare_conflict(
+        self,
+        root_id: str,
+        observation_token: str,
+        binding_id: str,
+    ) -> ConflictComparison:
+        """Return one bounded comparison under exact fresh planning authority."""
+
+        task = self._admit_task(root_id)
+        plan: ReconciliationPlan | None = None
+        observed_token: str | None = None
+        try:
+            reviewed = self._reviews.get(root_id)
+            if reviewed is None or reviewed.observation_token != observation_token:
+                raise ValueError("stale_review")
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            if root.state is not NotesSyncRootState.ACTIVE:
+                raise RuntimeError("sync_root_not_active")
+            self._require_authority(root_id, "plan")
+            observations = await self._adapter.observe_root(root)
+            observed_token = _observation_token(observations)
+            plan = plan_reconciliation(observations)
+            self._require_authority(root_id, "plan")
+            if observations.root_id != root_id or plan.root_id != root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            if plan.observation_token != observation_token:
+                raise ValueError("stale_review")
+            if plan != reviewed:
+                raise ValueError("stale_review")
+            managed = {effect.binding_id for effect in plan.managed_placement_effects}
+            matches = tuple(
+                attention
+                for attention in plan.attention
+                if attention.kind is ReconciliationAttentionKind.CONFLICT
+                and attention.binding_id == binding_id
+                and eligible_conflict_reason(
+                    attention.reason_code,
+                    managed=binding_id in managed,
+                )
+            )
+            if len(matches) != 1:
+                raise ValueError("comparison_binding_mismatch")
+            return await self._adapter.build_conflict_comparison(
+                root,
+                plan,
+                binding_id,
+            )
+        finally:
+            if observed_token is not None:
+                release = getattr(self._adapter, "release_observation", None)
+                if callable(release):
+                    release(observed_token)
+            self._finish_task(root_id, task)
+
     async def apply_reviewed(
         self,
         root_id: str,
         observation_token: str,
-        action_ids: tuple[str, ...],
-    ) -> tuple[object, ...]:
-        """Apply only selected actions after rebuilding fresh private authority."""
+        safe_action_ids: tuple[str, ...],
+        selections: tuple[ConflictSelection, ...] = (),
+    ) -> ConflictApplyResult:
+        """Apply safe work plus an exact reviewed conflict subset."""
 
         task = self._admit_task(root_id)
         try:
             reviewed = self._reviews.get(root_id)
             if reviewed is None or reviewed.observation_token != observation_token:
                 raise ValueError("stale_review")
-            root = await asyncio.to_thread(self._store.get_root, root_id)
-            if root.state is not NotesSyncRootState.ACTIVE:
-                await self._publish(root_id, "paused", "resume_sync")
-                raise RuntimeError("sync_root_not_active")
-            authority = await self._fresh_authority(root)
-            assert_review_current(reviewed, authority.observations)
-            if authority.plan != reviewed:
-                raise ValueError("stale_review")
-            blocked = self._blocked_plan_status(authority.plan)
-            if blocked is not None:
-                self._blocked_roots.add(root_id)
-                await self._publish(root_id, *blocked)
-                raise ValueError("review_not_executable")
-            selected_ids = set(action_ids)
-            selected = tuple(
-                action
-                for action in authority.plan.safe_actions
-                if action.action_id in selected_ids
-                and action.kind in _EXECUTABLE_ACTIONS
-            )
-            if len(selected) != len(selected_ids):
-                raise ValueError("reviewed_action_mismatch")
-            if not selected:
-                return ()
-            return await self._execute(root, authority, selected)
+            if type(safe_action_ids) is not tuple or any(
+                type(action_id) is not str for action_id in safe_action_ids
+            ):
+                raise TypeError("safe_action_ids must be a tuple of strings")
+            if len(set(safe_action_ids)) != len(safe_action_ids):
+                raise ValueError("reviewed_action_selection_duplicate")
+            if type(selections) is not tuple or any(
+                type(selection) is not ConflictSelection for selection in selections
+            ):
+                raise TypeError("selections must be a tuple of ConflictSelection")
+            selection_ids = tuple(selection.binding_id for selection in selections)
+            if len(set(selection_ids)) != len(selection_ids):
+                raise ValueError("conflict_selection_duplicate")
+            lock = self._mutation_lock(root_id)
+            async with lock:
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.root_id != root_id:
+                    raise RuntimeError("root_authority_mismatch")
+                if root.state is not NotesSyncRootState.ACTIVE:
+                    await self._publish(root_id, "paused", "resume_sync")
+                    raise RuntimeError("sync_root_not_active")
+                if (
+                    root.last_status_code
+                    in {
+                        "activation_recovery_required",
+                        "migration_review_required",
+                    }
+                    or root_id in self._setup_reviews
+                ):
+                    raise ValueError("review_not_executable")
+                self._require_authority(root_id, "plan")
+                observations = await self._adapter.observe_root(root)
+                observed_token = _observation_token(observations)
+                plan: ReconciliationPlan | None = None
+                try:
+                    plan = plan_reconciliation(observations)
+                    self._require_authority(root_id, "plan")
+                    if observations.root_id != root_id or plan.root_id != root_id:
+                        raise RuntimeError("root_observation_mismatch")
+                    if observations.direction is not root.direction:
+                        raise RuntimeError("root_direction_changed")
+                    if plan.observation_token != observation_token:
+                        raise ValueError("stale_review")
+                    assert_review_current(reviewed, observations)
+                    if plan != reviewed:
+                        raise ValueError("stale_review")
+                    eligible = self._eligible_conflicts(plan)
+                    if self._reviewed_plan_has_non_content_blocker(plan):
+                        self._blocked_roots.add(root_id)
+                        await self._publish(
+                            root_id, "needs_attention", "review_changes"
+                        )
+                        raise ValueError("review_not_executable")
+                    if any(binding_id not in eligible for binding_id in selection_ids):
+                        raise ValueError("conflict_selection_mismatch")
+                    selected_safe_ids = set(safe_action_ids)
+                    selected_safe_actions = tuple(
+                        action
+                        for action in plan.safe_actions
+                        if action.action_id in selected_safe_ids
+                    )
+                    if len(selected_safe_actions) != len(selected_safe_ids) or any(
+                        action.kind not in _EXECUTABLE_ACTIONS
+                        and action.kind is not NotesSyncActionKind.NO_CHANGE
+                        for action in selected_safe_actions
+                    ):
+                        raise ValueError("reviewed_action_mismatch")
+                    safe_actions = tuple(
+                        action
+                        for action in selected_safe_actions
+                        if action.kind in _EXECUTABLE_ACTIONS
+                    )
+                    requests: dict[str, object] = {}
+                    for action in safe_actions:
+                        self._require_authority(root_id, "write")
+                        requests[
+                            action.action_id
+                        ] = await self._adapter.build_execution_request(
+                            root, observations, plan, action
+                        )
+                    conflict_actions: list[NotesSyncAction] = []
+                    mutating = sorted(
+                        (
+                            selection
+                            for selection in selections
+                            if selection.choice is not NotesSyncConflictChoice.SKIP
+                        ),
+                        key=lambda selection: selection.binding_id,
+                    )
+                    for selection in mutating:
+                        self._require_authority(root_id, "write")
+                        request = await self._adapter.build_conflict_execution_request(
+                            root, observations, plan, selection
+                        )
+                        action = NotesSyncAction(
+                            action_id=getattr(request, "operation_id"),
+                            kind=getattr(request, "action_kind"),
+                            binding_id=selection.binding_id,
+                            reason_code=eligible[selection.binding_id].reason_code,
+                        )
+                        requests[action.action_id] = request
+                        conflict_actions.append(action)
+                    authority = _FreshAuthority(
+                        observations,
+                        plan,
+                        MappingProxyType(requests),
+                    )
+                finally:
+                    release = getattr(self._adapter, "release_observation", None)
+                    if callable(release):
+                        release(observed_token)
+
+                actions = (*safe_actions, *conflict_actions)
+                raw_results = (
+                    await self._execute_locked(
+                        root,
+                        authority,
+                        actions,
+                        publish_terminal=False,
+                    )
+                    if actions
+                    else ()
+                )
+                if any(
+                    type(result) is not NotesSyncExecutionResult
+                    for result in raw_results
+                ):
+                    raise RuntimeError("invalid_execution_result")
+                results = cast(tuple[NotesSyncExecutionResult, ...], tuple(raw_results))
+                completed = tuple(
+                    result.state is NotesSyncOperationState.COMPLETED
+                    for result in results
+                )
+                safe_result_count = min(len(results), len(safe_actions))
+                safe_completed = sum(completed[:safe_result_count])
+                conflict_completed = sum(completed[len(safe_actions) :])
+                for selection, result in zip(
+                    mutating,
+                    results[len(safe_actions) :],
+                    strict=False,
+                ):
+                    if result.state is NotesSyncOperationState.COMPLETED:
+                        self._remember_conflict_receipt(
+                            root_id,
+                            selection.binding_id,
+                            result.operation_id,
+                            selection.choice,
+                        )
+                all_completed = len(results) == len(actions) and all(completed)
+                needs_recovery = any(result.recovery_required for result in results)
+                partial = not all_completed and (
+                    any(completed) or len(results) < len(actions)
+                )
+                fresh_plan: ReconciliationPlan | None = None
+                unresolved = len(eligible) - conflict_completed
+                attention_remains = unresolved > 0 or not all_completed
+                if all_completed:
+                    fresh = await self._fresh_authority(root)
+                    fresh_plan = fresh.plan
+                    self._reviews[root_id] = fresh_plan
+                    unresolved = len(self._eligible_conflicts(fresh_plan))
+                    attention_remains = await self._publish_post_apply_status(
+                        root_id, fresh_plan
+                    )
+                return ConflictApplyResult(
+                    results=results,
+                    safe_completed=safe_completed,
+                    conflicts_resolved=conflict_completed,
+                    unresolved_conflicts=unresolved,
+                    attention_remains=attention_remains,
+                    partial=partial,
+                    needs_recovery=needs_recovery,
+                    fresh_plan=fresh_plan,
+                )
         finally:
             self._finish_task(root_id, task)
+
+    @staticmethod
+    def _eligible_conflicts(
+        plan: ReconciliationPlan,
+    ) -> dict[str, ReconciliationAttention]:
+        managed = {effect.binding_id for effect in plan.managed_placement_effects}
+        return {
+            attention.binding_id: attention
+            for attention in plan.attention
+            if attention.kind is ReconciliationAttentionKind.CONFLICT
+            and attention.binding_id is not None
+            and eligible_conflict_reason(
+                attention.reason_code,
+                managed=attention.binding_id in managed,
+            )
+        }
+
+    @classmethod
+    def _reviewed_plan_has_non_content_blocker(
+        cls,
+        plan: ReconciliationPlan,
+    ) -> bool:
+        eligible = cls._eligible_conflicts(plan)
+        return bool(
+            plan.deletion_groups
+            or plan.managed_placement_effects
+            or plan.skips
+            or any(attention.binding_id not in eligible for attention in plan.attention)
+        )
 
     async def _execute(
         self,
         root: NotesSyncRootRecord,
         authority: _FreshAuthority,
         actions: tuple[NotesSyncAction, ...],
+    ) -> tuple[object, ...]:
+        lock = self._mutation_lock(root.root_id)
+        async with lock:
+            return await self._execute_locked(root, authority, actions)
+
+    async def _execute_locked(
+        self,
+        root: NotesSyncRootRecord,
+        authority: _FreshAuthority,
+        actions: tuple[NotesSyncAction, ...],
+        *,
+        publish_terminal: bool = True,
     ) -> tuple[object, ...]:
         self._require_authority(root.root_id, "write")
         executor = self._adapter.executor_for(
@@ -1181,7 +2133,11 @@ class NotesSyncRuntimeOwner:
                     root.root_id,
                     "needs_attention",
                     "review_changes",
-                    action_id=getattr(result, "operation_id", None),
+                    action_id=(
+                        getattr(result, "operation_id", None)
+                        if getattr(result, "recovery_required", False)
+                        else None
+                    ),
                 )
                 return tuple(results)
             if state is not NotesSyncOperationState.COMPLETED:
@@ -1209,7 +2165,8 @@ class NotesSyncRuntimeOwner:
                 else:
                     await self._publish(root.root_id, "partial", "review_changes")
                 return tuple(results)
-        await self._publish(root.root_id, "up_to_date", "sync_now")
+        if publish_terminal:
+            await self._publish(root.root_id, "up_to_date", "sync_now")
         return tuple(results)
 
     async def _classify_incomplete_block(
@@ -1221,11 +2178,15 @@ class NotesSyncRuntimeOwner:
     ) -> bool:
         durable = _DURABLE_BLOCKED_STATUS.get(root.last_status_code or "")
         if operation.state is NotesSyncOperationState.NEEDS_ATTENTION:
-            status = "needs_attention"
-            action = (
-                "resolve_cleanup"
-                if operation.reason_code == "replacement_cleanup_pending"
-                else "review_changes"
+            if operation.kind == "undo_resolution" and not block_pending:
+                return False
+            status, action = (
+                "needs_attention",
+                (
+                    "resolve_cleanup"
+                    if operation.reason_code == "replacement_cleanup_pending"
+                    else "review_changes"
+                ),
             )
         elif durable is not None:
             status, action = durable
@@ -1261,57 +2222,77 @@ class NotesSyncRuntimeOwner:
                 continue
             if not await self._ensure_lease(root):
                 continue
-            if await self._classify_incomplete_block(root, operation):
-                recovery_blocked.add(root.root_id)
-                continue
-            try:
-                self._require_authority(root.root_id, "write")
-                executor = self._adapter.executor_for(
-                    root,
-                    after_stage=lambda _state, root_id=root.root_id: (
-                        self._require_authority(root_id, "write")
-                    ),
-                )
-                request = await executor.reconstruct_request(operation.operation_id)
-                self._require_authority(root.root_id, "write")
-                result = await executor.resume(request)
-                self._require_authority(root.root_id, "write")
-            except Exception:
-                self._blocked_roots.add(root.root_id)
-                await self._publish(
-                    root.root_id,
-                    "failed",
-                    "review_changes",
-                    action_id=operation.operation_id,
-                )
-                recovery_blocked.add(root.root_id)
-                continue
-            if result.state is NotesSyncOperationState.COMPLETED:
-                await self._publish(root.root_id, "up_to_date", "sync_now")
-            elif result.state is NotesSyncOperationState.NEEDS_ATTENTION:
-                self._blocked_roots.add(root.root_id)
-                await self._publish(
-                    root.root_id,
-                    "needs_attention",
-                    "review_changes",
-                    action_id=operation.operation_id,
-                )
-                recovery_blocked.add(root.root_id)
-            else:
-                self._blocked_roots.add(root.root_id)
-                next_action = (
-                    "resolve_cleanup"
-                    if getattr(result, "reason_code", None)
-                    == "replacement_cleanup_pending"
-                    else "review_changes"
-                )
-                await self._publish(
-                    root.root_id,
-                    "partial",
-                    next_action,
-                    action_id=operation.operation_id,
-                )
-                recovery_blocked.add(root.root_id)
+            lock = self._mutation_lock(root.root_id)
+            async with lock:
+                try:
+                    current_root = await asyncio.to_thread(
+                        self._store.get_root,
+                        operation.root_id,
+                    )
+                except Exception:
+                    recovery_blocked.add(operation.root_id)
+                    continue
+                if (
+                    current_root.root_id != operation.root_id
+                    or current_root.state is not NotesSyncRootState.ACTIVE
+                ):
+                    recovery_blocked.add(operation.root_id)
+                    continue
+                if await self._classify_incomplete_block(current_root, operation):
+                    recovery_blocked.add(current_root.root_id)
+                    continue
+                try:
+                    self._require_authority(current_root.root_id, "write")
+                    executor = self._adapter.executor_for(
+                        current_root,
+                        after_stage=lambda _state, root_id=current_root.root_id: (
+                            self._require_authority(root_id, "write")
+                        ),
+                    )
+                    request = await executor.reconstruct_request(operation.operation_id)
+                    self._require_authority(current_root.root_id, "write")
+                    result = await executor.resume(request)
+                    self._require_authority(current_root.root_id, "write")
+                except Exception:
+                    self._blocked_roots.add(current_root.root_id)
+                    await self._publish(
+                        current_root.root_id,
+                        (
+                            "needs_attention"
+                            if operation.kind == "undo_resolution"
+                            else "failed"
+                        ),
+                        "review_changes",
+                        action_id=operation.operation_id,
+                    )
+                    recovery_blocked.add(current_root.root_id)
+                    continue
+                if result.state is NotesSyncOperationState.COMPLETED:
+                    await self._publish(current_root.root_id, "up_to_date", "sync_now")
+                elif result.state is NotesSyncOperationState.NEEDS_ATTENTION:
+                    self._blocked_roots.add(current_root.root_id)
+                    await self._publish(
+                        current_root.root_id,
+                        "needs_attention",
+                        "review_changes",
+                        action_id=operation.operation_id,
+                    )
+                    recovery_blocked.add(current_root.root_id)
+                else:
+                    self._blocked_roots.add(current_root.root_id)
+                    next_action = (
+                        "resolve_cleanup"
+                        if getattr(result, "reason_code", None)
+                        == "replacement_cleanup_pending"
+                        else "review_changes"
+                    )
+                    await self._publish(
+                        current_root.root_id,
+                        "partial",
+                        next_action,
+                        action_id=operation.operation_id,
+                    )
+                    recovery_blocked.add(current_root.root_id)
 
     def schedule_hint(self, root_id: str) -> object | None:
         """Coalesce one watcher hint without granting it mutation authority."""
@@ -1392,20 +2373,24 @@ class NotesSyncRuntimeOwner:
 
     async def pause_root(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
-        self._closed_roots.add(root_id)
-        self._blocked_roots.add(root_id)
-        await self._settle_root(root_id)
-        await asyncio.to_thread(
-            self._store.transition_root, root_id, NotesSyncRootState.PAUSED
-        )
-        lease = self._leases.pop(root_id, None)
-        self._admissions.pop(root_id, None)
-        if lease is not None and self._coordinator is not None:
+        task = self._register_task(root_id)
+        try:
+            self._closed_roots.add(root_id)
+            self._blocked_roots.add(root_id)
+            await self._settle_root(root_id)
             await asyncio.to_thread(
-                self._coordinator.close_admission, lease, lambda: None
+                self._store.transition_root, root_id, NotesSyncRootState.PAUSED
             )
-        await self._publish(root_id, "paused", "resume_sync")
-        return NotesSyncControlResult(True, "paused", "resume_sync")
+            lease = self._leases.pop(root_id, None)
+            self._admissions.pop(root_id, None)
+            if lease is not None and self._coordinator is not None:
+                await asyncio.to_thread(
+                    self._coordinator.close_admission, lease, lambda: None
+                )
+            await self._publish(root_id, "paused", "resume_sync")
+            return NotesSyncControlResult(True, "paused", "resume_sync")
+        finally:
+            self._finish_task(root_id, task)
 
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object:
         """Resolve one explicit durable cleanup action under root authority."""
@@ -1444,6 +2429,13 @@ class NotesSyncRuntimeOwner:
 
     async def resume_root(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
+        task = self._register_task(root_id)
+        try:
+            return await self._resume_root(root_id)
+        finally:
+            self._finish_task(root_id, task)
+
+    async def _resume_root(self, root_id: str) -> NotesSyncControlResult:
         root = await asyncio.to_thread(self._store.get_root, root_id)
         if root.state is not NotesSyncRootState.PAUSED:
             return NotesSyncControlResult(False, "needs_attention", "review_settings")
@@ -1709,6 +2701,19 @@ class NotesSyncRuntimeOwner:
         self._require_cutover(root_id)
         if root_id in self._closed_roots:
             raise RuntimeError("root_admission_closed")
+        return self._register_task(root_id)
+
+    def _register_task(self, root_id: str) -> asyncio.Task[object]:
+        """Make this coroutine's store work visible to settle()/shutdown.
+
+        task-21101 review round: pause_root, resume_root, and review_setup
+        touch the held-connection store but were invisible to settle(), so
+        _shutdown_once could close the store while their pool thread held a
+        checked-out connection. Unlike _admit_task, registration does not
+        gate on _closed_roots -- resume_root must run on a closed root, and
+        pause_root closes its own root as it starts.
+        """
+
         task = asyncio.current_task()
         if task is None:
             raise RuntimeError("runtime_task_required")
@@ -1808,6 +2813,15 @@ class NotesSyncRuntimeOwner:
                     continue
                 self._leases.pop(root_id, None)
                 self._admissions.pop(root_id, None)
+        # Release the store's held per-thread connections (task-21101); the
+        # store transparently re-opens if a later start() needs it again.
+        # getattr-guarded like close_adapter above: tests supply fake stores.
+        close_store = getattr(self._store, "close", None)
+        if callable(close_store):
+            try:
+                await asyncio.to_thread(close_store)
+            except Exception:
+                pass
         if close_failed:
             self._status = "failed"
             self._next_action = "review_settings"
@@ -1829,8 +2843,18 @@ def build_notes_sync_runtime_owner(
     file_notes_binding: Callable[[], object | None] | None = None,
     local_user_id: str | None = None,
     recovery_capacity_bytes: int | None = None,
+    start_evidence: Callable[[], bool] | None = None,
+    watcher_interval_seconds: float | None = None,
+    watcher_max_interval_seconds: float | None = None,
 ) -> NotesSyncRuntimeOwner:
-    """Build the application-owned lasting-sync runtime."""
+    """Build the application-owned lasting-sync runtime.
+
+    ``start_evidence`` (TASK-21112) gates the boot-time start: when it
+    reports False, :meth:`NotesSyncRuntimeOwner.start` defers inert without
+    creating the state database; first-time setup forces the start later.
+    ``watcher_interval_seconds`` / ``watcher_max_interval_seconds`` shape the
+    default polling watcher's idle backoff; ``None`` keeps its defaults.
+    """
 
     if notes_scope_service is None:
         raise ValueError("notes_scope_service is required.")
@@ -1855,9 +2879,18 @@ def build_notes_sync_runtime_owner(
         lambda: NotesSyncRootCoordinator(path.parent / "notes_sync_locks")
     )
     owner_holder: dict[str, NotesSyncRuntimeOwner] = {}
+    watcher_intervals: dict[str, float] = {}
+    if watcher_interval_seconds is not None:
+        watcher_intervals["interval_seconds"] = float(watcher_interval_seconds)
+    if watcher_max_interval_seconds is not None:
+        watcher_intervals["max_interval_seconds"] = float(
+            watcher_max_interval_seconds
+        )
     selected_watcher_factory = watcher_factory or (
         lambda schedule: PollingNotesSyncWatcher(
-            lambda: owner_holder["owner"]._changed_root_ids(), schedule
+            lambda: owner_holder["owner"]._changed_root_ids(),
+            schedule,
+            **watcher_intervals,
         )
     )
     owner = NotesSyncRuntimeOwner(
@@ -1869,6 +2902,7 @@ def build_notes_sync_runtime_owner(
         file_notes_binding=file_notes_binding or (lambda: None),
         cutover_admitted=cutover_admitted,
         profile_process_is_sole=profile_process_is_sole,
+        start_evidence=start_evidence,
     )
     owner_holder["owner"] = owner
     return owner
@@ -1910,6 +2944,9 @@ __all__ = [
     "NotesSyncControlResult",
     "NotesSyncRootRuntimeSnapshot",
     "NotesSyncRootSetup",
+    "RuntimeConflictHistoryRow",
+    "RuntimeConflictLabel",
+    "RuntimeConflictReceipt",
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
     "build_notes_sync_legacy_migrator",

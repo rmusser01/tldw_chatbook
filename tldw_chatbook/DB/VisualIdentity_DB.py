@@ -189,6 +189,7 @@ class VisualIdentityRepository:
         expected_binding_id: int | None = None,
         expected_binding_version: int | None = None,
         expected_source_pack_version: int | None = None,
+        require_unbound_actor: bool = False,
         publication_guard: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Atomically create and activate one complete pack graph.
@@ -205,6 +206,8 @@ class VisualIdentityRepository:
                 must still own the actor before activation.
             expected_binding_version: Optional optimistic binding revision.
             expected_source_pack_version: Optional optimistic source-pack revision.
+            require_unbound_actor: Require the actor to remain without an active
+                binding while the write reservation is held.
             publication_guard: Optional final filesystem identity check invoked
                 while the transaction holds its write reservation.
 
@@ -220,6 +223,12 @@ class VisualIdentityRepository:
             raise ValueError("visual_identity_pack_active_version_mismatch")
 
         with self.db.transaction():
+            if (
+                require_unbound_actor
+                and self._validate_existing_actor_binding(actor_kind, str(actor_id))
+                is not None
+            ):
+                raise ValueError("visual_identity_binding_changed")
             if expected_active_identity is not None:
                 existing = self._validate_existing_actor_binding(
                     actor_kind, str(actor_id)

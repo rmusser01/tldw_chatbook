@@ -48,9 +48,9 @@ Detailed executable plan: `Docs/superpowers/plans/2026-08-22-confirmatory-steady
 
 ADR required: no
 
-ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md` after latest-dev integration (existing governing ADR, renumbered from branch-local ADR-077)
+ADR path: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md` after latest-dev integration (existing governing ADR, renumbered after latest-dev integration)
 
-Reason: this task changes benchmark-only tooling and retained evidence, while the renumbered ADR-079 already governs the Change Review behavior being measured.
+Reason: this task changes benchmark-only tooling and retained evidence, while the renumbered ADR-084 already governs the Change Review behavior being measured.
 <!-- SECTION:PLAN:END -->
 
 ## Acceptance Criteria Evidence
@@ -194,6 +194,6 @@ changes and gates are recorded in their own Done task files and are not treated
 as TASK-20010 implementation.
 
 ADR required: no. Existing
-[ADR-079](../decisions/079-change-review-consent-and-asynchronous-finalization.md)
+[ADR-084](../decisions/084-change-review-consent-and-asynchronous-finalization.md)
 governs the Change Review behavior being measured; this task introduces no new
 production storage, ownership, privacy, provider, or runtime boundary.

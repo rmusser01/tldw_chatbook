@@ -1,5 +1,4 @@
 import shutil
-from pathlib import Path
 
 import pytest
 from textual.app import App
@@ -55,6 +54,8 @@ class _FlakyBindRegistry:
 
 
 class _HarnessApp(App[None]):
+    CSS = WorkspaceCreateModal.BUNDLED_CSS
+
     def __init__(self, registry, *, description: str | None = None):
         super().__init__()
         # NOTE: `App.__init__` already defines `self._registry` (a WeakSet of
@@ -77,6 +78,19 @@ class _HarnessApp(App[None]):
         if self._modal_description is not None:
             kwargs["description"] = self._modal_description
         self.push_screen(WorkspaceCreateModal(**kwargs), _done)
+
+
+@pytest.mark.asyncio
+async def test_explainer_describes_private_scratch_and_optional_folders(tmp_path):
+    app = _HarnessApp(_registry(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        explainer = app.screen.query_one("#workspace-create-explainer", Static)
+        copy = str(explainer.renderable).lower()
+
+        assert "private scratch" in copy
+        assert "folder access is optional" in copy
+        assert "no file access" not in copy
 
 
 @pytest.mark.asyncio

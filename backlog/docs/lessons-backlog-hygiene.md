@@ -39,6 +39,15 @@ known, expensive to rediscover. Every entry states the incident that produced it
   **never pass a "next safe id" between tasks in a brief** — an ID is only safe at the
   instant it is derived, so re-derive it at filing time.
 
+- **2026-08-23, Console private scratch.** A task added at 08:11 as
+  `TASK-21161` rebased over a different `TASK-21161` added to `dev` at 10:22.
+  The first closeout command, `backlog task edit 21161 -s Done`, reported
+  success but resolved the later task file; the Console task visibly remained
+  In Progress. Add-commit provenance applied the older-arrival rule, the later
+  startup-order task moved to `TASK-21163`, and every reference moved with it.
+  The extra guard is important: after any rebase, verify the CLI's printed
+  **file path**, not merely its success message or requested ID.
+
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
 a duplicate can arrive from dev moving underneath you, in which case rebasing is the
@@ -553,6 +562,29 @@ then verify with `backlog task <id> --plain`.
 
 ---
 
+## In zsh, brace `"${b}:path"` — unbraced `"$b:path"` applies the `:t` modifier and the sweep lies
+
+**What happened.** 2026-08-21, the chunking-template-parity spec's §5 version
+sweep (`_CURRENT_SCHEMA_VERSION` across all refs). The loop ran
+`git show "$b:tldw_chatbook/DB/Client_Media_DB_v2.py"` per remote ref and
+returned the **same old version for every branch** — "clean, no collisions
+anywhere." That was the bug: in zsh, `:t` after a parameter inside quotes is
+a **history modifier** (`:t` = tail-of-path), so `"$b:path"` silently
+rewrote the ref. `git show` then resolved something other than the intended
+`<ref>:<path>` (or errored into the fallback), and the sweep reported a
+uniform answer that proved nothing about any ref. The spec's sweep results
+were only trusted after re-running with the braced form — which is also the
+form the sweep snippets in this file already use (`"${b}:backlog/..."` in
+the collision-sweep habit above, where the braces make it work).
+
+**What to do.** Any zsh loop that builds a `<ref>:<path>` or `<var><suffix>`
+string must brace the variable: `git show "${b}:path"`, `git log
+"${b}..HEAD"`. If a per-ref sweep returns an identical value for every ref,
+treat that as the sweep being broken, not as the board being clean — 200
+refs agreeing exactly is the signature of a loop that never varied its
+input. Sanity-check with one ref you know differs
+(`git show "${b}:path" | grep VERSION` against two refs you expect to
+disagree).
 ## ADR numbers collide across concurrent branches — re-verify at merge time
 
 **What happened.** 2026-08-20, two independent sessions in the same window: the
@@ -578,6 +610,18 @@ renumbering, grep the repo for `NNN-<slug>` AND both header forms — `ADR-NNN`
 `ADR[- ]NNN` character class covers both) — the owning task's plan section
 references the ADR by number and path, and stale references in either form
 mislead the next session.
+
+## Backlog filenames must survive every supported checkout platform (TASK-21139)
+
+**What happened.** On 2026-08-22, commit `46cb7bc1f` added TASK-21130 with `>`
+in its tracked filename. Git for Windows fetched the repository, but
+`actions/checkout` exited 128 before project tests ran in runs `32617893248` and
+`32617893237`.
+
+**What to do.** Content may stay expressive, but direct files in the live,
+completed, and archived Backlog buckets must use Win32-compatible basenames.
+The shared stdlib guard is the authoring-time source of truth because Windows
+cannot run repository code before checkout succeeds.
 
 ---
 

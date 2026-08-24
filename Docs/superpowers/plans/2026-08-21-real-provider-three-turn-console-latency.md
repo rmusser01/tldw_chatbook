@@ -19,10 +19,10 @@
 - Generate `Docs/superpowers/qa/console-three-turn-real-provider/real-provider-three-turn.manifest.json`: revisions, model/runtime metadata, fixture hashes, arm order, and safe host facts.
 - Generate `Docs/superpowers/qa/console-three-turn-real-provider/real-provider-three-turn.summary.json`: recomputable per-arm distributions, paired confidence bounds, validity gates, and verdicts.
 - Generate `Docs/superpowers/qa/console-three-turn-real-provider/real-provider-three-turn-summary.md`: concise human interpretation separating provider and application latency.
-- Modify `backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md`: check acceptance criteria, add implementation/evidence notes, retain ADR-079 linkage, and mark Done only after the full evidence review.
+- Modify `backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md`: check acceptance criteria, add implementation/evidence notes, retain ADR-084 linkage, and mark Done only after the full evidence review.
 
 ADR required: no
-ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
+ADR path: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
 Reason: the task adds opt-in benchmark tooling and evidence only; it does not change production ownership, storage, provider contracts, or user-visible behavior.
 
 ### Task 1: Establish the pure benchmark contract
@@ -385,7 +385,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Step 2: Self-review the complete diff against the spec and ADR-079**
+- [ ] **Step 2: Self-review the complete diff against the spec and ADR-084**
 
 Check that no production file changed, the disabled path creates no shadow state, the trigger is identical across arms, wrappers are observational, every required boundary is real, and evidence claims match raw data.
 

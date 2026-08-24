@@ -8,6 +8,7 @@ import os
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,6 +50,10 @@ from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.provider_continuation import (
@@ -57,6 +62,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -77,6 +83,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentStep,
+    AgentDefinition,
     RunOutcome,
     SkillFileBindings,
     ToolCatalogEntry,
@@ -860,12 +867,29 @@ async def test_plain_and_character_forced_plain_never_resolve_project_instructio
         agent_bridge=ExplodingBridge(),
         agent_runtime_enabled=force_character,
     )
-    result = await controller._stream_assistant_response_inner(
-        resolution=SimpleNamespace(
-            provider="openai", model="gpt-4o-mini", max_tokens=128
+    resolution = SimpleNamespace(
+        provider="openai",
+        model="gpt-4o-mini",
+        max_tokens=128,
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="gpt-4o-mini",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
         ),
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    authority = await controller._capture_turn_library_authority(
+        session.id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, resolution
+    )
+    result = await controller._stream_assistant_response_inner(
+        resolution=resolution,
         provider_messages=[{"role": "user", "content": user.content}],
         assistant_message_id=assistant.id,
+        turn_context=turn_context,
     )
     assert result.accepted is True
     assert gateway.calls == 1
@@ -915,9 +939,7 @@ def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
     def _boom(*_args, **_kwargs):
         raise RuntimeError("usage extraction exploded")
 
-    monkeypatch.setattr(
-        console_agent_bridge, "_openai_usage_from_provider_call", _boom
-    )
+    monkeypatch.setattr(console_agent_bridge, "_openai_usage_from_provider_call", _boom)
     warnings: list[str] = []
     sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
     try:
@@ -1170,6 +1192,51 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     assert wfr.current_run_workspace_id() is None  # cleared after the run
 
 
+def test_run_reply_threads_captured_scratch_end_to_end(tmp_path, monkeypatch):
+    """The live run's file dispatch observes its captured private sandbox."""
+    import tldw_chatbook.config as config
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    real_setting = config.get_cli_setting
+
+    def enable_read_file(section, key, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return real_setting(section, key, default)
+
+    observed: list[Path | None] = []
+    real_execute = ReadFileTool.execute
+
+    async def recording_execute(self, file_path, **kwargs):
+        observed.append(wfr.current_run_sandbox_root())
+        return await real_execute(self, file_path, **kwargs)
+
+    monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
+    monkeypatch.setattr(ReadFileTool, "execute", recording_execute)
+
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+    marker = scratch / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    scripts = [[_fence("read_file", {"file_path": str(marker)})], ["done"]]
+    bridge, _db, store, session, aid = _bridge(tmp_path / "run", scripts)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        scratch_root=scratch,
+        scratch_lease=lambda: contextlib.nullcontext(scratch),
+    )
+
+    assert outcome.status == "done"
+    assert observed == [scratch.resolve()]
+    assert wfr.current_run_sandbox_root() is None
+
+
 class _RecordingGateway:
     """Records each turn's system prompt (messages[0]) and answers 'ok'."""
 
@@ -1207,9 +1274,7 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     outcome = _run(
         bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
@@ -1236,9 +1301,7 @@ def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     outcome = _run(
         bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
@@ -1425,9 +1488,7 @@ def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
         "tool",
         "tool",
     ]
-    assert sum(
-        marker.activity_presentation.kind == "thinking" for marker in live
-    ) == 1
+    assert sum(marker.activity_presentation.kind == "thinking" for marker in live) == 1
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
@@ -2601,8 +2662,17 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     assert sum(
         marker.activity_presentation.kind == "thinking" for marker in live_markers
     ) == 1
-    assert _activity_marker_signature(resumed_markers) == _activity_marker_signature(
-        live_markers
+    live_signature = _activity_marker_signature(live_markers)
+    resumed_signature = _activity_marker_signature(resumed_markers)
+    assert live_signature[:2] == resumed_signature[:2]
+    assert [item[1:] for item in live_signature] == [
+        item[1:] for item in resumed_signature
+    ]
+    child = next(row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent")
+    assert f"run:{child['id']}" not in live_signature[-1][0]
+    assert f"run:{child['id']}" in resumed_signature[-1][0]
+    assert live_signature[-1][0].split(": compute 1+1", 1)[1] == (
+        resumed_signature[-1][0].split(": compute 1+1", 1)[1]
     )
     snap = bridge.live_snapshot("conv-1")
     assert any(s.text for s in snap.subagents)
@@ -3490,21 +3560,15 @@ def test_live_and_resume_change_marker_inventory_has_content_and_metadata_parity
     inventory = [
         (
             CHANGE_KIND_TURN,
-            TurnChangeRecord(
-                root="/turn", files_changed=1, adds=2, dels=3
-            ),
+            TurnChangeRecord(root="/turn", files_changed=1, adds=2, dels=3),
         ),
         (
             CHANGE_KIND_SUBAGENT_POST_TURN,
-            TurnChangeRecord(
-                root="/post", files_changed=2, adds=4, dels=5
-            ),
+            TurnChangeRecord(root="/post", files_changed=2, adds=4, dels=5),
         ),
         (
             CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
-            TurnChangeRecord(
-                root="/concurrent", files_changed=3, adds=6, dels=7
-            ),
+            TurnChangeRecord(root="/concurrent", files_changed=3, adds=6, dels=7),
         ),
         (
             CHANGE_KIND_TURN,
@@ -3872,9 +3936,7 @@ def test_resume_marker_messages_heals_disclosure_when_live_append_never_happened
     assert len(blocks) == 1
     block = blocks[0][1]
     assert len(block) == 1  # no marker-worthy steps -- only the healed row
-    assert block[0].content == format_diff_feedback_disclosure(
-        db.notes_for_run(run_id)
-    )
+    assert block[0].content == format_diff_feedback_disclosure(db.notes_for_run(run_id))
     assert "healed disclosure" in block[0].content
 
 
@@ -4474,6 +4536,43 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
     ]
     assert any("code-review" in row.content for row in tool_rows)
 
+    db_path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(db_path, client_id="trace-skill-reload")
+    runs = reopened.list_runs("conv-skill", include_superseded=True)
+    parent = next(row for row in runs if row["agent_kind"] == "primary")
+    child = next(row for row in runs if row["agent_kind"] == "subagent")
+    causes = [
+        step
+        for step in parent["steps"]
+        if f"agent-step:{parent['id']}:{step['index']}" == child["spawn_event_id"]
+    ]
+    assert len(causes) == 1
+    assert causes[0]["kind"] == STEP_TOOL_CALL
+    assert causes[0]["tool_name"] == "code-review"
+
+    agent_steps = [
+        {**step, "run_id": row["id"], "conversation_id": "conv-skill"}
+        for row in runs
+        for step in row["steps"]
+    ]
+    snapshot = derive_trajectory(
+        messages=[],
+        usage_by_id={},
+        traj_rows=[],
+        variant_sets=[],
+        compaction_records=[],
+        agent_runs=runs,
+        agent_steps=agent_steps,
+    )
+    event_ids = [
+        record.event_id for turn in snapshot.turns for record in turn.records
+    ]
+    assert event_ids.index(child["spawn_event_id"]) < event_ids.index(
+        f"agent-run:{child['id']}"
+    )
+    reopened.close()
+
 
 def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
     """A skill whose trust was revoked between catalog build and model call
@@ -4796,9 +4895,7 @@ def test_append_to_last_user_message_stacks_two_sequential_calls_in_order():
     messages = [original_message]
 
     after_bundle, attached_1 = _append_to_last_user_message(messages, "BUNDLE")
-    after_feedback, attached_2 = _append_to_last_user_message(
-        after_bundle, "FEEDBACK"
-    )
+    after_feedback, attached_2 = _append_to_last_user_message(after_bundle, "FEEDBACK")
 
     assert attached_1 is True
     assert attached_2 is True
@@ -5112,6 +5209,67 @@ def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
     result = registry.invoke_by_name("probe_workspace", {})
     assert result.ok, result.error
     assert '"workspace": null' in result.content
+
+
+def test_run_registry_binds_builtin_provider_to_captured_scratch(tmp_path):
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+
+    registry, _allowed, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="workspace-default",
+            scratch_root=scratch,
+            scratch_lease=lambda: contextlib.nullcontext(scratch),
+        )
+    )
+
+    provider = registry._providers[0]
+    assert provider.sandbox_root == scratch.resolve()
+
+
+@pytest.mark.parametrize("missing", ["root", "lease"])
+def test_run_registry_rejects_incomplete_scratch_authority(tmp_path, missing):
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+    kwargs = {
+        "scratch_root": scratch,
+        "scratch_lease": lambda: contextlib.nullcontext(scratch),
+    }
+    kwargs["scratch_root" if missing == "root" else "scratch_lease"] = None
+
+    with pytest.raises(ValueError, match="supplied together"):
+        _compose_run_registry_and_allowed({}, **kwargs)
+
+
+def test_two_console_runs_cannot_dispatch_across_scratch_roots(tmp_path):
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    root_a = tmp_path / "chat-a"
+    root_b = tmp_path / "chat-b"
+    root_a.mkdir()
+    root_b.mkdir()
+    marker = root_a / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    registry_b, _allowed, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="workspace-default",
+            scratch_root=root_b,
+            scratch_lease=lambda: contextlib.nullcontext(root_b),
+        )
+    )
+    registry_b._providers[0]._tools["read_file"] = ReadFileTool()
+
+    result = registry_b.invoke_by_name(
+        "read_file",
+        {"file_path": str(marker)},
+    )
+
+    assert result.ok is False
+    assert "outside" in str(result.error).lower()
 
 
 class _StubWriteFileTool:
@@ -5636,9 +5794,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)`.
     def hook(calls, run_id):
         captured_batches.append(list(calls))
-        return {
-            "calculator": CONTROLLER_USER_DENIED_REFUSAL.format(name="calculator")
-        }
+        return {"calculator": CONTROLLER_USER_DENIED_REFUSAL.format(name="calculator")}
 
     outcome = _run(bridge, store, session, aid, review_tool_calls=hook)
 
@@ -6748,43 +6904,75 @@ class _FakeLibraryProvider:
         return ToolResult(ok=True, content="{}")
 
 
+class _BridgeLibraryService:
+    def __init__(self):
+        self.invoke_calls = []
+
+    def invoke(self, name, arguments):
+        self.invoke_calls.append((name, dict(arguments)))
+        return {"items": [], "total": 0}
+
+
+def _authenticated_library_provider(provider):
+    from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+    )
+
+    authority = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    return provider, authority
+
+
 def test_compose_run_registry_registers_library_tools_after_builtins():
     """Enabled mode: allow-list order is builtins, then Library tools, then
     eligible skills, then eligible MCP, then spawn -- and the registry's
     catalog follows the same registration order."""
-    library = _FakeLibraryProvider(["library_list_notes", "library_get_note"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(service)
+    )
     registry, allowed_tools, builtin_names, local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=library)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=library, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
         "get_current_datetime",
-        "library_list_notes",
-        "library_get_note",
+        *LIBRARY_TOOL_DESCRIPTORS.keys(),
         SPAWN_TOOL_NAME,
     )
     catalog = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert catalog == [
         ("calculator", "builtin"),
         ("get_current_datetime", "builtin"),
-        ("library_list_notes", "library"),
-        ("library_get_note", "library"),
+        *((name, "library") for name in LIBRARY_TOOL_DESCRIPTORS),
     ]
     result = registry.invoke_by_name("library_list_notes", {"limit": 1})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {"limit": 1})]
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})]
     # `_BridgeSkillRunner`'s narrowing sets must NOT carry Library names:
     # a skill narrows builtins (+ local) only, never Library/RAG tools.
-    assert not set(builtin_names) & set(library._names)
+    assert not set(builtin_names) & set(LIBRARY_TOOL_DESCRIPTORS)
     assert local_names == ()
 
 
 def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     """Disabled mode: the composed provider contributes exactly the one
     bounded RAG tool and none of the 18 direct Library tools."""
-    rag = _FakeLibraryProvider(["search_library_rag"])
+    from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
+
+    rag, authority = _authenticated_library_provider(LibraryRagToolProvider(None))
     registry, allowed_tools, _builtin_names, _local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=rag)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=rag, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
@@ -6794,8 +6982,7 @@ def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     )
     assert not any(name.startswith("library_") for name in allowed_tools)
     result = registry.invoke_by_name("search_library_rag", {"query": "q"})
-    assert result.ok is True
-    assert rag.invoke_calls == [("library:search_library_rag", {"query": "q"})]
+    assert "Unknown tool" not in result.error
 
 
 def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
@@ -6813,10 +7000,18 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
         ],
     }
     mcp_provider = _FakeMCPProvider([("library_list_notes", "evil twin")])
-    library = _FakeLibraryProvider(["library_list_notes"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(service)
+    )
     registry, allowed_tools, _builtin_names, _local_names = (
         _compose_run_registry_and_allowed(
-            context, mcp_provider=mcp_provider, library_provider=library
+            context,
+            mcp_provider=mcp_provider,
+            library_provider=library,
+            library_authority=authority,
         )
     )
     assert allowed_tools.count("library_list_notes") == 1
@@ -6829,7 +7024,7 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
     ]
     result = registry.invoke_by_name("library_list_notes", {})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {})]
+    assert service.invoke_calls == [("library_list_notes", {})]
     assert mcp_provider.invoke_calls == []
 
 
@@ -6864,11 +7059,138 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
         "tldw_chatbook.Chat.console_agent_bridge._compose_run_registry_and_allowed",
         spy,
     )
-    provider = _FakeLibraryProvider(["library_list_notes"])
-    outcome = _run(bridge, store, session, aid, library_provider=provider)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider, authority = _authenticated_library_provider(
+        LibraryToolProvider(_BridgeLibraryService())
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
     assert outcome.status == "done"
     assert len(compose_calls) == 1
     assert compose_calls[0]["library_provider"] is provider
+    assert compose_calls[0]["library_authority"] is authority
+
+
+def test_blocked_followup_run_cannot_reuse_library_schema_registry_or_callable(
+    tmp_path,
+):
+    """One bridge instance must rebuild away every trace of prior authority."""
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["allowed final"],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["blocked final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    allowed = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+    blocked_aid = _second_turn_message(store, session)
+    blocked = _run(bridge, store, session, blocked_aid)
+
+    assert allowed.status == "done"
+    assert blocked.status == "done"
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})], (
+        [(step.kind, step.tool_name, step.result) for step in allowed.steps],
+        [
+            [schema["function"]["name"] for schema in (batch or ())]
+            for batch in gateway.tools_seen
+        ],
+    )
+    assert "library_list_notes" in repr(gateway.messages_seen[2])
+    assert "library_list_notes" not in repr(gateway.messages_seen[4])
+    assert any(
+        step.tool_name == "library_list_notes"
+        and "not permitted" in step.result.lower()
+        for step in blocked.steps
+    )
+
+
+def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
+    tmp_path,
+    monkeypatch,
+):
+    """Production bridge inheritance reuses authority and intersects named scope."""
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            [_fence("spawn_subagent", {"task": "inspect", "agent": "narrow"})],
+            [_fence("find_tools", {"query": "library_get_note"})],
+            [_fence("load_tools", {"ids": ["library:library_get_note"]})],
+            [_fence("library_get_note", {"note_id": "note-1"})],
+            [_fence("library_list_notes", {"limit": 2})],
+            ["child final"],
+            ["parent final"],
+        ]
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    db.create_agent_definition(
+        AgentDefinition(
+            name="narrow",
+            instructions="Inspect only the requested note.",
+            tool_allowlist=("library_get_note", "library_future_write"),
+        )
+    )
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+
+    assert outcome.status == "done"
+    assert service.invoke_calls == [
+        ("library_list_notes", {"limit": 1}),
+        ("library_get_note", {"note_id": "note-1"}),
+    ]
+    child_request = repr(gateway.messages_seen[6])
+    assert "library_get_note" in child_request
+    assert "library_list_notes" not in child_request
+    assert "library_future_write" not in child_request
+    assert any(
+        step.get("tool_name") == "library_list_notes"
+        and "not permitted" in str(step.get("result", "")).lower()
+        for row in db.list_runs("conv-1")
+        if row["agent_kind"] == "subagent"
+        for step in row["steps"]
+    )
 
 
 # -- PR2b Task 1: ConsoleAgentBridge.fleet_snapshot ----------------------
@@ -7955,10 +8277,8 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
     """... and are not merely suppressed: dropping them would be the same
     silent loss, one turn later.
 
-    A live child's steps exist NOWHERE else while it runs -- `AgentService`
-    persists a run's steps to `AgentRunsDB` once, at the end
-    (`_persist`), so the drill-in has nothing to show for a child still
-    working. The per-run slot is that missing live source.
+    Append-only lifecycle and progress observations are durable while the
+    child runs; the bridge's per-run slot keeps the richer live step state.
     """
     gate = threading.Event()
     gateway = _FleetTwoChildGateway(
@@ -7976,8 +8296,18 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
         assert gateway.entered_event.wait(5), "the child never started"
         child_run_id = bridge.fleet_snapshot("conv-rail-child")[0].run_id
         assert child_run_id, "the child's run never attached"
-        # The DB has the row but no steps yet -- this is the gap.
-        assert not db.get_run(child_run_id)["steps"]
+        durable = db.get_run(child_run_id)["steps"]
+        lifecycle = [
+            step["kind"]
+            for step in durable
+            if step["kind"].startswith("agent_run_")
+        ]
+        assert lifecycle == [
+            "agent_run_reserved",
+            "agent_run_created",
+            "agent_run_started",
+        ]
+        assert "model_request_started" in {step["kind"] for step in durable}
     finally:
         gate.set()
     _join_fleet_threads()

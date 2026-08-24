@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
+import threading
 from pathlib import Path
 
 import pytest
@@ -36,8 +38,13 @@ from tldw_chatbook.Chat.console_runtime import (
     CONSOLE_VIEW_HOOK_SLOTS,
     ConsoleRuntime,
 )
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+from tldw_chatbook.UI.Console_Modules.fleet import (
+    ConsoleFleetLifecycleController,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -61,6 +68,90 @@ def test_console_runtime_owns_one_screen_free_persona_buddy_sink():
     assert isinstance(runtime.persona_buddy_sink, PersonaBuddyConsoleAdapter)
     assert runtime.persona_buddy_sink is runtime.persona_buddy_sink
     assert "view" not in vars(runtime.persona_buddy_sink)
+
+
+@pytest.mark.unit
+def test_console_runtime_reuses_one_scratch_manager_across_console_visits():
+    runtime = ConsoleRuntime(type("App", (), {})())
+    first = runtime.scratch_spaces
+
+    runtime.detach_view(None)
+
+    assert runtime.scratch_spaces is first
+
+
+@pytest.mark.asyncio
+async def test_runtime_injects_its_scratch_manager_into_chat_controller():
+    runtime = ConsoleRuntime(type("App", (), {})())
+
+    controller = runtime.ensure_chat_controller(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+
+    assert controller._scratch_spaces is runtime.scratch_spaces
+    assert controller._owns_scratch_spaces is False
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_leaving_console_preserves_live_session_scratch(tmp_path):
+    runtime = ConsoleRuntime(type("App", (), {})())
+    runtime._scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = runtime.scratch_spaces.snapshot("session-a")
+
+    assert await runtime.leave_console() is True
+
+    assert runtime.scratch_spaces.is_live(snapshot)
+    assert snapshot.root.is_dir()
+    await runtime.dispose()
+    assert not snapshot.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_runtime_tombstones_before_shutdown_and_disposes_via_to_thread(
+    monkeypatch,
+):
+    events: list[str] = []
+
+    class ScratchSpaces:
+        def tombstone_all(self) -> None:
+            events.append("scratch-tombstone")
+
+        def dispose(self) -> bool:
+            events.append("scratch-dispose")
+            return True
+
+    class Controller:
+        async def shutdown(self) -> None:
+            events.append("controller-shutdown")
+
+    class Gateway:
+        async def aclose(self) -> None:
+            events.append("gateway-close")
+
+    async def fake_to_thread(function, *args, **kwargs):
+        events.append("to-thread")
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime.asyncio.to_thread",
+        fake_to_thread,
+    )
+    runtime = ConsoleRuntime(type("App", (), {})())
+    runtime._scratch_spaces = ScratchSpaces()
+    runtime._chat_controller = Controller()
+    runtime._provider_gateway = Gateway()
+
+    await runtime.dispose()
+
+    assert events == [
+        "scratch-tombstone",
+        "controller-shutdown",
+        "to-thread",
+        "scratch-dispose",
+        "gateway-close",
+    ]
 
 
 @pytest.mark.asyncio
@@ -107,8 +198,11 @@ def _construction_sites(class_name: str) -> list[str]:
                 continue
             func = node.func
             called = (
-                func.id if isinstance(func, ast.Name) else func.attr
-                if isinstance(func, ast.Attribute) else None
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
             )
             if called == class_name:
                 line = source.splitlines()[node.lineno - 1].strip()
@@ -140,6 +234,16 @@ def test_attach_and_detach_cover_exactly_the_same_slot_set():
     cleared and never bound (a live Console with a silently dead hook).
     """
     screen = ChatScreen.__new__(ChatScreen)
+
+    def no_op(*_args, **_kwargs):
+        return None
+
+    screen._fleet = ConsoleFleetLifecycleController(
+        **{
+            name: no_op
+            for name in inspect.signature(ConsoleFleetLifecycleController).parameters
+        }
+    )
     declared = {slot.name for slot in CONSOLE_VIEW_HOOK_SLOTS}
     provided = set(ChatScreen.console_view_hooks(screen))
 
@@ -242,9 +346,9 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
         assert visit_one_event.is_set()
         # The hooks now answer for the LIVE screen, not the dead one.
         assert controller_two.notify_run_outcome is not None
-        assert (
-            controller_two.notify_run_outcome.__self__ is chat_two
-        ), "a hook is still bound to the previous, unmounted screen"
+        assert controller_two.notify_run_outcome.__self__ is chat_two, (
+            "a hook is still bound to the previous, unmounted screen"
+        )
 
 
 @pytest.mark.asyncio
@@ -283,8 +387,8 @@ async def test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
 
         reached: list[tuple[str, ConsoleRunStatus]] = []
         original = chat._notify_console_run_outcome
-        chat._notify_console_run_outcome = (
-            lambda session_id, status: reached.append((session_id, status))
+        chat._notify_console_run_outcome = lambda session_id, status: reached.append(
+            (session_id, status)
         )
         # Re-bind so the recorder is what the runtime holds for THIS visit.
         chat._console_runtime().attach_view(chat)
@@ -446,26 +550,165 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
 
 @pytest.mark.unit
 def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
-    """Console producers stop before Buddy drains, which precedes profiles."""
+    """Console producers stop before Buddy drains, which precedes profiles.
+
+    TASK-21103 rewrote what the construction half of this pin means. The
+    controller is no longer built inside ``__init__`` — importing it drags
+    Persona_Visual and PIL (1.28 s cold) onto the boot path, so the eager
+    wiring became the lazy ``persona_buddy_controller`` property over
+    ``_build_persona_buddy_controller``. The construction SEMANTICS the old
+    pin protected (portrait loader partial over the local persona service)
+    moved there intact, and ``__init__`` must stay construction-free. The
+    shutdown half is unchanged in meaning: Console producers stop first,
+    then Buddy drains — but the disposer must now PEEK the slot rather than
+    read the property, or a never-built controller would be constructed
+    (importing PIL) purely to be shut down.
+    """
     import inspect
 
     from tldw_chatbook.app import TldwCli
 
     initializer = inspect.getsource(TldwCli.__init__)
-    wiring = initializer.index("self._wire_character_persona_services()")
-    construction = initializer.index("PersonaBuddyController(")
-    assert "PersonaBuddyController" in initializer, initializer
-    assert "self.persona_buddy_controller" in initializer, initializer
-    assert "portrait_loader=partial(" in initializer, initializer
-    assert "load_local_persona_portrait" in initializer, initializer
-    assert wiring < construction, initializer
+    assert "PersonaBuddyController(" not in initializer, (
+        "eager Buddy construction is back in __init__ (TASK-21103 regression)"
+    )
+    slot = initializer.index("self._persona_buddy_controller")
+    console_runtime = initializer.index("= ConsoleRuntime(self)")
+    assert slot < console_runtime, (
+        "the controller slot must exist before ConsoleRuntime reads the "
+        "persona_buddy_controller property"
+    )
+
+    assert isinstance(
+        inspect.getattr_static(TldwCli, "persona_buddy_controller"), property
+    )
+    builder = inspect.getsource(TldwCli._build_persona_buddy_controller)
+    assert "PersonaBuddyController(" in builder, builder
+    assert "portrait_loader=partial(" in builder, builder
+    assert "load_local_persona_portrait" in builder, builder
+    guard = builder.index('"local_character_persona_service"')
+    construction = builder.index("PersonaBuddyController(")
+    assert guard < construction, builder
 
     source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
     buddy = source.index("_shutdown_persona_buddy")
     console = source.index("_shutdown_console_runtime")
     assert console < buddy, source
     disposer = inspect.getsource(TldwCli._shutdown_persona_buddy)
-    assert "persona_buddy_controller.shutdown" in disposer, disposer
+    assert "self._persona_buddy_controller" in disposer, disposer
+    assert "controller.shutdown()" in disposer, disposer
+    assert "self.persona_buddy_controller.shutdown" not in disposer, (
+        "shutdown must peek the slot, never the constructing property"
+    )
+
+
+@pytest.mark.unit
+def test_lazy_persona_buddy_property_defers_and_ensure_constructs():
+    """The lazy controller property's three states behave as designed.
+
+    TASK-21103 behavior pins, on a skeletal ``TldwCli``:
+
+    - disabled preferences: the passive property returns None WITHOUT
+      constructing (the every-screen-mount reconcile early-out stays free of
+      the Persona_Visual/PIL import);
+    - disabled preferences, explicit feature use:
+      ``ensure_persona_buddy_controller()`` constructs anyway (this is what
+      lets Workbench "Use for Buddy" enable from a disabled state), and the
+      passive property then returns the same cached instance;
+    - enabled preferences: the first passive read constructs, and the
+      construction is cached (same object on the second read).
+    - the setter installs a test double the property returns verbatim.
+    """
+    from tldw_chatbook.app import TldwCli
+
+    def skeleton(enabled: bool) -> TldwCli:
+        app = object.__new__(TldwCli)
+        app._persona_buddy_controller = None
+        app._persona_buddy_controller_lock = threading.Lock()
+        app.app_config = {"persona_buddy": {"enabled": enabled}}
+        app.local_character_persona_service = object()
+        app.chachanotes_db = object()
+        app.call_after_refresh = lambda *args, **kwargs: None
+        return app
+
+    disabled = skeleton(enabled=False)
+    assert disabled.persona_buddy_controller is None
+    assert disabled._persona_buddy_controller is None, (
+        "the passive property constructed a controller for a disabled profile"
+    )
+
+    ensured = disabled.ensure_persona_buddy_controller()
+    assert ensured is not None
+    assert disabled.persona_buddy_controller is ensured
+
+    enabled = skeleton(enabled=True)
+    first = enabled.persona_buddy_controller
+    assert first is not None
+    assert enabled.persona_buddy_controller is first
+
+    injected = object()
+    enabled.persona_buddy_controller = injected
+    assert enabled.persona_buddy_controller is injected
+
+
+@pytest.mark.unit
+def test_actor_pack_recovery_precedes_character_persona_surfaces():
+    """Cross-store recovery is gated ahead of every affected surface.
+
+    task-21106 rewrote what this pin means. Recovery no longer runs inside
+    ``_wire_character_persona_services`` — synchronous SQLite during
+    ``__init__`` cost every boot and crashed the test app factory — so the
+    old ``local_service < coordinator < recover() < scope`` source ordering
+    is gone by design. The guarantee it protected now has three seams, and
+    this test pins all of them:
+
+    - the deferred-startup worker kicks ``ensure_actor_pack_recovery`` on a
+      thread right after first paint (ahead of any user-driven Console/Buddy
+      persona read);
+    - the Personas surface awaits the same idempotent gate before its first
+      library read (behavioral proof in test_actor_pack_recovery_seam.py);
+    - the coordinator itself runs ``ensure_recovered`` before admitting a
+      ``create_persona`` mutation, so no caller ordering can bypass it.
+    """
+    import inspect
+
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinator,
+    )
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+
+    wiring = inspect.getsource(TldwCli._wire_character_persona_services)
+    local_service = wiring.index("LocalCharacterPersonaService(")
+    coordinator = wiring.index("PersonaActorPackCoordinator(")
+    scope = wiring.index("CharacterPersonaScopeService(")
+    assert local_service < coordinator < scope, wiring
+    assert ".recover()" not in wiring, (
+        "recovery is back on the construction path (task-21106 regression)"
+    )
+
+    deferred = inspect.getsource(TldwCli._schedule_deferred_startup_work)
+    assert "ensure_actor_pack_recovery" in deferred, deferred
+
+    personas_load = inspect.getsource(PersonasScreen._load_after_mount)
+    assert "ensure_actor_pack_recovery" in personas_load, personas_load
+
+    create = inspect.getsource(PersonaActorPackCoordinator.create_persona)
+    assert create.index("self.ensure_recovered()") < create.index(
+        "self._blocked_intent_ids"
+    ), create
+
+    # TASK-21103 moved Buddy construction out of ``__init__`` into the lazy
+    # ``_build_persona_buddy_controller``. The ordering guarantee this stanza
+    # pinned — Buddy is only ever wired to a fully constructed local persona
+    # service — is now enforced by the builder itself: it reads the service
+    # defensively and defers (returns None, retried on next access) until
+    # ``_wire_character_persona_services`` has run.
+    builder = inspect.getsource(TldwCli._build_persona_buddy_controller)
+    guard = builder.index('"local_character_persona_service"')
+    buddy = builder.index("PersonaBuddyController(")
+    assert guard < buddy, builder
+    assert "PersonaBuddyController(" not in inspect.getsource(TldwCli.__init__)
 
 
 @pytest.mark.asyncio
@@ -501,6 +744,9 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     async def later_lifecycle() -> None:
         events.append("later-lifecycle")
 
+    async def no_op_lifecycle() -> None:
+        return None
+
     console_task: asyncio.Task[None] | None = None
 
     async def console_runner() -> None:
@@ -520,6 +766,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     app._persona_buddy_shutdown_task = None
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
+    app._shutdown_notes_sync_runtime = no_op_lifecycle
     app._shutdown_console_image_edits = later_lifecycle
     app._shutdown_console_runtime = shutdown_console_runtime
     app._shutdown_file_notes_session_owner = later_lifecycle

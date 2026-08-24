@@ -42,6 +42,7 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     SchemaError,
@@ -55,6 +56,7 @@ from Tests.ChaChaNotesDB.historical_bootstrap import (
 )
 
 CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+MIGRATION_SEED = ConsoleLibraryMigrationSeed(auto_retrieve_on_send=False)
 
 
 # --------------------------------------------------------------------------
@@ -137,7 +139,11 @@ def _fingerprint_of_clean_replay(tmp_path: Path, from_version: int) -> dict:
     path = tmp_path / f"clean_replay_v{from_version}.sqlite"
     with chachanotes_db_at_version(path, from_version):
         pass
-    db = CharactersRAGDB(str(path), client_id="clean-replay")
+    db = CharactersRAGDB(
+        str(path),
+        client_id="clean-replay",
+        console_library_migration_seed=MIGRATION_SEED,
+    )
     try:
         return _schema_fingerprint(db.get_connection())
     finally:
@@ -145,7 +151,11 @@ def _fingerprint_of_clean_replay(tmp_path: Path, from_version: int) -> dict:
 
 
 def _open_current(path: Path, client_id: str) -> CharactersRAGDB:
-    return CharactersRAGDB(str(path), client_id=client_id)
+    return CharactersRAGDB(
+        str(path),
+        client_id=client_id,
+        console_library_migration_seed=MIGRATION_SEED,
+    )
 
 
 # --------------------------------------------------------------------------

@@ -78,7 +78,16 @@ def _source_executable_lines(
             {
                 line
                 for _, line in dis.findlinestarts(function.__code__)
-                if start_line <= line <= end_line
+                # `line` is Optional: an instruction may carry no source
+                # position, and CPython emits more of those as it evolves --
+                # measured on this function, 3.11 yields 0 such entries and
+                # 3.14 yields 12, which turned this comprehension into a
+                # module-level `TypeError: '<=' not supported between
+                # instances of 'int' and 'NoneType'` and took the whole file
+                # out at COLLECTION. A positionless instruction cannot be
+                # inside a source-line boundary, so skipping it is also the
+                # semantically right answer, not just the safe one.
+                if line is not None and start_line <= line <= end_line
             }
         )
     )

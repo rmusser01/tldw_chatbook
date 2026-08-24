@@ -46,6 +46,12 @@ EXPECTED_LIBRARY_TOOLS = {
     "library_list_skills", "library_get_skill", "library_search_skills",
     "library_list_conversations", "library_get_conversation", "library_search_conversations",
     "library_list_collections", "library_get_collection", "library_search_collections",
+    # chunking-agent-tools siblings (spec §4; re-chunk landed with Task 5)
+    "library_get_media_structure", "library_get_media_chunk",
+    "library_list_chunk_specs", "library_save_chunk_spec",
+    "library_rechunk_media",
+    # student-workflow (spec §4): the note write tool
+    "library_save_note",
 }
 
 
@@ -54,10 +60,14 @@ EXPECTED_LIBRARY_TOOLS = {
 
 def test_descriptor_table_has_exact_canonical_surface():
     assert set(LIBRARY_TOOL_DESCRIPTORS) == EXPECTED_LIBRARY_TOOLS
-    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 18
+    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 24
     for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
         assert descriptor.item_type in LIBRARY_ITEM_TYPES
-        assert descriptor.operation in {"list", "get", "search"}
+        assert descriptor.operation in {
+            "list", "get", "search",
+            "structure", "chunk", "spec_list", "spec_save", "rechunk",
+            "save",
+        }
         assert descriptor.description
         assert descriptor.input_schema
 
@@ -109,7 +119,12 @@ def test_get_schemas_bound_continuation_cursor_length():
 def test_descriptions_carry_trust_and_read_only_boundaries():
     for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
         assert "untrusted" in descriptor.description
-        assert "Read-only" in descriptor.description
+        # Every tool states its data boundary: read-only, or (the chunking
+        # spec-save sibling) the explicit writes-local-only boundary.
+        assert (
+            "Read-only" in descriptor.description
+            or "Writes local Library data only" in descriptor.description
+        ), descriptor.name
 
 
 # -- Stable IDs (spec section 3) ---------------------------------------------------

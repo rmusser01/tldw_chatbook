@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
 from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
@@ -13,6 +14,308 @@ from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProd
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+
+@pytest.mark.parametrize(
+    "state", [None, *(item.value for item in AssistantGenerationState)]
+)
+def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
+    tmp_path, state: str | None
+) -> None:
+    db = CharactersRAGDB(tmp_path / f"state-{state}.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "State proof"})
+        private_json = (
+            _provider_continuation_json()
+            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
+            else None
+        )
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "visible answer",
+                "provider_continuation_json": private_json,
+                "assistant_generation_state": state,
+            }
+        )
+        assert message_id is not None
+        payload = {
+            "assistant_generation_state": state,
+            "content": "visible answer",
+            "role": "assistant",
+        }
+        if private_json is not None:
+            payload["provider_continuation_json"] = dump_provider_continuation_json(
+                parse_provider_continuation_json(private_json)
+            )
+        payload_hash = canonical_payload_hash(payload)
+        source = db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        )
+        assert source is not None
+        assert source.assistant_generation_state == state
+
+        dataset_key = generate_dataset_key()
+        repo = _local_first_repo(tmp_path)
+        result = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        ).reconcile_chat_message_intent(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        )
+
+        assert result["status"] == "enqueued"
+        assert _decrypt_payload(
+            result["outbox_entry"]["envelope"]["payload_ciphertext"], dataset_key
+        ) == payload
+    finally:
+        db.close_connection()
+
+
+def test_source_proof_normalizes_only_legacy_missing_generation_state(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "legacy-state.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Legacy state"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "legacy answer",
+            }
+        )
+        assert message_id is not None
+        connection = db.get_connection()
+        row = connection.execute(
+            "SELECT payload FROM sync_log WHERE entity = 'messages' AND entity_id = ?",
+            (message_id,),
+        ).fetchone()
+        legacy_payload = json.loads(row["payload"])
+        legacy_payload.pop("assistant_generation_state")
+        connection.execute(
+            "UPDATE sync_log SET payload = ? WHERE entity = 'messages' AND entity_id = ?",
+            (json.dumps(legacy_payload), message_id),
+        )
+        connection.commit()
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": None,
+                "content": "legacy answer",
+                "role": "assistant",
+            }
+        )
+
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        ) is not None
+
+        legacy_payload["unexpected"] = True
+        connection.execute(
+            "UPDATE sync_log SET payload = ? WHERE entity = 'messages' AND entity_id = ?",
+            (json.dumps(legacy_payload), message_id),
+        )
+        connection.commit()
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        ) is None
+    finally:
+        db.close_connection()
+
+
+def test_source_proof_rejects_malformed_wrong_role_and_mismatched_state(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "bad-state.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Bad state"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "visible",
+            }
+        )
+        assert message_id is not None
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": None,
+                "content": "visible",
+                "role": "user",
+            }
+        )
+        connection = db.get_connection()
+        for state in ("accepted", "unknown"):
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload FROM sync_log WHERE entity = 'messages' "
+                    "AND entity_id = ?",
+                    (message_id,),
+                ).fetchone()["payload"]
+            )
+            payload["assistant_generation_state"] = state
+            connection.execute(
+                "UPDATE sync_log SET payload = ? WHERE entity = 'messages' "
+                "AND entity_id = ?",
+                (json.dumps(payload), message_id),
+            )
+            connection.commit()
+            assert db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            ) is None
+    finally:
+        db.close_connection()
+
+
+def test_source_proof_rejects_illegal_nonassistant_persisted_state(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "bad-row-state.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Bad row state"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "visible",
+            }
+        )
+        assert message_id is not None
+        with db.transaction() as connection:
+            connection.execute("DROP TRIGGER messages_sync_update")
+            connection.execute(
+                "UPDATE messages SET assistant_generation_state = 'accepted' "
+                "WHERE id = ?",
+                (message_id,),
+            )
+
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": None,
+                "content": "visible",
+                "role": "user",
+            }
+        )
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        ) is None
+    finally:
+        db.close_connection()
+
+
+def test_source_proof_rejects_continuation_active_without_continuation(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "missing-continuation.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Missing continuation"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "",
+                "assistant_generation_state": "continuation_active",
+            }
+        )
+        assert message_id is not None
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": "continuation_active",
+                "content": "",
+                "role": "assistant",
+            }
+        )
+
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        ) is None
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("role", "delete_state"),
+    [
+        ("assistant", "unknown"),
+        ("user", "accepted"),
+        ("assistant", "continuation_active"),
+    ],
+)
+def test_undelete_source_proof_rejects_invalid_prior_delete_state(
+    tmp_path, role: str, delete_state: str
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"bad-delete-{role}-{delete_state}.db", client_id="sync-source"
+    )
+    try:
+        conversation_id = db.add_conversation({"title": "Bad delete"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": role,
+                "role": role,
+                "content": "visible",
+            }
+        )
+        assert message_id is not None
+        assert db.soft_delete_message(str(message_id), expected_version=1)
+        connection = db.get_connection()
+        deleted_payload = json.loads(
+            connection.execute(
+                "SELECT payload FROM sync_log WHERE entity = 'messages' "
+                "AND entity_id = ? AND version = 2",
+                (message_id,),
+            ).fetchone()["payload"]
+        )
+        deleted_payload["assistant_generation_state"] = delete_state
+        connection.execute(
+            "UPDATE sync_log SET payload = ? WHERE entity = 'messages' "
+            "AND entity_id = ? AND version = 2",
+            (json.dumps(deleted_payload), message_id),
+        )
+        connection.commit()
+        with db.transaction() as connection:
+            connection.execute("DROP TRIGGER messages_au")
+            connection.execute(
+                "UPDATE messages SET deleted = 0, version = 3, last_modified = ? "
+                "WHERE id = ?",
+                (db._get_current_utc_timestamp_iso(), message_id),
+            )
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": None,
+                "content": "visible",
+                "role": role,
+            }
+        )
+
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=3,
+            payload_hash=payload_hash,
+        ) is None
+    finally:
+        db.close_connection()
 
 
 def test_chat_producer_enqueues_encrypted_message_and_updates_summary(tmp_path) -> None:
@@ -72,6 +375,7 @@ def test_chat_producer_enqueues_encrypted_message_and_updates_summary(tmp_path) 
         "variant_turn_id": "turn-1",
     }
     assert _decrypt_payload(envelope["payload_ciphertext"], dataset_key) == {
+        "assistant_generation_state": None,
         "content": "Private answer",
         "role": "assistant",
     }
@@ -210,6 +514,7 @@ def test_chachanotes_source_reads_only_exact_committed_message_intent(tmp_path) 
         )
         payload_hash = canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": "visible answer",
                 "provider_continuation_json": canonical_private,
                 "role": "assistant",
@@ -272,6 +577,7 @@ def test_chachanotes_source_read_uses_database_transaction(
         )
         payload_hash = canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": "visible answer",
                 "provider_continuation_json": canonical_private,
                 "role": "assistant",
@@ -409,6 +715,7 @@ def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
         )
         payload_hash = canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": "visible answer",
                 "provider_continuation_json": canonical_private,
                 "role": "assistant",
@@ -453,7 +760,11 @@ def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
                 message_id=message_id,
                 message_version=2,
                 payload_hash=canonical_payload_hash(
-                    {"content": "visible answer", "role": "assistant"}
+                    {
+                        "assistant_generation_state": None,
+                        "content": "visible answer",
+                        "role": "assistant",
+                    }
                 ),
             )
             is None
@@ -462,7 +773,11 @@ def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
 
         db.soft_delete_message(message_id, expected_version=2)
         deleted_hash = canonical_payload_hash(
-            {"content": "visible answer", "role": "assistant"}
+            {
+                "assistant_generation_state": None,
+                "content": "visible answer",
+                "role": "assistant",
+            }
         )
         assert (
             db.read_committed_chat_sync_intent(
@@ -494,6 +809,7 @@ def test_chat_producer_reconciles_only_from_exact_source_proof(tmp_path) -> None
         )
         payload_hash = canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": "visible answer",
                 "provider_continuation_json": canonical_private,
                 "role": "assistant",
@@ -520,6 +836,7 @@ def test_chat_producer_reconciles_only_from_exact_source_proof(tmp_path) -> None
         assert result["receipt"]["source_version"] == 1
         envelope = result["outbox_entry"]["envelope"]
         assert _decrypt_payload(envelope["payload_ciphertext"], dataset_key) == {
+            "assistant_generation_state": "continuation_active",
             "content": "visible answer",
             "provider_continuation_json": canonical_private,
             "role": "assistant",
@@ -555,6 +872,7 @@ def test_reconcile_same_payload_later_version_gets_distinct_outbox_entry(
         source_row = db.get_message_by_id(message_id)
         payload_hash = canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": source_row["content"],
                 "provider_continuation_json": source_row["provider_continuation_json"],
                 "role": "assistant",
@@ -647,6 +965,7 @@ def test_reconcile_resumes_after_commit_before_producer_return(
         source_row = db.get_message_by_id(message_id)
         payload_hash = canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": source_row["content"],
                 "provider_continuation_json": source_row["provider_continuation_json"],
                 "role": "assistant",

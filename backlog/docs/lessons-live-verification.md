@@ -1340,3 +1340,54 @@ to the intended subview and inspect the capture itself. Here the verifier now
 captures New note honestly, sends Escape, and requires `Add from files` before
 recording the Notes-list frames. A parent-surface title proves only that the
 parent mounted; it cannot certify which retained child view is active.
+
+---
+
+## A live app launch can rewrite a tracked generated artifact (TASK-21161, 2026-08-23)
+
+**What happened.** The isolated Console/DeepSeek UAT changed only the generated
+timestamp in tracked `tldw_chatbook/css/tldw_cli_modular.tcss`. No source CSS
+had changed; app startup had rebuilt the consolidated file. Left in the
+working tree, that runtime side effect would have looked like an intentional
+implementation change and polluted the review diff.
+
+**What to do.** Capture `git status --short` before a live app launch and again
+after clean exit. For tracked generated artifacts, compare the body as well as
+the header before deciding whether a delta belongs to the task. Restore a
+timestamp-only runtime rebuild to the pre-UAT content; regenerate and commit it
+only when its source modules actually changed.
+
+## A recovery modal can complete while the owning run stays non-terminal (TASK-20941, 2026-08-22)
+
+**What happened.** Persona Buddy full-app UAT sent a real Console prompt through
+a disposable loopback provider. Console first opened the project-instructions
+folder recovery modal because the scratch profile had no eligible workspace
+binding. Choosing **Disable** dismissed the modal and updated the session, but
+the controller returned a raw rejected result without replacing its earlier
+`VALIDATING` run state. The transcript, Console header, composer, and Buddy then
+remained stuck at `Running` / `thinking`; no provider request was made. Unit
+coverage had verified the setup decision and session mutation separately, so it
+never observed the owning run after the modal completed.
+
+**What to do.** For every modal or async recovery branch that rejects an active
+run, assert both the domain mutation and the owner-facing terminal state, then
+retry through the same controller. A dismissed modal or a returned failure value
+is not sufficient evidence: the run-state ledger, composer admission, dependent
+UI state, and retry path must all be terminal/current together.
+
+---
+
+## Restart the partial-review state, not only each isolated choice (TASK-97, 2026-08-23)
+
+**What happened.** Real-authority integration tests proved Keep file, Keep
+note, Keep both, Skip, receipts, restart history, and Undo one choice at a time.
+The isolated live run then applied three choices and skipped the fourth. After
+restart, the fresh plan correctly contained three `NO_CHANGE` rows plus the
+remaining conflict, but Apply rejected the reviewed no-change IDs as an invalid
+review. The single-choice cases never produced that mixed plan shape.
+
+**What to do.** For a reviewed batch that permits partial completion, restart
+after a genuinely mixed partial Apply and resolve the remainder through the
+same public boundary. Per-choice restart tests prove each operation is durable;
+they do not prove the next review accepts terminal no-op rows alongside work
+that still mutates.

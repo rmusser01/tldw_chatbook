@@ -64,6 +64,7 @@ def _fake_response(
     body: bytes = b"",
     *,
     close_calls: list[int] | None = None,
+    request: requests.PreparedRequest | None = None,
 ) -> requests.Response:
     """Build a bare ``requests.Response`` double that ``close()`` safely.
 
@@ -104,6 +105,16 @@ def _fake_response(
     resp._content = body
     resp._content_consumed = True
     resp.encoding = "utf-8"
+    # A real adapter sets this in `HTTPAdapter.build_response`; a hand-rolled
+    # `send` double has to do it explicitly. Not cosmetic: `Session.send`
+    # peeks ahead through `resolve_redirects` -> `rebuild_auth`, which
+    # dereferences `response.request.url` to decide whether to strip
+    # `Authorization` across a host change. With `.request` left as None that
+    # raises `AttributeError` INSIDE requests, before the production refusal
+    # can be observed -- and the production code's own `except Exception`
+    # then swallows it and reports it as a generic failure, so the test
+    # appears to exercise the redirect path while actually never reaching it.
+    resp.request = request
     if close_calls is not None:
         original_close = resp.close
 
@@ -149,9 +160,15 @@ def _install_redirecting_adapter(
                 302,
                 {"Location": "https://evil.example/steal"},
                 close_calls=redirect_close_calls,
+                request=request,
             )
         if host == "evil.example":
-            return _fake_response(200, {"Content-Type": "application/json"}, ok_body)
+            return _fake_response(
+                200,
+                {"Content-Type": "application/json"},
+                ok_body,
+                request=request,
+            )
         raise AssertionError(f"unexpected host in test transport: {host}")
 
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", _fake_send)

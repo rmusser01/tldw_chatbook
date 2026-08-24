@@ -404,10 +404,31 @@ class ConsoleEvidenceDisplayState:
     reference_rows: tuple[ConsoleDisplayRow, ...] = ()
 
 
+#: Instance attribute used to cache one launch's parsed evidence bundle:
+#: ``(payload mapping identity, parsed bundle or None)``. Stored via
+#: ``object.__setattr__`` because ``ConsoleLiveWorkLaunch`` is a frozen
+#: dataclass (with a plain ``__dict__``, so the write is safe).
+_EVIDENCE_BUNDLE_CACHE_ATTR = "_tldw_parsed_evidence_bundle_cache"
+
+
 def evidence_bundle_from_launch(
     launch: ConsoleLiveWorkLaunch | None,
 ) -> EvidenceBundle | None:
-    """Parse a staged live-work evidence bundle without exposing raw payload text."""
+    """Parse a staged live-work evidence bundle without exposing raw payload text.
+
+    TASK-21118: parsed at most ONCE per launch. All Console staged-state
+    consumers (source counts, prompted text, the workspace context's
+    staged sources, the evidence display card) funnel through this seam,
+    and while a launch was staged the control-state build re-ran
+    ``EvidenceBundle.from_payload`` for each of them on every printable
+    keystroke -- measured >=2x per key by the 2026-08-22 holistic perf
+    review, and 11x across three keys by this task's mounted probe. The
+    parse result is cached on the launch object keyed by the identity of
+    the payload's ``evidence_bundle`` mapping, so replacing the payload
+    invalidates the cache while repeat reads (including of a failed
+    parse) are free. Launches copy their payload at construction and are
+    otherwise treated as immutable, so identity is the right key.
+    """
     if launch is None:
         return None
     evidence_payload = launch.payload.get("evidence_bundle")
@@ -415,10 +436,21 @@ def evidence_bundle_from_launch(
         return evidence_payload
     if not isinstance(evidence_payload, Mapping):
         return None
+    cached = getattr(launch, _EVIDENCE_BUNDLE_CACHE_ATTR, None)
+    if cached is not None and cached[0] is evidence_payload:
+        return cached[1]
     try:
-        return EvidenceBundle.from_payload(evidence_payload)
+        bundle: EvidenceBundle | None = EvidenceBundle.from_payload(evidence_payload)
     except (TypeError, ValueError):
-        return None
+        bundle = None
+    try:
+        object.__setattr__(
+            launch, _EVIDENCE_BUNDLE_CACHE_ATTR, (evidence_payload, bundle)
+        )
+    except (AttributeError, TypeError):
+        # A slotted or otherwise write-refusing launch double stays uncached.
+        pass
+    return bundle
 
 
 def build_console_evidence_display_state(

@@ -16,11 +16,36 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Workspaces import SkippedReviewRoot
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class _PausedGateway:
@@ -34,13 +59,20 @@ class _PausedGateway:
         self.selections.append(selection)
         self.resolve_started.set()
         await self.release_resolve.wait()
+        model = selection.explicit_model or selection.configured_model or ""
         return SimpleNamespace(
             ready=True,
             provider=selection.provider,
-            model=selection.explicit_model or selection.configured_model or "",
+            model=model,
             base_url=selection.base_url,
             max_tokens=selection.max_tokens,
             visible_copy="",
+            resolved_destination=ConsoleResolvedDestination(
+                provider=selection.provider,
+                model=model,
+                endpoint_identity="https://api.openai.com",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
         )
 
     async def stream_chat(self, resolution, messages, **_kwargs):
@@ -92,7 +124,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     tool_configuration = {"local": {"enabled": True, "names": ["fs_read"]}}
     payload_settings = {"headers": {"x-mode": "one"}, "stops": ["END"]}
 
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id="session-a",
         provider_selection=selection,
         session_settings=_settings("openai", "gpt-context", "system-a"),
@@ -141,7 +173,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
 
 def test_direct_constructor_also_detaches_mutable_inputs():
     capabilities = {"formats": ["image/png"]}
-    context = ConsoleTurnExecutionContext(
+    context = ConsoleTurnConfigurationSnapshot(
         session_id="session-a",
         provider_selection=ConsoleProviderSelection(provider="openai"),
         capabilities=capabilities,
@@ -152,10 +184,83 @@ def test_direct_constructor_also_detaches_mutable_inputs():
     assert context.capabilities["formats"] == ("image/png",)
 
 
+def _authority() -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=4,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "gpt-context", None),
+        attempt_id="attempt-1",
+    )
+
+
+def _destination() -> ConsoleResolvedDestination:
+    return ConsoleResolvedDestination(
+        provider="openai",
+        model="gpt-context",
+        endpoint_identity="https://api.example.invalid/v1",
+        egress_class=ConsoleEgressClass.UNKNOWN,
+    )
+
+
+def test_final_context_requires_complete_authority_and_destination():
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(provider="openai"),
+    )
+
+    with pytest.raises(TypeError, match="library_authority"):
+        ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=None,
+            resolved_destination=_destination(),
+        )
+    with pytest.raises(TypeError, match="resolved_destination"):
+        ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=_authority(),
+            resolved_destination=None,
+        )
+
+
+def test_final_context_exposes_read_only_configuration_compatibility_properties():
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(
+            provider="openai", configured_model="gpt-context"
+        ),
+        capabilities={"vision": True},
+        rag_defaults={"top_k": 5},
+        tool_configuration={"direct_library_tools": True},
+        provider_payload_settings={"temperature": 0.2},
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=configuration,
+        library_authority=_authority(),
+        resolved_destination=_destination(),
+    )
+
+    assert context.session_id == "session-a"
+    assert context.effective_model == "gpt-context"
+    assert context.provider_selection.provider == "openai"
+    assert context.capabilities == {"vision": True}
+    assert context.rag_defaults == {"top_k": 5}
+    assert context.tool_configuration == {"direct_library_tools": True}
+    assert context.provider_payload_settings == {"temperature": 0.2}
+    with pytest.raises(AttributeError):
+        context.configuration = configuration
+
+
 def test_live_tool_kill_switch_is_not_frozen_into_turn_context():
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="workspace-a")
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(provider="openai"),
         tool_configuration={"local_tools_enabled": True},
@@ -176,18 +281,20 @@ def test_live_tool_kill_switch_is_not_frozen_into_turn_context():
     assert review_hook is None
 
 
-def test_legacy_session_without_settings_still_uses_own_workspace():
+def test_legacy_session_without_settings_still_uses_own_workspace(tmp_path):
     store = ConsoleChatStore()
     first = store.create_session(workspace_id="workspace-a")
     store.create_session(workspace_id="workspace-b")
     store.set_workspace_context(
         ConsoleWorkspaceContext(active_workspace_id="workspace-b")
     )
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_PausedGateway(),
         provider="anthropic",
         model="model-b",
+        scratch_spaces=scratch_spaces,
     )
 
     context = controller.resolve_turn_execution_context(first.id)
@@ -195,38 +302,100 @@ def test_legacy_session_without_settings_still_uses_own_workspace():
     assert context.provider_selection.workspace_context.active_workspace_id == (
         "workspace-a"
     )
+    assert scratch_spaces.dispose()
 
 
-def test_controller_fallback_does_not_promote_tool_root_to_change_review(
+def test_turn_context_captures_frozen_scratch_snapshot(tmp_path):
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="workspace-a")
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+        scratch_spaces=scratch_spaces,
+    )
+
+    context = controller.resolve_turn_execution_context(session.id)
+
+    assert context.scratch_space == scratch_spaces.snapshot(session.id)
+    assert context.scratch_space.root.is_dir()
+    assert scratch_spaces.dispose()
+
+
+def test_two_live_sessions_for_same_saved_conversation_get_distinct_scratch(
+    tmp_path,
+):
+    store = ConsoleChatStore()
+    first = store.create_session(workspace_id="workspace-a")
+    second = store.create_session(workspace_id="workspace-a")
+    first.persisted_conversation_id = "saved-conversation"
+    second.persisted_conversation_id = "saved-conversation"
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+        scratch_spaces=scratch_spaces,
+    )
+
+    first_context = controller.resolve_turn_execution_context(first.id)
+    second_context = controller.resolve_turn_execution_context(second.id)
+
+    assert first_context.scratch_space.root != second_context.scratch_space.root
+    assert first_context.scratch_space.token != second_context.scratch_space.token
+    assert scratch_spaces.dispose()
+
+
+def test_fallback_turn_context_does_not_capture_configured_workspace_root(
     monkeypatch,
+    tmp_path,
 ):
     """The legacy tool confinement root is not Change Review consent."""
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="workspace-a")
-    controller = ConsoleChatController(
-        store=store,
-        provider_gateway=_PausedGateway(),
-        provider="openai",
-        model="model-a",
-    )
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
 
     def setting(section, key, default=None):
-        if (section, key) == ("console", "workspace_root"):
-            return "C:/tool-only-root"
+        if section == "console" and key == "workspace_root":
+            return "/configured/root"
         return default
 
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_chat_controller.get_cli_setting",
         setting,
     )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+        scratch_spaces=scratch_spaces,
+    )
 
     context = controller.resolve_turn_execution_context(session.id)
 
     assert context.workspace_roots == ()
-    assert context.tool_configuration["workspace_root"] == "C:/tool-only-root"
+    assert "workspace_root" not in context.tool_configuration
+    assert scratch_spaces.dispose()
 
 
-def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
+@pytest.mark.asyncio
+async def test_compatibility_controller_disposes_its_owned_scratch_space():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+    )
+    snapshot = controller.resolve_turn_execution_context(session.id).scratch_space
+
+    await controller.shutdown()
+
+    assert snapshot is not None
+    assert not snapshot.root.exists()
+
+
+def test_session_builder_captures_roots_rag_tools_and_generation(
+    monkeypatch,
+    tmp_path,
+):
     store = ConsoleChatStore()
     settings = _settings(
         "openai",
@@ -245,9 +414,7 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
         temperature=0.4,
         max_tokens=777,
         system_prompt="system-a",
-        workspace_context=ConsoleWorkspaceContext(
-            active_workspace_id="workspace-a"
-        ),
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id="workspace-a"),
     )
     app_config = {
         "chat_defaults": {"rag_auto_retrieve_on_send": "true"},
@@ -289,6 +456,9 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
     controller._chat_store_accessor = lambda: store
     controller._rag_source_types_accessor = lambda: ["notes", "media"]
     controller._rag_top_k_accessor = lambda: 7
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    scratch_snapshot = scratch_spaces.snapshot(session.id)
+    controller._scratch_snapshot_provider = lambda _session_id: scratch_snapshot
 
     context = controller._build_console_turn_execution_context(session.id)
     roots.append(str(Path("C:/workspace/leak")))
@@ -305,17 +475,19 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
         ),
     )
     assert admissions == 1
+    assert context.scratch_space is scratch_snapshot
     assert context.rag_defaults == {
-        "auto_retrieve_on_send": True,
         "source_types": ("notes", "media"),
         "top_k": 7,
     }
     assert context.tool_configuration["agent_runtime_enabled"] is True
     assert context.tool_configuration["native_tool_calls_enabled"] is False
     assert context.tool_configuration["local_tools_enabled"] is True
+    assert "workspace_root" not in context.tool_configuration
     assert context.tool_configuration["direct_library_tools"] is False
     assert context.provider_payload_settings["temperature"] == 0.4
     assert context.provider_payload_settings["max_tokens"] == 777
+    assert scratch_spaces.dispose()
 
 
 def test_session_builder_without_consent_service_has_no_review_fallback(
@@ -327,9 +499,7 @@ def test_session_builder_without_consent_service_has_no_review_fallback(
     selection = ConsoleProviderSelection(
         provider="openai",
         explicit_model="model-a",
-        workspace_context=ConsoleWorkspaceContext(
-            active_workspace_id="workspace-a"
-        ),
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id="workspace-a"),
     )
     monkeypatch.setattr(
         "tldw_chatbook.Tools.workspace_file_roots.folder_binding_roots",
@@ -343,6 +513,7 @@ def test_session_builder_without_consent_service_has_no_review_fallback(
     controller._chat_store_accessor = lambda: store
     controller._rag_source_types_accessor = lambda: []
     controller._rag_top_k_accessor = lambda: 4
+    controller._scratch_snapshot_provider = lambda _session_id: None
 
     context = controller._build_console_turn_execution_context(session.id)
 
@@ -483,7 +654,7 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
             content="answer",
         )
 
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="openai",
@@ -496,13 +667,29 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
         session_settings=store.session_settings(session.id),
         tool_configuration={"agent_runtime_enabled": False},
     )
+    events: list[str] = []
     context_calls: list[str] = []
 
-    def resolve_context(session_id: str) -> ConsoleTurnExecutionContext:
+    def resolve_context(session_id: str) -> ConsoleTurnConfigurationSnapshot:
+        events.append("configuration")
         context_calls.append(session_id)
         return context
 
-    gateway = _PausedGateway()
+    class UnavailableCoordinator:
+        async def capture_for_execution(self, captured_session_id: str):
+            assert captured_session_id == session.id
+            events.append("policy")
+            raise RuntimeError("durable policy unavailable")
+
+    class ActionGateway(_PausedGateway):
+        async def resolve_for_send(self, selection: ConsoleProviderSelection):
+            events.append("gateway")
+            resolution = await super().resolve_for_send(selection)
+            resolution.resolved_destination = _destination()
+            return resolution
+
+    store.library_policy_coordinator = UnavailableCoordinator()
+    gateway = ActionGateway()
     gateway.release_resolve.set()
     controller = ConsoleChatController(
         store=store,
@@ -513,6 +700,17 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
         agent_runtime_enabled=False,
         turn_context_provider=resolve_context,
     )
+    observed_contexts: list[ConsoleTurnExecutionContext] = []
+    real_inner = controller._stream_assistant_response_inner
+
+    async def assert_complete_provider_boundary(**kwargs):
+        events.append("provider-boundary")
+        turn_context = kwargs["turn_context"]
+        assert isinstance(turn_context, ConsoleTurnExecutionContext)
+        observed_contexts.append(turn_context)
+        return await real_inner(**kwargs)
+
+    controller._stream_assistant_response_inner = assert_complete_provider_boundary
 
     if action_name == "retry":
         result = await controller.retry_message(assistant.id)
@@ -526,6 +724,17 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
     assert result.accepted is True
     assert context_calls == [session.id]
     assert gateway.selections == [context.provider_selection]
+    assert events == ["configuration", "policy", "gateway", "provider-boundary"]
+    assert len(observed_contexts) == 1
+    turn_context = observed_contexts[0]
+    assert turn_context.resolved_destination == _destination()
+    assert turn_context.library_authority.policy == ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        policy_revision=None,
+        source="unavailable",
+        error_code="policy_read_error",
+    )
     assert gateway.message_batches[0][0] == {
         "role": "system",
         "content": "captured-system",
@@ -555,7 +764,7 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         role=ConsoleMessageRole.USER,
         content="second question",
     )
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="openai",
@@ -596,7 +805,9 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         context.provider_selection,
         context.provider_selection,
     ]
-    assert rag_contexts == [context]
+    assert len(rag_contexts) == 1
+    assert rag_contexts[0] is not None
+    assert rag_contexts[0].configuration == context
 
 
 @pytest.mark.asyncio
@@ -618,7 +829,7 @@ async def test_attachment_gate_and_payload_use_captured_capabilities():
             mime_type="image/png",
         ),
     )
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="custom",
@@ -700,15 +911,11 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     # `_build_console_provider_selection_uncached`; the wrapper under test
     # delegates to the latter through `self`, so the double borrows the real
     # uncached half exactly as the memo-less path binds it in production.
-    fake_screen._build_console_provider_selection_uncached = (
-        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
-            fake_screen, session_id
-        )
+    fake_screen._build_console_provider_selection_uncached = lambda session_id=None: (
+        ChatScreen._build_console_provider_selection_uncached(fake_screen, session_id)
     )
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, first.id
-    )
+    selection = ChatScreen._build_console_provider_selection(fake_screen, first.id)
 
     assert selection.provider == "openai"
     assert selection.explicit_model == "model-a"

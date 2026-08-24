@@ -817,7 +817,7 @@ async def test_wire_excludes_library_tools_while_in_process_manifest_keeps_all_1
         }
         library_names = set(LIBRARY_TOOL_DESCRIPTORS)
 
-        assert len(library_names) == 18
+        assert len(library_names) == 24
         assert library_names <= manifest_names
         assert wire_names == set(BUILTIN_TOOL_NAMES)
         assert wire_names.isdisjoint(library_names)

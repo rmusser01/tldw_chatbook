@@ -1639,6 +1639,7 @@ async def test_executor_advances_every_durable_stage_and_completes_last(
     assert result == NotesSyncExecutionResult(
         operation_id="operation-1",
         state=NotesSyncOperationState.COMPLETED,
+        recovery_required=False,
     )
     assert stages == [
         NotesSyncOperationState.RECOVERY_ADMITTED,
@@ -1744,7 +1745,7 @@ def test_capacity_is_durable_before_the_first_authority_mutation(
 
 
 @pytest.mark.asyncio
-async def test_capacity_refusal_mutates_nothing_and_persists_no_intent(
+async def test_conflict_capacity_refusal_has_no_recovery_or_recovery_actions(
     tmp_path: Path,
 ) -> None:
     store, database = _execution_store(tmp_path)
@@ -1757,19 +1758,25 @@ async def test_capacity_refusal_mutates_nothing_and_persists_no_intent(
         recovery_capacity_bytes=1,
     )
 
-    result = await executor.execute(
+    request = replace(
         _request(
             action=NotesSyncActionKind.UPDATE_NOTE,
             note=note_authority.snapshot,
             file=filesystem.snapshot,
-        )
+        ),
+        journal_kind="resolve_keep_file",
     )
+
+    result = await executor.execute(request)
 
     assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
     assert result.reason_code == "recovery_capacity_exceeded"
-    assert result.choices == tuple(NotesSyncRecoveryChoice)
+    assert result.recovery_required is False
+    assert result.choices == ()
     assert note_authority.replace_calls == 0
     assert filesystem.replace_calls == 0
+    assert store.find_operation(request.operation_id) is None
+    assert store.find_operation_recovery(request.operation_id) is None
     assert _counts(database) == (0, 0)
 
 
@@ -1895,6 +1902,7 @@ async def test_resume_with_changed_observation_becomes_explicit_attention(
 
     assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
     assert result.reason_code == "stale_observation"
+    assert result.recovery_required is True
     assert result.choices == tuple(NotesSyncRecoveryChoice)
     assert note_authority.replace_calls == 0
 
@@ -3280,7 +3288,21 @@ def test_execution_public_models_reject_ambiguous_states() -> None:
         NotesSyncExecutionResult(
             operation_id="operation-1",
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
             reason_code="stale_observation",
+        )
+    with pytest.raises(TypeError, match="recovery_required"):
+        NotesSyncExecutionResult(
+            operation_id="operation-1",
+            state=NotesSyncOperationState.NEEDS_ATTENTION,
+            recovery_required="yes",  # type: ignore[arg-type]
+            reason_code="stale_observation",
+        )
+    with pytest.raises(ValueError, match="recovery_required"):
+        NotesSyncExecutionResult(
+            operation_id="operation-1",
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=True,
         )
     with pytest.raises(ValueError, match="write authority"):
         NotesSyncExecutionRequest(
@@ -3893,6 +3915,7 @@ def test_public_results_and_executor_source_disclose_no_private_values() -> None
     result = NotesSyncExecutionResult(
         operation_id="operation-private",
         state=NotesSyncOperationState.NEEDS_ATTENTION,
+        recovery_required=True,
         reason_code="stale_observation",
         choices=tuple(NotesSyncRecoveryChoice),
     )
@@ -3906,3 +3929,309 @@ def test_public_results_and_executor_source_disclose_no_private_values() -> None
     assert "ChaChaNotes" not in source
     assert "FileNotes" not in source
     assert "Notes_Library" not in source
+
+
+class _BindingReadCensus:
+    """Shadow the store's binding reads and record where each one ran.
+
+    Instance shadowing (not class patching) so a callee reaching the same
+    store object by another route lands in the same counter, and the REAL
+    method still runs -- an assertion about thread placement is only honest
+    if the subject under it is the production implementation.
+    """
+
+    def __init__(self, store: NotesDeviceStateStore) -> None:
+        self.calls: list[tuple[str, bool]] = []
+        self._store = store
+        for name in (
+            "list_bindings",
+            "active_binding_note_ids",
+            "has_binding_for_note_or_path",
+        ):
+            setattr(store, name, self._wrap(name, getattr(store, name)))
+
+    def _wrap(self, name, function):
+        def wrapper(*args, **kwargs):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                on_loop = False
+            else:
+                on_loop = True
+            self.calls.append((name, on_loop))
+            return function(*args, **kwargs)
+
+        return wrapper
+
+    def named(self, name: str) -> list[tuple[str, bool]]:
+        return [call for call in self.calls if call[0] == name]
+
+
+def _create_note_request() -> NotesSyncExecutionRequest:
+    return NotesSyncExecutionRequest(
+        operation_id="operation-1",
+        root_id="root-1",
+        logical_folder_id="folder-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        binding_id="binding-1",
+        observation_token="observation-1",
+        action_kind=NotesSyncActionKind.CREATE_NOTE,
+        note=None,
+        file=_file(content="from-file"),
+        desired_title="Title",
+        recovery_id="recovery-operation-1",
+        recovery_expires_at=100_000,
+        candidate_note_scope_id="local_note",
+        candidate_note_id="note-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_never_reads_every_binding_and_projects_off_the_loop(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the read-all sites are gone, and the projection is off-loop.
+
+    ``on_loop`` is decided by ``asyncio.get_running_loop()`` inside the store
+    call itself, so a projection that silently moved back onto the event loop
+    fails here even though the calling method would still be ``async def``.
+    """
+
+    store, _ = _store(tmp_path)
+    census = _BindingReadCensus(store)
+    request = _create_note_request()
+
+    result = await NotesSyncExecutor(
+        store,
+        CreatingNoteAuthority(),
+        FakeFilesystem(request.file),
+        recovery_capacity_bytes=4096,
+    ).execute(request)
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    # No site materializes every binding of the root any more.
+    assert census.named("list_bindings") == []
+    # The membership projection ran, and every call ran off the event loop.
+    projections = census.named("active_binding_note_ids")
+    assert projections, "the executor never projected managed memberships"
+    assert all(on_loop is False for _name, on_loop in projections), projections
+    # The candidate-owner guard is deliberately still synchronous: nothing may
+    # run between the check and the mutation it admits.
+    guards = census.named("has_binding_for_note_or_path")
+    assert guards, "the candidate-owner guard never ran"
+    assert all(on_loop is True for _name, on_loop in guards), guards
+
+
+@pytest.mark.asyncio
+async def test_membership_projection_sees_a_binding_committed_moments_before(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the off-loop read must never miss the caller's own write.
+
+    The projection feeds ``reconcile_managed_memberships``, which REMOVES any
+    managed membership absent from it. A cross-thread read that missed a
+    just-committed binding would therefore silently unfile a live note, so
+    read-your-own-writes across the thread hop is a data-safety property, not
+    a performance detail.
+    """
+
+    store, _ = _store(tmp_path)
+    executor = NotesSyncExecutor(
+        store,
+        CreatingNoteAuthority(),
+        FakeFilesystem(_file(content="from-file")),
+        recovery_capacity_bytes=4096,
+    )
+    request = _create_note_request()
+
+    assert await executor._desired_managed_memberships(request) == ()
+
+    for index in range(12):
+        binding_id = f"binding-{index:03d}"
+        store.create_binding(
+            NotesSyncBindingRecord(
+                binding_id=binding_id,
+                root_id="root-1",
+                note_scope_id="local_note",
+                note_id=f"note-{index:03d}",
+                normalized_relative_path=f"folder/note-{index:03d}.md",
+                stable_identity_digest=f"{index:064d}",
+                state=NotesSyncBindingState.ACTIVE,
+                serialization=NotesSyncSerializationProfile(
+                    utf8_bom=False, newline="lf", final_newline=True, mode=0o600
+                ),
+                content_digest="b" * 64,
+                note_version=1,
+            )
+        )
+        # No await between the commit and the read other than the hop itself.
+        projected = await executor._desired_managed_memberships(request)
+        assert projected[-1] == ("folder-1", f"note-{index:03d}"), projected
+        assert len(projected) == index + 1
+
+    excluded = await executor._desired_managed_memberships(
+        request, exclude_binding_id="binding-000"
+    )
+    assert ("folder-1", "note-000") not in excluded
+    assert len(excluded) == 11
+
+
+@pytest.mark.asyncio
+async def test_concurrent_membership_projections_never_observe_a_torn_set(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: interleaved off-loop reads see whole committed snapshots.
+
+    Twenty projections run concurrently against the default thread pool while
+    the owning task flips one binding between active and paused. Every result
+    must equal one of the two legal committed sets; a partial set would mean
+    the reconcile input could drop a live note.
+    """
+
+    store, _ = _store(tmp_path)
+    executor = NotesSyncExecutor(
+        store,
+        CreatingNoteAuthority(),
+        FakeFilesystem(_file(content="from-file")),
+        recovery_capacity_bytes=4096,
+    )
+    request = _create_note_request()
+    for index in range(6):
+        store.create_binding(
+            NotesSyncBindingRecord(
+                binding_id=f"binding-{index:03d}",
+                root_id="root-1",
+                note_scope_id="local_note",
+                note_id=f"note-{index:03d}",
+                normalized_relative_path=f"folder/note-{index:03d}.md",
+                stable_identity_digest=f"{index:064d}",
+                state=NotesSyncBindingState.ACTIVE,
+                serialization=NotesSyncSerializationProfile(
+                    utf8_bom=False, newline="lf", final_newline=True, mode=0o600
+                ),
+                content_digest="b" * 64,
+                note_version=1,
+            )
+        )
+    everything = tuple(
+        ("folder-1", f"note-{index:03d}") for index in range(6)
+    )
+    without_last = everything[:-1]
+
+    async def flip() -> None:
+        # active <-> paused is the legal round trip; disconnected is terminal.
+        for _ in range(10):
+            await asyncio.to_thread(
+                store.transition_binding,
+                "binding-005",
+                NotesSyncBindingState.PAUSED,
+            )
+            await asyncio.to_thread(
+                store.transition_binding,
+                "binding-005",
+                NotesSyncBindingState.ACTIVE,
+            )
+
+    writer = asyncio.create_task(flip())
+    results = await asyncio.gather(
+        *(executor._desired_managed_memberships(request) for _ in range(20))
+    )
+    await writer
+
+    for observed in results:
+        assert observed in {everything, without_last}, observed
+    assert await executor._desired_managed_memberships(request) == everything
+
+
+@pytest.mark.asyncio
+async def test_projection_failure_becomes_attention_not_an_unhandled_exception(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the thread hop must not change how a read failure lands.
+
+    Moving a read onto a worker thread re-raises its exception at the await,
+    which is a different code location than the old inline call. This pins
+    that the operation still ends as a durable NEEDS_ATTENTION result rather
+    than escaping to the caller (a Textual event handler) as a crash.
+    """
+
+    store, _ = _store(tmp_path)
+    request = _create_note_request()
+
+    def failing(*_args, **_kwargs):
+        raise NotesDeviceStateError("private read failed")
+
+    store.active_binding_note_ids = failing
+
+    result = await NotesSyncExecutor(
+        store,
+        CreatingNoteAuthority(),
+        FakeFilesystem(request.file),
+        recovery_capacity_bytes=4096,
+    ).execute(request)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert store.get_operation("operation-1").state is (
+        NotesSyncOperationState.NEEDS_ATTENTION
+    )
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operation(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: app quit with the off-loop read in flight stays clean.
+
+    The projection is a pure read, so cancelling at its new await point can
+    never abandon a half-applied mutation; this drives that path for real --
+    cancel while the worker thread is inside the read, then close the store
+    the way ``NotesSyncRuntimeOwner._shutdown_once`` does.
+    """
+
+    store, _ = _store(tmp_path)
+    request = _create_note_request()
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    real = store.active_binding_note_ids
+    completed: list[int] = []
+
+    def blocking(*args, **kwargs):
+        entered.set()
+        release.wait(5)
+        answer = real(*args, **kwargs)
+        completed.append(len(answer))
+        finished.set()
+        return answer
+
+    store.active_binding_note_ids = blocking
+
+    task = asyncio.create_task(
+        NotesSyncExecutor(
+            store,
+            CreatingNoteAuthority(),
+            FakeFilesystem(request.file),
+            recovery_capacity_bytes=4096,
+        ).execute(request)
+    )
+    await asyncio.to_thread(entered.wait, 5)
+    assert entered.is_set()
+
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The worker thread finished its read harmlessly after the cancellation:
+    # a pure read, so nothing was left half-applied by the abandoned result.
+    assert await asyncio.to_thread(finished.wait, 5)
+    assert completed == [0]
+    # The durable operation is left resumable, not completed.
+    assert store.get_operation("operation-1").state is not (
+        NotesSyncOperationState.COMPLETED
+    )
+    store.close()
+    # A closed store re-arms, exactly as the shutdown contract documents.
+    assert store.active_binding_note_ids is blocking
+    store.active_binding_note_ids = real
+    assert store.active_binding_note_ids("root-1") == ()

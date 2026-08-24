@@ -104,20 +104,38 @@ class _FocusRecoveryIncident:
 
 
 class _InspectorOuterBody(VerticalScroll):
-    """Inspector scroller that invalidates its owner on scroll and resize."""
+    """Inspector scroller that separates scroll notices from geometry notices.
 
-    def __init__(self, *, on_geometry_changed: Callable[[], None]) -> None:
+    Two distinct owner notifications, because they cost two very different
+    things (TASK-21117):
+
+    * ``on_scrolled`` -- the offset moved and nothing else. The only outer
+      state a scroll can change is the fold copy, so the owner repaints that
+      and stops.
+    * ``on_geometry_changed`` -- committed size or virtual-size change
+      (``Resize``, or a virtual-size-only change whose ``Resize`` does not
+      bubble). This is the one that can change what the fold REQUIRES, so it
+      still schedules the full outer reconcile.
+    """
+
+    def __init__(
+        self,
+        *,
+        on_geometry_changed: Callable[[], None],
+        on_scrolled: Callable[[], None],
+    ) -> None:
         super().__init__(
             id="console-inspector-rail-body",
             classes="console-inspector-rail-body",
             can_focus=True,
         )
         self._on_geometry_changed = on_geometry_changed
+        self._on_scrolled = on_scrolled
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
         if old_value != new_value:
-            self._on_geometry_changed()
+            self._on_scrolled()
 
     def on_resize(self, _event: Resize) -> None:
         self._on_geometry_changed()
@@ -161,9 +179,39 @@ class ConsoleInspectorRail(Vertical):
     state, session settings summary, and the live-work card build all remain
     screen-owned concerns — this widget only renders the results). Nothing
     here reaches ``app_instance``.
+
+    **Outer-fold invalidation triggers** (TASK-21117). Every source that can
+    invalidate the outer fold routes explicitly to one of two paths; nothing
+    reaches the fold by any other route:
+
+    * ``on_mount`` — full (owner demand)
+    * rail ``Resize`` — full (owner demand)
+    * section-widget state sync: the staged-context tray, changed-files
+      section, run inspector, and settings summary each call the
+      ``on_reconcile`` callback this rail hands them at compose time when a new
+      display state lands — full (owner demand)
+    * the screen's live-work card swap (``chat_screen.py``, the one external
+      ``request_outer_reconcile`` caller) — full (owner demand)
+    * focus-recovery scheduling/retry — full (owner demand)
+    * body ``Resize`` — full (geometry only)
+    * body ``_size_updated``: any committed size or virtual-size change. This
+      is the route a ``ConsoleBoundedSection`` collapse/expand or content
+      growth actually takes — geometry only, *not* owner demand;
+      ``ConsoleBoundedSection`` has no ``on_reconcile`` of its own — full
+      (geometry only)
+    * hint display-toggle continuation — full (geometry only)
+    * body ``scroll_y`` change: wheel, keys, ``scroll_to``, reveal — pure
+      scroll
+
+    The full path is ``_request_outer_reconcile`` — two ``ConsoleBoundedSection``
+    sweeps, ``refresh(layout=True)`` on the whole rail, then a second
+    ``call_after_refresh`` hop for focus recovery and fold measurement. The
+    pure-scroll path is ``_handle_outer_scrolled``: an offset clamp and, only
+    when it actually changes, the fold copy. Scroll position is not an input to
+    ``outer_hint_required``, so a scroll frame cannot change the fold itself.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleInspectorRail .console-inspector-scroll-owner,
     ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
         text-style: bold underline;
@@ -275,6 +323,28 @@ class ConsoleInspectorRail(Vertical):
 
         self._request_outer_reconcile(owner_demand=False)
 
+    def _handle_outer_scrolled(self) -> None:
+        """Repaint the fold copy for a pure scroll; never re-lay out the rail.
+
+        A scroll offset cannot change what the outer fold *requires*:
+        ``outer_hint_required`` reads content demand against the viewport, and
+        a scroll moves neither. Every input that does move them has its own
+        trigger into the full reconcile (see the class docstring's trigger
+        table), so the pure-scroll path re-clamps the offset and repaints the
+        hint copy -- no ``refresh(layout=True)`` on the rail, no refold chain,
+        no focus-recovery pass (TASK-21117).
+
+        When a geometry generation is already scheduled it owns this frame's
+        fold *and* copy, so this path stands down rather than painting copy
+        that pass is about to recompute.
+        """
+
+        if not self.is_mounted or not self.is_attached or self._pruning:
+            return
+        if self._outer_reconcile_scheduled:
+            return
+        self._update_outer_hint(clamp=True)
+
     def _request_outer_reconcile(self, *, owner_demand: bool) -> None:
         """Schedule one generation while preserving its semantic owner demand."""
 
@@ -374,22 +444,59 @@ class ConsoleInspectorRail(Vertical):
         self._update_outer_hint()
         return True
 
-    def _update_outer_hint(self) -> None:
-        """Paint copy only while actual outer content remains below."""
+    def _update_outer_hint(self, *, clamp: bool = False) -> None:
+        """Paint copy only while actual outer content remains below.
+
+        Args:
+            clamp: Re-clamp the outer offset, for symmetry with the full
+                reconcile, which clamps before it measures. Defensive rather
+                than load-bearing: ``Widget.validate_scroll_y`` already clamps
+                every assignment, and the one case that can leave an offset
+                past the end — the viewport shrinking with no scroll
+                assignment — arrives on the geometry path and is clamped by
+                ``_reconcile_outer_fold``.
+        """
 
         try:
             body = self.query_one("#console-inspector-rail-body", VerticalScroll)
             hint = self.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
         except (NoMatches, QueryError):
             return
+        if clamp:
+            body.scroll_y = min(body.scroll_y, max(0, body.max_scroll_y))
         if not hint.display:
-            hint.update("")
+            self._paint_outer_hint(hint, "")
             return
-        hint.update(
+        self._paint_outer_hint(
+            hint,
             INSPECTOR_OUTER_HINT
             if body.max_scroll_y > 0 and body.scroll_y < body.max_scroll_y
-            else ""
+            else "",
         )
+
+    @staticmethod
+    def _paint_outer_hint(hint: Static, text: str) -> None:
+        """Write the fold copy only when it actually changes.
+
+        Most scroll frames leave the copy identical, and ``Static.update``
+        costs a repaint each time. The unchanged check reads the live widget's
+        own content rather than a shadow copy held on the rail: the fold path
+        writes this same widget directly when it toggles the hint's display, so
+        a cached string would need an invalidation hook at every writer -- the
+        stale-one-frame trap TASK-21115's review found.
+
+        ``layout=False`` because this slot's height is pinned to exactly one
+        row at compose time, so its copy can never resize it; the default
+        ``Static.update`` would schedule a view layout for a one-row repaint
+        (measured: two extra screen layout passes per wheel gesture). Changing
+        the hint's DISPLAY still goes through the full reconcile, which lays
+        out normally.
+        """
+
+        current = hint.content
+        if isinstance(current, str) and current == text:
+            return
+        hint.update(text, layout=False)
 
     def on_resize(self, _event: Resize) -> None:
         """Recompute fixed-child overflow on terminal grow and shrink."""
@@ -963,7 +1070,8 @@ class ConsoleInspectorRail(Vertical):
             yield collapse_button
 
         with _InspectorOuterBody(
-            on_geometry_changed=self._request_outer_geometry_reconcile
+            on_geometry_changed=self._request_outer_geometry_reconcile,
+            on_scrolled=self._handle_outer_scrolled,
         ):
             project_instruction_row = ConsoleProjectInstructionStatusRow(
                 self._project_instruction_state

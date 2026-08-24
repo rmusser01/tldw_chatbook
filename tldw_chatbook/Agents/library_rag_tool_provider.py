@@ -31,6 +31,9 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
+from tldw_chatbook.Agents.library_tool_provider import (
+    _BuiltinLibraryAuthorityIssuer,
+)
 from tldw_chatbook.Library.library_expand_policy import (
     EXPANDABLE_SOURCE_TYPES,
     expand_hint,
@@ -201,7 +204,7 @@ class _RagServiceAppShim:
         self.library_rag_search_service = service
 
 
-class LibraryRagToolProvider:
+class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
     """Exposes the single bounded ``search_library_rag`` tool to Console agents."""
 
     SOURCE = "library"
@@ -213,6 +216,7 @@ class LibraryRagToolProvider:
         every call then returns ``index_unavailable`` rather than enabling any
         direct access.
         """
+        self._initialize_builtin_authority_issuer()
         self._rag_service = rag_service
 
     def _tool_id(self) -> str:

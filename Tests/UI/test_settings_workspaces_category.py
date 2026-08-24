@@ -303,7 +303,10 @@ async def test_default_workspace_card_is_protected() -> None:
 
         assert not screen.query("#settings-workspace-rename-apply")
         assert not screen.query("#settings-workspace-archive")
-        assert "stays tool-less" in _visible_text(screen)
+        visible = _visible_text(screen)
+        assert "use private scratch" in visible
+        assert "only to bind external folders" in visible
+        assert "tool-less" not in visible
 
 
 @pytest.mark.asyncio

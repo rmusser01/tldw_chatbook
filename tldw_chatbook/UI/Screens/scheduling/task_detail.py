@@ -520,14 +520,26 @@ class TaskDetail(Vertical):
     def _update_missed_notice(
         self, task: ReminderTask | ScheduledTask | None
     ) -> None:
-        """Render the "missed while away" notice for a late last dispatch.
+        """Render the late-dispatch notice for the last dispatch.
 
         Distinct from failed: failed means the dispatch ran and the handler
-        raised; missed-while-away means the scheduled time elapsed with the
-        scheduler not running (app closed, or the occurrence predates the
-        task reaching the queue). The notice describes the last dispatch and
-        self-heals: the next on-time dispatch clears it. Plain text, no
-        markup -- titles are untrusted and never interpolated into markup.
+        raised; this means the dispatch happened well after its scheduled
+        time. The notice describes the last dispatch and self-heals: the next
+        on-time dispatch clears it. Plain text, no markup -- titles are
+        untrusted and never interpolated into markup.
+
+        task-19562: this used to say "Missed while away ... (the scheduler
+        was not running at the scheduled time)", which the app cannot know
+        from the row. `SchedulerLoop.tick` awaits every due handler serially
+        and inline, so one slow handler (a watchlist check may run to its
+        300 s execution timeout, against a 60 s missed-fire grace) pushes
+        every task behind it past the grace and produces exactly this row
+        while the scheduler is running the whole time. `missed_at` and
+        `missed_count` remain true either way -- the occurrence WAS owed
+        late, and earlier ones really were skipped -- so the facts stay and
+        only the invented cause goes. Which cause it actually was is
+        recorded where the loop can still tell (see
+        `SchedulerLoop._report_lateness_cause`).
         """
         notice = self.query_one("#scheduling-task-detail-missed", Static)
         if not isinstance(task, ReminderTask):
@@ -550,19 +562,20 @@ class TaskDetail(Vertical):
             )
 
             copy = (
-                f"Missed while away: ran late for the {scheduled} occurrence; "
+                f"Ran late: dispatched well after the {scheduled} occurrence; "
                 f"more than {ScheduledTasksDB._MISSED_COUNT_CAP:,} earlier "
                 "occurrence(s) were skipped, not replayed."
             )
         elif missed_count > 0:
             copy = (
-                f"Missed while away: ran late for the {scheduled} occurrence; "
+                f"Ran late: dispatched well after the {scheduled} occurrence; "
                 f"{missed_count} earlier occurrence(s) were skipped, not replayed."
             )
         else:
             copy = (
-                f"Missed while away: the {scheduled} occurrence ran late "
-                "(the scheduler was not running at the scheduled time)."
+                f"Ran late: the {scheduled} occurrence dispatched well after "
+                "its scheduled time (for example the app was closed or "
+                "asleep, or the scheduler was busy with an earlier task)."
             )
         notice.update(copy)
         notice.display = True

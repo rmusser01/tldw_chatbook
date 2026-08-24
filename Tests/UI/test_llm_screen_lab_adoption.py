@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +13,16 @@ from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.Model_Artifacts.machine_memory import (
+    AcceleratorMemoryObservation,
+    AcceleratorSource,
+    AcceleratorState,
+    GIB,
+    MachineMemorySnapshot,
+    MemoryKind,
+    ProbeReason,
+    SystemMemoryState,
+)
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.app_factory import _build_test_app
@@ -76,6 +87,299 @@ def _assert_painted_inside(app, widget, parent) -> None:
     assert widget.region.right <= bounds.right
     assert widget.region.y >= bounds.y
     assert widget.region.bottom <= bounds.bottom
+
+
+def _remote_text(remote) -> str:
+    """Return the current Remote presentation text without markup rendering."""
+    return "\n".join(str(item.renderable) for item in remote.query(Static))
+
+
+def _machine_snapshot(
+    *,
+    total_gib: int = 32,
+    available_gib: int | None = 10,
+    system_state: SystemMemoryState = SystemMemoryState.OBSERVED,
+    system_reason: ProbeReason | None = None,
+    accelerator_state: AcceleratorState = AcceleratorState.NOT_OBSERVED,
+    accelerator_reason: ProbeReason | None = None,
+    device_count: int = 0,
+) -> MachineMemorySnapshot:
+    """Build one complete bounded probe result for screen lifecycle tests."""
+    has_capacity = system_state in {
+        SystemMemoryState.OBSERVED,
+        SystemMemoryState.PARTIAL,
+    }
+    accelerators = tuple(
+        AcceleratorMemoryObservation(
+            vendor="nvidia",
+            label=f"Production evidence GPU {index} with a bounded long label",
+            total_bytes=(index + 1) * 8 * GIB,
+            shared=False,
+            source=AcceleratorSource.NVIDIA_SMI,
+        )
+        for index in range(device_count)
+    )
+    return MachineMemorySnapshot(
+        platform="linux",
+        architecture="x86_64",
+        system_state=system_state,
+        accelerator_state=(
+            AcceleratorState.OBSERVED if accelerators else accelerator_state
+        ),
+        total_bytes=total_gib * GIB if has_capacity else None,
+        available_bytes=(
+            available_gib * GIB if has_capacity and available_gib is not None else None
+        ),
+        memory_kind=MemoryKind.SYSTEM if has_capacity else MemoryKind.UNKNOWN,
+        accelerators=accelerators,
+        system_reason=system_reason,
+        accelerator_reason=None if accelerators else accelerator_reason,
+    )
+
+
+def _machine_screen() -> LLMScreen:
+    """Build only the screen-owned memory lifecycle state, without mounting UI."""
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._machine_memory_snapshot = None
+    screen._machine_memory_observed_label = None
+    screen._machine_memory_observed_monotonic = None
+    screen._machine_memory_wall_clock = lambda: datetime(2032, 4, 5, 9, 41)
+    screen._machine_memory_monotonic_clock = lambda: 8_765.25
+    screen._machine_memory_generation = 0
+    screen._machine_memory_worker = None
+    screen._machine_memory_active = False
+    screen._machine_memory_failure = None
+    screen._hydrate_remote_machine_memory = MagicMock(return_value=False)
+    return screen
+
+
+def test_first_machine_memory_request_starts_one_screen_worker() -> None:
+    """Removing the no-duplicate guard would start two probes for one resolution."""
+    screen = _machine_screen()
+    worker = object()
+    screen._run_machine_memory_probe = MagicMock(return_value=worker)
+
+    LLMScreen._request_remote_machine_memory(screen, force=False)
+    LLMScreen._request_remote_machine_memory(screen, force=False)
+
+    assert screen._machine_memory_generation == 1
+    assert screen._machine_memory_active is True
+    assert screen._machine_memory_worker is worker
+    screen._run_machine_memory_probe.assert_called_once_with(1)
+
+
+def test_active_machine_memory_request_hydrates_without_starting_another_probe() -> (
+    None
+):
+    """A remounted RemoteView must receive retained facts during an active probe."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot()
+    screen._machine_memory_generation = 1
+    screen._machine_memory_active = True
+    screen._run_machine_memory_probe = MagicMock()
+
+    LLMScreen._request_remote_machine_memory(screen, force=False)
+
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+    screen._run_machine_memory_probe.assert_not_called()
+
+
+def test_forced_machine_memory_recheck_advances_generation() -> None:
+    """Treating a forced recheck as a duplicate would leave stale facts forever."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot()
+    screen._run_machine_memory_probe = MagicMock(side_effect=[object(), object()])
+
+    LLMScreen._request_remote_machine_memory(screen, force=True)
+    LLMScreen._request_remote_machine_memory(screen, force=True)
+
+    assert screen._machine_memory_generation == 2
+    assert [item.args for item in screen._run_machine_memory_probe.call_args_list] == [
+        (1,),
+        (2,),
+    ]
+
+
+def test_stale_machine_memory_result_cannot_replace_newer_snapshot() -> None:
+    """Dropping the generation fence would publish an older probe completion."""
+    screen = _machine_screen()
+    screen._machine_memory_generation = 2
+    current = _machine_snapshot(total_gib=32)
+    screen._machine_memory_snapshot = current
+
+    LLMScreen._apply_machine_memory_result(screen, 1, _machine_snapshot(total_gib=64))
+
+    assert screen._machine_memory_snapshot is current
+    screen._hydrate_remote_machine_memory.assert_not_called()
+
+
+def test_machine_memory_failed_recheck_retains_last_valid_ram() -> None:
+    """Replacing accepted RAM with an unavailable refresh would erase useful facts."""
+    screen = _machine_screen()
+    current = _machine_snapshot(total_gib=32)
+    screen._machine_memory_snapshot = current
+    screen._machine_memory_observed_label = "09:41"
+    screen._machine_memory_generation = 3
+
+    LLMScreen._apply_machine_memory_result(
+        screen,
+        3,
+        _machine_snapshot(
+            system_state=SystemMemoryState.UNAVAILABLE,
+            system_reason=ProbeReason.MEMORY_UNAVAILABLE,
+            available_gib=None,
+        ),
+    )
+
+    assert screen._machine_memory_snapshot is current
+    assert screen._machine_memory_observed_label == "09:41"
+    assert screen._machine_memory_failure is ProbeReason.MEMORY_UNAVAILABLE
+    assert screen._machine_memory_active is False
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+
+
+def test_machine_memory_partial_valid_ram_replaces_previous_observation() -> None:
+    """Rejecting valid partial RAM would keep an obsolete installed-memory total."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot(total_gib=32)
+    screen._machine_memory_generation = 4
+    partial = _machine_snapshot(
+        total_gib=64,
+        available_gib=None,
+        system_state=SystemMemoryState.PARTIAL,
+        system_reason=ProbeReason.MEMORY_UNAVAILABLE,
+    )
+
+    LLMScreen._apply_machine_memory_result(screen, 4, partial)
+
+    assert screen._machine_memory_snapshot is partial
+    assert screen._machine_memory_failure is None
+    assert screen._machine_memory_observed_label is not None
+
+
+def test_machine_memory_accelerator_failure_does_not_discard_valid_ram() -> None:
+    """Coupling accelerator and RAM status would hide a valid capacity estimate."""
+    screen = _machine_screen()
+    screen._machine_memory_generation = 1
+    result = _machine_snapshot(
+        accelerator_state=AcceleratorState.NOT_OBSERVED,
+        accelerator_reason=ProbeReason.COMMAND_TIMEOUT,
+    )
+
+    LLMScreen._apply_machine_memory_result(screen, 1, result)
+
+    assert screen._machine_memory_snapshot is result
+    assert screen._machine_memory_failure is None
+
+
+def test_machine_memory_completion_is_retained_during_remote_remount_gap() -> None:
+    """A missing RemoteView at completion must not lose the accepted snapshot."""
+    screen = _machine_screen()
+    screen._machine_memory_generation = 1
+    result = _machine_snapshot(total_gib=64)
+
+    LLMScreen._apply_machine_memory_result(screen, 1, result)
+
+    assert screen._machine_memory_snapshot is result
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+
+
+def test_deferred_remote_mount_hydrates_machine_memory_without_another_probe() -> None:
+    """Recomposition may hydrate retained state but must not observe twice."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot()
+    screen._audio_cpp_model_request_claim = None
+    screen._model_install_active = False
+    screen._model_install_last_progress = None
+    screen._model_install_kind = None
+    screen._external_operation_status = ""
+    screen._remote_runtime_handoff = None
+    screen._model_install_presentation_pending = MagicMock(return_value=False)
+    screen._hydrate_external_status = MagicMock()
+    screen._replay_remote_runtime_handoff = MagicMock()
+    screen._run_machine_memory_probe = MagicMock()
+
+    LLMScreen._on_deferred_views_mounted(screen)
+
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+    screen._run_machine_memory_probe.assert_not_called()
+
+
+def test_machine_memory_worker_returns_bounded_result_on_event_thread(
+    monkeypatch,
+) -> None:
+    """Applying directly from the worker thread would violate Textual ownership."""
+    screen = _machine_screen()
+    result = _machine_snapshot()
+    screen._machine_memory_probe_factory = MagicMock(return_value=result)
+    app = MagicMock()
+    monkeypatch.setattr(LLMScreen, "app", property(lambda _screen: app))
+
+    LLMScreen._run_machine_memory_probe.__wrapped__(screen, 7)
+
+    app.call_from_thread.assert_called_once_with(
+        screen._apply_machine_memory_result,
+        7,
+        result,
+    )
+
+
+@pytest.mark.asyncio
+async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose() -> (
+    None
+):
+    """Global time or view-owned timestamps would drift or disappear on remount."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    observed_wall = datetime(2032, 4, 5, 9, 41, 37)
+    observed_monotonic = 8_765.25
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = LLMScreen(
+            app,
+            machine_memory_wall_clock=lambda: observed_wall,
+            machine_memory_monotonic_clock=lambda: observed_monotonic,
+        )
+        await app.push_screen(screen)
+        assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+        accepted = _machine_snapshot(total_gib=32)
+        screen._machine_memory_generation = 1
+
+        screen._apply_machine_memory_result(1, accepted)
+
+        assert screen._machine_memory_observed_label == "09:41"
+        assert screen._machine_memory_observed_monotonic == observed_monotonic
+
+        screen._machine_memory_generation = 2
+        screen._apply_machine_memory_result(
+            2,
+            _machine_snapshot(
+                system_state=SystemMemoryState.UNAVAILABLE,
+                system_reason=ProbeReason.MEMORY_UNAVAILABLE,
+                available_gib=None,
+            ),
+        )
+        assert screen._machine_memory_snapshot is accepted
+        assert screen._machine_memory_observed_label == "09:41"
+        assert screen._machine_memory_observed_monotonic == observed_monotonic
+
+        old_remote = screen.query_one(RemoteView)
+        await screen.recompose()
+        assert await _wait_for(
+            lambda: (
+                bool(screen.query(RemoteView))
+                and screen.query_one(RemoteView) is not old_remote
+                and screen.query_one(RemoteView)._machine_snapshot is accepted
+            ),
+            pilot,
+            attempts=500,
+        )
+        fresh_remote = screen.query_one(RemoteView)
+        assert fresh_remote._machine_presentation.failure_line == (
+            "Recheck failed · using memory observed at 09:41"
+        )
+        assert screen._machine_memory_observed_label == "09:41"
+        assert screen._machine_memory_observed_monotonic == observed_monotonic
 
 
 @pytest.mark.asyncio
@@ -611,9 +915,657 @@ async def test_empty_models_recovery_routes_hold_at_80_columns(
 
 
 @pytest.mark.asyncio
-async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_80_columns():
-    """Remote's panes must fit the actual Lab body, not a full-width harness."""
+async def test_remote_drill_down_install_action_stays_inside_real_models_body_at_80_columns():
+    """The production body uses one complete pane at its measured width."""
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#remote-models-view")), pilot)
+
+        remote_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+        )
+        remote_row.press()
+        assert await _wait_for(
+            lambda: screen.query_one(LLMManagementWindow).active_view == "remote",
+            pilot,
+        )
+
+        window = screen.query_one(LLMManagementWindow)
+        remote = window.query_one("#remote-models-view", RemoteView)
+        resolved = _resolved_remote_model()
+        query = remote.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        remote._resolve_generation = 1
+        remote._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        remote._show_repository_detail()
+        assert await _wait_for(
+            lambda: (
+                remote.has_class("-single-pane")
+                and remote.query_one(".remote-detail-pane").display
+                and bool(remote.query("#remote-variant-filter"))
+                and bool(remote.query(".remote-candidate"))
+            ),
+            pilot,
+        )
+
+        parent = window.query_one("#llm-view-remote")
+        results_pane = remote.query_one(".remote-results-pane")
+        detail_pane = remote.query_one(".remote-detail-pane")
+        variant_filter = remote.query_one("#remote-variant-filter", Input)
+        variant_sort = remote.query_one("#remote-variant-sort", Select)
+        candidate = remote.query_one(".remote-candidate", Button)
+        selection = remote.query_one("#remote-model-selection", Static)
+        install = remote.query_one("#remote-model-install", Button)
+
+        assert remote.has_class("-single-pane")
+        assert results_pane.display is False
+        assert results_pane not in app.screen._compositor.visible_widgets
+        assert detail_pane.display is True
+        _assert_painted_inside(app, detail_pane, parent)
+        back = remote.query_one("#remote-back-to-results", Button)
+        _assert_painted_inside(app, back, parent)
+
+        for control in (variant_filter, variant_sort, candidate):
+            control.scroll_visible(
+                animate=False,
+                immediate=True,
+                force=True,
+                top=True,
+            )
+            assert await _wait_for(
+                lambda control=control: (
+                    control in app.screen._compositor.visible_widgets
+                ),
+                pilot,
+            )
+            _assert_painted_inside(app, control, parent)
+
+        app.screen.set_focus(candidate)
+        assert await _wait_for(lambda: app.focused is candidate, pilot)
+        _assert_painted_inside(app, candidate, parent)
+        await pilot.press("enter")
+        assert await _wait_for(
+            lambda: str(selection.renderable).startswith("Selected: model-q4.gguf"),
+            pilot,
+        )
+        _assert_painted_inside(app, selection, parent)
+
+        await pilot.press("tab")
+        assert await _wait_for(lambda: app.focused is install, pilot)
+        _assert_painted_inside(app, install, parent)
+
+
+@pytest.mark.asyncio
+async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
+    """Production rails, drill-down, refresh, and remount retain memory facts."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Model_Artifacts.remote_huggingface import RemoteModelSummary
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    repository = (
+        "publisher-with-long-name/model-with-an-even-longer-exact-repository-name"
+    )
+    filename = f"models/{'long-reviewed-variant-' * 7}Q4_K_M.gguf"
+    resolved = _resolved_remote_model(
+        repository,
+        filename=filename,
+        total_bytes=4 * GIB,
+    )
+    exact_resolved = replace(resolved, warnings=("exact-resolution-complete",))
+    summary = RemoteModelSummary(
+        repository=repository,
+        private=False,
+        gated="none",
+        downloads=12_345,
+        likes=678,
+        last_modified="2026-08-01T00:00:00Z",
+    )
+
+    class _Adapter:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        async def search(self, query: str, *, token=None):
+            self.search_calls.append(query)
+            return (summary,)
+
+        async def resolve(self, requested: str, *, token=None):
+            self.resolve_calls.append(requested)
+            return resolved if len(self.resolve_calls) == 1 else exact_resolved
+
+    class _Resolver:
+        def resolve(self, _repository: str) -> None:
+            return None
+
+    accepted = _machine_snapshot(total_gib=32, available_gib=10, device_count=3)
+    refreshed = _machine_snapshot(total_gib=32, available_gib=10, device_count=3)
+    stale = _machine_snapshot(total_gib=64, available_gib=64)
+    probe_starts = (threading.Event(), threading.Event())
+    probe_releases = (threading.Event(), threading.Event())
+    probe_results = (accepted, refreshed)
+    probe_calls: list[int] = []
+
+    def observe_memory() -> MachineMemorySnapshot:
+        index = len(probe_calls)
+        probe_calls.append(index)
+        probe_starts[index].set()
+        if not probe_releases[index].wait(10):
+            raise RuntimeError("test-controlled memory probe was not released")
+        return probe_results[index]
+
+    async def assert_painted(control, parent, pilot, app) -> None:
+        control.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
+        assert await _wait_for(
+            lambda: control in app.screen._compositor.visible_widgets,
+            pilot,
+        ), (
+            control.id,
+            control.region,
+            control.display,
+            getattr(control, "disabled", None),
+            remote.query_one("#remote-model-details").scroll_offset,
+            remote.query_one("#remote-model-details").content_region,
+        )
+        _assert_painted_inside(app, control, parent)
+
+    async def assert_scroll_section_painted(
+        section,
+        viewport,
+        parent,
+        expected_widgets,
+        pilot,
+        app,
+    ) -> None:
+        """Prove a tall scroll section and its expected copy paint in slices."""
+
+        def painted_intersection(widget) -> bool:
+            clipped = widget.region.intersection(viewport.content_region)
+            clipped = clipped.intersection(parent.content_region)
+            return clipped.width > 0 and clipped.height > 0
+
+        section.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
+        assert await _wait_for(
+            lambda: (
+                section in app.screen._compositor.visible_widgets
+                and painted_intersection(section)
+            ),
+            pilot,
+        )
+        assert section.region.x >= parent.content_region.x
+        assert section.region.right <= parent.content_region.right
+
+        for widget, expected_text in expected_widgets:
+            widget.scroll_visible(
+                animate=False,
+                immediate=True,
+                force=True,
+                top=True,
+            )
+            assert await _wait_for(
+                lambda widget=widget: (
+                    widget in app.screen._compositor.visible_widgets
+                    and painted_intersection(widget)
+                ),
+                pilot,
+            )
+            assert expected_text in str(widget.renderable)
+
+    async def assert_exact_filename_painted(parent, pilot, app) -> None:
+        """Read the current filename from painted compositor cells, not widget state."""
+        from textual.strip import Strip
+
+        viewport = remote.query_one("#remote-model-details")
+        filename_widget: Static | None = None
+        last_geometry: tuple[object, ...] = ()
+
+        def painted_region(widget: Static):
+            clipped = widget.content_region.intersection(viewport.content_region)
+            return clipped.intersection(parent.content_region)
+
+        def filename_is_painted() -> bool:
+            nonlocal filename_widget, last_geometry
+            current = remote.query_one(".remote-variant-filename", Static)
+            if current is not filename_widget:
+                filename_widget = current
+            clipped = painted_region(current)
+            visible = current in app.screen._compositor.visible_widgets
+            last_geometry = (
+                current.region,
+                current.content_region,
+                viewport.content_region,
+                viewport.scroll_offset,
+                clipped,
+                visible,
+            )
+            if not visible or clipped.width <= 0 or clipped.height <= 0:
+                current.scroll_visible(
+                    animate=False,
+                    immediate=True,
+                    force=True,
+                    top=True,
+                )
+                return False
+            return True
+
+        assert await _wait_for(
+            filename_is_painted,
+            pilot,
+        ), last_geometry
+        assert filename_widget is not None
+        assert remote.query_one(".remote-variant-filename", Static) is filename_widget
+        clipped = painted_region(filename_widget)
+        assert clipped == filename_widget.content_region
+        assert clipped.height > 1
+        assert clipped.x >= viewport.content_region.x
+        assert clipped.right <= viewport.content_region.right
+        assert clipped.x >= parent.content_region.x
+        assert clipped.right <= parent.content_region.right
+
+        update = app.screen._compositor.render_full_update()
+        painted_rows: list[str] = []
+        for screen_y in range(clipped.y, clipped.bottom):
+            line = Strip.join(update.strips[screen_y - update.region.y])
+            painted_rows.append(
+                line.crop(
+                    clipped.x - update.region.x,
+                    clipped.right - update.region.x,
+                ).text.rstrip()
+            )
+        assert all(painted_rows)
+        painted_filename = "".join(painted_rows)
+        assert "…" not in painted_filename
+        assert painted_filename == filename
+
+    def current_candidate_ready(remote) -> bool:
+        candidates = list(remote.query(".remote-candidate").results(Button))
+        return (
+            len(candidates) == 1
+            and candidates[0].display
+            and candidates[0].region.width > 0
+            and candidates[0].region.height > 0
+        )
+
+    adapter = _Adapter()
+    app = _app()
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            assert app.CSS_PATH == TldwCli.CSS_PATH
+            screen = await _models_screen(app)
+            assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+            window = screen.query_one(LLMManagementWindow)
+            remote = screen.query_one(RemoteView)
+            remote._adapter_factory = lambda: adapter
+            remote._credential_resolver_factory = _Resolver
+            screen._machine_memory_probe_factory = observe_memory
+
+            remote_row = next(
+                row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+            )
+            remote_row.press()
+            assert await _wait_for(lambda: window.active_view == "remote", pilot)
+            parent = window.query_one("#llm-view-remote")
+
+            rail = screen.query_one("#lab-rail")
+            rail_handle = screen.query_one("#lab-rail-handle")
+            assert rail.display is True
+            assert rail_handle.display is False
+            assert await _wait_for(
+                lambda: (
+                    0 < remote.content_region.width < 72
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+            verified_rail_state_widths = {
+                "expanded": remote.content_region.width,
+            }
+            screen.query_one("#lab-rail-collapse", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    not rail.display
+                    and rail_handle.display
+                    and verified_rail_state_widths["expanded"]
+                    < remote.content_region.width
+                    < 72
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+            verified_rail_state_widths["collapsed"] = remote.content_region.width
+
+            query = remote.query_one("#remote-model-query", Input)
+            query.value = "memory model"
+            remote.query_one("#remote-model-search", Button).press()
+            assert await _wait_for(lambda: bool(remote.query(".remote-result")), pilot)
+            result = remote.query_one(".remote-result", Button)
+            result.focus()
+            assert await _wait_for(lambda: app.focused is result, pilot)
+            result.press()
+            assert await _wait_for(
+                lambda: (
+                    remote.query_one(".remote-detail-pane").display
+                    and probe_starts[0].is_set()
+                    and adapter.resolve_calls == [repository]
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-results-pane").display is False
+            assert "Machine memory: Checking local memory…" in _remote_text(remote)
+            assert "Memory scenario: Checking local memory…" in _remote_text(remote)
+            assert repository in _remote_text(remote)
+
+            back = remote.query_one("#remote-back-to-results", Button)
+            await assert_painted(back, parent, pilot, app)
+            assert not rail.display
+            assert (
+                remote.content_region.width == verified_rail_state_widths["collapsed"]
+            )
+            back.press()
+            assert await _wait_for(
+                lambda: (
+                    remote.query_one(".remote-results-pane").display
+                    and app.focused is result
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-result", Button) is result
+
+            screen.query_one("#lab-rail-open", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    rail.display
+                    and not rail_handle.display
+                    and remote.content_region.width
+                    == verified_rail_state_widths["expanded"]
+                    and remote.content_region.width
+                    < verified_rail_state_widths["collapsed"]
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+
+            query.value = repository
+            remote.query_one("#remote-model-search", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    remote.query_one(".remote-detail-pane").display
+                    and len(adapter.resolve_calls) == 2
+                    and remote._resolved is exact_resolved
+                    and "exact-resolution-complete" in _remote_text(remote)
+                    and current_candidate_ready(remote)
+                ),
+                pilot,
+            )
+            assert adapter.search_calls == ["memory model"]
+            assert adapter.resolve_calls == [repository, repository]
+            assert probe_calls == [0]
+            await assert_exact_filename_painted(parent, pilot, app)
+
+            back = remote.query_one("#remote-back-to-results", Button)
+            await assert_painted(back, parent, pilot, app)
+            candidate = remote.query_one(".remote-candidate", Button)
+            await assert_painted(candidate, parent, pilot, app)
+            candidate.focus()
+            assert await _wait_for(lambda: app.focused is candidate, pilot)
+            probe_releases[0].set()
+            assert await _wait_for(
+                lambda: (
+                    screen._machine_memory_snapshot is accepted
+                    and "64K scenario within RAM budget" in _remote_text(remote)
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-candidate", Button) is candidate
+            assert app.focused is candidate
+            assert "64K may need more free RAM now" in _remote_text(remote)
+            assert "VRAM observed on 3 devices" in _remote_text(remote)
+
+            panel = remote.query_one(".remote-machine-panel")
+            toggle = remote.query_one("#remote-machine-details-toggle", Button)
+            recheck = remote.query_one("#remote-machine-recheck", Button)
+            model_details = remote.query_one("#remote-model-details")
+            await assert_scroll_section_painted(
+                panel,
+                model_details,
+                parent,
+                (
+                    (
+                        remote.query_one("#remote-machine-headline", Static),
+                        "Machine memory: 32.0 GiB RAM",
+                    ),
+                    (
+                        remote.query_one("#remote-machine-evidence", Static),
+                        "VRAM observed on 3 devices",
+                    ),
+                ),
+                pilot,
+                app,
+            )
+            for control in (toggle, candidate):
+                await assert_painted(control, parent, pilot, app)
+            candidate.focus()
+            assert await _wait_for(lambda: app.focused is candidate, pilot)
+            for _ in range(8):
+                previous_focus = app.focused
+                await pilot.press("shift+tab")
+                assert await _wait_for(
+                    lambda: app.focused is not previous_focus,
+                    pilot,
+                )
+                if app.focused is recheck:
+                    break
+            assert app.focused is recheck
+            assert recheck in app.screen._compositor.visible_widgets
+            _assert_painted_inside(app, recheck, parent)
+
+            exact_details = remote.query_one("#remote-machine-estimate-details", Static)
+            assert exact_details.display is False
+            toggle.press()
+            assert await _wait_for(lambda: exact_details.display, pilot)
+            assert all(
+                device.label in str(exact_details.renderable)
+                for device in accepted.accelerators
+            )
+
+            candidate.focus()
+            await pilot.press("enter")
+            selection = remote.query_one("#remote-model-selection", Static)
+            install = remote.query_one("#remote-model-install", Button)
+            assert await _wait_for(
+                lambda: (
+                    str(selection.renderable).startswith(f"Selected: {filename}")
+                    and not install.disabled
+                ),
+                pilot,
+            )
+            await assert_painted(selection, parent, pilot, app)
+            await assert_painted(install, parent, pilot, app)
+            assert rail.display
+            assert remote.content_region.width == verified_rail_state_widths["expanded"]
+            verified_control_states = {"expanded"}
+
+            screen.query_one("#lab-rail-collapse", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    not rail.display
+                    and rail_handle.display
+                    and screen.query_one(RemoteView) is remote
+                    and remote.content_region.width
+                    == verified_rail_state_widths["collapsed"]
+                    and remote.content_region.width < 72
+                    and remote.has_class("-single-pane")
+                    and remote.query_one(".remote-candidate", Button) is candidate
+                ),
+                pilot,
+            )
+
+            collapsed_back = remote.query_one("#remote-back-to-results", Button)
+            collapsed_panel = remote.query_one(".remote-machine-panel")
+            collapsed_toggle = remote.query_one(
+                "#remote-machine-details-toggle", Button
+            )
+            collapsed_recheck = remote.query_one("#remote-machine-recheck", Button)
+            collapsed_candidate = remote.query_one(".remote-candidate", Button)
+            collapsed_selection = remote.query_one("#remote-model-selection", Static)
+            collapsed_install = remote.query_one("#remote-model-install", Button)
+            collapsed_model_details = remote.query_one("#remote-model-details")
+            assert collapsed_back is back
+            assert collapsed_panel is panel
+            assert collapsed_toggle is toggle
+            assert collapsed_recheck is recheck
+            assert collapsed_candidate is candidate
+            assert collapsed_selection is selection
+            assert collapsed_install is install
+
+            await assert_exact_filename_painted(parent, pilot, app)
+
+            await assert_scroll_section_painted(
+                collapsed_panel,
+                collapsed_model_details,
+                parent,
+                (
+                    (
+                        remote.query_one("#remote-machine-headline", Static),
+                        "Machine memory: 32.0 GiB RAM",
+                    ),
+                    (
+                        remote.query_one("#remote-machine-evidence", Static),
+                        "VRAM observed on 3 devices",
+                    ),
+                ),
+                pilot,
+                app,
+            )
+            for control in (
+                collapsed_back,
+                collapsed_toggle,
+                collapsed_recheck,
+                collapsed_candidate,
+                collapsed_selection,
+                collapsed_install,
+            ):
+                await assert_painted(control, parent, pilot, app)
+            assert str(collapsed_selection.renderable).startswith(
+                f"Selected: {filename}"
+            )
+            assert collapsed_install.disabled is False
+            verified_control_states.add("collapsed")
+
+            initial_generation = screen._machine_memory_generation
+            recheck.focus()
+            await pilot.press("enter")
+            assert await _wait_for(
+                lambda: (
+                    probe_starts[1].is_set()
+                    and screen._machine_memory_generation == initial_generation + 1
+                    and screen._machine_memory_active
+                    and str(recheck.label) == "Checking…"
+                    and recheck.disabled
+                ),
+                pilot,
+            )
+            screen._apply_machine_memory_result(initial_generation, stale)
+            assert screen._machine_memory_snapshot is accepted
+            assert screen._machine_memory_active is True
+            assert "VRAM observed on 3 devices" in _remote_text(remote)
+
+            probe_releases[1].set()
+            assert await _wait_for(
+                lambda: (
+                    screen._machine_memory_snapshot is refreshed
+                    and not screen._machine_memory_active
+                    and not recheck.disabled
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-candidate", Button) is candidate
+            assert not install.disabled
+            candidate.focus()
+            await pilot.press("tab")
+            assert await _wait_for(lambda: app.focused is install, pilot)
+            await assert_painted(install, parent, pilot, app)
+
+            old_remote = remote
+            await screen.recompose()
+            assert await _wait_for(
+                lambda: (
+                    bool(screen.query(RemoteView))
+                    and screen.query_one(RemoteView) is not old_remote
+                    and screen.query_one(RemoteView)._machine_snapshot is refreshed
+                ),
+                pilot,
+                attempts=500,
+            )
+            fresh_remote = screen.query_one(RemoteView)
+            assert fresh_remote._machine_presentation.action_disabled is False
+            assert probe_calls == [0, 1]
+
+            fresh_window = screen.query_one(LLMManagementWindow)
+            fresh_remote._adapter_factory = lambda: adapter
+            fresh_remote._credential_resolver_factory = _Resolver
+            next(
+                row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+            ).press()
+            assert await _wait_for(
+                lambda: (
+                    fresh_window.active_view == "remote"
+                    and fresh_remote.content_region.width
+                    == verified_rail_state_widths["collapsed"]
+                    and fresh_remote.content_region.width < 72
+                    and fresh_remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+            fresh_remote.query_one("#remote-model-query", Input).value = repository
+            fresh_remote.query_one("#remote-model-search", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    bool(fresh_remote.query(".remote-candidate"))
+                    and "64K scenario within RAM budget" in _remote_text(fresh_remote)
+                    and "VRAM observed on 3 devices" in _remote_text(fresh_remote)
+                ),
+                pilot,
+            )
+            assert probe_calls == [0, 1]
+            assert set(verified_rail_state_widths) == {"expanded", "collapsed"}
+            assert verified_rail_state_widths["expanded"] < 72
+            assert (
+                verified_rail_state_widths["expanded"]
+                < verified_rail_state_widths["collapsed"]
+                < 72
+            )
+            assert verified_control_states == {"expanded", "collapsed"}
+    finally:
+        for release in probe_releases:
+            release.set()
+
+
+@pytest.mark.asyncio
+async def test_remote_completion_and_runtime_choice_fit_real_models_at_80_columns():
+    """The complete adoption path must remain painted and keyboard-operable."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+    from tldw_chatbook.Widgets.ModelArtifacts import ManagedGGUFRuntimeChoiceModal
 
     app = _app()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -629,8 +1581,7 @@ async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_8
         window = screen.query_one(LLMManagementWindow)
         remote = window.query_one("#remote-models-view", RemoteView)
         resolved = _resolved_remote_model()
-        query = remote.query_one("#remote-model-query", Input)
-        query.value = resolved.repository
+        remote.query_one("#remote-model-query", Input).value = resolved.repository
         remote._resolve_generation = 1
         remote._apply_resolve_result(
             1,
@@ -639,19 +1590,68 @@ async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_8
             resolved,
             None,
         )
-        await pilot.pause()
+        remote._show_repository_detail()
+        assert await _wait_for(
+            lambda: (
+                remote.query_one(".remote-detail-pane").display
+                and bool(remote.query(".remote-candidate"))
+            ),
+            pilot,
+        )
         remote.query_one(".remote-candidate", Button).press()
         await pilot.pause()
 
-        parent = window.query_one("#llm-view-remote")
-        results_pane = remote.query_one(".remote-results-pane")
-        detail_pane = remote.query_one(".remote-detail-pane")
-        install = remote.query_one("#remote-model-install", Button)
+        reference = _remote_catalog().artifact.reference
+        remote.finish_install(
+            "Model downloaded and managed.",
+            completed_reference=reference,
+        )
+        await pilot.pause()
 
-        _assert_painted_inside(app, results_pane, parent)
+        parent = window.query_one("#llm-view-remote")
+        detail_pane = remote.query_one(".remote-detail-pane")
+        open_installed = remote.query_one("#remote-model-open-installed", Button)
+        configure = remote.query_one("#remote-model-configure-runtime", Button)
+        assert await _wait_for(
+            lambda: all(
+                widget in app.screen._compositor.visible_widgets
+                for widget in (detail_pane, open_installed, configure)
+            ),
+            pilot,
+        )
         _assert_painted_inside(app, detail_pane, parent)
-        _assert_painted_inside(app, install, parent)
-        assert results_pane.region.right <= detail_pane.region.x
+        _assert_painted_inside(app, open_installed, parent)
+        _assert_painted_inside(app, configure, parent)
+        assert open_installed.disabled is False
+        assert configure.disabled is False
+        assert (
+            open_installed.region.bottom <= configure.region.y
+            or open_installed.region.right <= configure.region.x
+        )
+
+        open_installed.focus()
+        assert await _wait_for(lambda: app.focused is open_installed, pilot)
+        _assert_painted_inside(app, open_installed, parent)
+        await pilot.press("tab")
+        assert await _wait_for(lambda: app.focused is configure, pilot)
+        _assert_painted_inside(app, configure, parent)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        modal = app.screen
+        assert isinstance(modal, ManagedGGUFRuntimeChoiceModal)
+        dialog = modal.query_one(".managed-gguf-runtime-modal")
+        llama_cpp = modal.query_one("#managed-gguf-runtime-llamacpp", Button)
+        llamafile = modal.query_one("#managed-gguf-runtime-llamafile", Button)
+        cancel = modal.query_one("#managed-gguf-runtime-cancel", Button)
+        _assert_painted_inside(app, dialog, modal)
+        for action in (llama_cpp, llamafile, cancel):
+            _assert_painted_inside(app, action, dialog)
+        assert app.focused is llama_cpp
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is screen
 
 
 @pytest.mark.asyncio
@@ -2477,6 +3477,8 @@ def _resolved_remote_model(
     repository: str = "owner/repository",
     *,
     license_id: str = "apache-2.0",
+    filename: str = "model-q4.gguf",
+    total_bytes: int = 1024,
 ):
     from tldw_chatbook.Model_Artifacts.remote_huggingface import (
         RemoteGGUFCandidate,
@@ -2487,9 +3489,9 @@ def _resolved_remote_model(
     commit = "a" * 40
     digest = "b" * 64
     candidate = RemoteGGUFCandidate(
-        label=f"{repository} · model-q4.gguf",
-        files=(RemoteGGUFFile("model-q4.gguf", 1024, digest),),
-        total_bytes=1024,
+        label=f"{repository} · {filename}",
+        files=(RemoteGGUFFile(filename, total_bytes, digest),),
+        total_bytes=total_bytes,
     )
     return ResolvedRemoteModel(
         repository=repository,
@@ -2679,7 +3681,7 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
             str(item.renderable) for item in fresh_remote.query(Static)
         )
         assert resolved.repository in fresh_text
-        assert candidate.label in fresh_text
+        assert candidate.files[0].upstream_path in fresh_text
         assert fresh_remote.query_one("#remote-model-install", Button).disabled
 
         # Half 2 of the fix: still updating, via this screen's own
@@ -2763,7 +3765,7 @@ async def test_remote_context_survives_recompose_before_the_first_progress_tick(
         )
 
         assert resolved.repository in detail_text
-        assert candidate.label in detail_text
+        assert candidate.files[0].upstream_path in detail_text
         assert fresh_remote.query_one("#remote-model-install", Button).disabled
         assert fresh_remote.query_one("#remote-model-search", Button).disabled
         assert (
@@ -3588,7 +4590,7 @@ def test_apply_remote_provision_result_notifies_mirrors_and_resets_state(
     screen._model_install_reference = reference
     screen._model_install_service = MagicMock()
     screen._model_install_catalog = catalog
-    screen._model_install_candidate = None
+    screen._model_install_candidate = _resolved_remote_model().candidates[0]
     screen._model_install_credential_resolver = MagicMock()
     screen._model_install_pending_report = object()
     screen._model_install_kind = "remote"
@@ -3612,7 +4614,13 @@ def test_apply_remote_provision_result_notifies_mirrors_and_resets_state(
     assert delivered.active is False
     assert delivered.succeeded == (error is None)
 
-    view.finish_install.assert_called_once_with(expected_message)
+    if error is None:
+        view.finish_install.assert_called_once_with(
+            expected_message,
+            completed_reference=reference,
+        )
+    else:
+        view.finish_install.assert_called_once_with(expected_message)
 
 
 @pytest.mark.parametrize(
@@ -3678,7 +4686,337 @@ def test_remote_terminal_outcome_crosses_the_recompose_gap(
     module.LLMScreen._hydrate_model_install_progress(screen)
 
     fresh_view.restore_install_context.assert_called_once_with(catalog, candidate)
-    getattr(fresh_view, expected_method).assert_called_once_with(expected_message)
+    outcome = getattr(fresh_view, expected_method)
+    if terminal_path == "provision" and error is None:
+        outcome.assert_called_once_with(
+            expected_message,
+            completed_reference=catalog.artifact.reference,
+        )
+    else:
+        outcome.assert_called_once_with(expected_message)
+
+
+def test_successful_remote_completion_survives_later_recomposes(monkeypatch):
+    """A consumed success remains durable until Remote starts new discovery."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    reference = catalog.artifact.reference
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    screen._remote_view = MagicMock(return_value=None)
+    screen._installed_view = MagicMock(return_value=None)
+    screen._model_install_worker = MagicMock()
+    screen._model_install_reference = reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_catalog = catalog
+    screen._model_install_candidate = candidate
+    screen._model_install_credential_resolver = MagicMock()
+    screen._model_install_pending_report = object()
+    screen._model_install_kind = "remote"
+    screen._model_install_active = False
+    screen._model_install_last_progress = None
+    screen._remote_install_terminal_catalog = None
+    screen._remote_install_terminal_candidate = None
+    screen._remote_install_terminal_action = None
+    screen._remote_install_terminal_message = None
+    screen._remote_install_completed_catalog = None
+    screen._remote_install_completed_candidate = None
+    screen._remote_install_completed_reference = None
+    screen._remote_install_completed_message = None
+
+    module.LLMScreen._apply_remote_provision_result(screen, None)
+
+    first_view = MagicMock(is_mounted=True)
+    first_view.restore_install_context.return_value = True
+    screen._remote_view.return_value = first_view
+    module.LLMScreen._hydrate_model_install_progress(screen)
+
+    second_view = MagicMock(is_mounted=True)
+    second_view.restore_install_context.return_value = True
+    screen._remote_view.return_value = second_view
+    module.LLMScreen._hydrate_model_install_progress(screen)
+
+    for view in (first_view, second_view):
+        view.restore_install_context.assert_called_once_with(catalog, candidate)
+        view.finish_install.assert_called_once_with(
+            "Model downloaded and managed. Runtime compatibility has not been verified.",
+            completed_reference=reference,
+        )
+
+
+def test_new_remote_discovery_clears_durable_completion_identity():
+    """A new query supersedes the prior completed model at screen scope."""
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._remote_install_completed_catalog = object()
+    screen._remote_install_completed_candidate = object()
+    screen._remote_install_completed_reference = object()
+    screen._remote_install_completed_message = "done"
+
+    screen._remote_discovery_started(RemoteView.DiscoveryStarted("new model"))
+
+    assert screen._remote_install_completed_catalog is None
+    assert screen._remote_install_completed_candidate is None
+    assert screen._remote_install_completed_reference is None
+    assert screen._remote_install_completed_message is None
+
+
+def test_open_installed_switches_and_reveals_exact_reference_without_activation():
+    """The Remote completion action is navigation, never implicit activation."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.llm_window = MagicMock()
+    installed = MagicMock()
+    screen._installed_view = MagicMock(return_value=installed)
+    screen.call_after_refresh = MagicMock(
+        side_effect=lambda callback, *args: callback(*args)
+    )
+    event = RemoteView.OpenInstalledRequested(reference)
+
+    screen._remote_open_installed_requested(event)
+
+    assert screen.llm_window.active_view == "installed"
+    screen.call_after_refresh.assert_called_once_with(
+        installed.reveal_reference,
+        reference,
+    )
+    installed.reveal_reference.assert_called_once_with(reference)
+    assert not any(call[0] == "activate" for call in installed.method_calls)
+
+
+@pytest.mark.asyncio
+async def test_open_installed_exact_row_focus_wins_real_window_switch(
+    tmp_path,
+):
+    """The handoff focus must run after Installed's standard focus restore."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    row = InventoryRow(
+        path=tmp_path / reference.artifact_id,
+        reference=reference,
+        model_label=reference.artifact_id,
+        revision=reference.revision,
+        precision=reference.variant,
+        dependencies=(),
+        ready=True,
+        active=False,
+        activation_allowed=True,
+        is_broken=False,
+        is_unmanaged=False,
+        provenance="Integrity verified",
+        action_hint="Ready",
+        error=None,
+        size_bytes=1024,
+        installed_store_bytes=1024,
+        staging_store_bytes=0,
+        free_bytes=4096,
+    )
+
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#installed-models-view")),
+            pilot,
+        )
+        window = screen.query_one(LLMManagementWindow)
+        installed = window.query_one("#installed-models-view", InstalledView)
+        installed._loaded = True
+        installed._rows = (row,)
+        installed.refresh(recompose=True)
+        assert await _wait_for(
+            lambda: bool(installed.query(".installed-model-row")),
+            pilot,
+        )
+        window._model_library_focus_ids["installed"] = "installed-models-refresh"
+
+        screen._remote_open_installed_requested(
+            RemoteView.OpenInstalledRequested(reference)
+        )
+        for _ in range(4):
+            await pilot.pause()
+
+        focused = app.focused
+        assert window.active_view == "installed"
+        assert focused is not None
+        assert focused.has_class("model-activate")
+        assert any(
+            getattr(ancestor, "reference", None) == reference
+            for ancestor in focused.ancestors_with_self
+        )
+
+
+def test_configure_runtime_request_opens_choice_and_preserves_exact_reference(
+    monkeypatch,
+):
+    """The host owns provider choice while Remote contributes only identity."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+    from tldw_chatbook.Widgets.ModelArtifacts import ManagedGGUFRuntimeChoiceModal
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.llm_window = MagicMock()
+    screen.llm_window.configure_managed_gguf.return_value = True
+    event = RemoteView.ConfigureRuntimeRequested(reference)
+
+    screen._remote_configure_runtime_requested(event)
+
+    modal, callback = fake_app.push_screen.call_args.args
+    assert isinstance(modal, ManagedGGUFRuntimeChoiceModal)
+    callback("llamacpp")
+    screen.llm_window.configure_managed_gguf.assert_called_once_with(
+        "llamacpp",
+        reference,
+    )
+
+
+def test_runtime_refresh_rejection_clears_screen_owned_handoff():
+    """A synchronous lifecycle refusal cannot survive as pending intent."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = LLMScreen.__new__(LLMScreen)
+    screen.llm_window = MagicMock()
+    screen.llm_window.configure_managed_gguf.return_value = False
+    screen._remote_runtime_handoff = None
+    screen.notify = MagicMock()
+
+    screen._remote_runtime_selected(reference, "llamacpp")
+
+    assert screen._remote_runtime_handoff is None
+    screen.notify.assert_called_once_with(
+        "Stop the active Llama.cpp or Llamafile server, then configure this "
+        "managed model again.",
+        severity="warning",
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_runtime_handoff_replays_into_recomposed_models_window(
+    monkeypatch,
+):
+    """A fresh Models body must retain a still-resolving exact handoff."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    accepted: list[tuple[LLMManagementWindow, str, ArtifactRef]] = []
+
+    def configure(
+        window: LLMManagementWindow,
+        provider: str,
+        received: ArtifactRef,
+    ) -> bool:
+        accepted.append((window, provider, received))
+        return True
+
+    monkeypatch.setattr(LLMManagementWindow, "configure_managed_gguf", configure)
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#remote-models-view")), pilot)
+        first_window = screen.query_one(LLMManagementWindow)
+
+        screen._remote_runtime_selected(reference, "llamacpp")
+        assert accepted == [(first_window, "llamacpp", reference)]
+
+        screen.refresh(recompose=True)
+        assert await _wait_for(
+            lambda: (
+                screen.llm_window is not first_window
+                and screen.llm_window is not None
+                and screen.llm_window.is_attached
+            ),
+            pilot,
+        )
+        replacement = screen.llm_window
+        assert replacement is not None
+        assert await _wait_for(lambda: len(accepted) == 2, pilot)
+
+        assert accepted == [
+            (first_window, "llamacpp", reference),
+            (replacement, "llamacpp", reference),
+        ]
+
+
+def test_runtime_handoff_clears_only_after_matching_window_resolution():
+    """Detached-window results cannot clear a replacement window's intent."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    stale = ArtifactRef("other-gguf", "b" * 40, "q8_0")
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._remote_runtime_handoff = ("llamacpp", reference)
+    screen.notify = MagicMock()
+
+    screen._managed_gguf_handoff_resolved(
+        LLMManagementWindow.ManagedGGUFHandoffResolved(
+            "llamacpp",
+            stale,
+            succeeded=True,
+        )
+    )
+    assert screen._remote_runtime_handoff == ("llamacpp", reference)
+
+    screen._managed_gguf_handoff_resolved(
+        LLMManagementWindow.ManagedGGUFHandoffResolved(
+            "llamacpp",
+            reference,
+            succeeded=True,
+        )
+    )
+    assert screen._remote_runtime_handoff is None
+    screen.notify.assert_not_called()
+
+
+def test_runtime_handoff_failure_surfaces_inventory_specific_recovery():
+    """A resolved inventory failure clears intent with actionable copy."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._remote_runtime_handoff = ("llamafile", reference)
+    screen.notify = MagicMock()
+
+    screen._managed_gguf_handoff_resolved(
+        LLMManagementWindow.ManagedGGUFHandoffResolved(
+            "llamafile",
+            reference,
+            succeeded=False,
+            reason="inventory-error",
+        )
+    )
+
+    assert screen._remote_runtime_handoff is None
+    screen.notify.assert_called_once_with(
+        "Managed models could not be loaded. Refresh Installed models, then try again.",
+        severity="warning",
+    )
 
 
 @pytest.mark.asyncio

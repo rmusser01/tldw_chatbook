@@ -27,9 +27,6 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.run_log_eviction import bound_history_for_send
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ContinuationRestoreTarget,
@@ -39,12 +36,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     read_provider_continuation_json,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
-from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
-    ChatSyncV2OutboxProducer,
-)
-from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from Tests.Chat.test_console_dispatch_continuation_handoff import (
+    _portable_store as _portable_dispatch_store,
+    _started_portable,
+)
 
 
 CrashBoundary = Literal[
@@ -70,13 +67,6 @@ _SYNC_BOUNDARIES = {
     "after_commit_before_sync_projection",
     "after_projection_before_acknowledgement",
 }
-_SCOPE = {
-    "server_profile_id": "server-a",
-    "authenticated_principal_id": "user-a",
-    "workspace_scope": "workspace-a",
-}
-
-
 @dataclass(frozen=True)
 class _CrashSnapshot:
     boundary: CrashBoundary
@@ -137,34 +127,6 @@ def _checkpoint(
     )
 
 
-def _portable_stack(
-    db: CharactersRAGDB, repository_path: Path
-) -> tuple[SyncStateRepository, ChatSyncV2OutboxProducer, ConsoleChatStore]:
-    repository = SyncStateRepository(repository_path)
-    repository.set_sync_v2_profile_state(
-        **_SCOPE,
-        profile_mode="local_first",
-        device_id="device-a",
-        dataset_id="dataset-a",
-    )
-    producer = ChatSyncV2OutboxProducer(
-        state_repository=repository,
-        dataset_keys={"dataset-a": generate_dataset_key()},
-        source=db,
-    )
-    return (
-        repository,
-        producer,
-        ConsoleChatStore(
-            persistence=ChatPersistenceService(db),
-            sync_v2_chat_producer=producer,
-            sync_v2_server_profile_id=_SCOPE["server_profile_id"],
-            sync_v2_authenticated_principal_id=_SCOPE["authenticated_principal_id"],
-            sync_v2_workspace_scope=_SCOPE["workspace_scope"],
-        ),
-    )
-
-
 def _continuation_receipt_count(
     repository: SyncStateRepository, owner_message_id: str
 ) -> int:
@@ -187,34 +149,27 @@ def _payload_hash(row: dict) -> str:
 
 
 def _crash_snapshot(tmp_path: Path, boundary: CrashBoundary) -> _CrashSnapshot:
-    database_path = tmp_path / f"{boundary}.db"
-    sync_path = tmp_path / f"{boundary}-sync.db"
-    database = CharactersRAGDB(database_path, f"client-{boundary}")
-    repository: SyncStateRepository | None = None
-    producer: ChatSyncV2OutboxProducer | None = None
+    boundary_path = tmp_path / boundary
+    boundary_path.mkdir()
+    (
+        database,
+        conversation_id,
+        _dispatch_repository,
+        _dispatch_checkpoint,
+        store,
+        session_id,
+        repository,
+        producer,
+    ) = _started_portable(boundary_path)
+    owner = store.get_message("assistant-1")
+    context = ContinuationEventContext(
+        owner.id,
+        "run-a",
+        "primary",
+        "persistent",
+    )
+
     if boundary in _SYNC_BOUNDARIES:
-        repository, producer, store = _portable_stack(database, sync_path)
-    else:
-        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
-
-    session = store.create_session(title="Crash matrix")
-    user = store.append_message(
-        session.id,
-        role=ConsoleMessageRole.USER,
-        content="Use the calculator",
-        persist=True,
-    )
-    owner = store.append_message(
-        session.id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="",
-        persist=True,
-    )
-    conversation_id = session.persisted_conversation_id
-    assert conversation_id is not None
-    context = ContinuationEventContext(owner.id, "run-a", "primary", "persistent")
-
-    if producer is not None:
         reconcile = producer.reconcile_chat_message_intent
 
         if boundary == "after_commit_before_sync_projection":
@@ -257,42 +212,38 @@ def _crash_snapshot(tmp_path: Path, boundary: CrashBoundary) -> _CrashSnapshot:
             )
         )
 
-    outbox_before_restart = (
-        _continuation_receipt_count(repository, owner.id) if repository else 0
+    # The restored accepted v2 owner is projected before the first provider
+    # event. Only v3+ receipts belong to ADR-063 continuation ownership.
+    outbox_before_restart = max(
+        0,
+        _continuation_receipt_count(repository, owner.id) - 1,
     )
     database.close_connection()
 
-    restarted_db = CharactersRAGDB(database_path, f"restart-{boundary}")
+    restarted_db = CharactersRAGDB(database.db_path, f"restart-{boundary}")
     row = restarted_db.get_message_by_id(owner.id)
-    restarted_repository: SyncStateRepository | None = None
-    if boundary in _SYNC_BOUNDARIES:
-        restarted_repository, _restarted_producer, restored_store = _portable_stack(
-            restarted_db, sync_path
-        )
-    else:
-        restored_store = ConsoleChatStore(
-            persistence=ChatPersistenceService(restarted_db)
-        )
-    restored_session = restored_store.restore_persisted_session(
-        title="Crash matrix",
-        workspace_id=None,
-        persisted_conversation_id=conversation_id,
-        all_nodes=[],
-        active_leaf_persisted_id=owner.id if row else user.persisted_message_id,
+    (
+        restored_store,
+        restored_session_id,
+        restarted_repository,
+        _restarted_producer,
+    ) = _portable_dispatch_store(
+        restarted_db,
+        conversation_id,
+        boundary_path,
     )
     interrupted = restored_store.interrupted_provider_continuation_message(
-        restored_session.id
+        restored_session_id
     )
     restored_call_state = None
-    if row is not None:
+    if row is not None and row["provider_continuation_json"] is not None:
         checkpoint = parse_provider_continuation_json(row["provider_continuation_json"])
         restored_call_state = checkpoint.rounds[-1].calls[-1].state
 
-    outbox_after_reconciliation = outbox_before_restart
-    if restarted_repository is not None and row is not None:
-        outbox_after_reconciliation = _continuation_receipt_count(
-            restarted_repository, owner.id
-        )
+    outbox_after_reconciliation = max(
+        0,
+        _continuation_receipt_count(restarted_repository, owner.id) - 1,
+    )
 
     snapshot = _CrashSnapshot(
         boundary=boundary,
@@ -330,19 +281,19 @@ def test_every_approved_crash_boundary_has_an_exact_restored_state(tmp_path) -> 
         0,
         0,
         1,
-        0,
-        0,
-        0,
-        0,
+        1,
+        2,
+        3,
+        3,
     ]
     assert [snapshot.outbox_after_reconciliation for snapshot in snapshots] == [
         0,
         1,
         1,
-        0,
-        0,
-        0,
-        0,
+        1,
+        2,
+        3,
+        3,
     ]
 
 
@@ -360,25 +311,23 @@ def test_runtime_crash_hooks_restart_without_repeating_side_effects(
     expected_state: str,
     expected_model_attempts: int,
 ) -> None:
-    database_path = tmp_path / f"runtime-{boundary}.db"
-    database = CharactersRAGDB(database_path, f"runtime-{boundary}")
-    store = ConsoleChatStore(persistence=ChatPersistenceService(database))
-    session = store.create_session(title="Runtime crash")
-    store.append_message(
-        session.id,
-        role=ConsoleMessageRole.USER,
-        content="Use the calculator",
-        persist=True,
+    (
+        database,
+        conversation_id,
+        _dispatch_repository,
+        _dispatch_checkpoint,
+        store,
+        _session_id,
+        _sync_repository,
+        _producer,
+    ) = _started_portable(tmp_path)
+    owner = store.get_message("assistant-1")
+    context = ContinuationEventContext(
+        owner.id,
+        "run-a",
+        "primary",
+        "persistent",
     )
-    owner = store.append_message(
-        session.id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="",
-        persist=True,
-    )
-    conversation_id = session.persisted_conversation_id
-    assert conversation_id is not None
-    context = ContinuationEventContext(owner.id, "run-a", "primary", "persistent")
     schema = ToolSchema(
         id="builtin:calculator",
         name="calculator",
@@ -458,20 +407,15 @@ def test_runtime_crash_hooks_restart_without_repeating_side_effects(
         )
     database.close_connection()
 
-    restarted_db = CharactersRAGDB(database_path, f"restart-runtime-{boundary}")
+    restarted_db = CharactersRAGDB(database.db_path, f"restart-runtime-{boundary}")
     row = restarted_db.get_message_by_id(owner.id)
     assert row is not None
     restored = parse_provider_continuation_json(row["provider_continuation_json"])
     assert restored.rounds[-1].calls[-1].state == expected_state
-    restarted_store = ConsoleChatStore(
-        persistence=ChatPersistenceService(restarted_db)
-    )
-    restarted_store.restore_persisted_session(
-        title="Runtime crash",
-        workspace_id=None,
-        persisted_conversation_id=conversation_id,
-        all_nodes=[],
-        active_leaf_persisted_id=owner.id,
+    restarted_store, _, _, _ = _portable_dispatch_store(
+        restarted_db,
+        conversation_id,
+        tmp_path,
     )
 
     def resumed_model(messages, _schemas):

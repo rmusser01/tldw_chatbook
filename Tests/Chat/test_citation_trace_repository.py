@@ -287,6 +287,28 @@ def _authorization(
     )
 
 
+def test_active_owner_candidate_ids_are_identity_scoped_and_bounded(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, message_id="candidate-message")
+    transaction_calls: list[bool] = []
+    original_transaction = db.transaction
+
+    def tracked_transaction(*, immediate: bool = False):
+        transaction_calls.append(immediate)
+        return original_transaction(immediate=immediate)
+
+    monkeypatch.setattr(db, "transaction", tracked_transaction)
+
+    candidates = repository.active_owner_candidate_message_ids(
+        tuple([f"missing-{index}" for index in range(500)] + ["candidate-message"])
+    )
+
+    assert candidates == {"candidate-message"}
+    assert transaction_calls
+
+
 def test_runtime_policy_is_frozen_and_disabled_write_fails_before_validation(
     db: CharactersRAGDB,
 ) -> None:

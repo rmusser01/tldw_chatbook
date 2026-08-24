@@ -93,6 +93,9 @@ from .provider_continuation import (  # noqa: E402
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
+from .assistant_generation_state import (  # noqa: E402
+    normalize_assistant_generation_state,
+)
 #
 ####################################################################################################
 #
@@ -2461,7 +2464,12 @@ def save_chat_history_to_db_wrapper(
 
         # --- Save Messages (Handles new OpenAI format) ---
         try:
-            with db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # the nested hot messages writers save_history drives
+            # (transaction(immediate=) is depth-0 only); DEFERRED here re-opens
+            # the snapshot-upgrade "database is locked" window (see
+            # CharactersRAGDB.add_message's scoping comment).
+            with db.transaction(immediate=True):
                 message_save_count = persistence_service.save_history(
                     conversation_id=current_conversation_id,
                     chatbot_history=chatbot_history,
@@ -2704,6 +2712,32 @@ def generate_chat_history_content(
             if private_value is None and isinstance(item.get("_private"), dict):
                 private_value = item["_private"].get("provider_continuation")
             private = read_provider_continuation_json(private_value)
+            raw_state = item.get("assistant_generation_state")
+            if raw_state is not None and item["role"] != "assistant":
+                raise ValueError("Invalid assistant generation state on export.")
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=item["role"],
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        private.checkpoint is not None
+                        and private.checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise ValueError("Invalid assistant generation state on export.") from None
+            if (
+                generation_state is not None
+                and generation_state.value == "continuation_active"
+                and (
+                    private.checkpoint is None
+                    or private.checkpoint.state != "active"
+                )
+            ):
+                raise ValueError("Invalid assistant generation state on export.")
+            projected["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
             if item["role"] == "assistant" and private.checkpoint is not None:
                 canonical = dump_provider_continuation_json(private.checkpoint)
                 projected["_private"] = {

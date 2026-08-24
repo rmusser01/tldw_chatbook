@@ -7,6 +7,8 @@ This extends the Phase 1 enhanced RAG service with:
 - Configuration profiles
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
 from dataclasses import replace
@@ -25,13 +27,33 @@ from ..parallel_processor import (
     create_chunking_processor,
     ProcessingConfig,
 )
-from ..config_profiles import (
-    get_profile_manager,
-    ProfileConfig,
-    ExperimentConfig,
-    ProfileType,
-    ConfigProfileManager,
-)
+# task-21160: import config_profiles lazily. The module-level from-import
+# created a circular-import edge -- ``config_profiles`` imports
+# ``.simplified.config``, which executes ``simplified/__init__``, which
+# executes THIS module; a ``config_profiles``-first import order then hit the
+# partially-initialized module and raised ImportError (latent for as long as
+# the eager ``RAG_Search/__init__`` front-loaded ``simplified`` in the safe
+# order; unmasked when task-21102 made that facade lazy). Typing-only names
+# stay importable for checkers; the two runtime uses go through
+# ``_config_profiles()``.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config_profiles import (
+        ProfileConfig,
+        ExperimentConfig,
+        ProfileType,
+        ConfigProfileManager,
+    )
+
+
+def _config_profiles():
+    """Return the ``config_profiles`` module, imported at first use."""
+    from .. import config_profiles
+
+    return config_profiles
+
+
 from .data_models import IndexingResult
 
 
@@ -94,7 +116,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         # Handle different config types
         if isinstance(config, str):
             # Load profile by name
-            self.profile_manager = profile_manager or get_profile_manager()
+            self.profile_manager = profile_manager or _config_profiles().get_profile_manager()
             profile = self.profile_manager.get_profile(config)
             if not profile:
                 raise ValueError(f"Profile '{config}' not found")
@@ -102,7 +124,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             config = profile.rag_config
             self.reranking_config = profile.reranking_config
             self.processing_config = profile.processing_config
-        elif isinstance(config, ProfileConfig):
+        elif isinstance(config, _config_profiles().ProfileConfig):
             # Use provided profile. Capture reranking_config/processing_config
             # off the ProfileConfig BEFORE reassigning the local `config` name
             # to its `.rag_config` below -- reading them off the reassigned
@@ -115,13 +137,13 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             self.reranking_config = config.reranking_config
             self.processing_config = config.processing_config
             config = config.rag_config
-            self.profile_manager = profile_manager or get_profile_manager()
+            self.profile_manager = profile_manager or _config_profiles().get_profile_manager()
         else:
             # Direct RAG config
             self.profile = None
             self.reranking_config = None
             self.processing_config = None
-            self.profile_manager = profile_manager or get_profile_manager()
+            self.profile_manager = profile_manager or _config_profiles().get_profile_manager()
 
         # Initialize base service
         super().__init__(config, enable_parent_retrieval)
@@ -186,7 +208,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         Returns:
             Configured RAG service
         """
-        manager = get_profile_manager()
+        manager = _config_profiles().get_profile_manager()
         profile = manager.get_profile(profile_name)
 
         if not profile:

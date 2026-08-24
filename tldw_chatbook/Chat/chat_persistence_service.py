@@ -15,6 +15,23 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
 )
+from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDurableTurnAcceptance,
+)
+from tldw_chatbook.Chat.console_library_policy_repository import (
+    ConsoleLibraryPolicyRepository,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicySnapshot,
+    ConsoleLibraryPolicyWriteStatus,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleTransactionContribution,
+    _scoped_console_transaction_writer,
+)
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -83,6 +100,8 @@ class ChatPersistenceService:
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
+        self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
+        self.console_dispatch_repository = ConsoleDispatchRepository(db)
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
@@ -216,6 +235,7 @@ class ChatPersistenceService:
     def create_conversation(
         self,
         *,
+        conversation_id: str | None = None,
         character_id: Optional[int] = None,
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
@@ -232,9 +252,10 @@ class ChatPersistenceService:
         metadata: Mapping[str, object] | str | None = None,
         speech_preferences: ConsoleSpeechPreferences | None = None,
     ) -> str:
-        """Create a conversation and link it to a workspace when requested.
+        """Create a conversation after validating any workspace authority.
 
         Args:
+            conversation_id: Optional preallocated durable conversation identity.
             character_id: Local character identifier associated with the conversation.
             character_name: Display name used to derive a title when no explicit
                 title is supplied.
@@ -248,12 +269,12 @@ class ChatPersistenceService:
             discovery_owner: Owner of the assistant discovery record.
             discovery_entity_id: Discovery record identifier for the assistant.
             scope_type: Conversation scope. Only an explicit normalized
-                ``scope_type="workspace"`` validates and links workspace
-                membership here.
+                ``scope_type="workspace"`` validates the workspace target here.
+                Registry membership is a separate post-commit projection.
             workspace_id: Candidate workspace identifier forwarded to the
                 database and resolved for an explicit workspace scope.
                 Non-workspace/global persistence is normalized by the database
-                and may clear it; omitting scope does not create a link.
+                and may clear it; this method never creates registry membership.
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.
@@ -267,10 +288,8 @@ class ChatPersistenceService:
 
         Raises:
             ValueError: If workspace scope is invalid or its workspace cannot be
-                resolved.
-            Exception: If workspace membership linkage fails after creation. A
-                best-effort soft-delete is attempted; a false result can leave
-                the row, and a cleanup exception may replace the link error.
+                resolved. Workspace registry membership is intentionally not
+                written here; it is a post-commit projection of the durable row.
         """
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
@@ -298,6 +317,8 @@ class ChatPersistenceService:
             "system_prompt": system_prompt,
             "client_id": self.db.client_id,
         }
+        if conversation_id is not None:
+            conversation_data["id"] = conversation_id
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
         initial_metadata = (
@@ -317,18 +338,166 @@ class ChatPersistenceService:
                 allow_nan=False,
                 sort_keys=True,
             )
-        conversation_id = self.db.add_conversation(conversation_data)
-        if safe_workspace_id is not None:
-            try:
-                self._link_workspace_conversation(
-                    workspace_id=safe_workspace_id,
-                    conversation_id=conversation_id,
-                    title=title,
+        return self.db.add_conversation(conversation_data)
+
+    def persist_console_conversation_with_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit a first conversation row and its Library policy together."""
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True):
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError("Persistence returned an unexpected conversation id.")
+            result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
                 )
-            except Exception:
-                self._discard_created_conversation(conversation_id)
-                raise
-        return conversation_id
+        return result.snapshot
+
+    def commit_durable_turn(
+        self,
+        *,
+        acceptance: ConsoleDurableTurnAcceptance,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleDispatchCheckpoint:
+        """Atomically create/validate and accept one durable Console turn.
+
+        The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
+        returns only durable values and never mutates the live Console session;
+        publication is a postcommit store/controller responsibility.
+        """
+
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                (acceptance.conversation_id,),
+            ).fetchone()
+            if conversation is None:
+                created_id = self.create_conversation(
+                    conversation_id=acceptance.conversation_id,
+                    **dict(conversation_kwargs),
+                )
+                if created_id != acceptance.conversation_id:
+                    raise RuntimeError(
+                        "Persistence returned an unexpected conversation id."
+                    )
+                policy_result = self.console_library_policy_repository.insert(
+                    acceptance.conversation_id,
+                    policy_candidate,
+                )
+                if (
+                    policy_result.status
+                    is not ConsoleLibraryPolicyWriteStatus.COMMITTED
+                ):
+                    raise RuntimeError(
+                        "Console Library policy could not be committed with turn."
+                    )
+            else:
+                if conversation["deleted"]:
+                    raise RuntimeError("Durable conversation is unavailable.")
+                policy_row = cursor.execute(
+                    "SELECT auto_retrieve_on_send, assistant_library_access, "
+                    "policy_revision FROM console_conversation_library_policy "
+                    "WHERE conversation_id = ?",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                authority = acceptance.frozen_authority.policy
+                if (
+                    policy_row is None
+                    or authority.source != "durable"
+                    or authority.policy_revision != policy_row["policy_revision"]
+                    or int(policy_candidate.auto_retrieve.value == "automatic")
+                    != policy_row["auto_retrieve_on_send"]
+                    or int(policy_candidate.assistant_access.value == "allowed")
+                    != policy_row["assistant_library_access"]
+                ):
+                    raise RuntimeError(
+                        "Durable Console Library policy no longer matches acceptance."
+                    )
+            return self.console_dispatch_repository.insert_with_messages(
+                cursor,
+                acceptance,
+            )
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+        messages: Sequence[Mapping[str, object]],
+        active_leaf_message_id: str | None,
+        context_summary: str | None = None,
+        context_summary_boundary_message_id: str | None = None,
+        contributions: Sequence[ConsoleTransactionContribution] = (),
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit one temporary Console transcript and all Task-7 sidecars."""
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError("Persistence returned an unexpected conversation id.")
+            policy_result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if policy_result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
+                )
+            message_ids: dict[str, str] = {}
+            for prepared in messages:
+                native_id = str(prepared["native_id"])
+                kwargs = dict(prepared["create_kwargs"])
+                persisted_id = self.create_message(
+                    conversation_id=conversation_id,
+                    **kwargs,
+                )
+                expected_id = str(kwargs["message_id"])
+                if persisted_id != expected_id:
+                    raise RuntimeError("Persistence returned an unexpected message id.")
+                message_ids[native_id] = persisted_id
+                role = str(kwargs["sender"])
+                if role in {"user", "assistant"}:
+                    message_ids[role] = persisted_id
+            self.db.set_conversation_active_leaf(
+                conversation_id,
+                active_leaf_message_id,
+            )
+            self.db.set_conversation_context_summary(
+                conversation_id,
+                context_summary,
+                context_summary_boundary_message_id,
+            )
+            if contributions:
+                with _scoped_console_transaction_writer(
+                    cursor,
+                    conversation_id,
+                ) as writer:
+                    for contribution in contributions:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            message_ids=message_ids,
+                        )
+        return policy_result.snapshot
 
     def fork_conversation_into_workspace(
         self,
@@ -391,6 +560,30 @@ class ChatPersistenceService:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
 
+    def validate_workspace_target(self, **conversation_kwargs: object) -> str | None:
+        """Validate an intended workspace before opening a Chat transaction."""
+        return self._require_workspace_scope(
+            scope_type=conversation_kwargs.get("scope_type"),
+            workspace_id=conversation_kwargs.get("workspace_id"),
+        )
+
+    def project_workspace_membership(self, conversation_id: str) -> Any | None:
+        """Project durable workspace authority into the registry idempotently."""
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None:
+            raise ValueError(f"Conversation {conversation_id} not found")
+        safe_workspace_id = self._require_workspace_scope(
+            scope_type=conversation.get("scope_type"),
+            workspace_id=conversation.get("workspace_id"),
+        )
+        if safe_workspace_id is None:
+            return None
+        return self._link_workspace_conversation(
+            workspace_id=safe_workspace_id,
+            conversation_id=conversation_id,
+            title=str(conversation.get("title") or "Workspace conversation"),
+        )
+
     def _link_workspace_conversation(
         self,
         *,
@@ -405,25 +598,6 @@ class ChatPersistenceService:
             role="workspace-thread",
             title=title,
         )
-
-    def _discard_created_conversation(self, conversation_id: str) -> None:
-        conversation = self.db.get_conversation_by_id(
-            conversation_id,
-            include_deleted=True,
-        )
-        if conversation is None or conversation.get("deleted"):
-            return
-        try:
-            expected_version = int(conversation["version"])
-            self.db.soft_delete_conversation(
-                conversation_id,
-                expected_version=expected_version,
-            )
-        except Exception:
-            logger.bind(conversation_id=conversation_id).opt(exception=True).error(
-                "Failed to soft-delete workspace conversation after membership link failure",
-            )
-            raise
 
     def update_conversation_system_prompt(
         self,
@@ -791,7 +965,12 @@ class ChatPersistenceService:
             extra_rows = []
 
         if citation_repository is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): `transaction(immediate=...)` is honored
+            # only at depth 0, so this OUTER wrapper decides the begin mode for
+            # the nested hot messages writers -- left DEFERRED it re-opens the
+            # snapshot-upgrade "database is locked" window their own IMMEDIATE
+            # closes (see add_message's scoping comment).
+            with self.db.transaction(immediate=True) as cursor:
                 result = bool(
                     self.db.update_message(
                         message_id,
@@ -823,7 +1002,10 @@ class ChatPersistenceService:
             # attachments table write must be skipped -- otherwise
             # attachments would be rewritten while content/version were not,
             # leaving the two out of sync.
-            with self.db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True):
                 result = bool(
                     self.db.update_message(
                         message_id,
@@ -1134,7 +1316,10 @@ class ChatPersistenceService:
             "metadata_json": metadata_json,
         }
         if prepared_citation is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True) as cursor:
                 existing_message = (
                     self.db.get_message_by_id(message_id)
                     if message_id is not None
@@ -1181,7 +1366,10 @@ class ChatPersistenceService:
             # attachments write always runs when this branch is taken -- an
             # empty list still clears any stale rows a prior attempt at this
             # same message_id may have left behind.
-            with self.db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True):
                 created_message_id = self.db.add_message(message_payload)
                 self.db.set_message_attachments(created_message_id, extra_rows)
                 if generation_metadata is not None:

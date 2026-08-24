@@ -43,7 +43,7 @@ from copy import deepcopy
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from textual.widgets import (
@@ -1599,31 +1599,69 @@ def test_first_run_result_callback_keeps_same_tab_context_navigation():
     assert message.screen_context == {"category": "providers-models"}
 
 
-def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+@pytest.mark.asyncio
+async def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+    """Await Home remount before scheduling the deferred catalog decision."""
     from tldw_chatbook.app import TldwCli
+
+    events: list[str] = []
+    worker_coroutines = []
+
+    async def record_navigation(_message) -> None:
+        await asyncio.sleep(0)
+        events.append("navigation-complete")
+
+    def record_schedule(**_kwargs) -> None:
+        events.append("catalog-scheduled")
+
+    def capture_worker(work, **kwargs) -> None:
+        worker_coroutines.append(work)
+        assert kwargs == {
+            "group": "first-run-exit-navigation",
+            "exclusive": True,
+            "exit_on_error": False,
+        }
 
     receiver = SimpleNamespace(
         current_tab=TAB_HOME,
-        post_message=MagicMock(),
-        _schedule_startup_model_catalog_refresh=MagicMock(),
+        handle_screen_navigation=AsyncMock(side_effect=record_navigation),
+        _schedule_startup_model_catalog_refresh=MagicMock(
+            side_effect=record_schedule
+        ),
+        post_message=MagicMock(
+            side_effect=AssertionError("completed navigation must use its worker")
+        ),
+        run_worker=capture_worker,
     )
-    TldwCli._handle_first_run_wizard_result(
-        receiver,
-        {
-            "completed": True,
-            "exit_route": TAB_HOME,
-            "exit_context": None,
-        },
-    )
+    try:
+        TldwCli._handle_first_run_wizard_result(
+            receiver,
+            {
+                "completed": True,
+                "exit_route": TAB_HOME,
+                "exit_context": None,
+            },
+        )
 
-    receiver._schedule_startup_model_catalog_refresh.assert_called_once_with(
-        after_setup_completion=True
-    )
-    receiver.post_message.assert_called_once()
-    message = receiver.post_message.call_args.args[0]
-    assert isinstance(message, NavigateToScreen)
-    assert message.screen_name == TAB_HOME
-    assert message.screen_context == {}
+        assert len(worker_coroutines) == 1
+        receiver.handle_screen_navigation.assert_not_awaited()
+        receiver._schedule_startup_model_catalog_refresh.assert_not_called()
+
+        await worker_coroutines[0]
+
+        receiver.handle_screen_navigation.assert_awaited_once()
+        message = receiver.handle_screen_navigation.await_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_HOME
+        assert message.screen_context == {}
+        receiver._schedule_startup_model_catalog_refresh.assert_called_once_with(
+            after_setup_completion=True
+        )
+        assert events == ["navigation-complete", "catalog-scheduled"]
+        receiver.post_message.assert_not_called()
+    finally:
+        for worker in worker_coroutines:
+            worker.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1856,7 +1894,6 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
-    navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
@@ -1870,20 +1907,15 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
                 == "Start chatting",
             )
 
-            navigation_messages.clear()
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # Dismiss pops back to Settings first; the exit_route is applied
-            # via a separately-queued NavigateToScreen message (same race
-            # noted in test_back_next_mashing_... above) -- wait for the
-            # final tab rather than racing the first screen-stack pop.
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             assert app.current_tab == TAB_CHAT
-            assert len(navigation_messages) == 1
-            assert navigation_messages[0].screen_name == TAB_CHAT
-            assert navigation_messages[0].screen_context == {}
+            assert isinstance(app.screen, ChatScreen)
+            assert app.screen.is_mounted
 
 
 @pytest.mark.asyncio

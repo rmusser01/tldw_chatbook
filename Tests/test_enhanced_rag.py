@@ -5,13 +5,16 @@ This script demonstrates the new features:
 1. Enhanced chunking with character-level position tracking
 2. Hierarchical chunking with structure preservation
 3. Parent document retrieval
-4. Table serialization
 
 Note (chunking-engine-parity task 8, Q5 ruling): the bespoke PDF-artifact
 cleaning (DocumentStructureParser.clean_text) was DELETED with the retired
 home-grown structure parser — the feature was NOT ported anywhere. The
 vendored engine performs security-oriented input sanitization only, which
 is not a replacement for it.
+
+Note (chunking-template-parity PR 0): the bespoke table serialization
+(table_serializer.py) and its ``serialize_tables`` kwarg were deleted as
+dead code; tables are chunked as structural blocks by the vendored engine.
 """
 
 import pytest
@@ -142,7 +145,6 @@ async def test_enhanced_chunking():
         method="hierarchical",
         preserve_structure=True,
         clean_artifacts=True,
-        serialize_tables=True,
     )
 
     logger.info(f"Created {len(chunks)} hierarchical chunks")
@@ -242,37 +244,6 @@ async def test_enhanced_rag_service():
 
             if results_expanded[0].metadata.get("context_expanded"):
                 logger.info("✓ Context successfully expanded to parent chunk")
-
-
-@pytest.mark.asyncio
-async def test_table_serialization():
-    """Test table serialization functionality."""
-    from tldw_chatbook.RAG_Search.table_serializer import serialize_table, TableFormat
-
-    logger.info("\n=== Testing Table Serialization ===")
-
-    # Test markdown table
-    table_text = """
-| Product | Q1 Sales | Q2 Sales | Growth |
-|---------|----------|----------|--------|
-| Laptop  | 1000     | 1200     | 20%    |
-| Phone   | 2000     | 2500     | 25%    |
-| Tablet  | 500      | 600      | 20%    |
-"""
-
-    result = serialize_table(table_text, format=TableFormat.MARKDOWN, method="hybrid")
-
-    logger.info("Table serialization result:")
-    logger.info(f"  Rows: {result['metadata']['num_rows']}")
-    logger.info(f"  Columns: {result['metadata']['num_columns']}")
-
-    logger.info("\nEntity blocks:")
-    for block in result["entity_blocks"][:2]:
-        logger.info(f"  - {block['information_block']}")
-
-    logger.info("\nGenerated sentences:")
-    for sentence in result["sentences"][:3]:
-        logger.info(f"  - {sentence}")
 
 
 @pytest.mark.asyncio

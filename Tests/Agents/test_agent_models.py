@@ -6,6 +6,7 @@ import math
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
+    MAX_RUN_CONTROL_STEPS,
     CHECK_AGENTS_TOOL_NAME,
     DIRECT_DISCLOSE_THRESHOLD,
     INSTALL_SKILL_TOOL_NAME,
@@ -25,6 +26,7 @@ from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
+    AgentDefinition,
     AgentStep,
     ModelTurn,
     RunBudget,
@@ -36,7 +38,18 @@ from tldw_chatbook.Agents.agent_models import (
     WAIT_AGENTS_TOOL_NAME,
     clamp_child_budget,
     contain_child_budget,
+    definition_fingerprint,
+    definition_from_row,
+    validate_agent_definition,
 )
+
+
+def test_run_budget_rejects_control_steps_that_could_reach_trace_bands():
+    assert RunBudget(max_steps=MAX_RUN_CONTROL_STEPS).max_steps == (
+        MAX_RUN_CONTROL_STEPS
+    )
+    with pytest.raises(ValueError, match="max_steps"):
+        RunBudget(max_steps=MAX_RUN_CONTROL_STEPS + 1)
 
 
 def test_run_status_values_and_terminal_set():
@@ -379,14 +392,6 @@ def test_max_active_tools_clears_the_disclosure_threshold():
     )
 
     assert RunBudget().max_active_tools >= DIRECT_DISCLOSE_THRESHOLD
-
-
-from tldw_chatbook.Agents.agent_models import (
-    AgentDefinition,
-    definition_fingerprint,
-    definition_from_row,
-    validate_agent_definition,
-)
 
 
 def _valid_definition(**overrides):

@@ -89,6 +89,45 @@ and performance regressions elsewhere.
 
 ---
 
+## A privacy assertion must inspect every default durable owner, not only the primary database
+
+**TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the
+projected ledger omitted hidden reasoning, credentials, and local tool content. An
+independent quality probe then decoded the default filesystem run log and found the
+same raw tool result persisted there, including an explicit hidden-reasoning phrase.
+The projection and its database owner were safe, but the product still violated the
+privacy contract because a second, default-enabled audit owner had not been included
+in the test oracle.
+
+**What to do.** For any capture/privacy change, inventory every durable owner reached
+by the real service seam (database rows, sidecars, files, caches, exports) and inspect
+their decoded persisted bytes. A green projection or sanitized primary table proves
+only that owner. When content is intentionally withheld, also verify that recovery
+handles and user/model guidance do not promise a nonexistent full copy.
+
+---
+
+## An outer SQLite rollback cannot undo a write committed by another database
+
+**TASK-19900.1 fix review, 2026-08-22.** Console temporary promotion wrapped
+conversation, policy, messages, attachments, and sidecars in one ChaChaNotes
+transaction, but `create_conversation` also linked WorkspaceDB membership from
+inside that transaction. Failure injection against only the Chat database made
+the bundle look atomic. A real two-file probe failed the later policy write and
+found a committed workspace membership with no surviving conversation; retry
+then produced a second membership identity. The two connection-local transaction
+managers could not provide the cross-database atomicity the call graph implied.
+
+**What to do.** State the database boundary whenever claiming transaction
+atomicity. For a derived row in another database, validate its target before the
+authoritative transaction, commit the authority first, and perform an idempotent
+post-commit projection with durable-source reconciliation after failure/restart.
+Test with two real temporary SQLite files and inject failures both before and
+after the authority commit; one in-memory database or mocked registry cannot
+prove the absence of cross-database orphans.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled
@@ -129,6 +168,15 @@ application. Assert containment and compositor text, not only a child widget's
 declared height. A shortened DOM or partial stylesheet can make both overflow
 and clipping tests pass for a product path that still hides its controls.
 
+**Recurred, TASK-21161 (2026-08-23).** The shared Workspace-create modal's bare
+`App` harness omitted `WorkspaceCreateModal.BUNDLED_CSS`. Ten click-path tests
+failed on both the task branch and untouched latest `dev`: at 80 columns the
+Browse/Add controls landed at x=80/96, outside the viewport. Simply widening the
+Pilot screen to 120 made the same controls move to x=120/136, proving this was
+not a small-screen product defect; without the modal stylesheet, each default
+`1fr` child claimed another full row width. Mounting the production bundled CSS
+in the harness made all 23 modal tests pass at the default viewport.
+
 **Recurred, TASK-16478, 2026-08-15.** A picker-comparison investigation
 rendered `EnhancedFileOpen` in a bare `App` (widget DEFAULT_CSS only) and
 concluded the dialog was fine; the user's live app showed no Select/Cancel
@@ -140,6 +188,32 @@ extraction of the bundled render hid their absence. The fix's regression test
 (`Tests/UI/test_enhanced_file_dialog_bundle_css.py`) registers the exact
 `TldwCli.CSS_PATH` stack and asserts button containment -- it failed red
 against the unfixed bundle without touching app code.
+
+**Recurred, TASK-19913, 2026-08-23.** A latest-dev merge moved the Trace
+screen and timeline from automatically registered `DEFAULT_CSS` into
+consolidated `BUNDLED_CSS`. The branch's plain-`App` geometry harness then
+mounted both widgets without their production defaults and reported four
+layout/style failures. Migrating the harness to `ConsolidatedCSSApp` fixed the
+false containment failure, but full-detail and brush-theme tests still failed:
+the checked-in generated widget sheets predated this branch's expanded
+`BUNDLED_CSS`. Rebuilding them restored the production interactions without a
+specificity workaround.
+
+**What to do.** After merging the consolidated-CSS system into a branch that
+changed class-level CSS, update production-shaped harnesses to inherit
+`Tests.UI.consolidated_css.ConsolidatedCSSApp`, rebuild with
+`python -m tldw_chatbook.css.build_css`, and run CSS-build integrity tests.
+Loading only the app bundle is insufficient, and testing regenerated sheets
+against stale source is equally misleading.
+
+**Recurred, TASK-20937.5, 2026-08-23.** Character-art fitting passed in a
+lightweight Console harness, but the production bundle produced a different
+available cell box and exposed a one-row/one-column mismatch between the
+requested avatar size and the mosaic grid actually painted. Thumbnail rounding
+had allowed the two rendering paths to derive slightly different aspect-ratio
+results. Loading the bundled stylesheet in the mounted shape matrix made the
+failure deterministic; sharing the mosaic grid calculation made graphics and
+mosaic settle to the same exact cell box.
 
 ---
 
@@ -5894,7 +5968,6 @@ Threat model, recorded because it is what makes the above worth the effort: no
 root these features operate on (TASK-19700).
 
 
-
 ## A setup step whose failure is only a log line builds the wrong fixture (TASK-19554, 2026-08-21)
 
 **What happened.** `Tests/Notes/test_sync_engine.py::test_conflict_detection`
@@ -5926,7 +5999,6 @@ calls instead of reusing a literal. The tell that something is wrong is a
 fixture that passes against a *stronger* claim than it set up: here, deleting
 the entire baseline step would not have changed the test's result, which is the
 definition of a setup step that is not doing anything.
-
 
 
 ## A guarantee is only proved for the sink you asserted against — and a test's stand-in is not the shipped one (TASK-19555, 2026-08-21)
@@ -6395,3 +6467,1547 @@ Rule: source-tree AST/file sweeps must prune environment and tool directories
 (`.venv`, virtualenvs, caches) explicitly; `.gitignore` does not affect
 `Path.rglob`. When such a gate fails in dependency code, print the exact
 discovered path before changing production CSS or blaming version drift.
+
+## A truthful fresh-profile factory is not a returning-user destination harness (TASK-19579/TASK-19642.1, 2026-08-22)
+
+**Incident.** The shared Library app factory correctly admitted a fresh profile,
+while destination integration tests assumed the complete returning-user rail.
+The mismatch first recurred in TASK-19579 and then made the Skills import flow
+look broken because the expected Skills row was absent. Choose the factory whose
+profile posture matches the destination contract; do not redefine a truthful
+fresh-profile factory merely to satisfy returning-user tests.
+
+## A red guard protects nothing, and `raising=False` is how a stale monkeypatch hides (TASK-19569, 2026-08-22)
+
+**What happened.** Three guards had been red on `dev` for weeks. None of them
+was red because the thing it guards was broken:
+
+- `Tests/Agents/test_tool_catalog_concurrency.py` asserted `2 == 1` on every
+  run since it installed its `_ensure_catalog_cache` counter and *then* called
+  `registry.list_catalog()` itself, counting its own setup call. Production was
+  correct the whole time. Hoisting one line made it green — and a mutation
+  restoring the historical two-snapshot `name -> id -> provider` shape in
+  `_owner_record_for_name` made it red again with the same `assert 2 == 1`. For
+  the whole period, a real TOCTOU guard could not detect its own regression.
+- Five `Tests/MCP/` watchlists tests patched
+  `local_server_tools.RuntimeSourceStateStore`, a name TASK-18609 had replaced
+  with an injected `load_default_runtime_source_state`. Four errored at the
+  monkeypatch line. **The other two passed `raising=False`** — so `monkeypatch`
+  cheerfully created a brand-new attribute nobody reads, the test fell through
+  to the real loader, and one of them *passed for an accidental reason* (the
+  real loader happens to return `"local"`, which is what the fake wanted).
+- Six `Tests/DB/test_core_sqlite_owner_privacy.py` failures were the only
+  honest reds in the set: a genuine product defect (a `from None` severing the
+  cause chain the privacy contract walks).
+
+**Two traps worth naming.** First, `monkeypatch.setattr(..., raising=False)` on
+a *seam* is never a convenience — it converts "this seam was renamed" from a
+loud error into a silent no-op, and the resulting green tells you nothing.
+Reserve it for genuinely-optional attributes; on an injection seam, let it
+raise.
+
+Second, mutation-testing a scrubbing guard has to hit the layer the guard
+actually watches. `test_real_watchlists_provider_scrubs_unexpected_failures`
+survived *three* separate leak mutations before biting, because the scrub is
+layered (service `_raise_unexpected` -> provider `ToolResult.error` -> gateway
+fixed-message mapping) and any one layer alone re-scrubs. The mutation that
+finally exposed a real hole was the smallest one: adding `detail=%s` to
+`WatchlistsToolService._raise_unexpected`'s `_LOGGER.error` leaked the sentinel
+into the captured log **and the test still passed** — it asserted against
+capsys and a loguru sink, and neither sees stdlib `logging` records. Its
+sibling in `test_local_server_tools.py` had asserted `sentinel not in
+caplog.text` all along. If a "no secrets leak" test names some output channels,
+check that it names the one the code under test actually writes to.
+
+**What to do.** When you inherit a red test, first establish *why* it is red:
+a defect in the product, a defect in the test, or a seam that moved. Only the
+first is a baseline you may carry. Then never leave a repaired guard at green —
+mutate the behaviour it protects and watch it red, at the layer that owns that
+behaviour, before you call it repaired.
+
+## An assertion whose expected value equals the platform default proves nothing — and neither does one the platform quietly satisfies for you (TASK-19562, 2026-08-22)
+
+**What happened.** Two of this task's ACs asked for facts about SQLite, and
+the obvious tests for both were inert.
+
+*One.* `SubscriptionsDB` set no `busy_timeout`, so it inherited one. AC:
+"set a timeout." The natural pin —
+`assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000` — passes
+**with the pragma deleted**, because 5000 ms is exactly what
+`sqlite3.connect(timeout=5.0)` already gives you. Deleting the production
+line and re-running was what exposed it. The pin that can actually fail
+monkeypatches the connector to pass `timeout=0` and asserts the connection
+still reports 5000: red at `0 == 5000` without the pragma.
+
+*Two.* AC: "the `-wal` is checkpointed on close." The natural pin — write
+300 rows, `close()`, assert the `-wal` is 0 bytes — also passes with the
+checkpoint removed, because **SQLite checkpoints and deletes the `-wal`
+itself when the LAST connection to a database closes**. The test was
+measuring sqlite's own cleanup. The fix was to hold a second connection open
+across the assertion (which is also the leaked worker connection the task was
+about) and additionally assert the file still *exists*: red at "close() left
+content in the -wal" once something else keeps it alive.
+
+The same platform behaviour refuted a whole premise: a child process that
+wrote a 4.1 MB `-wal` and exited normally left only the `.db` behind, with a
+new `atexit` settle hook enabled and suppressed — identical. The "the `-wal`
+is left behind at exit" concern is false for a clean exit; what is real is
+the standing WAL a long-running process carries, and the `os._exit(0)` signal
+path, which no `atexit` hook can reach.
+
+**What to do.** For any test whose expected value is a platform, library or
+language *default*, delete the production line and re-run before believing
+the green. If it still passes, the assertion is describing the platform, not
+your change — either find an input where the two diverge (force the default
+to something else, keep a second handle open) or write in the test that it
+cannot fail on its own and name the sibling that can.
+
+## Instrument the argument shape production uses, not the one that is easiest to call (TASK-19562, 2026-08-22)
+
+**What happened.** A previous session had to decide whether
+`SubscriptionsDB.record_check_result` really nested `transaction()`. It
+instrumented the context manager across "a real call", observed **depth 1,
+one entry**, and recorded the hazard as REFUTED at that call site — in the
+code, in the tests' docstring, and in the task file.
+
+Re-instrumented per argument shape:
+
+    record_check_result WITH stats    -> 2 entries, depths [1, 2]
+    record_check_result WITHOUT stats -> 1 entry,  depths [1]
+
+The nesting runs through `_update_subscription_stats` ->
+`update_subscription_stats`, reached only when `stats` is truthy — and
+`execute_run`, the only production caller, *always* passes stats. The
+earlier probe had called it the easy way, with `stats` omitted, and measured
+the one branch production never takes. The hazard was **live**, not latent:
+the daily-statistics write was durably committing the enclosing
+subscription-health UPDATE.
+
+**What to do.** When a probe decides whether a hazard is live, call the
+function the way the production call site calls it — copy the arguments from
+that call site, do not construct minimal ones. If the function branches on an
+argument's presence, probe **both** branches and record which is which; a
+single "instrumented a real call" line in a task file cannot be checked later
+by anyone, and this one was wrong in the direction that closes an
+investigation.
+
+## A sequential start/join thread loop hides per-thread leaks -- and "descriptors return to baseline" is the wrong assertion (PR #1964 review, 2026-08-22)
+
+**What happened.** Qodo found that `SubscriptionsDB._connections` held a
+strong reference to every thread's sqlite connection and only ever removed
+the *calling* thread's entry, so a worker that exited without calling
+`close()` pinned its connection -- descriptor and WAL lock -- for the life of
+the process. The first probe written to confirm it spawned 100 short-lived
+threads **one at a time** (`start(); join()`), and reported **no growth at
+all**: the registry stayed at 2 entries. The reason is that the OS recycles
+thread idents, so `self._connections[ident] = connection` overwrote the
+previous entry every iteration. The defect was real; the measurement designed
+to see it could not.
+
+Re-run with 20 threads held **concurrently** on a barrier, the same code gave
+registry 21 entries and 43 descriptors, permanently, and `gc.collect()` could
+not reclaim any of it (the sqlite3 statement cache is an `lru_cache` wrapping
+the connection, so every used connection sits in a reference cycle and is
+never freed by refcounting alone).
+
+Two further facts cost time and are worth writing down:
+
+* **`sqlite3.Connection` cannot be weak-referenced.** The obvious fix -- and
+  the one the review suggested -- is a `weakref.WeakValueDictionary`. CPython
+  3.12.11 raises `TypeError: cannot create weak reference to
+  'sqlite3.Connection' object`. Check weak-referenceability before designing
+  around it; C types often lack `tp_weaklistoffset`.
+* **Descriptors do not return to their pre-thread baseline even when every
+  connection is genuinely closed.** SQLite's unix VFS keeps closed
+  descriptors for an inode in a reuse pool while any connection to that file
+  remains open, releasing them together when the last one closes. Asserting
+  "fds back to baseline" would have failed against a correct fix. The
+  assertion that actually distinguishes fixed from broken is **"a second
+  round of threads costs no more descriptors than the first"**: fixed gave
+  13, 13, 13, 13, 13 over five rounds and 0 after the final close; broken
+  gave 23, 43, 63, 83.
+
+**What to do.** To measure anything keyed on thread identity, run the threads
+concurrently -- a sequential loop tests ident recycling, not your registry.
+And before asserting on file descriptors, establish what the *correct*
+steady state looks like by measuring a known-good control (here: the same
+code path with no registry at all), rather than assuming it is the baseline.
+
+---
+
+## The interpreter is an input to your test, and this repo spans four of them (PR #1960, 2026-08-22)
+
+**The trap.** A test can be correct, deterministic, and still pass or fail purely on
+which Python ran it. This repo makes that routine rather than exotic: the declared
+floor is **3.11** (`requires-python = ">=3.11"`), the maintainer's `.venv` is **3.12**,
+worktree venvs get **3.14**, and a contributor may have **3.13**. Four of six reds
+found on dev in one sweep were this, by three unrelated mechanisms — each invisible on
+whichever interpreter its author happened to use.
+
+**What happened.**
+
+- **`ast.dump()` stopped rendering empty fields.** Python 3.13 added `show_empty`,
+  defaulting to `False`, so `Call(func=..., args=[...], keywords=[])` became
+  `Call(func=..., args=[...])`. The summarization diagnostic ledger FREEZES dumped
+  shapes, so every reviewed row holding a no-keyword call stopped matching. Measured by
+  digesting all 229 shapes in `Local_Summarization_Lib.py` on four real interpreters:
+  3.11 and 3.12 gave `92a85a3a989ffd13`; 3.13 and 3.14 gave `cd27a1b6c1fdf001`. The
+  split is exactly where `show_empty` landed.
+- **`dis.findlinestarts()` began yielding `None` lines.** On
+  `ProfileStoreLease.acquire`, 3.11 yields 0 positionless entries and 3.14 yields 12.
+  Comparing those against an int boundary raised `TypeError` while building a
+  *module-level* constant — a COLLECTION error, so all 98 tests in the file stopped
+  running rather than failing.
+- **A nested same-quote f-string is a 3.11 `SyntaxError`.** PEP 701 legalised quote
+  reuse in 3.12. `TTS/backends/kokoro.py` therefore could not be imported *at all* on
+  the project's own floor, while every local test passed on 3.14. Note that
+  `ast.parse(feature_version=(3, 11))` does **not** catch this — it does not downgrade
+  the tokenizer. Only a real 3.11 interpreter does.
+
+**A recorded diagnosis is not a fix.** The `findlinestarts` case was already written up
+here nine days earlier ("Run source-inspection tests on a supported interpreter before
+changing them", TASK-15706, 2026-08-13). That entry was accurate and correctly told the
+reader how to tell interpreter drift from a product regression — and the 98 tests stayed
+uncollectable the whole time, because diagnosing is not the same as repairing. When an
+entry lands here describing something still broken, it needs a task, not just a
+paragraph.
+
+**What to do.**
+
+1. **Verify a version-sensitive fix across the whole supported range**, not on the one
+   you are sitting at, and not only at the two ends. All four matter here: the `ast.dump`
+   split falls **between 3.12 and 3.13**, so an ends-only check (3.11 and 3.14) would
+   have seen two disagreeing answers without locating the boundary, while the f-string
+   break is visible **only at the floor**. `uv python find 3.11` / `3.12` / `3.13`
+   resolve the three you are not running; re-running the same digest under each is
+   seconds of work.
+2. **An artifact that freezes interpreter output must pin the rendering, not chase it.**
+   `stable_dump()` in `Tests/ast_shape.py` forces the pre-3.13 rendering (`show_empty=True`
+   where supported, nothing below 3.13 where empty fields always rendered), so all four
+   interpreters reproduce the committed digest. Regenerating the ledger against the new
+   rendering was the tempting alternative and the wrong one: it invalidates a large set
+   of individually reviewed privacy rows at once, and breaks the 3.11 floor instead of
+   fixing anything.
+3. **Treat an Optional in an introspection API as load-bearing.** `findlinestarts`
+   documents its line as optional; the failure was assuming otherwise.
+4. **A module-level computation turns drift into a collection error**, which reports as
+   an error rather than a failure and can be skipped past with
+   `--continue-on-collection-errors`. Grep for `ERROR` as well as `FAILED` when
+   surveying a suite, or an entire file's worth of tests will read as "not failing".
+
+---
+
+## A `wait_for` around work that ignores cancellation is not a bound (task-19561)
+
+While replacing shutdown's flat `asyncio.sleep(0.1)` with a real bounded wait,
+the first draft was `await asyncio.wait_for(asyncio.gather(*tasks), timeout)`.
+It read like a timeout. The test written for exactly that case —
+"shutdown does not hang on a task that ignores cancellation" — **wedged the
+whole pytest run for five minutes** until the harness killed it.
+
+`wait_for` (and `asyncio.timeout`, which it is built on in 3.11+) implements
+its deadline by *cancelling* what it is awaiting and then awaiting that
+cancellation. Work that swallows `CancelledError` therefore hangs the very call
+whose timeout was supposed to bound it. Use `asyncio.wait(tasks, timeout=...)`
+when the point is to stop waiting: it returns `(done, pending)` and cancels
+nothing. Then drain `.exception()` off the finished ones so a cancelled-at-
+shutdown task does not resurface as "exception was never retrieved".
+
+The generalisable half: **a timeout is only a bound if the thing it is wrapped
+around can be interrupted.** Write the uncooperative-work test — it is the only
+one that distinguishes the two.
+
+## A process-lifetime mechanism must be gated on owning the process (task-19561)
+
+The same task added an exit watchdog: a daemon thread that `os._exit`s if
+shutdown has not finished within a grace period, armed from `App.on_unmount`.
+Every unit test passed. What that misses is that `Textual`'s `run_test()`
+mounts and unmounts a **real** `TldwCli` inside the pytest process, which then
+runs thousands more tests — so every such test was arming a timer to kill the
+test runner ~20 seconds later. It surfaced only because a test was written that
+mounts the real app and asserts *no watchdog thread exists afterwards*.
+
+Two rules fell out. **Gate anything that ends the process on an explicit claim
+made by an entry point** (`claim_process_exit()` here), never on "the app is
+shutting down" — under test those are different facts. And **when a mechanism
+replaces itself with a tighter deadline, stand the superseded one down**: the
+first version left the old thread asleep on its original, longer deadline,
+which is a live timer nothing can cancel any more. That bug was found by the
+same real-app-mount test, not by any of the seven unit tests around it.
+
+## A timeout on shutdown is enforced against healthy work too (task-19561)
+
+Independent review of the same watchdog asked one question its own tests did
+not: *can this fire while the app is still doing something legitimate?* The
+answer was yes, and only a side-by-side live probe showed it. A clean quit
+(`app.exit()`, no signal) with one ordinary `run_worker(..., thread=True)`
+holding an open `BEGIN IMMEDIATE`:
+
+| | merge base | with the watchdog |
+|---|---|---|
+| 30 s worker, clean quit | died 28.8 s after quit, **rc 0**, both statements committed | died **20.1 s** after quit, **rc 1**, `[]` — transaction abandoned |
+
+The grace period is not only a stuck-process bound. Textual thread workers run
+on the loop's default executor and cannot be interrupted, so teardown really
+does wait for them — and a *healthy* one that outlives the deadline is
+`os._exit`ed exactly like a wedged one. The unit tests could not see this
+because they arm the watchdog against nothing; the quiet-exit measurement
+(0.6 s) could not see it either, because the whole point is that the
+pathological case is the one with live work in it.
+
+**Generalisable:** when you bound a shutdown, the acceptance evidence must
+include a run with legitimate long work still in flight, not just a quiet exit
+and a wedged thread. Write down which side of the trade you chose, in the
+config comment the user will read — not only in the module docstring.
+
+Second, smaller one from the same review: **`thread.is_alive()` is False for a
+constructed-but-unstarted thread**, so a guard of the shape "is a watchdog
+already running?" written as `self._thread is not None and
+self._thread.is_alive()` has a hole between publishing the thread and starting
+it. An `RLock` does not close it — signal handlers re-enter on the *same*
+thread and sail straight through. Key the guard off the state you actually
+care about (here: an unexpired deadline), not off thread liveness.
+
+**Resolved:** the default went 20 s -> 120 s. The reasoning is worth keeping
+because it generalises to any "how long should the timeout be" argument: the
+requirement that motivated the bound (*"interpreter exit is not blocked for
+seconds"*) was already satisfied by the **quiet**-exit measurement, 0.6 s,
+which the constant does not affect at all — a healthy exit never reaches the
+deadline. So tightening it bought nothing on the AC and cost a 30-second
+ingest its write. Once you notice that a knob is inert on the metric you
+picked it for, the only live consideration left is the asymmetry of the two
+failure modes: a slow quit is an annoyance, an abandoned transaction is data
+loss. Deliberately declined at the same time: extending the deadline whenever
+a straggler is reported, which turns a bound into a suggestion.
+
+## "It runs at startup, so nothing of ours exists yet" is an ordering claim, and ordering claims decay (task-19561)
+
+`Subscriptions/startup_reconcile.py` shipped with a paragraph headed *"Why it
+is safe to sweep unscoped"*, whose argument was: the sweep runs once, during
+app startup, before any claim can have been taken in this process, so every
+in-progress row it sees belongs to a dead process.
+
+Every clause was true about the *design* and false about the *code*.
+`on_mount` starts the scheduler worker; the sweep is created later, as a
+deferred startup task after post-mount setup; `SchedulerLoop.run()` ticks
+immediately after loading its queue. So a due watchlist check launched a real
+`running` row seconds before the sweep looked at it, and the sweep marked that
+live row `failed`. Single process, every launch. Nothing anywhere enforced the
+ordering the docstring assumed — it was not even written down as a requirement,
+only as an observation about what the code happened to do at the time.
+
+The tests could not see it, because every one of them built the "stranded"
+rows itself and then called the sweep. A hand-built row cannot tell you
+*when*, relative to the rest of startup, a real row comes into existence. It
+took driving the real `SchedulerLoop` + real handler + real service against a
+throwaway DB, with only the HTTP fetch blocked so the check was genuinely
+in flight, to make the defect appear at all.
+
+**Generalisable, two parts.**
+
+*Evidence:* when a claim is about ordering between two subsystems ("this runs
+before that can have started"), the only evidence that tests it is a probe
+that actually starts both. Seeding the row yourself tests the SQL, not the
+claim.
+
+*Design:* prefer a boundary to a sequence. Fixing this by moving the sweep
+earlier in `on_mount` and pinning the order with a test would have been
+correct only until the next innocent edit to `on_mount` — a file that changes
+constantly. Capturing `MAX(id)` per table when the database is opened, in
+`__init__` where no event loop exists yet, makes "this process's rows are out
+of reach" true by construction, whatever order anything after it runs in. Two
+details make it hold: the tables are `AUTOINCREMENT`, so ids are never reused
+after a delete (a plain `INTEGER PRIMARY KEY` would reuse the highest freed
+rowid and break the scoping silently — so that guarantee gets its own test);
+and the boundary is a **required** argument, so the scoped call cannot decay
+back into the unscoped one by omission. An absent boundary means *sweep
+nothing*, because leaving a row wedged is recoverable on the next launch and
+failing a live one is not.
+
+*Corollary on mutation-testing your own regression test:* removing the `AND
+id <= ?` from the SQL did **not** turn the headline scheduler-race test red —
+its boundary was `None` (empty table), so an early return short-circuited
+ahead of the mutated statement. The test was only proven load-bearing by
+mutating the *whole* contract to HEAD semantics. If a mutation leaves a test
+green, find out which guard absorbed it before concluding the test is weak —
+or that the mutation was equivalent.
+
+## Latching "done" before doing it disables the mechanism permanently (task-19561)
+
+`install_termination_handlers()` called `claim_process_exit()` and set its
+`_handlers_installed` flag *before* attempting `signal.signal`, and it
+swallows installation errors by design (failing to install a nicety must not
+stop the app starting). One failure — not on the main thread, or any other
+`signal.signal` error — therefore produced both bad outcomes at once: the
+latch made every later call a no-op, so handlers were never installed at all,
+**and** the watchdog was armed and able to hard-exit the process anyway,
+because the claim had already gone through.
+
+**Generalisable:** an idempotence latch and a capability claim must both be
+consequences of success, never preconditions of the attempt. Set them after
+the thing works. And when you write the "degrade gracefully" branch, say out
+loud what the resulting end state is: here the correct one for a legitimately
+embedded app is *no handlers, no claim, no watchdog* — fully inert — which is
+only reachable if the failure path leaves the state untouched and retryable.
+
+## "Zero external callers" ages: re-derive the caller set, do not inherit the claim (TASK-19564, 2026-08-22)
+
+**What happened.** TASK-19564 filed ChaChaNotes `sync_log` as a write-only
+shadow copy and recommended *retiring the content columns* on the strength of
+"both of its readers have **zero external callers** — nothing consumes it."
+That sentence was true when the pattern was named. By the time the task was
+implemented, `ChaChaNotes_DB.py` had **six** `sync_log` readers, not two, and
+three of the four newer ones had live non-test callers:
+`read_committed_chat_sync_intent` (`ConsoleChatStore
+.ensure_provider_continuation_durable`, which **raises** on a `None` read),
+`read_committed_chat_delete_intent`, and
+`list_current_committed_chat_sync_intents`
+(`._reconcile_restored_chat_sync_intents`, on every conversation restore).
+Each compares the stored payload to the live `messages` row **field by field**;
+the payload IS the commit proof. Retiring `content` as recommended would have
+made every comparison fail — silently disabling Sync v2 and turning every
+provider-continuation checkpoint into a hard error.
+
+**Why the stale claim was believable.** Grepping the two READER NAMES the
+filing quoted reproduces the filing's answer exactly: `get_sync_log_entries`
+and `get_latest_sync_log_change_id` really do have only test callers in this
+database (the production hits are `Prompt_Management/Prompts_Interop.py`
+calling the *Prompts* DB's same-named methods). The claim fails only if you
+grep the TABLE, `sync_log`, and read every hit — the newer readers embed it in
+a `JOIN sync_log AS intent` inside a method whose name says nothing about the
+log.
+
+**What to do.** When a filing says a thing is dead, re-derive the caller set
+from the artifact itself (the table, the column, the file) rather than from the
+symbol names the filing chose, and check the *newest* code first — a corpse
+claim decays from the direction of recent work. Then confirm the negative
+direction too: what *would* break if you removed it, checked by reading the
+would-be-orphaned call sites, not by running a suite. Here the suite would not
+have caught it either: the readers `return None` on failure, and the callers
+degrade to `{"status": "skipped"}`.
+
+**Second-order find, same session.** Writing the direct-index witness for the
+sibling task surfaced an unrelated live defect the same way: `messages_au` and
+`keyword_collections_au` issued an FTS5 `'delete'` unconditionally, and
+`add_keyword_collection` on a soft-deleted name raised `database disk image is
+malformed` through the public API. Nothing had ever asserted against the FTS
+index directly, so it had gone unnoticed. Also worth knowing before you reach
+for it: FTS5 `'rebuild'` re-derives from the base table with **no** `deleted`
+filter, so using it to repair an external-content index re-indexes every
+tombstoned row. Use `'delete-all'` plus an explicit filtered reinsert.
+
+**Third find, same session — `_` is a wildcard in SQL `LIKE`.** The new
+retention triggers were first named `<entity>_sync_log_prune`, which silently
+joined the `<entity>_sync_%` namespace that three tests assert the exact
+membership of as a design invariant ("these four triggers, and only these,
+write the sync log"). Only ONE of the three went red, because the other two run
+against pre-migration historical databases where the new triggers do not exist
+yet — so two-thirds of the collision was invisible until a later schema bump
+would have surfaced it in an unrelated PR. When adding a schema object, grep
+the test tree for `LIKE '<prefix>%'` patterns your new name could match, and
+remember the underscore matches any single character.
+
+**Fourth find, independent review of the same branch — a retention rule must
+enumerate its WRITERS from the live schema, not from the entities the filing
+named.** The filing's ACs listed "conversation, message, note or character", and
+the shipped rule covered those plus keywords and keyword_collections: six
+entities, all correct. Enumerating `sqlite_master` for triggers containing
+`INSERT INTO sync_log` finds **nine** — `chat_dictionaries`, `world_books` and
+`world_book_entries` also write the log, none was covered, and probing them on
+the finished branch reproduced the original defect verbatim (a hard-deleted
+world-book entry's full `keys` + `content` orphaned in `sync_log` forever;
+4/4 old bodies retained across 4 edits). The sibling half of the SAME commit had
+already enumerated `chat_dictionaries` and `world_books` from the schema for its
+FTS census and found them — so the information was in the branch, it just did
+not cross from one half to the other. Rule: when a change claims to bound a
+shared table, derive the covered set from the table's own writers and assert
+`covered == writers` in a census test, exactly as the FTS half did; otherwise
+the AC's example list silently becomes the scope.
+
+**Follow-on, same branch, after a third-party reviewer converged on the same
+find.** Qodo's review of PR #1974 reported the identical three omissions. Two
+things were learned closing it, both worth carrying:
+
+*A documented gap is not a shipped gap.* The branch had already written the
+residue up honestly, with reasons it was hard. That is better than silence, but
+the docstring still said "Delete every `sync_log` row no reader can reach"
+while three entities' plaintext survived deletion — an untrue contract in a
+*privacy* fix. When an independent reviewer names the same gap, that is the
+signal to price the fix again rather than re-defend the deferral.
+
+*"Order-independent" is a claim that needs a control, not an argument.* The
+rule that shipped had to survive SQLite's undefined firing order for same-kind
+triggers. Re-running every scenario under six permutations of the emitters'
+creation order and getting identical results proves nothing on its own — the
+permutation might not reach the firing order at all. The evidence is the
+**control**: with the retention triggers dropped, the same soft delete emits
+`update@cid3, delete@cid4` in one permutation and `delete@cid3, update@cid4` in
+the other. Only then does "identical with retention" mean something. The shipped
+test asserts both halves — differ without, agree with — so it cannot pass
+vacuously. Generalises: any experiment of the form "X does not depend on Y"
+needs a run showing Y actually varied.
+
+One more concrete trap from the same work: `CURRENT_TIMESTAMP` is constant
+within a single `sqlite3_step()`, so a timestamp trigger's nested UPDATE
+usually writes the *same* value the outer statement did and its emitter's
+`OLD.x IS NOT NEW.x` guard stays false. The hazard only appears when the outer
+statement supplies a different timestamp — which means probing the natural path
+alone would have concluded, wrongly, that there was no same-version content
+row. Construct the hostile input; the friendly one hid the bug.
+
+---
+
+## A Pilot-driven latency probe can measure the harness, not the app
+
+**What happened (2026-08-22, holistic perf review of dev `35d4bf3a1`).** A live message
+census attributed **~940 posted `Callback` messages per keypress** in the configured Console —
+looking exactly like an app-side message storm, and superficially contradicting the static
+lane's verdict that the keystroke path was clean. Attribution by callback qualname (patching
+`MessagePump.call_later`/`call_next`) showed 18,640 of 18,648 were
+`Pilot._wait_for_screen.<locals>.decrement_counter`: Textual's `pilot.pause()` posts **one
+callback per mounted widget per pause**, so every `press()+pause()` latency median in the
+probe (82–226 ms) was harness-inflated, and the "storm" was the probe itself. The app-side
+per-key work was ~7 widget refreshes — the static read had been right all along.
+
+**Rules.**
+- Never quote an absolute latency measured through `pilot.press()+pause()`; use that shape
+  only for A/B comparisons where the pause overhead is identical on both arms.
+- Before believing any message/callback storm, attribute the POSTERS by qualname — counting
+  message types alone cannot distinguish app traffic from harness traffic.
+- When a live probe contradicts a careful static read, suspect the probe's harness before the
+  static read; resolve by attribution, not by majority.
+
+Full disclosure section: `Docs/Design/2026-08-22-holistic-perf-review.md`
+("Measurement-artifact disclosure").
+
+## Which hand-maintained literal an author updates is decided by DISCOVERY PATH, not by importance (TASK-20971, 2026-08-22)
+
+**What happened.** `VALID_TABLES['chachanotes']` in `DB/sql_validation.py` is a
+hand-maintained allowlist; `validate_table_name()` rejects anything not in it,
+so a forgotten table makes every generic CRUD helper raise for that table.
+TASK-864 filed it when 9 of ~47 tables were listed. TASK-19568 repaired it
+after it went stale again — merged `aaec11812`, 2026-08-22 **00:16** -0700.
+TASK-19057 added two Actor Pack tables in a v44→v45 migration and broke it
+again — merged `2fe6ca20f`, **14:51** the same day. **Fourteen and a half
+hours** between "repaired" and "red again."
+
+**The instructive part is what that same author *did* update.** They correctly
+added `idx_actor_pack_persona_intents_state` to
+`Tests/ChaChaNotesDB/test_index_census.py` — an equally hand-maintained
+literal, guarding the same migration, with the same "nothing connects the
+migration to the literal" weakness. And they correctly bumped three
+schema-version pins under `Tests/DB/`. Measured on that branch
+(`git diff b593f853d 09b768239`), both were reachable by something the author
+actually did:
+
+* the index census sits in `Tests/ChaChaNotesDB/`, the directory where they had
+  just written `test_actor_pack_migration.py` — running that directory turned
+  it red; and
+* the version pins contain the schema version number, which a grep for the
+  constant finds.
+
+`VALID_TABLES` is reachable by neither. It names no schema version, and nothing
+else in `Tests/DB/test_sql_validation.py` mentions the feature. **Its guard had
+been surviving by geography, and stopped the first time a migration landed from
+a directory that did not happen to sit next to it.** Nothing about the
+allowlist's importance, its comment block, or the correctness of its pin
+mattered — the pin was right and it did report; it reported after the merge.
+
+**What to do.** When you add a hand-maintained literal as a guard, ask what
+*discovery path* connects the change to the literal, and assume the author will
+have only two: (a) they run the directory their new test lives in, and (b) they
+grep for a token their change forces them to touch. If the literal is in
+neither, the guard depends on memory and will decay on a schedule set by how
+often work lands from elsewhere. Give it a path: put the check where the author
+already runs (here, `scripts/preflight.sh`, which is stdlib-only and ~0.1 s for
+this check), and make its failure message print the exact lines to paste rather
+than only the names of what drifted.
+
+**Do not "fix" it by generating the literal.** TASK-19045's rule stands: a
+census that re-derives its expectation from the artifact it guards is the
+identity function on the defect class it exists to catch. The way out is a
+*different* artifact. Here the schema's own `CREATE TABLE` text —
+`DB/migrations/chachanotes_*.sql` plus the SQL string literals in
+`ChaChaNotes_DB.py` — is independent of `VALID_TABLES` and was already
+authoritative. Two details made that scan trustworthy: parse the `.py` sources
+through `ast` and read only string constants (a raw-text scan reports three
+phantom tables — `IF`, `column`, `as` — from prose in `#` comments that says
+"CREATE TABLE", and a guard that reports phantoms gets muted), and prove the
+new oracle against the old one rather than asserting it alone: the static scan
+and a live fully-migrated `CharactersRAGDB(":memory:")` agree exactly, 69
+substantive tables, symmetric difference empty.
+
+## A packaging test that reads the packaging config is the identity function; assert against the built artifact (TASK-19860, 2026-08-22)
+
+**Incident.** `tldw_chatbook/DB/migrations/` held 32 `.sql` files. Four separate
+hand-maintained lists said which of them ship: `pyproject.toml`'s
+`package-data` (13), `MANIFEST.in` (11), `Packaging/check_manifest.py` (13),
+and `Tests/Packaging/test_installed_distribution.py`'s
+`RUNTIME_MIGRATION_PATHS` (13 -- one of its fifteen constants was even defined
+twice, with the same value). A wheel built from that config carried 13 files.
+`pip install` + first launch died with
+`SchemaError: Migration from V40 to V41 failed ... No such file or directory:
+chachanotes_v40_to_v41_persona_visual.sql`. **The application did not start
+after a normal install, and had not been able to for two schema bumps.**
+
+**Two things made it survive a packaging suite that already had ~90 tests.**
+
+1. *The tests agreed with the config instead of with reality.* `check_manifest`
+   and the test both required exactly the 13 names the config shipped, so a
+   green run meant "the wheel contains what we listed", never "the wheel
+   contains what exists". Adding a migration and forgetting the lists produced
+   no red anywhere.
+2. *The runtime symptom under-reported by 19 files.* `_initialize_schema` walks
+   v4 -> current and aborts at the FIRST missing script, so one `SchemaError`
+   named one file. Fixing only that file would have moved the wall to v45, and
+   the next report would have looked like a new bug. Aborting-at-first is a
+   reporting property, and here it hid 95% of the defect.
+
+**The rule.** Build the wheel and the sdist and read the members out of the
+`ZipFile`/`TarFile`. If the assertion can be satisfied by editing
+`pyproject.toml`, it is testing the config, not the artifact -- and it goes on
+passing the day someone changes build backends. Report *every* missing file in
+one assertion message; a per-file `parametrize` that stops at the first still
+tells you one name at a time.
+
+**This does not contradict TASK-19045's "do not generate the literal".** That
+rule forbids re-deriving an expectation from *the artifact it guards*. The
+derivation has to come from somewhere independent: here the expectation is the
+`.sql` files in the source tree, and -- separately -- the `.sql` names the
+artifact's own `ChaChaNotes_DB.py` opens, parsed out of the shipped module.
+Neither is the packaging config, so neither can be satisfied by editing it.
+Both fail closed: an empty derivation is a red check ("no migration reads
+detected; the detector has drifted"), never a vacuous pass.
+
+**Mutation-check it against the artifact, not the test.** Enumerating 31 of 32
+files in `pyproject.toml` and rebuilding made four independent tests name
+`chachanotes_v45_to_v46_sync_log_retention.sql` and made the installed-wheel
+probe die with the real `SchemaError` -- which is what proves the test is
+wired to the build and not to a fixture.
+
+**Audit the neighbours, and do it against the artifact too.** Grouping every
+non-`.py` file under `tldw_chatbook/` by directory and extension and diffing
+each group against the wheel and sdist took one script and cleared 60 groups:
+one real defect (migrations), one deliberate partial
+(`embedding_configs_examples.toml`, forbidden in the wheel on purpose), and
+three deliberately explicit single-file lists (the pinned TTS manifest and the
+vendored `LICENSE` notices). Recording *why* each of those stays enumerated is
+the part that keeps the next person from "helpfully" globbing them.
+
+**Addendum from the independent review: "absent from both artifacts" is not
+evidence of "excluded by design".** The group audit above sorts every group
+into shipped / absent / partial, and the *absent* bucket was read as
+intentional. Two of its members were not. `Evals/eval_datasets/*.json` is read
+at runtime — `Evals/eval_templates/research.py` resolves an absolute path into
+it and passes it to the runner as `dataset_name`, which the runner probes with
+`Path(...).exists()`; absent from the artifact, the bundled research template
+loses its dataset and **nothing raises**, which is exactly why it outlived the
+migrations, whose absence at least produced a `SchemaError`. And
+`LLM_Calls/LICENSE` / `tldw_api/LICENSE` — Apache-2.0 texts for two subtrees
+this project deliberately re-licenses — shipped in neither artifact while the
+modules they cover shipped in both. Note the shape of that second one: the
+reason recorded for keeping licences enumerated ("a fixed legal obligation per
+package, not a growing directory") is *true*, and it is precisely what makes an
+incomplete list a breach rather than an oversight. A stated reason justifies
+the mechanism; it says nothing about whether the list is complete, and both
+have to be checked separately.
+
+So the audit needs a positive probe, not only a grouping: for every non-`.py`
+file under the package, grep the packaged Python for its basename, and treat
+any hit that is missing from the wheel as guilty until explained. That sweep is
+~20 lines, ran in a second over 190 assets and 1,813 modules, and it is what
+surfaced both. Filter the noise by hand — generic names (`README.md`,
+`LICENSE`, `pyproject.toml`, `.DS_Store`) match string literals all over the
+tree — 15 raw hits, 3 real.
+## A "prefer the new accessor" getattr order silently bypasses injected test doubles on MagicMock apps (TASK-21103, 2026-08-23)
+
+Converting the eager `persona_buddy_controller` to a lazy property needed an
+explicit-construction seam (`ensure_persona_buddy_controller()`) for the one
+consumer allowed to build it — the Personas Workbench Buddy action handler.
+The first wiring resolved it "new accessor first": `ensure =
+getattr(self.app, "ensure_persona_buddy_controller", None); controller =
+ensure() if callable(ensure) else getattr(self.app,
+"persona_buddy_controller", None)`. Every targeted Buddy test stayed green
+except `test_restart_restores_selection_open_collapsed_and_geometry`, which
+failed with an apparently unrelated `FileNotFoundError` on a config.toml the
+test expected the action to have written. The cause: the test's app double is
+a **MagicMock**, so `getattr(mock, "ensure_persona_buddy_controller", None)`
+auto-creates a callable attribute — the handler happily "constructed" a fresh
+MagicMock controller and the REAL injected `PersonaBuddyController` (the one
+whose preference writer persists to disk) was never touched. Nothing raised;
+the action "succeeded" against a phantom.
+
+Two rules from this:
+
+- When adding an optional accessor consulted via `getattr` in code that
+  MagicMock-backed tests drive, resolve the EXISTING seam first and fall back
+  to the new accessor only when it yields None. The passive-first order is
+  also the semantically correct one here — an already-built (or injected)
+  controller must always win over re-construction.
+- The failure surfaced two files away from the change (a missing config file,
+  not a wrong controller), which is exactly why the whole feature's test
+  files get re-run after a consumer-resolution change, not just the file that
+  motivated it.
+
+Same task, smaller trap: a source-pin test asserting init ordering via
+`initializer.index("ConsoleRuntime(self)")` matched the substring inside MY
+OWN explanatory comment ("Slots must exist before `ConsoleRuntime(self)`
+below") and pinned the comment, not the construction. A source-index pin's
+needle must be an expression form that cannot appear in prose (here
+`"= ConsoleRuntime(self)"`), or writing a helpful comment breaks the pin —
+or worse, keeps it green while pinning nothing.
+---
+
+## A consolidated widget's first DYNAMIC mount can lose its own CSS to a stale tie-breaker
+
+**TASK-21115, 2026-08-23.** Converting 25 post-consolidation `DEFAULT_CSS` blocks
+to `BUNDLED_CSS` left every compose-time harness green while 19 UI tests went red —
+every one of them mounting a converted widget AFTER app boot. Textual's
+`Stylesheet.add_source` keeps the lowest tie-breaker ever offered for an existing
+source but does not arm `_require_parse` when lowering it (textual 8.2.8). A
+class's own `DEFAULT_CSS` used to mask that: it WAS a new source at first mount,
+arming the reparse itself. A consolidated class adds no source, so its dynamic
+first mount resolved against a stale parse in which a bare `Vertical`'s
+`width: 1fr; height: 1fr` defaults still carried tie-breaker 0 — exactly tying the
+sheet's `ConsoleSelectionMenu { width: auto; ... }` rule and beating it on source
+order. Measured: the menu mounted 80x40 instead of 24x6. Compose-time mounts never
+show it because registration and the first parse share the mount batch.
+
+**What to do.** Any change that stops a widget class registering its own stylesheet
+source must be verified with a DYNAMIC first mount (post-boot `app.mount(...)` /
+`push_screen`), not only compose-time mounts — the destination tour guard never
+exercises that path. The durable fix here is `css/tie_aware_stylesheet.py`
+(`TieAwareStylesheet`, used by both `TldwCli` and the `ConsolidatedCSSApp` harness),
+pinned born-red-vs-plain-`Stylesheet` in `Tests/UI/test_consolidated_css_harness.py`.
+## An unpaced reader-latency probe hides whole-write stalls at p95 (TASK-21124, 2026-08-23)
+
+**TASK-21124, 2026-08-23.** The fix removed the global config file lock from
+cache-hit reads so a concurrent config write (fsyncs + TOML parses under the
+lock) could no longer stall event-loop-side `get_cli_setting` calls. The
+obvious probe — a reader thread timing 2,000 reads while a writer loops, then
+comparing p50/p95 — showed *identical* percentiles before and after the fix
+(p50 ~5.5 µs both sides), twice: first because the reads finished before the
+writer thread ever reached its first lock acquisition (a fixed read count
+races thread startup), and then, after gating the read loop on writer
+progress, because of distribution shape — an unpaced reader oversamples the
+uncontended gaps, so five whole-write stalls became five huge samples in
+57,000, landing beyond p99.9 and invisible at p95/p99. Yet those few samples
+ARE the defect: one 18 ms block on the event loop is the jank being fixed.
+Printing max and a `>1 ms` stall count made the change legible instantly
+(base: max 18.2 ms; fixed: max 3.7 ms, fsync phase no longer under a
+reader-visible lock). Two rules: (1) for a stall-class defect, gate the test
+on a *mechanism* counter — here, a lock-acquisition count asserted to be
+exactly zero on the warm path, which was also the honest red-first test (100
+acquisitions per 100 reads before the fix) — and keep wall-clock numbers
+informational; (2) when you do report reader latency against a bursty
+contender, report max and a stall count, never percentiles alone, because an
+unpaced sampler weights its own idle loop, not the user's exposure.
+
+## A "is this feature configured?" probe that reads the store CREATES the store (TASK-21112, 2026-08-23)
+
+**TASK-21112, 2026-08-23.** Gating the notes-sync runtime's unconditional
+start on "non-empty root summaries" looked like a one-liner:
+`store.list_root_summaries()`. But that call goes `transaction()` →
+`_get_connection()` → `sqlite3.connect(path)`, and connect **creates the
+database file** (plus the WAL side files and a full schema census) — the
+probe would have manufactured the exact zero-profile state DB the gate
+exists to prevent, and the "no DB file after boot" regression pin would have
+gone red against the *gate itself*. The shipped gate never opens SQLite: it
+is `legacy_sync_directory_configured(app_config) or state_db_path.exists()`
+(config-key presence + `Path.exists()`), evaluated off-thread inside
+`_start_once`, with `review_setup` force-starting the runtime on first real
+feature use. Two rules: (1) a lazy-open/no-side-effect gate must be decided
+from evidence that is itself side-effect-free — file presence, config keys —
+never by calling into the store it guards; check the read path all the way
+to `connect()` before trusting a "read-only" method. (2) the regression pin
+must assert on the FILESYSTEM (`not path.exists()` after boot AND after
+shutdown), not on which methods were called — that is the only shape that
+catches a probe, a shutdown hook, or a migrator quietly creating the file.
+This recurs for every store queued in TASK-21105 (seven more feature DBs to
+be made first-use-lazy).
+## A "safe_" local that only reaches the error message is not protection — mutate it to prove which value the query saw (TASK-19558, 2026-08-23)
+
+Three `ChaChaNotes_DB` search methods computed `safe_search_term = f'"{term}"'`
+and then bound the RAW term. The quoted value was interpolated into the
+`logger.error` f-string in the `except` block and nowhere else. It had survived
+every review of those methods because a reader who sees `safe_search_term` two
+lines above a query stops reading — the NAME is the assertion, and the name was
+free.
+
+The evidence that settles it is a **mutation, not a reading**. Replace the
+computed value with an absurd string
+(`"ZZZ_MUTATED_NEVER_MATCHES_ANYTHING_ZZZ"`) and run the real method against a
+real database: at base all three returned byte-identical results
+(`['Zed the Hunter'] / ['Talk about dragons'] / ['hello world']`), which is only
+possible if the value never reached SQLite. Apply the same mutation to the fixed
+code and all three return `[]`. Two directions, one probe each; no amount of
+staring at the diff produces that.
+
+Generalise it: **whenever a sanitizer's output is a local rather than an
+expression at the call site, the sanitizer might not be wired.** The shape is
+cheap to census — a local named `safe_*`/`quoted_*`/`escaped_*` whose every AST
+`Name` load sits inside a `logger.*` call is, by construction, decorative. That
+census (`Tests/Utils/test_fts5_quoting_adoption_census.py`) run against the base
+blob rediscovers exactly those three and nothing else, and it ships as a test so
+the rediscovery is repeatable rather than a claim in a PR description.
+
+A third face turned up in review, and it is the one to remember: the FIX for
+a dead store can be a dead store. Round one replaced the unbound
+`safe_search_term` with a bound whole-query phrase -- correct, protective, and
+quietly halving multi-word recall at eight seams (see the recall lesson below).
+Binding the sanitized value is necessary, not sufficient; you still have to
+show the query means what it meant before.
+
+The same shape has a second face, met later in the same task. The review had
+asked for `("reads",)` risk tags on the read-only local agent tools "so they are
+floored to ask". Measured: local tools resolve through
+`permission_store.resolve_effective_state`, whose floor set is
+`HIGH_RISK_TAGS = {"mutates", "process"}`; `"reads"` is in
+`BUILTIN_HIGH_RISK_TAGS`, which only `resolve_builtin_state` consults, and that
+function never serves the `local:__local__` server key. Adding the tag would
+have produced a marking that reads as protection in review and floors nothing —
+the `safe_search_term` defect, re-created while fixing it. **Before adding a
+marking because a sibling has it, run the resolver that consumes it and show
+the verdict change.** If the verdict does not change, the honest deliverable is
+the written-down mechanism plus a test that demonstrates the inertness, not the
+tag.
+
+## Sanitizing a search box can NARROW it, and nothing red will tell you (TASK-19558 review, 2026-08-23)
+
+Quoting fixed an injection at fourteen search seams. It also quoted each seam's
+whole query as ONE FTS5 phrase, and an FTS5 phrase requires the words to be
+CONTIGUOUS. `dragon lore` stopped matching a record named "lore of the dragon
+reversed": recall halved at eight seams, on the Console conversation search,
+the Study flashcard box and the prompt picker. Every test passed. The injection
+tests passed *harder* — a narrower query closes more.
+
+The trap is that **the security assertion and the recall assertion point the
+same way.** "Returns 0 rows for `x" OR col:"y`" is satisfied by a fix and by
+an over-fix alike, so a suite made only of closure tests cannot distinguish
+"safe" from "broken in the user's favour of nothing". This repo had already
+paid for it once: `rag_service._escape_fts5_query`'s docstring records
+TASK-3995 finding that whole-query phrase quoting "is strictly stronger than
+AND-of-terms, not equivalent to it", verified against a real corpus document.
+The fix was re-derived from scratch three years later by someone who had read
+that docstring while working in the same file.
+
+Two things to actually do:
+
+1. **Pair every closure probe with a recall probe on the same corpus.** Seed
+   two records per seam — one where the query's words are adjacent, one where
+   they are split — and assert BOTH are returned. One extra fixture row turns
+   an invisible regression into a red test. A before/after table across both
+   halves is the evidence; a table of only closures is not.
+2. **When a "safety" change touches an expression language, name the semantics
+   you are picking.** Phrase, AND-of-terms and prefix are three different
+   queries, all of them injection-safe. Write down which one each seam had
+   BEFORE — here the rule turned out to be mechanical (*a seam that bound RAW
+   had implicit AND; a seam that bound a quoted phrase had a phrase*), and
+   that rule, once stated, decided all fourteen seams and stopped the fix from
+   smuggling in unmeasured behaviour changes beside the measured one.
+
+A third, cheaper lesson from the same round: **a NUL byte is not just another
+character to a quoting fix.** `sqlite3` passes a bound TEXT parameter as a C
+string, so SQLite truncates at the first NUL *after* you quoted — the closing
+quote is on the far side of the cut, and `unterminated string` is raised no
+matter how correct the escape was. Raw binds had survived it by luck. If you
+are adding quoting to anything that reaches SQLite, test `"a\x00b"`.
+
+## An FTS5 search box quietly has two contracts, and quoting one breaks the other (TASK-19558, 2026-08-23)
+
+Fixing the quoting above broke five Library tests, and the reason generalises to
+any "sanitize at the boundary" sweep. `search_conversations_by_content` had two
+kinds of caller: the Console/UI seams passing PLAIN user text (which must be
+quoted), and `library_local_rag_search_service._search_conversations` passing a
+pre-built, plural/singular-widened FTS5 MATCH expression (which must not be).
+The second only worked BECAUSE the argument was bound raw — the defect was load
+bearing. Its three sibling seams (notes, media, prompts) had already been given
+an explicit `fts_match_query` parameter for exactly this; the conversations seam
+had never been converted, and nothing marked it as the odd one out.
+
+So: before quoting a parameter, **enumerate its callers and split them by what
+they are actually passing**, and give the expression-supplying callers a
+separate, named parameter rather than overloading one argument with two
+contracts. A single parameter that means "plain text OR a MATCH expression,
+depending on who is calling" cannot be made safe — every fix for one caller is a
+regression for the other.
+
+Two smaller traps from the same sweep, both worth a line:
+
+- **A length test measured on the wrong string silently retires a branch.**
+  `search_media_db` widened 1-2 character queries to a prefix match
+  (`len(effective_fts_query) <= 2`). Quoting adds two characters, so testing the
+  quoted string's length would have made that branch dead code with no test
+  failing. Measure such predicates on the RAW input and say so in the comment.
+- **A test asserting that bad input raises can be pinning the bug.**
+  `test_search_with_invalid_fts_syntax_raises_error` asserted that typing
+  `invalid "syntax` into the prompt search box raises `DatabaseError`. That was
+  never a contract; it was the symptom of the raw bind, written down as if it
+  were one. When a fix turns such a test red, read what the test is asserting
+  about the USER before assuming the fix is wrong.
+
+## "No rows" is not the safe default for an unparseable query — and an AND-joined false leg poisons the whole WHERE (TASK-19558 review round 2, 2026-08-23)
+
+The round-one fix above had a second half nobody measured. When the new quoting
+could not build a MATCH expression at all — punctuation-only input, whitespace,
+a NUL — `search_media_db` answered `conditions.append("0")`. The conditions are
+`" AND ".join`ed, so that one leg forced the ENTIRE query to zero rows,
+including the LIKE predicates sitting right beside it that could still express
+what the user typed. Measured against the merge-base on a five-row corpus:
+`!!!` → 0 rows (LIKE would have found "Alert!!! urgent dragon"), `-` → 0
+("well-known dashes"), `***` → 0, `""` → 0. The comment above the line even
+argued for it — "simply DROPPING the condition would widen the result set" —
+which is true of a query whose ONLY filter is that leg and false of this one.
+
+Three things this generalises to:
+
+1. **A false predicate is not a no-op, it is a veto over its siblings.** Before
+   writing `1=0` / `"0"` / `AND FALSE` into a conjunction, look at what else is
+   in the conjunction. If any sibling can still answer the question, the leg
+   must be DROPPED, not falsified. Symmetrically, dropping is only safe when a
+   sibling survives — with no other text predicate, dropping returns everything.
+2. **Branch on the REASON the builder returned empty, not on the fact that it
+   did.** Three reasons arrived at the same line and want three answers: a
+   caller-supplied expression that came out blank means "no rows" by that seam's
+   own contract (and its LIKE legs are deliberately not built, so dropping
+   returns the whole table); a NUL means the LIKE fallback is *wider* than what
+   was asked for, because SQLite truncates the bound parameter at the NUL and
+   `%dragon\x00lore%` reaches it as `%dragon` (measured: it returned the dragon
+   row at the merge-base); punctuation-only means LIKE is exactly right. One
+   `if` per reason, each with the measurement in the comment.
+3. **Whitespace-only input is an EMPTY search, and padding is not part of the
+   query.** `"   "` should mean "I typed nothing", not "find me three spaces".
+   The same strip also fixed a pre-existing narrowing nobody had noticed: the
+   LIKE leg is AND-ed with the FTS leg, so `"  dragon  "` matched `MATCH` and
+   was then vetoed by `LIKE '%  dragon  %'` — 1 row for `dragon`, 0 for the
+   padded spelling, on dev.
+
+The evidence shape that catches this class: a before/after table over the
+AWKWARD inputs (`!!!`, `   `, `""`, `-`, `***`, empty, plus a normal control),
+run against the merge-base AND the branch in the same process — `git show
+<merge-base>:path/to/module.py` loaded via `importlib.util.spec_from_file_
+location` under a dotted name inside the real package resolves its relative
+imports fine, so both versions can be seeded and queried side by side without a
+second worktree. Closure probes alone never move on any of those rows.
+## A lazy package facade protects nothing that consumers import directly, and deferring at the CONSUMER can move the cost instead of removing it (TASK-21200, 2026-08-23)
+
+TASK-21103 removed PIL and `Persona_Visual` from the `import tldw_chatbook.app`
+closure and shipped a guard. Eight hours later the Actor Packs branch merged and
+put them straight back: `app.py` -> `Actor_Packs/__init__` ->
+`Actor_Packs.activation` -> `Persona_Visual.repository` +
+`Character_Chat.visual_identity` (module-level `from PIL import Image`). The
+branch was authored *before* the guard existed and merged *after* it, without a
+rebase, while CI was not enforcing checks — so a trunk invariant that was one
+commit old was silently undone by a branch that predated it. **When you land a
+new invariant, the in-flight branches are the threat, and only enforced CI
+catches them.**
+
+Two fix shapes looked right and were both wrong; the reasoning generalises to
+any import-closure repair.
+
+1. **The house lazy-facade pattern did not apply.** TASK-21103 fixed
+   `Persona_Buddy` with a PEP-562 `__getattr__` on the package `__init__`, so
+   reaching for it here was the obvious move. It would have changed nothing:
+   `app.py` imports `Actor_Packs.activation`/`.export`/`.importer`
+   **directly**, and importing a submodule executes the package init *and* the
+   submodule regardless of how lazy the init is. A facade only helps when the
+   heavy module is reached **through** the package's own re-exports. Check which
+   one your consumers actually write before copying the pattern.
+2. **Deferring at the consumer would have made the guard green while boot stayed
+   slow.** The tempting one-line-region fix was moving app.py's eight
+   `Actor_Packs` imports into `_wire_character_persona_services`, their only
+   caller. But that method runs from `TldwCli.__init__` (app.py:6076), so every
+   real boot would still have paid PIL — the guard measures *module import*, and
+   the user feels *import + construction*. Fixing the three modules at the
+   source removed PIL from both. **Before deferring an import into a function,
+   check when that function runs; if it runs during construction anyway, you
+   have satisfied the test and not the user.**
+
+The evidence shape that settled all of it: a `sys.meta_path` finder that records,
+for each module, the module whose body triggered its import (importlib executes a
+module body in a frame whose `co_name` is `<module>`, so the nearest such frame
+outside the finder is the true importer). Reading `-X importtime` instead is the
+trap it replaces — its indentation nests by *completion* order, and misreading it
+pointed the first diagnosis at the wrong module. That tracer is now installed in
+`Tests/Packaging/test_persona_buddy_import_closure.py` itself, so the guards fail
+with the offending chain printed rather than a list of resident modules; the
+mutation test (re-add one module-level import, watch it go red) printed
+`app -> Actor_Packs -> ...activation -> ...visual_identity -> PIL` verbatim.
+
+Two checks worth copying when you defer imports: read the pre-change public
+surface from `git show HEAD:<file>` (not the edited file) and assert
+`getattr(pkg, name) is <direct submodule import>` for every name — a surface that
+silently shrank cannot pass that; and re-probe import ordering in fresh
+subprocesses (submodule-first, package-first, heavy-dep-first), because
+TASK-21160 shipped a live regression when a lazy facade unmasked a cycle the
+eager init had been front-loading in a safe order.
+
+---
+
+## A resting compact screenshot does not prove focused control geometry (TASK-21000, 2026-08-22)
+
+**What happened.** Persona Buddy's 10-column fallback looked correct at rest with
+two three-cell icon buttons. Preserving a two-cell lower-right resize grip moved
+Close left, but focusing it still expanded `×` to the seven-cell native `Close`
+button. That expansion overlapped and visually replaced Fold even though resting
+screenshots, hit tests, and keyboard tests were green. An earlier repair that let
+the resize corner override Close was also false evidence: both operations existed,
+but some cells inside a control secretly resized instead of activating the control.
+
+**What to do.** For terminal overlays, test the complete interaction-state geometry,
+not just the resting glyphs: focus every control, assert regions remain disjoint,
+assert each visible control cell resolves to that control, and exercise activation
+and resize through distinct cells. Add up the cell budget before promising transient
+labels; if controls plus required hit regions cannot fit, define the constrained
+fallback explicitly instead of creating ambiguous overlap priority.
+---
+
+## A deferral changes WHICH objects the build binds, not just WHEN it runs (TASK-21108, 2026-08-23)
+
+**What happened.** TASK-21108 moved `build_notes_sync_runtime_owner(...)` out of
+`TldwCli.__init__` into a lazy `notes_sync_runtime_owner` property so
+`Notes/notes_sync_runtime` + `Notes/notes_sync_legacy` (15 modules) would leave the app
+import closure. The body was moved VERBATIM — same call, same keywords, same start gate.
+Every closure probe was green, the new Packaging guard was green, the Notes and
+`ProductionApp/test_notes_sync_runtime_lifecycle.py` suites were green.
+
+Two `ProductionApp/test_file_notes_session_owner_lifecycle.py` tests went red anyway.
+They replace `app.file_notes_session_owner` with a probe AFTER construction and before
+mount. Under the eager build, `file_notes_binding=self.file_notes_session_owner.
+current_binding` had already been read from the real owner during `__init__`; under the
+lazy build the same line ran at mount and read the PROBE, which has no `current_binding`
+— an `AttributeError` inside `on_mount` that also took the LibraryScreen mount with it,
+so the sibling test failed with the unrelated-looking "production TldwCli did not mount
+LibraryScreen".
+
+**What to do.**
+
+1. When you defer a construction, list every `self.<collaborator>` the moved body READS
+   and decide, per name, whether the new read time is the same answer. Anything that can
+   be reassigned between `__init__` and first access must be captured at the OLD time
+   (`self._notes_sync_file_notes_binding = self.file_notes_session_owner.current_binding`
+   in `__init__`), not re-read in the builder. Deferring *when* is the intended change;
+   deferring *what it binds* is a silent second change riding along.
+2. Import-closure evidence cannot see this class at all. A deferral's test set must
+   include the suites that MUTATE the app object between construction and mount —
+   here `Tests/ProductionApp/`, not just `Tests/Packaging/` and the deferred module's own
+   unit tests.
+3. Related trap from the same task: an AST fence that matches call names with
+   `.endswith("build_notes_sync_runtime_owner")` (`Tests/Notes/test_notes_sync_cutover.py`)
+   counts a `_build_notes_sync_runtime_owner` WRAPPER as a second call and fails its own
+   `len(builds) == 1`. The wrapper was renamed `_construct_...`; if you add a wrapper
+   around a fenced call, check the fence's matching rule before the name.
+
+---
+
+## A repaint-gate harness that forces a repaint per stimulus resyncs the gate and goes blind — validate the negative control PER MEMBER
+
+**TASK-21122, 2026-08-23.** Gating Persona Buddy's ungated 10 Hz poll on a
+"paint authority" tuple needs evidence that the tuple cannot miss a real
+change. The natural harness: drive N stimuli, and after each one let the gated
+poll settle, fingerprint the rendered view, then force an ungated repaint
+(`_painted_authority = None; refresh_from_controller()`) and fingerprint again.
+Any difference is a repaint the gate skipped. Forty-five stimuli, zero misses.
+
+Then the negative control — deliberately dropping two tuple members — **also
+reported zero misses**. The harness was blind, and its clean run had been
+worth nothing.
+
+Two causes, both worth knowing:
+
+1. **The forced repaint resyncs the gate.** Every `_check` re-baselines
+   `_painted_authority`, so a member whose only isolating stimulus arrives as
+   a *sequence* (mouse-down, then a move that crosses a layout threshold) is
+   repaired mid-sequence by the harness itself. The dedicated pin test, which
+   never forces, caught exactly that member (`preferences.geometry`) when the
+   harness could not.
+2. **Eager handlers mask the poll.** The widget already repaints on
+   `on_resize`, `on_descendant_focus`, `on_descendant_blur` and
+   `on_mouse_move`, so several members are only load-bearing in the narrow
+   window those handlers do not cover.
+
+**What to do.** Never accept a differential harness's clean run without a
+negative control, and do not settle for one crippled variant — drop *each*
+member in turn and record which ones the harness can detect. That per-member
+table is the real result: here it showed `screen.size` (3 misses) and
+`display` (1 miss) caught by the harness, `preferences.geometry` caught only
+by a dedicated non-forcing test, and the rest individually redundant with
+`snapshot.generation` because the controller bumps its generation on every
+state, preference and lease change. Redundant is not the same as wrong — those
+members are cheap insurance against a future controller that stops bumping —
+but you must know which is which before you claim the gate is proven.
+
+A corollary from the same task: when a gate keys on an identity tuple, audit
+the test fixtures for that tuple before believing a red. An earlier probe leg
+"failed" because the fake frames were `SimpleNamespace(renderable=..., duration_ms=...)`
+with none of the identity fields set, so `getattr(frame, "paint_digest", None)`
+returned `None` for every frame and two visually different frames collapsed to
+one key. The old code never noticed because it repainted every tick regardless.
+## Count per-event work by instrumenting the call, not by reading the handler (TASK-21119, 2026-08-23)
+
+**What happened.** The holistic-perf finding said the Console's click-outside
+dismissal cost "~4 full-screen DOM walks per press": two `self.query(...)` calls
+visible in the handler, times the two events (MouseDown + Click) of one press.
+Shadowing `screen.query` on a real Console pilot and clicking said otherwise.
+A press on the composer cost **3** walks, because the composer stops the Click
+so the handler ran ONCE — and a single invocation costs three walks, not two:
+the third is `screen.query(ConsoleSelectionMenu)` inside
+`transcript._remove_selection_menu()`, a callee the review never opened. A press
+on the rail cost **6**. So the reviewed number was simultaneously too high for
+one press shape and 50% too low for the other, and both errors came from
+counting call sites by eye.
+
+**What to do.** For any "this runs N times per event" claim, instrument the
+thing being counted and drive a real event; do not multiply what you can see in
+the handler body. Two specifics that made the probe honest here:
+
+- **Shadow the method on the instance** (`screen.query = counting_query`), not
+  the class: it catches the callees that reach the same object by another route
+  (the transcript's own `self.screen.query(...)` landed in the same counter),
+  which is exactly where the uncounted work was hiding.
+- **Measure more than one press shape.** Whether the second handler invocation
+  happens at all depends on who swallows the Click, so a single target
+  understates or overstates the per-press cost depending on which one you pick.
+
+**Adjacent trap from the same task.** In zsh, an unquoted `$(...)` IS
+word-split but an unquoted `$VAR` is NOT. Hoisting a file list into
+`FILES=$(...)` and running `pytest $FILES` handed pytest one giant argument;
+the run collected nothing, printed only a warnings block, and the compound
+command still exited 0. It looked like a completed A/B. Inline the command
+substitution, and read the passed-count before believing any comparison.
+
+## Mandatory migration inputs require a real historical-reopen sweep (TASK-19900.1, 2026-08-22)
+
+Delivery 1 made the v47→v48 Console Library seed explicit and fail-closed. Its
+named 203-test foundation battery passed, but the controller-required complete
+`Tests/DB/ Tests/ChaChaNotesDB/` sweep then produced 100 failures and four
+setup errors: historical v4–v47 fixtures reopened through bare
+`CharactersRAGDB(...)` calls, so they never supplied the new sanitized seed.
+The same sweep also found stale v48 table/index/version inventories. A shared
+`open_current_chachanotes_from_legacy(...)` test boundary fixed the reopeners;
+the final sweep had no Delivery-1-induced failures.
+
+When a schema upgrade adds mandatory constructor or migration authority, run
+the complete database-owner subtree, not only the new migration tests. Give
+historical fixtures one explicit opener that supplies sanitized authority at
+the legacy-to-current boundary, while leaving the production missing-input
+guard strict. Refresh absolute schema-version, table, index, and trigger
+inventories in the same delivery.
+
+## Private asyncio warning suppression makes lifecycle evidence vacuous (TASK-19900.3, 2026-08-23)
+
+Task 13's first closed-loop cleanup probe set the private
+`Task._log_destroy_pending` flag to false and manually called
+`task.get_coro().close()` before garbage collection. The test then reported no
+pending-task or never-awaited diagnostic and the implementation report treated
+that as shutdown evidence. A replacement probe using only a public event-loop
+exception handler, warning capture, and weak references exposed the real
+boundary: awaited controller shutdown while the owner loop was alive reached a
+terminal Task with no lifecycle diagnostic, but closing the loop first made
+terminal cancellation/await impossible and correctly produced `Task was
+destroyed but it is pending!` when the detached Task was collected.
+
+For asyncio lifecycle tests, assert the supported ordering directly: call and
+await the owner's shutdown API before closing its loop, then collect the Task
+and owner and require no public diagnostic. Test an already-closed-loop
+emergency separately: require fail-closed ownership cleanup and no dispatch,
+capture the expected destroyed-pending diagnostic through the loop's public
+exception handler, and assert warning capture contains no unhandled
+never-awaited coroutine. Never mutate private Task warning flags or manually
+close its coroutine; those operations change the behavior the test is meant to
+observe.
+
+## An isolated recovery widget does not prove one mounted action owner (TASK-19900.3, 2026-08-23)
+
+Task 15's first recovery UI tests passed against the standalone Textual widget,
+but the production ChatScreen never composed it. Once the real screen mounted
+the region, a queued recovery exposed a second Retry/Discard projection through
+the queue shelf, and a Button event delayed across navigation re-resolved the
+new `active_session_id` instead of the owner displayed when the click occurred.
+
+For recovery or destructive controls, mount the production hierarchy at empty
+and non-empty companion-state counts, count each advertised action across all
+sibling surfaces, and exercise the real callback after changing navigation
+state. Keep companion UI limited to its own count/pause truth, and carry the
+displayed session plus durable/ephemeral owner identity through the event rather
+than looking up a mutable active selection at handling time.
+
+---
+
+## UI lifecycle tests must stop before optional native backends (TASK-21201, 2026-08-23)
+
+**What happened.** The focused test for the Console Hands-free switch clicked the
+real control and let `HandsFreeController.enter()` continue into audio capture.
+During TASK-21201 verification that path initialized the optional parakeet-mlx
+backend and aborted the test process. The test was intended to prove only that the
+visible switch starts and stops the Hands-free UI lifecycle; opening a microphone
+and loading a native model made it machine-dependent without adding evidence for
+that contract.
+
+**What to do.** In UI lifecycle tests, patch at the first owned boundary before
+hardware, network, or optional native inference begins, while preserving the state
+transition the UI observes. Test those integrations separately behind their own
+explicitly marked suites. A test that can unexpectedly capture audio or initialize
+a model is not a focused UI test, even if it normally passes on a configured laptop.
+## An early `break` proves nothing when the list you scan was materialized for you (TASK-21121, 2026-08-23)
+
+**What happened.** `_console_changed_files_scope()` ran on the Console's 0.2 s
+run tick and carried a docstring arguing its own cost was fine: it scanned the
+session's messages in REVERSE and broke on the first change-review marker, and
+"markers cluster near the end", so "steady-state cost is near-constant"; the
+`O(messages)` worst case was conceded only for a session with no marker at all.
+Every clause was true and the conclusion was still wrong, because the thing
+being scanned was `store.messages_for_session()` — which `dataclasses.replace`
+-copies EVERY message in the session before the loop can look at one of them.
+Measured on a 400-message session, 25 ticks: **10,050 message copies and
+32.1 ms of event-loop time with a marker present** — i.e. the early break saved
+nothing at all, and the "worst case" and the "steady state" cost the same.
+
+**What to do.** When you reason about the cost of a scan, first ask who built
+the sequence you are scanning. An early exit only helps over a lazily produced
+or already-owned sequence; over an eagerly materialized copy the O(n) is paid
+before your loop starts, and no amount of breaking early can reach it. In this
+repo the shape to grep for is `for x in reversed(store.messages_for_session(
+...))` — several sites still have it, and each one is a full transcript copy
+regardless of how quickly it finds what it wants.
+
+**Adjacent trap from the same task: a call counter counts your fixture too.**
+The first cut of the counter probe wrapped `ConsoleChatStore._snapshot`
+globally and reported 26 copies per 25 ticks AFTER the fix — which would have
+read as "the fix is only partial". Those 26 were the probe's own
+`append_message` + 25 `append_stream_chunk` calls, each of which returns a
+snapshot; the subject's true count was 0. Arm the counter around the call under
+test and disarm it for the fixture's own store traffic, or the setup you wrote
+to make the measurement realistic gets billed to the code you are measuring.
+
+---
+
+## Sample a memo's signature BEFORE the work it describes, not after (TASK-21121 review round, 2026-08-23)
+
+**What happened.** TASK-21121's verified memo stored
+`(session_id, view_list, len(view_list), answer)` and re-checked all of it
+before serving a hit — the `TokenEstimateCache` "no invalidation protocol to
+get wrong" shape, and the reviewer's fuzzer found 0 violations in 138,565
+probes. It was still wrong, because the length was evaluated on the line that
+STORED the entry, i.e. after the scan that produced the answer:
+
+```python
+for message in reversed(view):   # answer describes the list as it is HERE
+    ...
+self._newest_change_review_memo = (sid, view, len(view), newest)  # ...but the
+#                                             ^^^^^^^^^  length as it is HERE
+```
+
+An append landing in between records a post-append length beside a pre-append
+answer. The signature then keeps matching forever, so the memo serves the stale
+value for as long as the list object survives. And this is reachable: the
+producer (`ConsoleAgentBridge._append_change_markers`) appends from the agent
+WORKER thread with no `call_from_thread` marshalling while the consumer runs on
+the event loop.
+
+**What to do.** Snapshot every component of a verification signature at the
+same instant as the value it certifies — hoist it above the computation. The
+asymmetry is what makes this safe to reason about: recording a signature that
+is *stale-short* only costs an extra miss, while one that is *stale-long* is a
+permanent wrong answer, so when in doubt sample earlier.
+
+**Two things this cost that generalise.** First, **a fuzzer that drives the
+subject single-threaded cannot see an interleaving bug** — 138,565 clean probes
+plus three passing mutation arms said nothing about this, because none of them
+ever mutated the list *during* the scan. Reach for a deterministic interleaving
+harness (here: a `list` subclass whose `__reversed__` performs the append after
+creating the iterator) rather than more volume. Second, **a memo can make an
+existing self-correcting glitch permanent**, which is a regression even when
+the memo is new: the pre-memo code recomputed every tick and healed on the next
+one, so "base had the same race" was true and irrelevant. Ask what the failure
+DURATION becomes, not just whether the failure is new.
+
+**Trap in the regression test itself.** That test is red at base too — but for
+the wrong reason (`assert racing.fired`: base reverses a snapshot *copy*, so
+the fixture's `__reversed__` hook never fires). Its real red-first evidence is
+mutating the fix back out. A base red is not automatically evidence that base
+has the bug; read *why* it failed.
+## A filing's prescribed FIX is a hypothesis; only its own behaviour matrix can accept it (TASK-21128, 2026-08-23)
+
+**What happened.** The finding was right about the defect: `messages_au` was
+declared `AFTER UPDATE ON messages` with no column list, so every auxiliary
+write to a message row — usage flush, metadata flush, variant bookkeeping —
+re-tokenized the whole assistant reply into `messages_fts`. Measured over one
+streamed turn: **4 index rewrites, `messages_fts_data` 55 → 12,636 bytes for a
+single 400-token reply.** The AC also named the fix, in backticks: `AFTER
+UPDATE OF content`. It is a one-line change, it matches the diagnosis, and it
+is a **data-exposure bug**. Soft delete is `UPDATE messages SET deleted = 1 …`
+and never names `content`, so the narrowed trigger would not fire and the
+tombstoned message would stay in the search index — the exact guarantee
+task-19567 exists to hold. Measured on a scratch matrix before any code was
+written (a direct `messages_fts MATCH` returned the tombstoned rowid), and
+re-proved afterwards by mutation: that shape turns all three `messages` cases
+in `Tests/DB/test_fts_soft_delete_index_witness.py` red.
+
+**What to do.** When an AC prescribes a mechanism, treat the mechanism as the
+author's hypothesis and the AC as the outcome; build the behaviour matrix for
+the mechanism BEFORE writing the diff, and amend the AC when the matrix
+disagrees. For a trigger narrowed with `UPDATE OF`, the correct column set is
+mechanical and worth writing down: **every column the derived artifact STORES,
+plus every column that decides whether the row BELONGS in it.** Here that is
+`content` (the only column `messages_fts` indexes) plus `deleted` (membership).
+Anything less is a stale-index bug in one direction or a leak in the other, and
+neither is visible through the six production `messages_fts` consumers,
+because all six redundantly re-filter on `deleted` (`ChaChaNotes_DB.py:9131,
+10318, 12496, 13935`; `RAG_Search/simplified/rag_service.py:2371, 2402` — the
+two RAG ones are easy to miss, and the review of this task caught them missing
+from an earlier draft of this very paragraph). So the failure such a mistake
+produces is an INDEX-LAYER leak, not a user-visible one, which is precisely
+why every witness for it must query the index directly.
+
+The permanent form of that rule is a census, not a comment: derive the required
+set from the LIVE schema (`PRAGMA table_info(messages_fts)` ∪ `{deleted}`),
+parse the trigger's `UPDATE OF` list out of `sqlite_master`, and assert the
+containment — so widening the fts5 table without widening the trigger fails at
+authoring time.
+
+**Adjacent trap from the same task, which cost a bogus baseline.** Editing a
+production module WHILE a pytest run is in flight makes structural tests lie.
+`Tests/DB/test_sql_debug_logging.py::…::test_no_eager_params_fstring_remains_in_source`
+came back red in the baseline run; the test uses `inspect.getsource`, which
+re-reads the file from disk using the ALREADY-IMPORTED code object's line
+numbers, so inserting ~85 lines earlier in `ChaChaNotes_DB.py` mid-run made it
+return a shifted, wrong span. It passed immediately on a re-run against the
+stable file. This repo has many `inspect.getsource` / source-text structural
+tests, so the failure looks exactly like a pre-existing red in someone else's
+area. Do not edit the tree while a run you intend to quote is running — and
+before A/B-ing any suspicious red, re-run it once against a quiescent tree.
+## A filing's prescribed fix is a hypothesis, not a spec (TASK-21128, 2026-08-23)
+
+The finding I filed said: scope the `messages_au` FTS trigger to `AFTER UPDATE OF
+content`. The implementer built the trigger matrix *before* writing the change and
+found that `OF content` alone does not fire on `UPDATE messages SET deleted = 1`, so
+a soft-deleted message's tokens would have stayed in the index — a retention bug
+introduced by the "fix". Shipped as `OF content, deleted` instead, and the acceptance
+criteria were amended before any code was written.
+
+**The rule this produced**, now enforced by a census test: the `UPDATE OF` column set
+is *every column the index stores* ∪ *every column that decides membership or
+visibility*. Widening an fts5 table without widening its trigger now fails at
+authoring time.
+
+**The generalisation**: a prescription written by whoever *found* a problem is a
+hypothesis about the fix, and the person implementing it is the last one positioned
+to falsify it. Build the differential harness first; if it contradicts the brief,
+the brief loses. Two separate reviewers reproduced this independently — it was not
+subtle, it was simply never tested before being written down.
+
+*Scope honesty, also worth keeping:* I first wrote this up as "soft-deleted messages
+stay searchable". Review corrected it — all six production `messages_fts` consumers
+re-filter on `m.deleted = 0`, so the retention was reachable only by a direct index
+query. Still a real regression of task-19567's guarantee, but not a user-visible
+search leak. State the blast radius you can prove, not the worst one you can imagine.
+
+## A thread-assert is only as honest as the double it runs against (TASK-21125, 2026-08-23)
+
+The acceptance criterion prescribed offloading the Writing backend at the *controller*.
+Every `WritingScopeService` method is already `async def`, so a controller-level
+`to_thread` would have moved **zero** work in the shipped app — while still passing a
+"runs off the event loop" assertion, because the test fake it ran against was
+synchronous. The offload landed at `_service_for_mode` instead.
+
+The same review turned up the matching failure of a *concurrency* assertion: a plain
+`gather` of 8 writers passed against a deliberately broken single-thread pool. It only
+began discriminating once every writer parked on a barrier inside the version check —
+then the mutant failed 5/5. Before trusting either kind of assertion, **run it against
+a deliberately broken implementation**; one that still passes is measuring the double,
+not the subject.
+## A `_maybe_await(service.call(...))` seam cannot be fixed by wrapping the VALUE — and the layer you were told to fix may not be the layer that blocks (TASK-21125, 2026-08-23)
+
+**What happened.** The finding said the Writing screen "runs all SQLite on the
+event loop" and the fix was "route the controller calls through
+`asyncio.to_thread`". `WritingController` really is where the calls start, and
+every one of them read
+`await self._maybe_await(service.method(...))`. Two things make that shape a
+trap:
+
+- **The value is already computed.** `_maybe_await` receives a *result*, not a
+  callable, so the synchronous work happened before the `await`. Anything you
+  wrap around `_maybe_await` offloads nothing. (Findings 21126 and 21127 name
+  the same seam in two other services — the pattern is repo-wide.)
+- **The controller's callee was async, so offloading THERE would have moved
+  zero work.** `WritingScopeService`'s ~70 methods are all `async def`; the
+  controller awaits them on the loop and the blocking SQLite call happens one
+  level down, inside the scope service. A controller-level `to_thread` would
+  have passed a thread-assert against a *synchronous* test fake and still left
+  the shipped app opening 180 connections on the loop.
+
+The fix that actually worked was to wrap the *backend object* at the scope
+service's single `_service_for_mode` dispatch point with a proxy whose
+`__getattr__` returns `asyncio.to_thread(bound_method, ...)` for non-coroutine
+callables (async backends pass straight through). One edit covered ~70 call
+sites, every `_maybe_await` kept working unchanged, and `scope.local_service`
+kept its identity — which a packaging test asserts.
+
+**What to do.**
+
+- Before writing a `to_thread`, follow the call one layer further and ask *which
+  frame is actually synchronous*. An `async def` wrapper around a blocking call
+  hides the blocking from the caller, not from the loop.
+- Prove it with a connection/statement counter that records
+  `threading.current_thread().name`, driven through the REAL object graph
+  (controller → scope service → real `LocalWritingService` on a tmp file), not
+  through the fake the UI tests use. Before: 180 opens, all on `MainThread`.
+  After: 0 opens and every statement on `asyncio_0`.
+- When a seam takes a value, change it to take the callable
+  (`_call(method, *args)`), or wrap the object. Do not wrap the seam.
+
+**Adjacent finding worth knowing (now TASK-21295).** `WritingController` calls
+**seven** methods — `get_project_structure`, `autosave_scene`, `search_project`,
+`assign_chapter`, `move_scene`, `reorder_items`,
+`restore_version_to_working_state` — that exist on **none** of
+`WritingScopeService`, `LocalWritingService` or `ServerWritingService`, none of
+which defines `__getattr__`. The first is on the live, **unguarded** click path
+(`Writing_Window._handle_project_selected` → `load_project_structure`, neither
+with a try/except), so an `AttributeError` escapes a Textual handler and the
+outline — the screen's whole purpose — cannot be loaded in the shipped app. It
+is invisible because `Tests/UI/test_writing_screen.py` drives everything through
+`FakeWritingScopeService`, which implements all seven.
+
+I first found six of these and left them in this footnote. That was two
+mistakes. **A green mounted-app test proves the controller talks to *a* service
+correctly; it does not prove that service is the one the app wires** — so when a
+perf task makes you read a screen's real object graph, diff the caller's
+expected API against the wired backend's actual API, in both directions. And a
+user-facing dead path belongs in a task file, not a lessons footnote: the
+footnote does not get triaged.
+
+## Moving work off the loop removes the serialization the loop was silently providing (TASK-21125 review, 2026-08-23)
+
+**What happened.** The held-connection + `to_thread` change for the Writing
+service was measured, mutation-tested and green — and it introduced a
+near-certain silent lost update. `_update_row` reads the row and checks
+`expected_version` in one committed transaction, then UPDATEs in the next. That
+check-then-write split is **pre-existing and was harmless**: every scope call ran
+inline on the event loop, so two writes could not interleave. Dispatching the
+backend on the default thread pool made the window real — a reviewer's A/B
+through the identical async graph measured **0/60 lost updates on base, 59/60
+after**. Both writers were told they succeeded, `version` advanced once, one
+writer's content vanished, and nothing downstream noticed.
+
+Two more defects came from the same "make it concurrent" step, both in
+scaffolding rather than the hot path: `close()` was called synchronously from an
+async `on_unmount`, freezing the loop for the whole 5 s settle timeout (a 50 ms
+ticker fired **zero** times) and then starving the very operation it waited for,
+which surfaced as `Task exception was never retrieved`. And a dead-thread reaper
+for the connection map never fired (recycled OS thread ids meant new threads took
+the reuse branch) while its liveness test — absence from `threading.enumerate()`
+— could not see a `_thread.start_new_thread` worker, so when it did fire it could
+close a **live** connection.
+
+**What to do.**
+
+- Before offloading anything, ask what the single-threaded loop was **implicitly
+  guaranteeing**. Ordering is the usual answer. Any check-then-act split in the
+  code you are about to parallelise is now a race, whether or not you wrote it.
+- The cheap durable fix is often a **single-thread executor**, not a lock or a
+  merged transaction: it restores the exact ordering the loop gave you and keeps
+  the whole latency win, because the point was getting off the loop, not going
+  wide. (Merging check+write into one transaction here would have needed
+  `BEGIN IMMEDIATE` too — with `isolation_level=None` and a deferred BEGIN the
+  reviewer measured `OperationalError: database is locked`, because SQLite's busy
+  handler does not retry `BUSY_SNAPSHOT`.)
+- Make the race deterministic in the test or it will not hold. A plain
+  `gather` of 8 same-version writers passed 3/3 runs against a deliberately
+  broken 8-worker pool; parking every writer on a `threading.Barrier` **inside
+  the version check** made the mutant fail every time with `assert 8 == 1`.
+- A blocking `close()` called from async teardown needs `await
+  asyncio.to_thread(...)`, and a settle timeout must **leave a busy thread's
+  connection open** rather than closing it anyway — closing it converts a slow
+  shutdown into `ProgrammingError: Cannot operate on a closed database` inside
+  live work, which is the exact defect the settle wait existed to prevent.
+---
+
+## "No index" was wrong and it would not have mattered: 88% of that read was Python (TASK-21129, 2026-08-23)
+
+**What happened.** The holistic-perf finding for the Notes-sync executor said its
+six `list_bindings` sites had "no LIMIT, no `root_id` index" and prescribed
+"indexed predicates + `to_thread`". Both halves of the diagnosis were checkable
+before writing a line of fix, and both came back different:
+
+- `idx_notes_sync_bindings_root(root_id, state, binding_id)` had existed since the
+  feature's **first commit**, and `EXPLAIN QUERY PLAN` on the real thirteen-column
+  statement showed SQLite already using it. Adding an index would have bought
+  nothing and cost write amplification on every binding insert.
+- Splitting the read showed where the time actually was: on a 1,000-binding root,
+  `fetchall` was **1.83 ms of a 14.75 ms read** — the other **12.9 ms (88%)** was
+  `_binding_from_row` building a dataclass, a nested serialization profile and an
+  enum, per row, for call sites that kept **one string** off each record.
+
+The fix that follows from the measurement is a different fix from the one that
+follows from the filing: project only the columns the caller consumes (and answer
+the existence question with `LIMIT 1`), rather than index anything.
+
+**What to do.** Before accepting "this query is slow because it is unindexed",
+run two cheap probes: `EXPLAIN QUERY PLAN` on the *actual* statement (not a
+paraphrase with fewer columns — the reduced form can report a covering index the
+real one cannot use), and a timing split of raw `fetchall` versus the full store
+method. In this repo the shape to suspect is any `for x in store.list_*(...)`
+whose loop body touches one or two attributes: the row-to-dataclass hydration is
+usually the bill, and it is invisible to the query planner.
+
+**Adjacent trap, same task: a "never crosses the boundary" assertion can be
+vacuous.** The mutation battery ran eleven deliberate defects; ten were caught and
+one survived — a probe rewritten to ignore its `root_id` filter entirely. The test
+that should have caught it asserted "root-1 does not see root-2's binding" using a
+note id that existed on **neither** root, so it passed for the wrong reason. The
+fixture now gives the other root values that exist only there. Any negative
+cross-scope assertion needs the value to genuinely exist in the other scope, or it
+proves only that nothing matches nothing.
+---
+
+## An index is not evidence until the planner picks it in the state your users' databases are actually in (TASK-21126, 2026-08-23)
+
+**What happened.** The holistic-perf finding said the Library Search/RAG
+panel's legacy-chunk census ran an unindexed full-table `GROUP BY` and
+prescribed "index or maintained count". The obvious index —
+`(chunk_engine_version, media_id) WHERE deleted = 0` — is a textbook
+COVERING index for that exact query, and the first probe confirmed it:
+112 ms → 3.4 ms at 200k chunk rows, `SCAN … USING COVERING INDEX`, both
+temp B-trees gone.
+
+The probe had run `ANALYZE` to make the corpus "realistic". **No media
+database in the wild has ever run `ANALYZE`** — there is no `ANALYZE`
+anywhere in `Client_Media_DB_v2.py`, so `sqlite_stat1` does not exist on a
+single user's disk. Re-measured in that state, the planner ignores the new
+index completely and stays on the pre-existing `idx_...deleted`: **118.8 ms
+without the index, 120.2 ms with it.** Five megabytes of disk, a schema
+migration, and a green "the index exists" test, for a 1% change.
+
+What actually works is counter-intuitive: lead the index with the
+**redundant** `deleted` column that the partial predicate already pins to a
+constant. That makes it answer the same equality search the no-stats
+heuristic already likes, while additionally covering the GROUP BY and the
+`COUNT(DISTINCT)` — chosen without stats, 23.4 ms at 200k and 122.8 ms at
+1M. Four shapes were measured; two of them were never chosen at all.
+
+**What to do.**
+
+1. **`EXPLAIN QUERY PLAN` on a corpus built the way production builds one.**
+   Before believing an index, grep the owning module for `ANALYZE` /
+   `PRAGMA optimize`. If neither runs, your probe must not run them either —
+   and say so in the probe, because "I made the corpus realistic" is exactly
+   how the `ANALYZE` got in.
+2. **Assert the PLAN in a test, not the index's existence.** `SELECT … FROM
+   sqlite_master WHERE type='index'` passes for a dead index. The pin that
+   catches this is the `EXPLAIN QUERY PLAN` string: index name present,
+   `COVERING INDEX` present, `TEMP B-TREE` absent — plus an explicit
+   assertion that `sqlite_stat1` is absent, so a future fixture that adds
+   `ANALYZE` cannot quietly restore the flattering plan.
+3. **Timing alone would not have caught it either.** 118.8 → 120.2 ms reads
+   as noise; only the plan text says *why*. Measure both.
+
+**Adjacent trap from the same task, worth its own line: offloading a query
+to a thread can make a `:memory:` database silently return the wrong
+answer.** `MediaDatabase` hands out THREAD-LOCAL connections. For a file
+that is fine; for `:memory:` a worker thread opens a *different, empty*
+database, so the census returns `{}` and the UI shows nothing instead of
+raising. Deliberately breaking the guard proved it — the memory-backed test
+went red with a zero count, not an error. Before wrapping any DB call in
+`to_thread`, check what that owner's connection factory does with
+`:memory:`, and keep a memory-backed test in the set.

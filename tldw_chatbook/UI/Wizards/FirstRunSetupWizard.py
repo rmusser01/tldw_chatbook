@@ -8921,8 +8921,9 @@ class SetupWizardContainer(WizardContainer):
 
             session_id: str | None = None
             for screen in reversed(tuple(self.app_instance.screen_stack)):
+                session_owner = getattr(screen, "_session", None)
                 eligible_session = getattr(
-                    screen,
+                    session_owner,
                     "eligible_console_first_chat_session_id",
                     None,
                 )

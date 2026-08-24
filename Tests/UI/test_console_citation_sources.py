@@ -69,6 +69,7 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
 from Tests.UI.console_controller_stubs import (
+    stub_fleet_controller,
     stub_image_controller,
     stub_message_controller,
 )
@@ -474,6 +475,11 @@ def _bare_screen(
     app_db: object | None = None,
 ) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
+    # Precedes the `_console_chat_store` assignment on purpose: that setter
+    # reaches `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` while building the chat
+    # controller's kwargs (TASK-21381).
+    stub_fleet_controller(screen, context="_bare_screen")
     screen._console_chat_store = _FakeStore(messages)
     screen._console_citation_counts = {}
     screen._console_annotation_previews = {}
@@ -1309,6 +1315,11 @@ def _citation_harness(
     )
     screen = ChatScreen.__new__(ChatScreen)
     Screen.__init__(screen)
+    # Precedes the `_console_chat_store` assignment on purpose: that setter
+    # reaches `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` while building the chat
+    # controller's kwargs (TASK-21381).
+    stub_fleet_controller(screen, context="citation harness screen")
     screen._console_chat_store = _FakeStore([message])
     screen._console_citation_counts = {"assistant-1": 2}
     screen._console_citation_request_generation = 1

@@ -28,12 +28,14 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    TYPE_CHECKING,
     Iterator,
 )
 
 #
 # Third-Party Imports
 from loguru import logger
+
 
 #
 # Local Imports
@@ -57,6 +59,9 @@ from tldw_chatbook.Utils.private_paths import (
     verify_trusted_directory,
 )
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 #
 #######################################################################################################################
 #
@@ -783,6 +788,9 @@ MIN_CONSOLE_AGENT_MAX_MODEL_TURNS = 1
 #: room for native multi-call batches, which cost `1 + 2N` steps per turn.
 DEFAULT_CONSOLE_AGENT_MAX_STEPS = 25000
 MIN_CONSOLE_AGENT_MAX_STEPS = 1
+# Mirrored by agent_models.MAX_RUN_CONTROL_STEPS; pinned by Console budget tests
+# without importing Agents here (that would create a config import cycle).
+MAX_CONSOLE_AGENT_MAX_STEPS = 199_999
 #: Wall-clock ceiling for ONE agent run (one user message), in seconds.
 #: 86400 = 24h, so a genuinely long-running operation is not cut off. This
 #: is a backstop, not a target: Stop cancels at every step boundary and
@@ -953,12 +961,21 @@ _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 #: itself. RLock keeps same-thread reentry behaving exactly as before while
 #: admitting only one *thread* at a time.
 #:
-#: Lock order is ``_CONFIG_FILE_LOCK`` -> ``_SETTINGS_REBUILD_LOCK`` ->
-#: ``_SETTINGS_CACHE_LOCK``. A config mutation retains the file lock while it
-#: publishes through ``load_settings(force_reload=True)``, so every settings
-#: rebuild must enter the file lock first. Reversing those first two locks
-#: deadlocks a background mutation against a concurrent settings reader.
+#: Lock order is ``_SETTINGS_REBUILD_LOCK`` -> ``_CONFIG_FILE_LOCK`` ->
+#: ``_SETTINGS_CACHE_LOCK``. Config writes and runtime snapshots use that same
+#: order, while warm settings-cache hits take only the cache lock.
 _SETTINGS_REBUILD_LOCK = None  # Will be initialized when needed
+
+
+def _settings_rebuild_lock():
+    """Return the process-wide reentrant settings rebuild lock."""
+
+    global _SETTINGS_REBUILD_LOCK
+    if _SETTINGS_REBUILD_LOCK is None:
+        import threading
+
+        _SETTINGS_REBUILD_LOCK = threading.RLock()
+    return _SETTINGS_REBUILD_LOCK
 
 
 def resolve_tldw_api_config(app_config) -> Dict:
@@ -1345,7 +1362,11 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
-def load_settings(force_reload: bool = False) -> Dict:
+def load_settings(
+    force_reload: bool = False,
+    *,
+    reload_bootstrap: bool | None = None,
+) -> Dict:
     """Return the merged application settings, rebuilding at most once.
 
     Thin wrapper over :func:`_load_settings_uncached` that serializes the
@@ -1354,19 +1375,23 @@ def load_settings(force_reload: bool = False) -> Dict:
 
     Args:
         force_reload: Rebuild even on a cache hit.
+        reload_bootstrap: Whether the rebuild also force-reloads the CLI
+            bootstrap config from disk. ``None`` (default) follows
+            ``force_reload``, preserving the historical behavior. TASK-21124:
+            ``_publish_runtime_config_unlocked`` passes ``False`` because it
+            has already installed a fresh bootstrap cache under the write
+            lock -- re-reading and re-parsing the file it just wrote was one
+            of the write path's redundant TOML parses.
 
     Returns:
         The merged settings mapping.
     """
-    global _SETTINGS_CACHE_LOCK, _SETTINGS_REBUILD_LOCK
+    global _SETTINGS_CACHE_LOCK
 
-    if _SETTINGS_CACHE_LOCK is None or _SETTINGS_REBUILD_LOCK is None:
+    if _SETTINGS_CACHE_LOCK is None:
         import threading
 
-        if _SETTINGS_CACHE_LOCK is None:
-            _SETTINGS_CACHE_LOCK = threading.Lock()
-        if _SETTINGS_REBUILD_LOCK is None:
-            _SETTINGS_REBUILD_LOCK = threading.RLock()
+        _SETTINGS_CACHE_LOCK = threading.Lock()
 
     active_config_path = _get_effective_config_path()
 
@@ -1384,12 +1409,10 @@ def load_settings(force_reload: bool = False) -> Dict:
         if cached is not None:
             return cached
 
-    # Miss: take the config-file lock before the rebuild lock. Config writers
-    # retain that first lock while publishing a forced settings rebuild, so
-    # acquiring these in the opposite order can deadlock two threads. Whoever
-    # loses the race re-checks the cache and returns the winner's freshly built
-    # settings rather than repeating the entire rebuild.
-    with _config_file_lock(), _SETTINGS_REBUILD_LOCK:
+    # Miss: serialize the rebuild. Whoever loses the race re-checks the cache
+    # and returns the winner's freshly built settings rather than repeating
+    # the entire rebuild.
+    with _settings_rebuild_lock():
         if not force_reload:
             cached = _cache_hit()
             if cached is not None:
@@ -1397,10 +1420,17 @@ def load_settings(force_reload: bool = False) -> Dict:
                     "load_settings: returning configuration rebuilt by another thread"
                 )
                 return cached
-        return _load_settings_uncached(force_reload=force_reload)
+        return _load_settings_uncached(
+            force_reload=force_reload,
+            reload_bootstrap=reload_bootstrap,
+        )
 
 
-def _load_settings_uncached(force_reload: bool = False) -> Dict:
+def _load_settings_uncached(
+    force_reload: bool = False,
+    *,
+    reload_bootstrap: bool | None = None,
+) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
     It first loads a base config (e.g., server-local), then attempts to load a user-specific
@@ -1408,6 +1438,9 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
 
     Args:
         force_reload: If True, bypasses the cache and reloads from disk.
+        reload_bootstrap: Whether the CLI bootstrap config is also
+            force-reloaded from disk; ``None`` follows ``force_reload``
+            (see :func:`load_settings`, TASK-21124).
 
     Returns:
         Dictionary containing all configuration settings.
@@ -1452,7 +1485,9 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
     # the packaged app (no installer/build step writes it, and pyproject.toml
     # only packages *.json/*.md from that directory) so merging it was always
     # a no-op; dropping the probe changes nothing observable.
-    bootstrap = _load_cli_config_bootstrap(force_reload=force_reload)
+    bootstrap = _load_cli_config_bootstrap(
+        force_reload=(force_reload if reload_bootstrap is None else reload_bootstrap)
+    )
     toml_config_data = copy.deepcopy(bootstrap.config)
     # Idempotent no-op when already decrypted (or encryption disabled) --
     # kept so a session password entered *after* the CLI cache above was
@@ -1501,9 +1536,15 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
     final_general_settings_cli = get_toml_section("general")
     final_database_settings_cli = get_toml_section("database")
     final_model_catalog_settings_cli = get_toml_section("model_catalog")
-    final_chat_defaults_cli = get_toml_section("chat_defaults")
+    final_chat_defaults_cli = copy.deepcopy(get_toml_section("chat_defaults"))
+    if not isinstance(final_chat_defaults_cli, dict):
+        final_chat_defaults_cli = {}
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
+    # (task 11, spec §9.1/AC 40) The [chunking] table -- the config tier of
+    # the ingest template resolution order (``[chunking] default_template``).
+    # Distinct from the legacy CamelCase "Chunking" server section above.
+    final_chunking_settings_cli = get_toml_section("chunking")
     final_image_generation_settings_cli = get_toml_section("image_generation")
     final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
@@ -1582,6 +1623,7 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
         ),
         DEFAULT_CONSOLE_AGENT_MAX_STEPS,
         minimum=MIN_CONSOLE_AGENT_MAX_STEPS,
+        maximum=MAX_CONSOLE_AGENT_MAX_STEPS,
     )
     final_console_settings_cli["agent_max_wall_seconds"] = coerce_float_setting(
         final_console_settings_cli.get(
@@ -1770,11 +1812,13 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
+        "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
+        "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -2739,6 +2783,12 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
                 1000,
                 minimum=1,
             ),
+            # (TASK-19556) Opt-in, OFF by default: see the [library] block in
+            # the default TOML below for why a link check is not free.
+            "ingest_url_preflight_probe": coerce_bool_setting(
+                library_section.get("ingest_url_preflight_probe", False),
+                False,
+            ),
             "ingest_options": library_section.get("ingest_options", {})
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
@@ -3004,10 +3054,22 @@ default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "tex
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
+# How long shutdown may take (Textual unmount + interpreter teardown) before a
+# hard exit is forced. Clamped to 1-300 seconds. A quiet exit measures ~0.6s,
+# so this deadline is never reached by a normal quit.
+# NOTE: it is enforced against healthy work too. A background job still
+# running when you quit -- media ingest, notes/character export, library
+# export, an embedding batch -- runs on a thread that cannot be interrupted.
+# If it is still going 120 seconds after you quit, the process is killed and
+# that job's database write is abandoned (not rolled back to a clean earlier
+# state -- simply lost). Raise this if you routinely quit while long jobs are
+# running; lower it only if you would rather lose such a write than wait.
+shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
+assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).
@@ -3090,6 +3152,18 @@ auth_token = "default-secret-key-for-single-user"
 [library]
 # Maximum files scanned when analysing a directory for Library ingestion.
 ingest_directory_scan_limit = 1000
+# Check a staged ingest URL by fetching its headers before the import runs.
+# OFF by default (TASK-19556). A link check is not free: it contacts the host
+# before you have asked for anything to be imported, and it used to run from
+# the ingest field's typing debounce, which turned a pasted link into a probe
+# of whatever the address pointed at -- including hosts on your own network.
+# With this on, the check runs only from the deliberate triggers (leaving the
+# field, pressing Enter, Browse..., the retry button), never while you type;
+# it is routed through the [web_security] egress policy, follows no
+# redirects, and reports one identical "could not be checked" note for every
+# address the policy declines. A link that cannot actually be fetched is
+# still reported by the import job itself, with a real reason.
+ingest_url_preflight_probe = false
 # Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
 # ingest_parse_workers = 3
 # Max concurrent heavy (audio/video transcription) parses; document parses fan
@@ -3235,12 +3309,17 @@ sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
 # A dispatch more than this many seconds after its scheduled time counts as
-# "missed while away" and is recorded on the task (missed_at/missed_count,
-# task-18937). Default is 2x the poll interval: while the app runs, dispatch
-# lands within one poll; beyond 2x the scheduler was not running at the
-# scheduled time (app closed, asleep, or the task was created after the last
-# queue load -- mid-session creations reload the queue immediately, so they
-# do not false-positive here).
+# late and is recorded on the task (missed_at/missed_count, task-18937).
+# Default is 2x the poll interval: an idle scheduler dispatches within one
+# poll. Beyond 2x has several possible causes and the row cannot tell them
+# apart (task-19562): the scheduler was not running at the scheduled time
+# (app closed), the machine slept or the loop was starved while the app
+# stayed open, or the scheduler was busy -- tick awaits every due handler
+# serially, so a slow handler holds the loop and pushes the NEXT poll past
+# the grace. The loop logs which it was and counts it as
+# scheduler_dispatch_late with a cause label (away / stalled / busy). A
+# task created mid-session reloads the queue immediately, so that case does
+# not false-positive here.
 missed_fire_grace_seconds = 60
 # Handler execution timeout (task-18939): a scheduled-task handler still
 # running after this many seconds is cancelled and its dispatch records
@@ -3789,12 +3868,6 @@ transcript_scrollback_lines = 96
 # span renderer, which keeps roleplay speech/action flavor colors.
 assistant_markdown = true
 
-# Console's RAG chip settings modal: when true, each plain text send first
-# retrieves Library evidence into the staged-evidence strip before the
-# message goes out. Off by default -- retrieval only runs when a user
-# explicitly asks for it (the RAG chip / "Run Library RAG").
-rag_auto_retrieve_on_send = false
-
 # Image attachment settings for chat
 [chat.images]
 enabled = true
@@ -4001,6 +4074,10 @@ model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for
 # Device-private lasting-sync settings. Legacy sync keys are intentionally not
 # emitted for fresh profiles; already-present keys remain migration input only.
 recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
+# Lasting-sync change watcher: base poll interval, and the cap it backs off to
+# while roots are quiet (backed-off sleeps are jittered by up to +/-50%).
+sync_watcher_interval_seconds = 1.0
+sync_watcher_max_interval_seconds = 10.0
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -4237,6 +4314,18 @@ fts_top_k = 10
 vector_top_k = 10
 web_vector_top_k = 10
 llm_context_document_limit = 10
+
+# ==========================================================
+# Chunking Template Configuration
+# ==========================================================
+[chunking]
+# Default chunking template for imports that did not pick one in the
+# Library ingest form. Empty (the default) means plain chunk options
+# (method/size/overlap) -- exactly today's behavior. The name must match
+# a live template row in the media DB (RAG Admin: chunking templates);
+# an unresolvable name fails the import with a named error rather than
+# silently falling back to different chunking.
+default_template = ""
 
 
 # --- Model Capabilities Configuration ---
@@ -5045,14 +5134,80 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
 def _config_write_lock(config_path: Path) -> Iterator[None]:
     """Serialize one config write transaction within and across processes."""
 
-    with _config_file_lock(), _config_interprocess_lock(config_path):
+    with (
+        _settings_rebuild_lock(),
+        _config_file_lock(),
+        _config_interprocess_lock(config_path),
+    ):
         yield
 
 
 def _load_cli_config_bootstrap(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
-    """Load or create the config while serializing the file/cache lifecycle."""
+    """Load or create the config while serializing the file/cache lifecycle.
+
+    TASK-21124 -- LOCK-FREE FAST PATH. `get_cli_setting` has ~398 call
+    sites, many on the Textual event loop, and every one funnels through
+    here; taking `_config_file_lock()` before the cache check meant one
+    config write (which holds that lock through two fsyncs and its TOML
+    parses) stalled every loop-side read for the whole write. A warm cache
+    hit now returns without touching the lock.
+
+    Why the unlocked reads below are safe (CPython, GIL builds -- the only
+    builds this app supports):
+
+    * Each global read (`_CONFIG_GENERATION`, `_CONFIG_CACHE`,
+      `_CONFIG_CACHE_SOURCE`) is a single atomic reference load; a reader
+      can never see a partially-assigned cell.
+    * Every publication installs a BRAND-NEW dict object (built via
+      `copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)` + `deep_merge_dicts`, both
+      of which construct fresh objects) -- a previously published dict is
+      never re-installed. Therefore the `_CONFIG_CACHE is cached_config`
+      re-check proves no install happened between the two cache reads, so
+      the (cache, source) pair read here belongs to one single install and
+      cannot be torn across two different installs.
+    * Writers store in the order: cache=None, source=None, <build>,
+      cache=new, source=path, all under `_config_file_lock`. In
+      `_load_cli_config_bootstrap_unlocked` and
+      `_invalidate_config_caches` the pre-clear is explicit; for
+      `_install_bootstrap_cache_from_raw` the coupling is IMPLICIT -- it
+      does no pre-clear itself, and the invariant holds only because
+      every `raw_config` it receives comes from
+      `_write_raw_cli_config_unlocked`, whose `_invalidate_config_caches()`
+      call performed the cache=None/source=None stores moments earlier
+      under the same lock. Combined with the identity re-check, a hit
+      therefore returns the config that IS the currently installed cache
+      for the caller's path.
+    * The `_CONFIG_GENERATION` sandwich (read, ..., re-read) is the
+      double-check the task's AC names, but it is NOT what makes the read
+      sound -- the identity re-check above carries the soundness on its
+      own (review of TASK-21124 proved by mutation that reordering the
+      publish-time bump relative to the cache install leaves every
+      guarantee intact). The generation term adds conservatism only: when
+      a publication lands between the two generation reads, the reader
+      declines the hit and re-validates through the locked path instead.
+    * A write's invalidate window (cache=None between file replace and
+      republish) makes readers MISS and serialize through the lock below,
+      which is the pre-existing behavior for every miss.
+
+    The fast path deliberately returns the SAME shared mutable dict the
+    locked cache-hit path has always returned (no defensive copy) -- the
+    copy semantics of `load_cli_config_and_ensure_existence` are unchanged.
+    """
+
+    if not force_reload:
+        config_path = _get_effective_config_path()
+        generation_before = _CONFIG_GENERATION
+        cached_config = _CONFIG_CACHE
+        cached_source = _CONFIG_CACHE_SOURCE
+        if (
+            cached_config is not None
+            and cached_source == config_path
+            and _CONFIG_CACHE is cached_config
+            and _CONFIG_GENERATION == generation_before
+        ):
+            return _ConfigBootstrapResult(cached_config, True)
 
     with _config_file_lock():
         return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
@@ -5118,8 +5273,21 @@ class ConfigSerializationError(ValueError):
 def _write_raw_cli_config_unlocked(
     config_path: Path,
     config_data: Mapping[str, Any],
-) -> None:
+) -> Dict[str, Any]:
     """Atomically write a private on-disk config while the lock is held.
+
+    Returns:
+        The verify parse-back of the exact serialized text committed to
+        disk -- byte-for-byte what the next read of the file will produce.
+        TASK-21124: callers hand this to
+        ``_publish_runtime_config_unlocked(raw_config=...)`` so the publish
+        step reuses this parse instead of re-reading and re-parsing the
+        file it just wrote (twice: once for the bootstrap cache, once again
+        inside ``load_settings(force_reload=True)``). The TASK-13157 guard
+        below is therefore not a redundant extra parse anymore -- it IS the
+        single serialization-side parse, and publishing its output is
+        strictly more faithful than publishing the input mapping (it is
+        the post-round-trip view the next boot would see).
 
     TASK-13157: every config-rewrite pass (settings-screen edits, the
     first-run wizard, and -- notably -- the full default+user re-merge every
@@ -5150,7 +5318,7 @@ def _write_raw_cli_config_unlocked(
     application_directory = _prepare_config_parent(config_path)
     serialized = toml.dumps(dict(config_data))
     try:
-        tomllib.loads(serialized)
+        parsed_back = tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
         logger.error(
             "Refusing to write CLI config: serialized TOML failed to parse back "
@@ -5168,15 +5336,81 @@ def _write_raw_cli_config_unlocked(
     )
     _report_config_path_posture(result)
     _invalidate_config_caches()
+    return parsed_back
 
 
-def _publish_runtime_config_unlocked() -> Dict[str, Any]:
-    """Reload caches and publish one complete in-process config generation."""
+def _install_bootstrap_cache_from_raw(
+    raw_config: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Install the bootstrap cache from an already-parsed raw config mapping.
+
+    TASK-21124: replicates exactly the success tail of
+    `_load_cli_config_bootstrap_unlocked` (merge the programmatic defaults,
+    decrypt strictly, publish cache + source, retire any recorded parse
+    failure) without re-reading or re-parsing the file. Used by
+    `_publish_runtime_config_unlocked` with the verify parse-back a write
+    just produced. Must be called with `_config_file_lock` held.
+
+    Returns:
+        The installed merged+decrypted config, or ``None`` when strict
+        decryption failed -- the caller then falls back to the full locked
+        reload, which reproduces the historical failure handling
+        (cache left empty, in-memory defaults returned).
+    """
+
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
+
+    config_path = _get_effective_config_path()
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
+    decryption = _decrypt_config_section_with_status(merged, strict=True)
+    if not decryption.succeeded:
+        return None
+    loaded_config = decryption.config
+    # Same store order as `_load_cli_config_bootstrap_unlocked` (cache, then
+    # source); the fast path's identity re-check makes either order safe --
+    # see `_load_cli_config_bootstrap`. NOTE an implicit coupling: this
+    # function performs no cache=None/source=None pre-clear of its own; the
+    # documented writer store order holds only because every caller's
+    # `raw_config` comes from `_write_raw_cli_config_unlocked`, whose
+    # `_invalidate_config_caches()` did that pre-clear moments earlier under
+    # the same lock. A new caller sourcing `raw_config` elsewhere must
+    # preserve that ordering.
+    _CONFIG_CACHE = loaded_config
+    _CONFIG_CACHE_SOURCE = config_path
+    _LAST_CONFIG_LOAD_FAILURE = None
+    return loaded_config
+
+
+def _publish_runtime_config_unlocked(
+    raw_config: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Reload caches and publish one complete in-process config generation.
+
+    Args:
+        raw_config: Optional already-parsed raw on-disk mapping (the verify
+            parse-back returned by `_write_raw_cli_config_unlocked`). When
+            given and installable, the bootstrap cache is rebuilt from it
+            without re-reading the file, and the settings rebuild reuses
+            that just-primed cache (`reload_bootstrap=False`) -- TASK-21124
+            takes one write from four TOML parses to two (the inherent
+            read-modify-write read plus the TASK-13157 verify parse).
+
+    The `_CONFIG_GENERATION` bump is kept last for consistency, but the
+    ordering is not load-bearing: the fast path's soundness rests on its
+    cache-identity re-check, and the generation sandwich only adds
+    conservatism (see `_load_cli_config_bootstrap` -- the TASK-21124
+    review proved a bump-first mutant equivalent). Callers hold the write
+    lock.
+    """
 
     global settings, _CONFIG_GENERATION
 
-    loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
-    settings = load_settings(force_reload=True)
+    loaded: Optional[Dict[str, Any]] = None
+    if raw_config is not None:
+        loaded = _install_bootstrap_cache_from_raw(raw_config)
+    if loaded is None:
+        loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
+    settings = load_settings(force_reload=True, reload_bootstrap=False)
     _CONFIG_GENERATION += 1
     return loaded
 
@@ -5225,7 +5459,7 @@ def get_runtime_config_snapshot(
 ) -> RuntimeConfigSnapshot:
     """Return a defensive current runtime config view."""
 
-    with _config_file_lock():
+    with _settings_rebuild_lock(), _config_file_lock():
         values = load_settings(force_reload=force_reload)
         return RuntimeConfigSnapshot(
             generation=_CONFIG_GENERATION,
@@ -5385,8 +5619,8 @@ def replace_cli_config_serialized(
                 current_serialized,
                 config_path=config_path,
             )
-        _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked(), backup_path
+        raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked(raw_config=raw_written), backup_path
 
 
 def persist_cli_config_for_shutdown() -> bool:
@@ -5404,8 +5638,8 @@ def persist_cli_config_for_shutdown() -> bool:
                 return False
             current = bootstrap.config
             persisted = _config_data_for_persistence(current)
-            _write_raw_cli_config_unlocked(config_path, persisted)
-            _publish_runtime_config_unlocked()
+            raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+            _publish_runtime_config_unlocked(raw_config=raw_written)
         return True
     except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
         logger.warning(
@@ -5466,8 +5700,8 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
         replacement = _preserve_revision_owned_sections(current, config_data)
         _enforce_existing_encryption(current, replacement)
         persisted = _config_data_for_persistence(replacement)
-        _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked()
+        raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked(raw_config=raw_written)
 
 
 def export_cli_config_snapshot(
@@ -5635,7 +5869,7 @@ def replace_revisioned_settings_section_to_cli_config(
         config_data[section] = replacement
         try:
             persisted = _config_data_for_persistence(config_data)
-            _write_raw_cli_config_unlocked(config_path, persisted)
+            raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -5646,7 +5880,7 @@ def replace_revisioned_settings_section_to_cli_config(
             return ConfigMutationResult(False, False, "before_replace")
 
         try:
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -5863,7 +6097,7 @@ def apply_settings_mutation_to_cli_config(
 
         try:
             persisted = _config_data_for_persistence(config_data)
-            _write_raw_cli_config_unlocked(
+            raw_written = _write_raw_cli_config_unlocked(
                 config_path,
                 persisted,
             )
@@ -5880,7 +6114,7 @@ def apply_settings_mutation_to_cli_config(
         logger.success(f"Successfully replaced settings file at {config_path}")
 
         try:
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
         except Exception as error:
             logger.error(
                 "Configuration mutation failed "
@@ -6338,9 +6572,9 @@ def enable_config_encryption(password: str) -> bool:
         with _config_write_lock(config_path):
             config_data = _read_raw_cli_config_unlocked(config_path)
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
-            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
             set_encryption_password(password)
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
 
         logger.success("Config encryption enabled successfully")
         return True
@@ -6378,9 +6612,9 @@ def disable_config_encryption(password: str) -> bool:
             set_encryption_password(password)
             decrypted_config = decrypt_config_section(config_data)
             decrypted_config.pop("encryption", None)
-            _write_raw_cli_config_unlocked(config_path, decrypted_config)
+            raw_written = _write_raw_cli_config_unlocked(config_path, decrypted_config)
             clear_encryption_password()
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
 
         logger.success("Config encryption disabled successfully")
         return True
@@ -6425,9 +6659,9 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
                 decrypted_config,
                 new_password,
             )
-            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
             set_encryption_password(new_password)
-            _publish_runtime_config_unlocked()
+            _publish_runtime_config_unlocked(raw_config=raw_written)
 
         logger.success("Encryption password changed successfully")
         return True
@@ -6688,6 +6922,89 @@ def get_notes_sync_recovery_capacity_bytes(
     return capacity
 
 
+NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT = 1.0
+NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 10.0
+_NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS = 3600.0
+
+
+def get_notes_sync_watcher_intervals(
+    config_data: Mapping[str, Any] | None = None,
+) -> tuple[float, float]:
+    """Return the notes-sync watcher's (base, max) polling intervals.
+
+    TASK-21112: the lasting-sync watcher polls at the base interval and backs
+    off toward the max while roots are quiet. Read from
+    ``[notes] sync_watcher_interval_seconds`` (default 1.0) and
+    ``[notes] sync_watcher_max_interval_seconds`` (default 10.0; backed-off
+    sleeps are jittered by up to +/-50 percent around it).
+
+    Args:
+        config_data: Optional pre-loaded settings mapping; loads the CLI
+            config when omitted.
+
+    Returns:
+        A ``(interval_seconds, max_interval_seconds)`` pair.
+
+    Raises:
+        ValueError: If either configured value is not a positive number in
+            range, or the max is below the base interval.
+    """
+
+    selected = (
+        load_cli_config_and_ensure_existence() if config_data is None else config_data
+    )
+    notes = selected.get("notes") if isinstance(selected, Mapping) else None
+    base: object = NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT
+    peak: object = NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT
+    if isinstance(notes, Mapping):
+        base = notes.get("sync_watcher_interval_seconds", base)
+        peak = notes.get("sync_watcher_max_interval_seconds", peak)
+    for label, value in (
+        ("notes.sync_watcher_interval_seconds", base),
+        ("notes.sync_watcher_max_interval_seconds", peak),
+    ):
+        if (
+            type(value) not in (int, float)
+            or not 0.05 <= value <= _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS
+        ):
+            raise ValueError(f"{label} must be a number between 0.05 and 3600 seconds.")
+    if peak < base:
+        raise ValueError(
+            "notes.sync_watcher_max_interval_seconds must be at least "
+            "notes.sync_watcher_interval_seconds."
+        )
+    return float(base), float(peak)
+
+
+def load_console_library_migration_seed(
+    app_config: Mapping[str, Any] | None = None,
+) -> "ConsoleLibraryMigrationSeed":
+    """Return the sanitized pre-upgrade automatic-retrieval migration seed.
+
+    Args:
+        app_config: Optional already-loaded application configuration.
+
+    Returns:
+        The strict typed seed required by a legacy database migration.
+    """
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+
+    selected = (
+        load_cli_config_and_ensure_existence() if app_config is None else app_config
+    )
+    chat_defaults = (
+        selected.get("chat_defaults") if isinstance(selected, Mapping) else None
+    )
+    raw_value = (
+        chat_defaults.get("rag_auto_retrieve_on_send", False)
+        if isinstance(chat_defaults, Mapping)
+        else False
+    )
+    return ConsoleLibraryMigrationSeed(
+        auto_retrieve_on_send=raw_value if type(raw_value) is bool else False
+    )
+
+
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the Prompts database.
 
@@ -6896,7 +7213,9 @@ def initialize_all_databases():
     logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
     try:
         chachanotes_db = CharactersRAGDB(
-            db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
+            db_path=chachanotes_path,
+            client_id=CLI_APP_CLIENT_ID,
+            console_library_migration_seed=load_console_library_migration_seed(),
         )
         seed_builtin_content(chachanotes_db)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
@@ -6948,6 +7267,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
                 db_path=chachanotes_path,
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
             seed_builtin_content(chachanotes_db)
             logger.success(

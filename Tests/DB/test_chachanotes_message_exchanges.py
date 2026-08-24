@@ -9,6 +9,11 @@ for these rows.
 """
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 # Matches CharactersRAGDB._SCHEMA_NAME, per the sibling migration tests
@@ -104,8 +109,8 @@ def test_schema_version_is_at_least_43(db):
     # exact current-version pin. That made every LATER migration edit this
     # file, which owns only v42->v43. It now asserts at-or-past its own
     # version, and the exact pin lives with the newest migration --
-    # `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py`'s
-    # `test_schema_version_is_44`.
+    # `Tests/DB/test_chachanotes_console_library_policy_migration.py`'s
+    # `test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows`.
     assert _version(db.get_connection()) >= 43
 
 
@@ -125,26 +130,24 @@ def test_migrate_from_v42_to_v43_requires_version_42(tmp_path):
 
 
 def test_upgrade_path_from_v42_recreates_the_table(tmp_path):
-    """A database stamped back to v42 (with message_exchanges dropped, so
-    the migration's CREATE TABLE genuinely has work to do rather than
-    no-op against an already-existing table) must, on reopen, re-run
+    """A genuine v42 database must, on reopen, run
     _migrate_from_v42_to_v43 and land on the current version with the
     table back. (task-19554: the landing version is the CURRENT one, not
     43 -- a stamped-back DB replays every later step too.)"""
     db_path = tmp_path / "chachanotes.db"
-    db = CharactersRAGDB(db_path, client_id="upgrade-test")
-    connection = db.get_connection()
-    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    with chachanotes_db_at_version(db_path, 42, client_id="upgrade-test") as db:
+        assert _version(db.get_connection()) == 42
+        tables = {
+            row[0]
+            for row in db.get_connection().execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "message_exchanges" not in tables
 
-    with db.transaction() as cursor:
-        cursor.execute("DROP TABLE message_exchanges")
-        cursor.execute(
-            "UPDATE db_schema_version SET version = 42 WHERE schema_name = ?",
-            (SCHEMA_NAME,),
-        )
-    db.close_connection()
-
-    reopened = CharactersRAGDB(db_path, client_id="upgrade-test-reopen")
+    reopened = open_current_chachanotes_from_legacy(
+        db_path, client_id="upgrade-test-reopen"
+    )
     reopened_connection = reopened.get_connection()
     assert _version(reopened_connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     tables = {

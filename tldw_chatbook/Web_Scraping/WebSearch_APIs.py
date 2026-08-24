@@ -4099,14 +4099,38 @@ def parse_exa_results(exa_search_results: dict, web_search_results_dict: dict) -
 def search_web_tavily(
     search_query, result_count=10, site_whitelist=None, site_blacklist=None
 ):
+    """Search Tavily.
+
+    (TASK-19735) The API key travels in ``headers`` as
+    ``Authorization: Bearer <key>``, which Tavily accepts and which every
+    sibling backend in this module already uses (bing's
+    ``Ocp-Apim-Subscription-Key``, brave's ``X-Subscription-Token``, plus
+    kagi, serper, exa and yandex). It used to sit inside ``payload``
+    alongside the query and the result count -- the same shape that produced
+    the Google key disclosure TASK-19552 fixed, where a credential in a
+    parameter dict was eventually rendered into a log line. Nothing logged
+    ``payload`` here, so this was latent rather than a live leak; the point
+    of the move is that a maintainer adding
+    ``logger.debug(f"payload: {payload}")`` while debugging can no longer
+    disclose the key with a one-line change.
+
+    Args:
+        search_query: The user's query string.
+        result_count: Maximum number of results to request.
+        site_whitelist: Optional list of domains to restrict results to.
+        site_blacklist: Optional list of domains to exclude.
+
+    Returns:
+        Tavily's decoded JSON response, or a human-readable error string on
+        a request failure. The key is not in the URL, so ``str(exc)`` --
+        which carries the URL, not the body -- cannot carry it either.
+    """
     # Check if API URL is configured
     tavily_api_url = "https://api.tavily.com/search"
 
-    tavily_api_key = loaded_config_data["search_engines"]["tavily_search_api_key"]
-
-    # Prepare the request payload
+    # Prepare the request payload. No credential belongs in this dict: it is
+    # the loggable request-parameter object (see the docstring).
     payload = {
-        "api_key": tavily_api_key,
         "query": search_query,
         "max_results": result_count,
     }
@@ -4122,6 +4146,13 @@ def search_web_tavily(
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            # Read at the point of use and never bound to a local name, so
+            # there is no `tavily_api_key` variable for a debug log to reach
+            # for either.
+            "Authorization": (
+                "Bearer "
+                f"{loaded_config_data['search_engines']['tavily_search_api_key']}"
+            ),
         }
 
         # task-3060: bound worst-case latency -- an unresponsive Tavily

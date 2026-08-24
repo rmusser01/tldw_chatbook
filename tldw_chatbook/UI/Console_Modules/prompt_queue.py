@@ -24,7 +24,11 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleControllerActivity,
+    ConsoleDispatchRecoveryAction,
+    ConsoleDispatchRecoveryState,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
     PromptQueueEntryPhase,
@@ -102,6 +106,7 @@ class ConsolePromptQueuePresentation:
     pause_label: str
     primary_action: str
     pause_enabled: bool
+    recovery_actions: tuple[ConsoleDispatchRecoveryAction, ...] = ()
 
 
 def derive_prompt_queue_presentation(
@@ -109,6 +114,8 @@ def derive_prompt_queue_presentation(
     activity: ConsoleControllerActivity,
     *,
     composer_collapsed: bool = False,
+    dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
+    dispatch_recovery_blocked: bool = False,
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary without reading a prompt body."""
 
@@ -175,6 +182,21 @@ def derive_prompt_queue_presentation(
         ),
         "",
     )
+    if dispatch_recovery is not None:
+        state_label = dispatch_recovery.visible_copy
+        pause_label = ""
+        primary_action = "dispatch-recovery"
+        pause_enabled = False
+        recovery_actions = dispatch_recovery.actions
+    elif dispatch_recovery_blocked:
+        state_label = "Paused for response recovery"
+        pause_label = "Resume"
+        primary_action = "toggle-pause"
+        pause_enabled = False
+        recovery_actions = ()
+    else:
+        pause_enabled = count > 0
+        recovery_actions = ()
     return ConsolePromptQueuePresentation(
         revision=snapshot.revision,
         count=count,
@@ -187,7 +209,8 @@ def derive_prompt_queue_presentation(
         next_preview=next_preview,
         pause_label=pause_label,
         primary_action=primary_action,
-        pause_enabled=count > 0,
+        pause_enabled=pause_enabled,
+        recovery_actions=recovery_actions,
     )
 
 
@@ -282,8 +305,8 @@ class ConsolePromptQueueRegion(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-prompt-queue-row"):
-            yield Static("", id="console-prompt-queue-summary")
-            yield Static("", id="console-prompt-queue-preview")
+            yield Static("", id="console-prompt-queue-summary", markup=False)
+            yield Static("", id="console-prompt-queue-preview", markup=False)
             yield Button("Manage", id="console-prompt-queue-manage")
             yield Button("Pause", id="console-prompt-queue-pause")
 
@@ -317,11 +340,40 @@ class ConsolePromptQueueRegion(Widget):
             if presentation.next_preview
             else ""
         )
-        manage.disabled = presentation.count == 0
-        manage.tooltip = "Open the prompt queue manager."
-        pause.label = presentation.pause_label
-        pause.disabled = not presentation.pause_enabled
-        pause.tooltip = f"{presentation.pause_label} this session's prompt queue."
+        if presentation.primary_action == "dispatch-recovery":
+            first = (
+                presentation.recovery_actions[0]
+                if presentation.recovery_actions
+                else None
+            )
+            second = (
+                presentation.recovery_actions[1]
+                if len(presentation.recovery_actions) > 1
+                else None
+            )
+            manage.label = first.label if first is not None else "Unavailable"
+            manage.disabled = first is None or not first.enabled
+            manage.tooltip = (
+                first.disabled_reason or first.label
+                if first is not None
+                else presentation.state_label
+            )
+            pause.label = second.label if second is not None else "Unavailable"
+            pause.disabled = second is None or not second.enabled
+            pause.tooltip = (
+                second.disabled_reason or second.label
+                if second is not None
+                else presentation.state_label
+            )
+        else:
+            manage.label = "Manage"
+            manage.disabled = presentation.count == 0
+            manage.tooltip = "Open the prompt queue manager."
+            pause.label = presentation.pause_label
+            pause.disabled = not presentation.pause_enabled
+            pause.tooltip = (
+                f"{presentation.pause_label} this session's prompt queue."
+            )
         self.refresh(layout=True)
         return True
 
@@ -336,7 +388,17 @@ class ConsolePromptQueueRegion(Widget):
             return
         if event.button.id == "console-prompt-queue-manage":
             event.stop()
-            if self._on_manage_requested is not None:
+            if (
+                presentation.primary_action == "dispatch-recovery"
+                and presentation.recovery_actions
+                and self._on_primary_requested is not None
+            ):
+                self._on_primary_requested(
+                    self._session_id,
+                    presentation.revision,
+                    presentation.recovery_actions[0].action_id.value,
+                )
+            elif self._on_manage_requested is not None:
                 self._on_manage_requested(self._session_id, presentation.revision)
             else:
                 self.post_message(
@@ -344,7 +406,17 @@ class ConsolePromptQueueRegion(Widget):
                 )
         elif event.button.id == "console-prompt-queue-pause":
             event.stop()
-            if presentation.primary_action == "review":
+            if (
+                presentation.primary_action == "dispatch-recovery"
+                and len(presentation.recovery_actions) > 1
+                and self._on_primary_requested is not None
+            ):
+                self._on_primary_requested(
+                    self._session_id,
+                    presentation.revision,
+                    presentation.recovery_actions[1].action_id.value,
+                )
+            elif presentation.primary_action == "review":
                 if self._on_manage_requested is not None:
                     self._on_manage_requested(
                         self._session_id, presentation.revision
@@ -408,6 +480,20 @@ class ConsolePromptQueueUIController:
     ) -> None:
         """Apply the shelf's state-specific primary action and repaint."""
 
+        if action in {"retry_response", "retry_anyway", "discard"}:
+            controller = self._chat_controller_accessor()
+            result = (
+                await controller.discard_dispatch_recovery(session_id)
+                if action == "discard"
+                else await controller.retry_dispatch_recovery(session_id)
+            )
+            if not result.accepted:
+                self._notify(
+                    result.visible_copy or "That recovery action is unavailable.",
+                    "warning",
+                )
+            await self._sync_ui()
+            return
         if action == "toggle-pause":
             await self.handle_pause_intent(
                 session_id, expected_revision=expected_revision
@@ -451,7 +537,14 @@ class ConsolePromptQueueUIController:
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
         return derive_prompt_queue_presentation(
-            snapshot, activity, composer_collapsed=composer_collapsed
+            snapshot,
+            activity,
+            composer_collapsed=composer_collapsed,
+            dispatch_recovery_blocked=(
+                controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+                    session_id
+                )
+            ),
         )
 
     def snapshot(self, session_id: str) -> PromptQueueSnapshot:

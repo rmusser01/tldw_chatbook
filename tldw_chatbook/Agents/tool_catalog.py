@@ -12,13 +12,16 @@ import asyncio
 import json
 import threading
 from collections.abc import Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
     Any,
     Callable,
+    ContextManager,
     Iterable,
+    Iterator,
     Literal,
     Mapping,
     NamedTuple,
@@ -28,8 +31,14 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+)
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
+from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
+from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
     CHECK_AGENTS_TOOL_NAME,
@@ -56,6 +65,10 @@ from .run_log_search import (
     MAX_SLICE_RECORDS,
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
+)
+
+LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
 )
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
@@ -142,9 +155,7 @@ WAIT_AGENTS_SCHEMA = ToolSchema(
             "ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": (
-                    "Handle ids to wait for (omit for all of them)."
-                ),
+                "description": ("Handle ids to wait for (omit for all of them)."),
             }
         },
         "required": [],
@@ -200,8 +211,7 @@ SEND_TO_AGENT_SCHEMA = ToolSchema(
             "message": {
                 "type": "string",
                 "description": (
-                    "The steering text to deliver. Plain text; must be "
-                    "non-empty."
+                    "The steering text to deliver. Plain text; must be non-empty."
                 ),
             },
         },
@@ -430,7 +440,8 @@ RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
         "properties": {
             "group_by": {
                 "type": "string",
-                "description": "Dimension to group by: " + ", ".join(STATS_GROUP_BY_FIELDS)
+                "description": "Dimension to group by: "
+                + ", ".join(STATS_GROUP_BY_FIELDS)
                 + " (default: tool). An unrecognised value falls back to tool.",
             },
             "tool": {
@@ -646,6 +657,57 @@ def build_gateable_tool(entry: GateableTool) -> Any:
     return getattr(module, entry.factory_name)()
 
 
+_FILE_AUTHORITY_BUILTIN_NAMES = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    }
+)
+
+
+def redact_root_locator(value: Any, root: Path | None) -> Any:
+    """Replace an opaque private-root locator with model-safe relative text.
+
+    Tool-provider results are copied into both model history and run logs.
+    Console scratch roots are process-local capabilities, so their absolute
+    locator must be removed at that shared boundary. Containers are rebuilt
+    recursively because built-in tools return nested JSON-shaped values.
+
+    Args:
+        value: Tool result value or error text to sanitize.
+        root: Opaque root whose locator must not leave the provider.
+
+    Returns:
+        A value of the same JSON-compatible shape with root-owned paths made
+        relative and exact root occurrences replaced by ``.``. Non-Console
+        callers pass ``None`` and retain their existing output byte-for-byte.
+    """
+    if root is None:
+        return value
+    if isinstance(value, str):
+        locators = {str(root), root.as_posix()}
+        for locator in sorted(locators, key=len, reverse=True):
+            if locator:
+                value = value.replace(f"{locator}/", "")
+                value = value.replace(f"{locator}\\", "")
+                value = value.replace(locator, ".")
+        return value
+    if isinstance(value, dict):
+        return {
+            key: redact_root_locator(item, root)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_root_locator(item, root) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_root_locator(item, root) for item in value)
+    return value
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
@@ -658,6 +720,8 @@ class BuiltinToolProvider:
         ephemeral: bool = False,
         diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
         instruction_root: Path | None = None,
+        sandbox_root: Path | None = None,
+        sandbox_lease: Callable[[], ContextManager[Path]] | None = None,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -668,6 +732,10 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        self._sandbox_root = (
+            Path(sandbox_root).resolve() if sandbox_root is not None else None
+        )
+        self._sandbox_lease = sandbox_lease
         self._instruction_root = (
             Path(instruction_root).resolve() if instruction_root is not None else None
         )
@@ -749,6 +817,41 @@ class BuiltinToolProvider:
         # a `deque.append` (single-argument contract, atomic in CPython).
         self._diff_sink = diff_sink
 
+    @property
+    def sandbox_root(self) -> Path | None:
+        """Return this provider's explicit run sandbox, when one was bound.
+
+        Returns:
+            The resolved per-run sandbox root, or ``None`` when absent.
+        """
+        return self._sandbox_root
+
+    @property
+    def sandbox_lease(self) -> Callable[[], ContextManager[Path]] | None:
+        """Return the lease factory paired with the explicit run sandbox.
+
+        Returns:
+            A context-manager factory that leases the sandbox generation, or
+            ``None`` when the provider has no explicit sandbox authority.
+        """
+        return self._sandbox_lease
+
+    @contextmanager
+    def _file_authority(self) -> Iterator[None]:
+        """Keep the explicit scratch generation alive for one file access."""
+        from tldw_chatbook.Tools.workspace_file_roots import run_file_sandbox
+
+        lease = (
+            self._sandbox_lease() if self._sandbox_lease is not None else nullcontext()
+        )
+        sandbox = (
+            run_file_sandbox(self._sandbox_root)
+            if self._sandbox_root is not None
+            else nullcontext()
+        )
+        with lease, sandbox:
+            yield
+
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
 
@@ -788,16 +891,14 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with run_workspace(self._workspace_id):
-            roots = allowed_file_roots(
-                write=write, sandbox_root=_tool_sandbox_root()
-            )
-        path = validate_path_multi(value, roots)
-        try:
-            path.relative_to(root)
-        except ValueError:
-            return (ToolPathTarget(path=path, kind="outside"),)
-        return (ToolPathTarget(path=path, kind=kind),)
+        with self._file_authority(), run_workspace(self._workspace_id):
+            roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
+            path = validate_path_multi(value, roots)
+            try:
+                path.relative_to(root)
+            except ValueError:
+                return (ToolPathTarget(path=path, kind="outside"),)
+            return (ToolPathTarget(path=path, kind=kind),)
 
     def _resolve_gate(self) -> Any:
         """Return the provider's gate, building one lazily on first use.
@@ -879,6 +980,11 @@ class BuiltinToolProvider:
             return ToolResult.blocked(refusal)
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
 
+        authority = (
+            self._file_authority()
+            if name in _FILE_AUTHORITY_BUILTIN_NAMES
+            else nullcontext()
+        )
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
@@ -889,12 +995,18 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with run_workspace(self._workspace_id):
+            with authority, run_workspace(self._workspace_id):
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
-            return ToolResult(ok=False, error=str(exc))
+            return ToolResult(
+                ok=False,
+                error=redact_root_locator(str(exc), self._sandbox_root),
+            )
         if isinstance(raw, dict) and raw.get("error"):
-            return ToolResult(ok=False, error=str(raw["error"]))
+            return ToolResult(
+                ok=False,
+                error=redact_root_locator(str(raw["error"]), self._sandbox_root),
+            )
         if isinstance(raw, dict):
             # Raw before/after contents captured for UI diff rendering
             # (TASK-1351) are live-session display state only. This is the
@@ -916,7 +1028,10 @@ class BuiltinToolProvider:
                         self._diff_sink(
                             (
                                 name,
-                                str(raw.get("file_path") or "file"),
+                                redact_root_locator(
+                                    str(raw.get("file_path") or "file"),
+                                    self._sandbox_root,
+                                ),
                                 old_content,
                                 new_content,
                             )
@@ -929,6 +1044,7 @@ class BuiltinToolProvider:
             raw = {
                 key: value for key, value in raw.items() if key not in DIFF_CONTENT_KEYS
             }
+        raw = redact_root_locator(raw, self._sandbox_root)
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
         return ToolResult(ok=True, content=content)
 
@@ -1072,6 +1188,8 @@ class ToolCatalogRegistry:
 
     def __init__(self, *, ephemeral: bool = False) -> None:
         self._providers: list[ToolProvider] = []
+        self._builtin_library_provider: ToolProvider | None = None
+        self._builtin_library_authority: BuiltinLibraryAuthority | None = None
         # Whether the Console session owning THIS run is temporary ("not
         # saved locally"). Enforced in `invoke_by_name` -- the one choke
         # point every provider's `invoke()` is reached through -- rather
@@ -1100,6 +1218,64 @@ class ToolCatalogRegistry:
             # cache already built — invalidate so the next lookup rebuilds it.
             self._catalog_snapshot = None
             self._catalog_generation += 1
+
+    def register_builtin_library_provider(
+        self,
+        provider: ToolProvider,
+        authority: BuiltinLibraryAuthority | None,
+    ) -> bool:
+        """Register one exact in-tree Library provider with its live capability.
+
+        Source strings and structural lookalikes are deliberately irrelevant:
+        only the concrete built-in provider classes and the exact authority
+        object currently issued by that same instance cross this boundary.
+        """
+        provider_type = type(provider)
+        if provider_type is LibraryToolProvider:
+            expected_names = frozenset(LIBRARY_TOOL_DESCRIPTORS)
+        elif provider_type is LibraryRagToolProvider:
+            expected_names = frozenset({RAG_TOOL_NAME})
+        else:
+            return False
+        if (
+            not isinstance(authority, BuiltinLibraryAuthority)
+            or authority.assistant_access is not ConsoleAssistantLibraryAccess.ALLOWED
+            or authority.reserved_names is not LIBRARY_RESERVED_TOOL_NAMES
+            or not provider.authenticates_builtin_authority(authority)
+        ):
+            return False
+        try:
+            entries = provider.list_catalog()
+        except Exception:  # noqa: BLE001 - malformed provider fails closed
+            return False
+        if (
+            frozenset(entry.name for entry in entries) != expected_names
+            or any(entry.source != "library" for entry in entries)
+        ):
+            return False
+        with self._catalog_lock:
+            if self._builtin_library_provider is not None:
+                return False
+            self._builtin_library_provider = provider
+            self._builtin_library_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def _authenticated_builtin_library_name(
+        self, provider: ToolProvider, name: str
+    ) -> bool:
+        """Return whether ``name`` is live-authorized for this exact provider."""
+        authority = self._builtin_library_authority
+        return bool(
+            provider is self._builtin_library_provider
+            and isinstance(authority, BuiltinLibraryAuthority)
+            and authority.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+            and authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
+            and name in LIBRARY_RESERVED_TOOL_NAMES
+            and provider.authenticates_builtin_authority(authority)
+        )
 
     def reset_catalog_cache(self) -> None:
         """Drop the owner-map/name-map cache; call once at the start of a run.
@@ -1135,6 +1311,14 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    self._ephemeral
+                    and entry.source == "library"
+                    and not self._authenticated_builtin_library_name(
+                        provider, entry.name
+                    )
+                ):
+                    continue
                 if entry.id in by_id or entry.name in by_name:
                     continue
                 record = _ToolOwnerRecord(
@@ -1196,9 +1380,7 @@ class ToolCatalogRegistry:
     def _owner_record_for_name(self, name: str) -> _ToolOwnerRecord | None:
         return self._ensure_catalog_cache().by_name.get(name)
 
-    def resolve_owner_for_name(
-        self, name: str
-    ) -> tuple[str, ToolProvider] | None:
+    def resolve_owner_for_name(self, name: str) -> tuple[str, ToolProvider] | None:
         """Atomically resolve one LLM-facing name to its cached first owner."""
         record = self._owner_record_for_name(name)
         if record is None:
@@ -1220,6 +1402,8 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         if self._ephemeral:
+            if self._authenticated_builtin_library_name(provider, name):
+                return provider.invoke(tool_id, args)
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
 
             reason = tool_blocked_reason(name, source=record.source, ephemeral=True)

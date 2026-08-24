@@ -8,6 +8,63 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
+/* ===== WIDGET: SiteConfigSettings (UI/SiteConfigSettings.py) ===== */
+
+    SiteConfigSettings {
+        height: 100%;
+        overflow: hidden;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: TraceFiltersDialog (UI/Widgets/trace_filter_bar.py) ===== */
+
+    TraceFiltersDialog { align: center middle; background: $background 70%; }
+
+
+
+    TraceFiltersDialog #trace-filter-dialog Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
+
+
+
+
+/* ===== WIDGET: TraceExportDialog (Widgets/Console/trace_export_dialog.py) ===== */
+
+    TraceExportDialog {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
     NoteSelectionDialog {
@@ -134,26 +191,3 @@
     VoiceBlendDialog {
         align: center middle;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

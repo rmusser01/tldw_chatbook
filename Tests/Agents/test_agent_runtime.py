@@ -506,9 +506,24 @@ def test_cancel_recognized_after_final_answer_with_no_tool_call():
     # re-polls should_cancel at step/tool-call boundaries, and a no-tool-call
     # turn used to return RUN_DONE immediately without one more recheck.
     flags = iter([False, True])
-    out = run([ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True))
+    trace_steps = []
+    deps = make_deps(
+        [ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True)
+    )
+    deps.on_trace_step = trace_steps.append
+    out = run_agent_loop(
+        CFG, [{"role": "user", "content": "hi"}], [CALC], deps
+    )
     assert out.status == RUN_CANCELLED
     assert out.final_text == "Tokyo."
+    assert [step.kind for step in trace_steps] == [
+        "model_request_started",
+        "model_response_completed",
+        "model_cancelled",
+    ]
+    request, completed, cancelled = trace_steps
+    assert cancelled.parent_step_index == completed.index
+    assert cancelled.source_step_index == request.index
 
 
 # --- G1/Q9: load_tools `ids` coercion must never crash and must not

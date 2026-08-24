@@ -1618,6 +1618,32 @@ class CitationTraceRepository:
             self._fingerprint_codec,
         )
 
+    def active_owner_candidate_message_ids(
+        self, message_ids: list[str] | tuple[str, ...]
+    ) -> set[str]:
+        """Return identity-scoped message IDs that may own an active trace.
+
+        This is only a cheap prefilter; callers must still use and verify the
+        repository-issued active-trace capability before including a summary.
+        """
+        identity = self.identity_context
+        if not identity or load_local_citation_identity_context(self.db) != identity:
+            return set()
+        candidates: set[str] = set()
+        unique_ids = tuple(dict.fromkeys(str(value) for value in message_ids if value))
+        with self.db.transaction() as connection:
+            for start in range(0, len(unique_ids), 500):
+                chunk = unique_ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = connection.execute(
+                    f"SELECT DISTINCT message_id FROM rag_message_trace_owners "
+                    f"WHERE profile_id = ? AND state = 'active' "
+                    f"AND message_id IN ({placeholders})",
+                    (identity.profile_id, *chunk),
+                )
+                candidates.update(str(row["message_id"]) for row in rows)
+        return candidates
+
     def get_active_trace_for_message(
         self,
         message_id: str,

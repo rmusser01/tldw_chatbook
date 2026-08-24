@@ -10,14 +10,13 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Static, Switch
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
-CONSOLE_CONTROL_BAR_HEIGHT = 2
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
@@ -58,26 +57,6 @@ FALLBACK_ACTIONS = (
         tooltip="Show visible Console actions and shortcuts",
     ),
 )
-
-
-class ConsoleHandsFreeToggleRequested(Message):
-    """User flipped the visible hands-free Switch (task-18911 fix 2).
-
-    Emitted only for user gestures; programmatic ``sync_hands_free_state``
-    repaints silently so lifecycle sync never re-enters the toggle path.
-    """
-
-    def __init__(self, enabled: bool) -> None:
-        super().__init__()
-        self.enabled = enabled
-
-
-class ConsoleAutoSpeakChanged(Message):
-    """User requested a durable Speak replies state change."""
-
-    def __init__(self, enabled: bool) -> None:
-        super().__init__()
-        self.enabled = enabled
 
 
 class ConsoleAutoSpeakResumeRequested(Message):
@@ -138,9 +117,14 @@ class ConsoleControlBar(Vertical):
         self.auto_speak_enabled = False
         self.auto_speak_paused = False
         self.auto_speak_retry_available = False
-        self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
-        self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
-        self.styles.max_height = CONSOLE_CONTROL_BAR_HEIGHT
+        self._set_recovery_height(False)
+
+    def _set_recovery_height(self, visible: bool) -> None:
+        """Set the exact bar height for its recovery-row visibility."""
+        height = 2 if visible else 1
+        self.styles.height = height
+        self.styles.min_height = height
+        self.styles.max_height = height
 
     @staticmethod
     def _compatibility_layout_widget(widget: Any) -> Any:
@@ -271,22 +255,22 @@ class ConsoleControlBar(Vertical):
         paused: bool,
         retry_available: bool = False,
     ) -> None:
-        """Render the active conversation's persisted reply-speech state."""
+        """Render recovery actions for the active conversation's speech state.
+
+        Args:
+            enabled: Whether automatic reply speech is enabled.
+            paused: Whether automatic speech is paused after a failure.
+            retry_available: Whether the failed reply can be retried.
+        """
         self.auto_speak_enabled = enabled is True
         self.auto_speak_paused = paused is True
         self.auto_speak_retry_available = retry_available is True
+        recovery_visible = self.auto_speak_enabled and self.auto_speak_paused
+        self._set_recovery_height(recovery_visible)
         try:
-            toggle = self.query_one("#console-auto-speak", Switch)
+            row = self.query_one("#console-auto-speak-row", Horizontal)
         except NoMatches:
             return
-        if toggle.value is not self.auto_speak_enabled:
-            toggle.value = self.auto_speak_enabled
-        toggle.disabled = False
-        toggle.tooltip = (
-            "Automatic speech is paused after a failure."
-            if self.auto_speak_paused
-            else "Speak only new assistant replies in this conversation."
-        )
         retry = self.query_one("#console-auto-speak-retry", Button)
         retry.display = (
             self.auto_speak_enabled
@@ -294,105 +278,19 @@ class ConsoleControlBar(Vertical):
             and self.auto_speak_retry_available
         )
         resume = self.query_one("#console-auto-speak-resume", Button)
-        resume.display = self.auto_speak_enabled and self.auto_speak_paused
-
-    def sync_hands_free_state(self, active: bool) -> None:
-        """Mirror the hands-free session state onto the visible Switch.
-
-        task-18911 (fix 2): called by ChatScreen whenever the session state
-        changes from any path (switch itself, keybinding, run end) so the
-        control never disagrees with reality. Silently no-ops pre-mount.
-        """
-        try:
-            switch = self.query_one("#console-hands-free-switch", Switch)
-        except Exception:
-            return
-        if switch.value is not active:
-            with self.prevent(Switch.Changed):
-                switch.value = active
+        resume.display = recovery_visible
+        row.display = recovery_visible
 
     def compose(self) -> ComposeResult:
         with Horizontal(
             id="console-control-action-row", classes="console-control-action-row"
         ):
-            # TASK-2154.1 (LY-10): stand-in for the header status badge while
-            # compact-height mode hides #console-workbench-header. Display is
-            # Python-driven by ChatScreen._sync_console_compact_status_marker
-            # (hidden by default); it deliberately carries no
-            # `_workbench_action_id`, so `sync_actions` never removes it.
-            compact_status_marker = Static(
-                "",
-                id="console-compact-status-marker",
-                classes="console-compact-status-marker",
-                markup=False,
-            )
-            # `auto` is load-bearing: a bare Static defaults to width 1fr and
-            # would claim the whole action row, pushing the buttons off screen.
-            compact_status_marker.styles.width = "auto"
-            compact_status_marker.styles.display = "none"
-            compact_status_marker.display = False
-            yield compact_status_marker
             for action in self._visible_actions():
                 yield self._action(action)
         with Horizontal(id="console-auto-speak-row") as speech_row:
             speech_row.styles.height = 1
             speech_row.styles.min_height = 1
             speech_row.styles.max_height = 1
-            with Horizontal(id="console-auto-speak-control") as auto_speak_control:
-                auto_speak_control.styles.width = "auto"
-                auto_speak_control.styles.height = 1
-                auto_speak_label = Static(
-                    "Speak replies",
-                    id="console-auto-speak-label",
-                    markup=False,
-                )
-                auto_speak_label.styles.width = "auto"
-                yield auto_speak_label
-                auto_speak_switch = Switch(
-                    False,
-                    name="Speak replies",
-                    id="console-auto-speak",
-                    tooltip=(
-                        "Speak only new assistant replies in this conversation."
-                    ),
-                )
-                auto_speak_switch.styles.width = "auto"
-                auto_speak_switch.styles.height = 1
-                auto_speak_switch.styles.min_height = 1
-                auto_speak_switch.styles.max_height = 1
-                auto_speak_switch.styles.padding = 0
-                auto_speak_switch.styles.border = ("none", "transparent")
-                yield auto_speak_switch
-            # task-18911 (fix 2): visible hands-free toggle. The mode was
-            # keybinding-only (ctrl+shift+h / escape), unreachable on a soft
-            # keyboard; this Switch mirrors the Speak-replies control beside it.
-            # ChatScreen keeps it in sync when the session exits by any path.
-            with Horizontal(id="console-hands-free-control") as hands_free_control:
-                hands_free_control.styles.width = "auto"
-                hands_free_control.styles.height = 1
-                hands_free_label = Static(
-                    "Hands-free",
-                    id="console-hands-free-label",
-                    markup=False,
-                )
-                hands_free_label.styles.width = "auto"
-                yield hands_free_label
-                hands_free_switch = Switch(
-                    False,
-                    name="Hands-free",
-                    id="console-hands-free-switch",
-                    tooltip=(
-                        "Voice conversation loop: speak prompts, hear replies "
-                        "(Ctrl+Shift+H)."
-                    ),
-                )
-                hands_free_switch.styles.width = "auto"
-                hands_free_switch.styles.height = 1
-                hands_free_switch.styles.min_height = 1
-                hands_free_switch.styles.max_height = 1
-                hands_free_switch.styles.padding = 0
-                hands_free_switch.styles.border = ("none", "transparent")
-                yield hands_free_switch
             retry = Button(
                 "Retry speech",
                 id="console-auto-speak-retry",
@@ -409,6 +307,7 @@ class ConsoleControlBar(Vertical):
             )
             resume.display = False
             yield resume
+            speech_row.display = False
         yield self._compatibility_layout_widget(
             Static(
                 _summary_line(self.state),
@@ -483,27 +382,22 @@ class ConsoleControlBar(Vertical):
         event.stop()
         self.post_message(WorkbenchActionRequested(action_id))
 
-    @on(Switch.Changed, "#console-hands-free-switch")
-    def on_console_hands_free_switch_changed(self, event: Switch.Changed) -> None:
-        """Forward the gesture; the screen owns the hands-free session."""
-        event.stop()
-        self.post_message(ConsoleHandsFreeToggleRequested(event.value))
-
-    @on(Switch.Changed, "#console-auto-speak")
-    def on_console_auto_speak_changed(self, event: Switch.Changed) -> None:
-        """Request persistence, keeping the visible value authoritative."""
-        if event.value is self.auto_speak_enabled:
-            return
-        event.stop()
-        event.switch.value = self.auto_speak_enabled
-        self.post_message(ConsoleAutoSpeakChanged(event.value))
-
     @on(Button.Pressed, "#console-auto-speak-resume")
     def on_console_auto_speak_resume_pressed(self, event: Button.Pressed) -> None:
+        """Forward a user request to resume automatic speech.
+
+        Args:
+            event: Textual button-press event.
+        """
         event.stop()
         self.post_message(ConsoleAutoSpeakResumeRequested())
 
     @on(Button.Pressed, "#console-auto-speak-retry")
     def on_console_auto_speak_retry_pressed(self, event: Button.Pressed) -> None:
+        """Forward a user request to retry the failed reply.
+
+        Args:
+            event: Textual button-press event.
+        """
         event.stop()
         self.post_message(ConsoleAutoSpeakRetryRequested())

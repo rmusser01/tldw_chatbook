@@ -69,7 +69,7 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
     otherwise.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleReviewNotesModal {
         align: center middle;
     }

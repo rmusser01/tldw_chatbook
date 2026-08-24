@@ -7,8 +7,8 @@
 **Tech stack:** Python 3.11+, Textual, pytest, SQLite, fixed daemon workers.
 
 ADR required: no
-ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
-Reason: ADR-079 already specifies this cross-module interface and recovery policy.
+ADR path: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md`
+Reason: ADR-084 already specifies this cross-module interface and recovery policy.
 
 ## Task 1: Establish runtime ordering
 

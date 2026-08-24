@@ -4130,6 +4130,19 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         == 1
     )
 
+    # task-19564: the v45 retention triggers drop superseded `sync_log`
+    # versions, so the `create` row no longer survives the replace -- a note's
+    # full text is not kept in the log once a newer version exists. Its
+    # payload shape is still asserted, by reading it while it is the frontier.
+    note_sync_on_create = connection.execute(
+        "SELECT operation, timestamp, client_id, version, payload FROM sync_log "
+        "WHERE entity = 'notes' AND entity_id = ? ORDER BY change_id",
+        (_NOTE_ID,),
+    ).fetchall()
+    assert [
+        (row["operation"], row["version"]) for row in note_sync_on_create
+    ] == [("create", 1)]
+
     target.replace_note(
         note_id=_NOTE_ID,
         expected_version=1,
@@ -4150,10 +4163,9 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         (_NOTE_ID,),
     ).fetchall()
     assert [(row["operation"], row["version"]) for row in note_sync] == [
-        ("create", 1),
         ("update", 2),
     ]
-    for row in note_sync:
+    for row in [*note_sync_on_create, *note_sync]:
         payload = json.loads(row["payload"])
         assert set(payload) == {
             "id",

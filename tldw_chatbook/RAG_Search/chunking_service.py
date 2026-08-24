@@ -16,7 +16,7 @@ the flat output shape with a top-level 0-based ``chunk_index``.
 
 import json
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Phase B: the exception classes are ALIASES of the engine's (re-exported by
 # the Chunk_Lib shim), so ``except chunking_service.ChunkingError`` and
@@ -131,6 +131,7 @@ class ChunkingService:
         chunk_size: int = 400,
         chunk_overlap: int = 100,
         method: str = "words",
+        template: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Chunk text using the specified method.
@@ -143,10 +144,14 @@ class ChunkingService:
 
         Args:
             content: Text to chunk
-            chunk_size: Target size of chunks
+            chunk_size: Target size of each chunk
             chunk_overlap: Overlap between chunks
             method: Chunking method ("words", "sentences", "paragraphs",
                 "tokens", "semantic", "json", "xml", "ebook_chapters", ...)
+            template: Optional pre-resolved template dict (spec §9.2 — the
+                audio/video ingest seam widened to carry it). Its chunk-stage
+                options merge under the explicit scalar arguments, exactly
+                like ``improved_chunking_process``'s ``template`` kwarg.
 
         Returns:
             List of chunk dictionaries with text and metadata
@@ -164,6 +169,7 @@ class ChunkingService:
             raw_chunks = _shim_improved_chunking_process(
                 content,
                 {"method": method, "max_size": chunk_size, "overlap": chunk_overlap},
+                template=template,
             )
         except ChunkingError:
             # Engine exceptions (including InvalidChunkingMethodError) keep
@@ -186,7 +192,9 @@ class ChunkingService:
 
 
 def improved_chunking_process(
-    text: str, options: Dict[str, Any]
+    text: str,
+    options: Dict[str, Any],
+    template: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Wrapper function to provide compatibility with the server's chunking interface.
@@ -197,12 +205,26 @@ def improved_chunking_process(
     genuinely unknown methods raise the (aliased) engine
     ``InvalidChunkingMethodError``.
 
+    (task 10, spec §9.2) Templates: a pre-resolved template dict can arrive
+    two ways, both honored. The explicit ``template`` kwarg is forwarded as
+    the Chunker keyword; a ``template`` KEY inside ``options`` is popped
+    and forwarded the same way -- that key used to be inert everywhere the
+    dict survived (``Chunker.__init__`` gates on the keyword, never on
+    ``options["template"]``), which is precisely why the ingest seams'
+    pop-and-forward lives HERE rather than in every processor. When both
+    are supplied the explicit kwarg wins. A bare-name string in either
+    slot raises the shim's named ``TemplateError`` pointing at
+    ``template_runtime.resolve_template`` (AC 32).
+
     Args:
         text: The text to chunk.
         options: Dictionary containing chunking options:
             - method: The chunking method to use
             - max_size: Maximum size of each chunk
             - overlap: Overlap between chunks
+            - template: (optional) a resolved template dict -- popped and
+              forwarded, never left to rot inertly in the options.
+        template: Optional pre-resolved template dict (explicit spelling).
 
     Returns:
         List of chunk dictionaries (flat contract with chunk_index)
@@ -211,13 +233,21 @@ def improved_chunking_process(
         InvalidChunkingMethodError: If the chunking method is not supported
         ChunkingError: For other chunking-related errors
     """
+    forward_template = template
+    if "template" in options:
+        options = dict(options)  # never mutate the caller's dict
+        popped = options.pop("template")
+        if forward_template is None:
+            forward_template = popped
     try:
         # Legacy validation contract first (same rationale as chunk_text):
         # the engine clamps degenerate values instead of raising.
         _validate_legacy_chunk_params(
             options.get("max_size", 400), options.get("overlap", 100)
         )
-        raw_chunks = _shim_improved_chunking_process(text, options)
+        raw_chunks = _shim_improved_chunking_process(
+            text, options, template=forward_template
+        )
     except ChunkingError:
         raise
     except Exception as e:

@@ -158,8 +158,18 @@ def _kokoro_stream_download(
         try:
             if os.path.exists(partial):
                 os.remove(partial)
-        except OSError:
-            logger.debug(f"{label}: could not remove partial file {partial}")
+        except OSError as cleanup_exc:
+            # No path here on purpose. `partial` is `destination + ".part"`,
+            # and two of this function's four call sites pass the user's
+            # CONFIGURED model/voice directory, so the path is user data.
+            # The two diagnostics this file lost in the same change
+            # ("Downloaded model to {self.model_path}") were removed for
+            # exactly that reason; the label identifies the download without
+            # naming where it lives.
+            logger.debug(
+                f"{label}: could not remove the partial file; "
+                f"error_type={type(cleanup_exc).__name__}"
+            )
         raise
 
 

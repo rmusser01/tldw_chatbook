@@ -41,8 +41,8 @@ Prevent tracked workspace mutations from racing ahead of their Change Review bas
 5. Add deterministic ordering, raised-review, refusal, bypass, timeout, late-result, survivor-degradation, and recovery tests; run focused runtime/bridge/coordinator suites plus Ruff and diff checks.
 
 ADR required: no
-ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
-Reason: ADR-079 already defines the conservative bounded pre-dispatch gate, timeout invalidation, survivor degradation, and recovery boundary implemented here.
+ADR path: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md`
+Reason: ADR-084 already defines the conservative bounded pre-dispatch gate, timeout invalidation, survivor degradation, and recovery boundary implemented here.
 
 Detailed plan: `Docs/superpowers/plans/2026-08-21-change-review-bounded-baseline-gate.md`
 <!-- SECTION:PLAN:END -->
@@ -56,5 +56,5 @@ Timeouts now invalidate affected current, predecessor, nested-root, and survivor
 
 Verification: 188 coordinator/runtime/service tests and 76 Console/context/consent tests passed; the three nested-root ordering regressions passed ten consecutive runs. Ruff, `py_compile`, and `git diff --check` passed for the changed files. Independent final review reported no Important findings.
 
-ADR required: no. ADR-079 already defines the bounded gate, timeout invalidation, degraded recovery, and asynchronous finalization policy implemented here.
+ADR required: no. ADR-084 already defines the bounded gate, timeout invalidation, degraded recovery, and asynchronous finalization policy implemented here.
 <!-- SECTION:NOTES:END -->

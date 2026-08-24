@@ -149,7 +149,15 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
     """
     app = _build_test_app()
     marks = _install_real_marks_service(app, tmp_path)
-    rows = (_browser_row("conv-star-1", "Planning notes"),)
+    rows = (
+        _browser_row(
+            "conv-star-1",
+            "Planning notes",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        ),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
@@ -181,7 +189,15 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
     """No service is a warning, not a crash and not a half-write."""
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    rows = (_browser_row("conv-star-2", "Unbacked row"),)
+    rows = (
+        _browser_row(
+            "conv-star-2",
+            "Unbacked row",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        ),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
@@ -231,9 +247,7 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
         def _press_section_toggle() -> None:
             # By group_id, not by position: a rebuild is free to reorder.
             next(
-                button
-                for button in _section_toggles()
-                if button.group_id == group_id
+                button for button in _section_toggles() if button.group_id == group_id
             ).press()
 
         # The polarity is NOT a constant. The handler flips the section's
@@ -257,7 +271,7 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
 
 
 @pytest.mark.asyncio
-async def test_browser_group_toggle_persists_its_collapse_preference():
+async def test_flat_browser_has_no_retired_workspace_group_toggles():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -272,15 +286,7 @@ async def test_browser_group_toggle_persists_its_collapse_preference():
                 "console-conversation-browser-group-toggle-"
             )
         ]
-        assert toggles, "the grouped browser must render group toggles"
-        toggle = toggles[0]
-        group_id = toggle.group_id
-        assert group_id and not group_id.startswith("section:")
-
-        toggle.press()
-        await pilot.pause()
-
-        assert _browser_config(app).get(group_id) is True
+        assert toggles == []
 
 
 # --------------------------------------------------------------------------
@@ -358,6 +364,9 @@ async def test_workspace_conversation_row_switches_to_its_already_open_session()
                 conversation_id=f"native:{second.id}",
                 native_session_id=second.id,
                 source_kind="native",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
             ),
         )
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
@@ -480,9 +489,7 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
 
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        console.query_one(
-            f"#console-close-session-tab-{doomed.id}", Button
-        ).press()
+        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
         dialog = await _wait_for_confirmation(host)
 
         assert "Transcript messages: 0" in dialog.message
@@ -511,9 +518,7 @@ async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        console.query_one(
-            f"#console-close-session-tab-{doomed.id}", Button
-        ).press()
+        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
         first = await _wait_for_confirmation(host)
         assert "Transcript messages: 1" in first.message
 

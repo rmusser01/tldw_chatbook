@@ -15,11 +15,12 @@ wrong:
 1. **The composed block** -- the ``#console-main-column`` >
    ``#console-transcript-region`` > ``#console-session-surface`` >
    ``#console-native-transcript`` chain, the inline sizing the workspace
-   grid depends on, and the deliberately top-less frame on
-   ``#console-transcript-region`` (``_frame_console_region(..., top=False)``,
-   which is what makes the transcript read as continuous with the control
-   bar above it). Ids and nesting are the extraction's stated contract, so
-   they are asserted as a parent/child chain rather than by bare presence:
+   grid depends on, and the then-deliberately top-less frame on
+   ``#console-transcript-region`` (``_frame_console_region(..., top=False)``),
+   which made the transcript read as continuous with the control bar above it.
+   This is the historical pre-extraction shape, not the current borderless
+   ``edges=()`` contract. Ids and nesting are the extraction's stated contract,
+   so they are asserted as a parent/child chain rather than by bare presence:
    a region widget that mounted the right ids in the wrong place would pass
    a presence check.
 
@@ -35,10 +36,12 @@ wrong:
    the delegation table works.
 """
 
+import inspect
 from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
@@ -53,6 +56,11 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
+from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
+from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+    ProviderContinuationTranscriptRegion,
+)
+from tldw_chatbook.UI.Console_Modules.transcript import ConsoleTranscriptRegion
 
 
 class _SpeechHeaderHarness(App):
@@ -89,6 +97,23 @@ class _SpeechHeaderHarness(App):
         transcript = self.query_one(ConsoleTranscript)
         transcript.set_messages(self.messages)
         self.call_later(transcript.refresh_messages)
+
+
+class _TranscriptRegionHarness(App):
+    def __init__(self, region_type: type[ConsoleTranscriptRegion]) -> None:
+        super().__init__()
+        self.region_type = region_type
+
+    def compose(self) -> ComposeResult:
+        kwargs = {
+            "session_surface_builder": lambda: Static("Visible transcript"),
+        }
+        if self.region_type is ProviderContinuationTranscriptRegion:
+            kwargs.update(
+                recovery_message_builder=lambda: None,
+                on_recovery_action=lambda *_args: True,
+            )
+        yield self.region_type(**kwargs)
 
 
 def _speech_status(transcript: ConsoleTranscript, message_id: str) -> str:
@@ -175,6 +200,46 @@ async def _seed_transcript(console, pilot):
     return transcript, selected_message_id
 
 
+def test_frame_helper_keeps_legacy_side_edges_when_top_and_bottom_are_false():
+    region = frame_console_region(Vertical(), top=False, bottom=False)
+
+    assert region.styles.border_top[0] in {"", "none"}
+    assert region.styles.border_right[0] == "solid"
+    assert region.styles.border_bottom[0] in {"", "none"}
+    assert region.styles.border_left[0] == "solid"
+
+
+@pytest.mark.parametrize(
+    "region_type",
+    [ConsoleTranscriptRegion, ProviderContinuationTranscriptRegion],
+)
+def test_both_transcript_compose_paths_request_explicitly_borderless_edges(
+    region_type: type[ConsoleTranscriptRegion],
+):
+    source = inspect.getsource(region_type.compose)
+
+    assert "edges=()," in source
+    assert "top=False" not in source
+    assert "bottom=False" not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "region_type",
+    [ConsoleTranscriptRegion, ProviderContinuationTranscriptRegion],
+)
+async def test_both_transcript_compose_paths_are_borderless_at_runtime(
+    region_type: type[ConsoleTranscriptRegion],
+):
+    app = _TranscriptRegionHarness(region_type)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        border = app.screen.query_one("#console-transcript-region").styles.border
+
+        assert all(edge[0] in {"", "none"} for edge in border)
+
+
 @pytest.mark.asyncio
 async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
     host = _ready_console_host()
@@ -200,7 +265,7 @@ async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
 
 
 @pytest.mark.asyncio
-async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
+async def test_transcript_region_keeps_inline_sizing_without_owning_frame_edges():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -221,13 +286,13 @@ async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
         # The main column really is the dominant pane at this width.
         assert main_column.region.width > left_rail.region.width
 
-        # TASK-17651 closes the frame at the workspace grid: the transcript
-        # keeps its side edges while suppressing both shared horizontal edges.
+        # TASK-20937.3: the transcript keeps its sizing role but owns no
+        # frame edge; the grid and rails own the surrounding separators.
         border = transcript_region.styles.border
         assert border.top[0] in {"", "none"}
-        assert border.right[0] == "solid"
+        assert border.right[0] in {"", "none"}
         assert border.bottom[0] in {"", "none"}
-        assert border.left[0] == "solid"
+        assert border.left[0] in {"", "none"}
         assert transcript_region.has_class("console-frame-solid")
 
 

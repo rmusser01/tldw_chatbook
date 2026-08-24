@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -11,6 +12,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleQueuedAcceptanceEvent,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
+)
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
@@ -68,6 +72,15 @@ class _PromptChain:
     last_terminal_status: ConsoleRunStatus | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _RecoveredQueueOwner:
+    """Body-free exact owner fencing later queued work."""
+
+    queue_entry_id: str
+    preparation_id: str
+    checkpoint_state: ConsoleDispatchCheckpointState
+
+
 class ConsolePromptQueueCoordinator:
     """Own queue admission, accepted claims, drain progression, and recovery."""
 
@@ -108,6 +121,10 @@ class ConsolePromptQueueCoordinator:
         self.on_chain_terminal = on_chain_terminal
         self._chains: dict[str, _PromptChain] = {}
         self._queue_snapshots: dict[str, PromptQueueSnapshot] = {}
+        self._dispatch_recoveries: dict[str, _RecoveredQueueOwner] = {}
+        self._settled_dispatch_recoveries: OrderedDict[tuple[str, str, str], None] = (
+            OrderedDict()
+        )
         self._shutting_down = False
 
     def authorizes(
@@ -162,7 +179,10 @@ class ConsolePromptQueueCoordinator:
             reservation = snapshot.reservation
         chain = self._chains.get(session_id)
         status = self._run_status(session_id)
-        accepted_live = bool(chain and chain.accepted_live_turn)
+        accepted_live = bool(
+            (chain and chain.accepted_live_turn)
+            or session_id in self._dispatch_recoveries
+        )
         preparing = (
             status
             in {
@@ -196,7 +216,114 @@ class ConsolePromptQueueCoordinator:
         if not session_id:
             return False
         snapshot = self.registry.snapshot(session_id)
-        return snapshot.total_count > 0 or snapshot.expected_context_epoch is not None
+        return bool(
+            snapshot.total_count > 0
+            or snapshot.expected_context_epoch is not None
+            or session_id in self._dispatch_recoveries
+        )
+
+    def hydrate_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        queue_entry_id: str,
+        preparation_id: str,
+        checkpoint_state: ConsoleDispatchCheckpointState,
+    ) -> bool:
+        """Fence one already-accepted entry before any restored queue wake."""
+
+        if (
+            not session_id
+            or not queue_entry_id
+            or not preparation_id
+            or not isinstance(checkpoint_state, ConsoleDispatchCheckpointState)
+        ):
+            return False
+        owner = _RecoveredQueueOwner(
+            queue_entry_id,
+            preparation_id,
+            checkpoint_state,
+        )
+        current = self._dispatch_recoveries.get(session_id)
+        if current is not None and current != owner:
+            return False
+        self._dispatch_recoveries[session_id] = owner
+        snapshot = self.registry.snapshot(session_id)
+        if snapshot.total_count and snapshot.mode is not PromptQueueMode.PAUSED:
+            paused = self.registry.pause(
+                session_id,
+                reason=PromptQueuePauseReason.FAILED,
+                expected_revision=snapshot.revision,
+            )
+            if paused.status not in {
+                QueueMutationStatus.APPLIED,
+                QueueMutationStatus.UNCHANGED,
+                QueueMutationStatus.LOCKED,
+            }:
+                self._dispatch_recoveries.pop(session_id, None)
+                return False
+        self._changed(session_id)
+        return True
+
+    def dispatch_recovery_blocks_queue(self, session_id: str) -> bool:
+        """Return whether a durable owner prevents automatic advancement."""
+
+        return session_id in self._dispatch_recoveries
+
+    def clear_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        queue_entry_id: str,
+        preparation_id: str,
+    ) -> bool:
+        """Clear only the exact hydrated queue owner."""
+
+        current = self._dispatch_recoveries.get(session_id)
+        if current is None or (
+            current.queue_entry_id != queue_entry_id
+            or current.preparation_id != preparation_id
+        ):
+            return False
+        self._dispatch_recoveries.pop(session_id, None)
+        self._changed(session_id)
+        return True
+
+    async def settle_dispatch_recovery_and_drain(
+        self,
+        session_id: str,
+        *,
+        queue_entry_id: str,
+        preparation_id: str,
+        terminal_status: ConsoleRunStatus,
+    ) -> PromptQueueMutationResult:
+        """Release one settled owner and advance later work at most once."""
+
+        key = (session_id, queue_entry_id, preparation_id)
+        snapshot = self.registry.snapshot(session_id)
+        if key in self._settled_dispatch_recoveries:
+            return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
+        if not self.clear_dispatch_recovery(
+            session_id,
+            queue_entry_id=queue_entry_id,
+            preparation_id=preparation_id,
+        ):
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                snapshot,
+                detail="Dispatch recovery queue owner changed.",
+            )
+        self._settled_dispatch_recoveries[key] = None
+        while len(self._settled_dispatch_recoveries) > 256:
+            self._settled_dispatch_recoveries.popitem(last=False)
+        snapshot = self.registry.snapshot(session_id)
+        if snapshot.total_count == 0:
+            return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
+        resumed = self.resume(session_id)
+        if not resumed.applied:
+            return resumed
+        await self._drain_waiting(session_id, terminal_status)
+        return resumed
 
     def pause_for_stop(self, session_id: str) -> PromptQueueMutationResult:
         """Release a chain reservation as soon as Stop targets its live turn."""
@@ -299,12 +426,15 @@ class ConsolePromptQueueCoordinator:
         origin: ConsoleSubmissionOrigin,
         context_epoch: int,
         entry_id: str | None = None,
+        defer_queued_settlement: bool = False,
     ) -> None:
         """Commit the accepted boundary and settle a queued claim exactly once."""
 
         chain = self._chains.get(session_id)
         if chain is None:
-            return
+            if origin is ConsoleSubmissionOrigin.MANUAL:
+                return
+            raise RuntimeError("accepted queued chain is unavailable")
         if origin is ConsoleSubmissionOrigin.MANUAL:
             snapshot = self.registry.snapshot(session_id)
             result = self.registry.begin_chain(
@@ -320,17 +450,92 @@ class ConsolePromptQueueCoordinator:
         else:
             if entry_id is None or chain.current_entry_id != entry_id:
                 raise RuntimeError("queued acceptance did not match the claimed entry")
+            if not defer_queued_settlement:
+                self._settle_queued_claim(session_id, entry_id)
+        chain.accepted_live_turn = True
+        self._changed(session_id)
+
+    def acknowledge_durable_acceptance(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+        context_epoch: int,
+    ) -> bool:
+        """Acknowledge one exact committed queue claim independently of a chain."""
+
+        del context_epoch  # The committed checkpoint, not a live epoch, owns re-entry.
+        chain = self._chains.get(session_id)
+        if chain is not None and chain.current_entry_id not in {None, entry_id}:
+            return False
+        result = self.registry.settle_durable_acceptance(
+            session_id,
+            entry_id=entry_id,
+            preparation_id=preparation_id,
+        )
+        if result.status not in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }:
+            return False
+        if session_id in self._dispatch_recoveries:
             snapshot = self.registry.snapshot(session_id)
-            settled = self.registry.settle_claim(
-                session_id,
-                entry_id=entry_id,
-                expected_revision=snapshot.revision,
-            )
-            if not settled.applied:
-                raise RuntimeError("queued acceptance could not settle its claim")
+            if snapshot.total_count and snapshot.mode is not PromptQueueMode.PAUSED:
+                paused = self.registry.pause(
+                    session_id,
+                    reason=PromptQueuePauseReason.FAILED,
+                    expected_revision=snapshot.revision,
+                )
+                if paused.status not in {
+                    QueueMutationStatus.APPLIED,
+                    QueueMutationStatus.UNCHANGED,
+                }:
+                    return False
+        if chain is not None:
+            chain.accepted_live_turn = True
+            if chain.current_entry_id == entry_id:
+                chain.current_entry_id = None
+            self._changed(session_id)
+        if result.status is QueueMutationStatus.APPLIED:
             callback = self.on_queued_accepted
             if callback is not None:
                 callback(ConsoleQueuedAcceptanceEvent(session_id, entry_id))
+        return True
+
+    def bind_claimed_preparation(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+    ) -> bool:
+        """Bind the exact current claim to its precommit recovery owner."""
+
+        chain = self._chains.get(session_id)
+        if chain is None or chain.current_entry_id != entry_id:
+            return False
+        result = self.registry.bind_claimed_preparation(
+            session_id,
+            entry_id=entry_id,
+            preparation_id=preparation_id,
+        )
+        return result.status in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }
+
+    def retain_durable_acceptance(self, session_id: str) -> None:
+        """Fence a committed queued claim from returning to pending.
+
+        Task 14 uses this only after SQLite has committed the durable owner and
+        a later publication effect failed.  Recovery presentation belongs to
+        Task 15; this narrow fence merely keeps the queue boundary truthful.
+        """
+
+        chain = self._chains.get(session_id)
+        if chain is None:
+            return
         chain.accepted_live_turn = True
         self._changed(session_id)
 
@@ -338,6 +543,7 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is None:
             return
+        current_entry_id = chain.current_entry_id
         accepted = chain.accepted_live_turn
         chain.accepted_live_turn = False
         status = self._terminal_status(session_id, result)
@@ -345,13 +551,18 @@ class ConsolePromptQueueCoordinator:
         self._changed(session_id)
 
         if not accepted:
-            if chain.current_entry_id is not None:
+            if current_entry_id is not None:
                 self._return_claim(
                     session_id,
-                    chain.current_entry_id,
+                    current_entry_id,
                     PromptQueuePauseReason.DISPATCH_REFUSED,
                 )
             return
+        if current_entry_id is not None:
+            snapshot = self.registry.snapshot(session_id)
+            if snapshot.claimed_count:
+                self._settle_queued_claim(session_id, current_entry_id)
+        chain.current_entry_id = None
         if status not in self._SUCCESS:
             reason = (
                 PromptQueuePauseReason.STOPPED
@@ -362,6 +573,21 @@ class ConsolePromptQueueCoordinator:
             return
 
         await self._drain_waiting(session_id, status)
+
+    def _settle_queued_claim(self, session_id: str, entry_id: str) -> None:
+        """Acknowledge one exact claimed entry and emit its acceptance event."""
+
+        snapshot = self.registry.snapshot(session_id)
+        settled = self.registry.settle_claim(
+            session_id,
+            entry_id=entry_id,
+            expected_revision=snapshot.revision,
+        )
+        if not settled.applied:
+            raise RuntimeError("queued acceptance could not settle its claim")
+        callback = self.on_queued_accepted
+        if callback is not None:
+            callback(ConsoleQueuedAcceptanceEvent(session_id, entry_id))
 
     async def _drain_waiting(self, session_id: str, status: ConsoleRunStatus) -> None:
         """Claim and submit FIFO entries until the chain empties or pauses."""
@@ -526,6 +752,12 @@ class ConsolePromptQueueCoordinator:
         """Reacquire a slot and resume a manually/dispatch-paused queue."""
 
         snapshot = self.registry.snapshot(session_id)
+        if session_id in self._dispatch_recoveries:
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                snapshot,
+                detail="Finish or discard the pending response first.",
+            )
         if snapshot.mode is not PromptQueueMode.PAUSED:
             return PromptQueueMutationResult(QueueMutationStatus.INVALID, snapshot)
         if self._context_epoch(session_id) != snapshot.expected_context_epoch:
@@ -563,6 +795,75 @@ class ConsolePromptQueueCoordinator:
             return resumed
         await self._drain_waiting(session_id, self._run_status(session_id))
         return resumed
+
+    def reclaim_prepared_entry(
+        self, session_id: str, entry_id: str, preparation_id: str
+    ) -> QueueGenerationAuthorization | None:
+        """Resume and reclaim the exact head entry owned by a paused preparation."""
+
+        resumed = self.resume(session_id)
+        if not resumed.applied:
+            return None
+        claimed = self.registry.claim_next(
+            session_id, expected_revision=resumed.snapshot.revision
+        )
+        if (
+            not claimed.applied
+            or claimed.claim is None
+            or claimed.claim.prompt.entry_id != entry_id
+        ):
+            if claimed.claim is not None:
+                self._return_claim(
+                    session_id,
+                    claimed.claim.prompt.entry_id,
+                    PromptQueuePauseReason.DISPATCH_REFUSED,
+                )
+            return None
+        chain = self._chains[session_id]
+        chain.current_entry_id = entry_id
+        if not self.bind_claimed_preparation(
+            session_id,
+            entry_id=entry_id,
+            preparation_id=preparation_id,
+        ):
+            self._return_claim(
+                session_id,
+                entry_id,
+                PromptQueuePauseReason.DISPATCH_REFUSED,
+            )
+            return None
+        self._changed(session_id)
+        return QueueGenerationAuthorization(self, session_id, _key=_AUTHORIZATION_KEY)
+
+    async def finish_recovered_entry(
+        self,
+        session_id: str,
+        entry_id: str,
+        result: "ConsoleSubmitResult" | None,
+    ) -> None:
+        """Finish one exact reclaimed send without losing claim ownership."""
+
+        chain = self._chains.get(session_id)
+        if chain is None:
+            return
+        if chain.current_entry_id != entry_id:
+            if result is None and chain.current_entry_id is None:
+                self._pause_after_exception(session_id)
+            return
+        if result is None:
+            self._pause_after_exception(session_id)
+            return
+        await self._after_turn(session_id, result)
+
+    def recovered_entry_is_accepted(self, session_id: str, entry_id: str) -> bool:
+        """Return whether the exact reclaimed entry crossed acceptance."""
+
+        chain = self._chains.get(session_id)
+        return bool(
+            chain is not None
+            and chain.current_entry_id == entry_id
+            and chain.accepted_live_turn
+        )
 
     async def recover_and_drain(
         self,

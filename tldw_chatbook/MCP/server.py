@@ -34,14 +34,19 @@ the retired `todo_write` tool is also absent.
 
 ## Exposed local Library tools (task-1337)
 
-The 18 descriptor-backed `library_*` tools (media/notes/prompts/skills/
-conversations/collections list+get+search) are part of the local MCP
-surface: they are read-only, locally served, and contract-governed by
+The 24 descriptor-backed `library_*` tools (media/notes/prompts/skills/
+conversations/collections list+get+search, plus the chunking-agent-tools
+siblings: structure/chunk/spec-list/spec-save/re-chunk, and the note WRITE
+tool `library_save_note`) are part of the
+local MCP surface: they are locally served and contract-governed by
 `Library/library_tool_contract.py`. The capability manifest appends them from
 the descriptor table (`_describe_local_library_tools`), and the in-app direct
 runtime (`local_runtime_delegate.LocalMCPRuntimeDelegate`) dispatches them to
 one shared `LocalLibraryToolService` (composed by
-`build_local_library_tool_service`) via `asyncio.to_thread`. The standalone
+`build_local_library_tool_service`) via `asyncio.to_thread`. The WRITING
+chunk tools are service-level policy-gated: the factory threads the
+runtime-policy enforcer into the chunk tool service (chunking-agent-tools
+Task 5, spec §6), on top of the always-on MCP action mapping. The standalone
 `TldwMCPServer` below uses `mcp-unified` and deliberately does not publish
 these in-process Library tools. The Console-only
 `[console].direct_library_tools` retrieval-mode toggle has no effect on this
@@ -253,7 +258,7 @@ def _describe_local_tools() -> list[dict[str, Any]]:
 
 
 def _describe_local_library_tools() -> list[dict[str, Any]]:
-    """Manifest entries for the 18 descriptor-backed Library tools (task-1337).
+    """Manifest entries for the descriptor-backed Library tools (task-1337).
 
     Derived from ``LIBRARY_TOOL_DESCRIPTORS`` -- never hand-maintained here --
     so the local MCP capability manifest can never drift from the contract the
@@ -286,6 +291,8 @@ def build_local_library_tool_service(
     chachanotes_db: Any,
     media_db: Any,
     notes_service: Any = None,
+    notes_scope_service: Any = None,
+    policy_enforcer: Any = None,
 ) -> Any:
     """Compose the six local Library backends into one shared synchronous service.
 
@@ -309,6 +316,20 @@ def build_local_library_tool_service(
         notes_service: Optional pre-built ``NotesInteropService``; when
             omitted, one is constructed with the canonical signature off
             ``get_chachanotes_db_path()`` and ``chachanotes_db``.
+        notes_scope_service: Optional pre-built ``NotesScopeService``
+            (student-workflow spec §4.3): the note-save tool's folder seam.
+            When omitted, one is composed over ``chachanotes_db`` with the
+            app builder's own shape (shared local folder repository); a
+            construction failure degrades folder requests to
+            ``feature_unavailable`` rather than sinking the surface.
+        policy_enforcer: Optional runtime-policy enforcer
+            (``require_allowed(action_id=...)`` seam) threaded into the
+            media chunk tool service and the note-save path, whose WRITING
+            tools (``library_save_chunk_spec``, ``library_rechunk_media``,
+            ``library_save_note``) are service-level gated
+            (chunking-agent-tools Tasks 4-5 + student-workflow Task 1,
+            spec §6); ``None`` leaves the always-on MCP action mapping as
+            the outer gate.
 
     Returns:
         The shared ``LocalLibraryToolService``.
@@ -393,6 +414,45 @@ def build_local_library_tool_service(
 
     _build("collection", _build_collections)
 
+    def _build_media_chunk():
+        from ..Chunking.chunking_interop_library import get_chunking_service
+        from ..Library.local_media_chunk_tool_service import (
+            LocalMediaChunkToolService,
+        )
+
+        return LocalMediaChunkToolService(
+            media_db,
+            backends["media"],
+            template_interop=get_chunking_service(media_db),
+            # chunking-agent-tools (Task 5, spec §6): the writing chunk
+            # tools are service-level gated here too -- the delegate
+            # threads the runtime-policy enforcer through (the Console
+            # construction site passes the same app handle).
+            policy_enforcer=policy_enforcer,
+        )
+
+    _build("media_chunk", _build_media_chunk)
+
+    if notes_scope_service is not None:
+        backends["notes_scope"] = notes_scope_service
+    else:
+
+        def _build_notes_scope():
+            # student-workflow (spec §4.3): the note-save folder seam, built
+            # with the app builder's own shape -- the scope facade over one
+            # shared local folder repository (the notes UI's own scope, so
+            # folders saved here are visible there).
+            from ..Notes.note_folder_repository import LocalNoteFolderRepository
+            from ..Notes.notes_scope_service import NotesScopeService
+
+            return NotesScopeService(
+                local_notes_service=backends["note"],
+                server_service=None,
+                folder_repository=LocalNoteFolderRepository(chachanotes_db),
+            )
+
+        _build("notes_scope", _build_notes_scope)
+
     return LocalLibraryToolService(
         media_service=backends["media"],
         notes_service=backends["note"],
@@ -400,6 +460,11 @@ def build_local_library_tool_service(
         skills_service=backends["skill"],
         conversation_service=backends["conversation"],
         collections_service=backends["collection"],
+        media_chunk_service=backends["media_chunk"],
+        # student-workflow (spec §4.3/§6): the note-save folder seam and the
+        # writing note tool's service-level gate (the chunk-tools pattern).
+        notes_scope_service=backends.get("notes_scope"),
+        policy_enforcer=policy_enforcer,
     )
 
 
@@ -452,6 +517,7 @@ class TldwMCPServer:
                 get_chachanotes_db_path,
                 get_media_db_path,
                 CLI_APP_CLIENT_ID,
+                load_console_library_migration_seed,
             )
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
             from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -459,7 +525,9 @@ class TldwMCPServer:
 
             # Initialize character/chat/notes database
             self.chachanotes_db = CharactersRAGDB(
-                db_path=get_chachanotes_db_path(), client_id=CLI_APP_CLIENT_ID
+                db_path=get_chachanotes_db_path(),
+                client_id=CLI_APP_CLIENT_ID,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
 
             # Initialize media database. Uses the same resolver the rest of

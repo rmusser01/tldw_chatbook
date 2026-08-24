@@ -17,8 +17,28 @@ from urllib.parse import urljoin
 #
 # Third-Party Imports
 import httpx
-from bs4 import BeautifulSoup
 from loguru import logger
+
+# bs4 is extras-only (`[subscriptions]` among others): guarded so a base
+# install can import this module; parsing degrades at use time (TASK-21104).
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - exercised via the base-install probe
+    BeautifulSoup = None  # type: ignore[assignment]
+
+_BS4_INSTALL_HINT = (
+    "beautifulsoup4 is required to parse web pages for scraping pipelines, "
+    "but it is not installed. "
+    "Install it with: pip install tldw_chatbook[subscriptions]"
+)
+
+
+def _require_beautifulsoup() -> type:
+    """Return the BeautifulSoup class or raise an actionable ImportError."""
+    if BeautifulSoup is None:
+        raise ImportError(_BS4_INSTALL_HINT)
+    return BeautifulSoup
+
 
 #
 # Local Imports
@@ -88,7 +108,13 @@ class CustomScrapingPipeline(BaseScrapingPipeline):
                     # Basic CSS selector validation
                     try:
                         # Test parse with BeautifulSoup
-                        BeautifulSoup("<div></div>", "html.parser").select(selector)
+                        _require_beautifulsoup()("<div></div>", "html.parser").select(
+                            selector
+                        )
+                    except ImportError as exc:
+                        # Missing bs4 is an install problem, not a bad
+                        # selector -- report it as itself (TASK-21104).
+                        return False, str(exc)
                     except Exception:
                         return False, f"Invalid CSS selector in {rule_name}: {selector}"
 
@@ -149,7 +175,7 @@ class CustomScrapingPipeline(BaseScrapingPipeline):
         items = []
 
         try:
-            soup = BeautifulSoup(raw_content, "html.parser")
+            soup = _require_beautifulsoup()(raw_content, "html.parser")
 
             # Extract JSON-LD data if available
             json_ld_data = {}

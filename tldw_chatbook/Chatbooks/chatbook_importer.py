@@ -31,12 +31,18 @@ from ..Chat.citation_service_factory import (
 from ..Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
+    parse_provider_continuation_json,
     read_provider_continuation_json,
+)
+from ..Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
 )
 from ..model_capabilities import moonshot_model_returns_reasoning_content
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..config import load_console_library_migration_seed
 from ..Prompt_Management.prompt_chatbook_record import (
     PromptChatbookRecordError,
     decode_chatbook_prompt_record,
@@ -758,7 +764,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
@@ -940,6 +950,44 @@ class ChatbookImporter:
                                     msg_dict["provider_continuation_json"] = (
                                         continuation
                                     )
+                                continuation_checkpoint = (
+                                    parse_provider_continuation_json(continuation)
+                                    if continuation is not None
+                                    else None
+                                )
+                                raw_state = msg.get("assistant_generation_state")
+                                try:
+                                    generation_state = (
+                                        normalize_assistant_generation_state(
+                                            role=msg["role"],
+                                            raw_state=raw_state,
+                                            has_valid_active_continuation=(
+                                                continuation_checkpoint is not None
+                                                and continuation_checkpoint.state
+                                                == "active"
+                                            ),
+                                        )
+                                    )
+                                except ValueError:
+                                    raise ValueError(
+                                        "Invalid V2 conversation graph."
+                                    ) from None
+                                if (
+                                    generation_state
+                                    is AssistantGenerationState.CONTINUATION_ACTIVE
+                                    and (
+                                        continuation_checkpoint is None
+                                        or continuation_checkpoint.state != "active"
+                                    )
+                                ):
+                                    raise ValueError(
+                                        "Invalid V2 conversation graph."
+                                    )
+                                msg_dict["assistant_generation_state"] = (
+                                    generation_state.value
+                                    if generation_state is not None
+                                    else None
+                                )
                             elif msg.get("_private") is not None:
                                 status.add_warning(
                                     "Exact tool continuation was discarded for "
@@ -1073,8 +1121,9 @@ class ChatbookImporter:
                 or total_content_chars > _MAX_V2_TOTAL_CONTENT_CHARS
             ):
                 raise ValueError("Invalid V2 conversation graph.")
-            item = raw
+            item = dict(raw)
             private = raw.get("_private")
+            checkpoint = None
             if (
                 isinstance(private, dict)
                 and set(private) == {"provider_continuation"}
@@ -1092,10 +1141,32 @@ class ChatbookImporter:
                         total_private_bytes + private_bytes
                         > _MAX_V2_TOTAL_PRIVATE_BYTES
                     ):
-                        item = dict(raw)
                         item["_private"] = {"provider_continuation": None}
+                        checkpoint = None
                     else:
                         total_private_bytes += private_bytes
+            raw_state = raw.get("assistant_generation_state")
+            if raw_state is not None and role != "assistant":
+                raise ValueError("Invalid V2 conversation graph.")
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=role,
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        checkpoint is not None and checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise ValueError("Invalid V2 conversation graph.") from None
+            if (
+                generation_state
+                is AssistantGenerationState.CONTINUATION_ACTIVE
+                and (checkpoint is None or checkpoint.state != "active")
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+            item["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
             messages.append(item)
             by_id[message_id] = item
             orders.add(order)
@@ -1423,7 +1494,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         notes_dir = extract_dir / "content" / "notes"
         logger.info(f"ChatbookImporter._import_notes: Looking for notes in {notes_dir}")
 
@@ -1540,7 +1615,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         chars_dir = extract_dir / "content" / "characters"
         logger.info(
             f"ChatbookImporter._import_characters: Looking for characters in {chars_dir}"
@@ -2059,7 +2138,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         kept_dir = extract_dir / "content" / "kept_briefings"
 
         for kept_id in kept_briefing_ids:

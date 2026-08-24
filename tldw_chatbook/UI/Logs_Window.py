@@ -7,6 +7,7 @@
 # content; the copy actions live in their own bottom bar.
 #
 # Imports
+import asyncio
 import re
 from collections import Counter, deque
 from typing import TYPE_CHECKING, Iterable, NamedTuple, Optional
@@ -38,6 +39,17 @@ MAX_LOG_RECORDS = 10000
 #: pass rescans up to `MAX_LOG_RECORDS` buffered records, so it must not run
 #: on every keystroke (task-15476).
 FILTER_DEBOUNCE_SECONDS = 0.2
+
+#: Debounce for PERSISTING the saved-filter state (task-21124) -- distinct
+#: from `FILTER_DEBOUNCE_SECONDS`, which debounces re-RENDERING. A level-chip
+#: click used to fire two sequential synchronous `save_setting_to_cli_config`
+#: calls on the event loop -- two full config.toml read-rewrite-reload cycles
+#: (four fsyncs) per click, each holding the global config write lock. Chip
+#: clicks now mark the filter state dirty and (re)arm this timer; the actual
+#: write is ONE batched atomic mutation dispatched off the loop, and
+#: `on_unmount` force-flushes any pending state (mirrors the task-15470
+#: dictation-settings debounce shape, including its value).
+LOGS_FILTER_SAVE_DEBOUNCE_SECONDS = 0.6
 
 #: Cap the RichLog rendered slice: a filter matching thousands of buffered
 #: records must not clear+rewrite the widget with all of them on every
@@ -178,6 +190,23 @@ class LogsWindow(Container):
         self._last_rendered: list[LogRecord] = []
         self._compiled_pattern_cache: tuple[str, "re.Pattern | None"] | None = None
         self._filter_debounce_timer: Timer | None = None
+        # task-21124: debounce state for the saved-filter persist -- see
+        # `LOGS_FILTER_SAVE_DEBOUNCE_SECONDS`. `_persisted_filter_state` is
+        # the last state known to be on disk (seeded by `load_from_app`);
+        # comparing against it instead of a bare dirty flag means neither the
+        # mount-time restore nor a click-and-click-back sequence produces a
+        # write.
+        self._filter_save_timer: Timer | None = None
+        self._filter_persist_worker = None
+        self._persisted_filter_state: dict[str, str] | None = None
+        # Mirror of the filter Input's value, kept current by
+        # `_on_filter_text_changed` and the `load_from_app` restore. The
+        # persist snapshot reads THIS, never the DOM: during teardown the
+        # Input may already be unmounted, and a DOM query degrading to ""
+        # there made the unmount flush clobber the user's saved filter with
+        # an empty string (caught by test_saved_filter_roundtrip while
+        # building task-21124).
+        self._filter_text = ""
 
     # ------------------------------------------------------------------
     # Composition
@@ -251,7 +280,12 @@ class LogsWindow(Container):
                 self._level_chip = saved_chip
             saved_text = get_cli_setting("logs", "last_filter", "")
             if saved_text:
+                self._filter_text = saved_text
                 self.query_one("#logs-filter-text", Input).value = saved_text
+            # Baseline for change detection (task-21124): what we just
+            # restored is, by definition, what is persisted -- so neither
+            # the restore itself nor an unmount without edits writes.
+            self._persisted_filter_state = self._filter_state_snapshot()
         except Exception:  # noqa: BLE001 - config read must never block logs
             pass
         app_records: Iterable[tuple] = getattr(
@@ -265,21 +299,107 @@ class LogsWindow(Container):
         self._level_counts = Counter(record.level for record in self._records)
         self._render_view()
 
-    def save_filter_state(self) -> None:
-        """Persist the current filter text and level chip (UX-077)."""
-        try:
-            from ..config import save_setting_to_cli_config
+    def _filter_state_snapshot(self) -> dict[str, str]:
+        """Capture the persistable filter state on the event-loop thread.
 
-            save_setting_to_cli_config(
-                "logs", "last_filter", self.query_one("#logs-filter-text", Input).value
-            )
-            save_setting_to_cli_config("logs", "last_level_chip", self._level_chip)
+        Prefers the live Input (an un-dispatched `Input.Changed` may not
+        have reached the `_filter_text` mirror yet); falls back to the
+        mirror when the Input is already unmounted at teardown, where a
+        degrade-to-"" would clobber the user's saved filter (see
+        `_filter_text`).
+        """
+        try:
+            self._filter_text = self.query_one("#logs-filter-text", Input).value
+        except Exception:  # noqa: BLE001 - teardown: mirror keeps last value
+            pass
+        return {
+            "last_filter": self._filter_text,
+            "last_level_chip": self._level_chip,
+        }
+
+    def _write_filter_state(self, snapshot: dict[str, str]) -> None:
+        """Persist a pre-captured filter snapshot with ONE atomic write.
+
+        task-21124: replaces two sequential `save_setting_to_cli_config`
+        calls (two full config rewrites, four fsyncs) with one batched
+        mutation. Safe to call from a worker thread: touches only the
+        passed-in snapshot.
+        """
+        try:
+            from ..config import save_settings_to_cli_config
+
+            save_settings_to_cli_config({"logs": snapshot})
+            self._persisted_filter_state = snapshot
         except Exception:  # noqa: BLE001 - config write must never break navigation
             pass
 
-    def on_unmount(self) -> None:
-        """Save the filter state when the screen is left."""
-        self.save_filter_state()
+    def save_filter_state(self) -> None:
+        """Persist the current filter text and level chip (UX-077), now.
+
+        Synchronous, immediate form -- the debounced path
+        (`_persist_filter_state`) is what UI event handlers use.
+        """
+        self._write_filter_state(self._filter_state_snapshot())
+
+    def _persist_filter_state(self) -> None:
+        """Schedule a debounced, batched, off-loop filter-state save.
+
+        task-21124: the single gate chip clicks go through -- see
+        `LOGS_FILTER_SAVE_DEBOUNCE_SECONDS`. A no-op when the current state
+        already matches what is persisted (e.g. click away and back).
+        """
+        if self._filter_state_snapshot() == self._persisted_filter_state:
+            return
+        if self._filter_save_timer is not None:
+            self._filter_save_timer.stop()
+        self._filter_save_timer = self.set_timer(
+            LOGS_FILTER_SAVE_DEBOUNCE_SECONDS,
+            self._flush_filter_state_after_debounce,
+        )
+
+    def _flush_filter_state_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._filter_save_timer = None
+        self._filter_persist_worker = self.run_worker(
+            self._persist_filter_state_off_loop(),
+            exclusive=True,
+            group="logs-filter-persist",
+        )
+
+    async def _persist_filter_state_off_loop(self) -> None:
+        """Write the filter state on a worker thread, off the event loop.
+
+        Snapshots on the main thread before handing the write to
+        `to_thread`, so a further chip click cannot race the worker's read
+        (same shape as the task-15470 dictation persist).
+        """
+        snapshot = self._filter_state_snapshot()
+        if snapshot == self._persisted_filter_state:
+            return
+        await asyncio.to_thread(self._write_filter_state, snapshot)
+
+    async def on_unmount(self) -> None:
+        """Flush any pending filter-state change when the screen is left.
+
+        Also picks up filter-TEXT edits, which (as before task-21124) are
+        persisted only at unmount -- but now only when the state actually
+        changed, where the old code rewrote the config file on every exit
+        from the Logs screen. If a debounced write is in flight, waits for
+        it rather than dispatching a second writer against the same file.
+        """
+        if self._filter_save_timer is not None:
+            self._filter_save_timer.stop()
+            self._filter_save_timer = None
+        # Capture before any await: after the wait the Input may be gone.
+        snapshot = self._filter_state_snapshot()
+        worker = self._filter_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception:  # noqa: BLE001 - flush must never break teardown
+                pass
+        if snapshot != self._persisted_filter_state:
+            await asyncio.to_thread(self._write_filter_state, snapshot)
 
     def append_record(self, level: str, name: str, message: str) -> None:
         """Receive one live log record from the app's logging handler.
@@ -467,13 +587,16 @@ class LogsWindow(Container):
         if chip_id and chip_id != self._level_chip:
             self._level_chip = chip_id
             self._render_view()
-            self.save_filter_state()
+            # task-21124: debounced, batched, off-loop -- never a
+            # synchronous double config rewrite on the click.
+            self._persist_filter_state()
 
     @on(Input.Changed, "#logs-filter-text")
     def _on_filter_text_changed(self, event: Input.Changed) -> None:
         """Debounced (task-15476): a render pass rescans up to
         `MAX_LOG_RECORDS` buffered records and clears+rewrites the RichLog,
         so it must not run on every keystroke."""
+        self._filter_text = event.value
         if self._filter_debounce_timer is not None:
             self._filter_debounce_timer.stop()
         self._filter_debounce_timer = self.set_timer(

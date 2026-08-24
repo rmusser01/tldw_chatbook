@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
 from tldw_chatbook.Chat.console_provider_gateway import (
     MAX_AUXILIARY_OUTPUT_TOKENS,
     AuxiliaryCompletionRequest,
@@ -986,6 +987,71 @@ async def test_resolve_for_send_materializes_builtin_cloud_endpoint(
 
     assert resolved.ready is True
     assert resolved.base_url == expected_base_url
+    assert resolved.resolved_destination is not None
+    assert resolved.resolved_destination.endpoint_identity == (
+        expected_base_url.split("/v1", maxsplit=1)[0]
+    )
+    assert (
+        resolved.resolved_destination.egress_class
+        is ConsoleEgressClass.PUBLIC_NETWORK
+    )
+
+
+@pytest.mark.asyncio
+async def test_gateway_attaches_on_device_destination_after_llamacpp_normalization():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="llama_cpp",
+            base_url="127.42.7.9:9099/v1/chat/completions",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "http://127.42.7.9:9099"
+    assert resolved.resolved_destination is not None
+    assert resolved.resolved_destination.endpoint_identity == "http://127.42.7.9:9099"
+    assert resolved.resolved_destination.egress_class is ConsoleEgressClass.ON_DEVICE
+
+
+@pytest.mark.asyncio
+async def test_gateway_unknown_custom_destination_identity_is_credential_free():
+    endpoint = (
+        "https://user:URL-SECRET@models.example.test:8443/private/v1"
+        "?api_key=URL-SECRET#fragment"
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "openai": {
+                    "api_key": "CONFIG-SECRET",
+                    "model": "gpt-test",
+                    "api_base_url": endpoint,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
+    )
+
+    assert resolved.ready is True
+    assert resolved.resolved_destination is not None
+    assert resolved.resolved_destination.endpoint_identity == (
+        "https://models.example.test:8443"
+    )
+    assert resolved.resolved_destination.egress_class is ConsoleEgressClass.UNKNOWN
+    rendered = repr(resolved.resolved_destination)
+    for secret in ("user", "URL-SECRET", "CONFIG-SECRET", "private", "api_key"):
+        assert secret not in rendered
 
 
 @pytest.mark.asyncio
@@ -2112,6 +2178,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
         "_synthetic_fallback",
+        "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
         "_active_usage_payloads",
@@ -2125,6 +2192,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
         "_synthetic_fallback",
+        "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
         "_active_usage_payloads",
@@ -2869,9 +2937,17 @@ class _DeepBacklogHTTPServer(http.server.ThreadingHTTPServer):
     request_queue_size = 32
 
 
+_LOOPBACK_LISTENER_PERMISSION_SKIP_REASON = (
+    "loopback listener unavailable: permission denied"
+)
+
+
 @pytest.fixture
 def local_http_server():
-    server = _DeepBacklogHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    try:
+        server = _DeepBacklogHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    except PermissionError:
+        pytest.skip(_LOOPBACK_LISTENER_PERMISSION_SKIP_REASON)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2881,12 +2957,54 @@ def local_http_server():
         thread.join(timeout=2)
 
 
+def test_local_http_server_permission_denied_skips_with_capability_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Classify listener permission denial as an explicit capability skip.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace listener construction.
+    """
+
+    def deny_listener(*_args, **_kwargs):
+        raise PermissionError("sandbox denied loopback bind")
+
+    monkeypatch.setitem(globals(), "_DeepBacklogHTTPServer", deny_listener)
+
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        next(local_http_server.__wrapped__())
+
+    assert str(exc_info.value) == _LOOPBACK_LISTENER_PERMISSION_SKIP_REASON
+
+
+def test_local_http_server_non_permission_oserror_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep non-permission listener failures actionable instead of skipping.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace listener construction.
+    """
+
+    def fail_listener(*_args, **_kwargs):
+        raise OSError("address resources exhausted")
+
+    def fail_if_skipped(reason: str) -> None:
+        pytest.fail(f"unexpected capability skip: {reason}")
+
+    monkeypatch.setitem(globals(), "_DeepBacklogHTTPServer", fail_listener)
+    monkeypatch.setattr(pytest, "skip", fail_if_skipped)
+
+    with pytest.raises(OSError, match="address resources exhausted"):
+        next(local_http_server.__wrapped__())
+
+
 # Real owned client AND a real socket: the whole point is httpx's per-loop
-# connection-pool binding against a server this test starts itself
-# (`local_http_server`, ephemeral loopback port). Opts out of both autouse
-# guards (Tests/conftest.py, task-15111).
+# connection-pool binding against a server this test starts itself on numeric
+# loopback only. The fixture skips explicitly when the host denies listener
+# construction (Tests/conftest.py, task-15111).
 @pytest.mark.owned_http_client
-@pytest.mark.allow_network
+@pytest.mark.loopback_network
 def test_owned_http_client_survives_agent_bridge_style_loop_swap(local_http_server):
     """Regression (Task 8 live gate): every agent turn crashed against a real
     llama.cpp server with ``RuntimeError: <asyncio.locks.Event ...> is bound
@@ -3147,7 +3265,7 @@ def test_aclose_closes_current_loop_client_and_schedules_others(monkeypatch):
 
 # Same as above: real owned client + this test's own `local_http_server`.
 @pytest.mark.owned_http_client
-@pytest.mark.allow_network
+@pytest.mark.loopback_network
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
     local_http_server,
     monkeypatch,
@@ -6739,6 +6857,74 @@ class TestLlamaCppExchangeCapture:
         assert retry_capture.response["content"] == "recovered text"
         # Same keyless guarantee the sibling captures hold.
         assert "local-secret" not in _json.dumps(retry_capture.request)
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_stream_to_complete_fallback_emits_retry_signal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _EmptyStreamResponse:
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                return
+                yield  # pragma: no cover
+
+        class _StreamCtx:
+            async def __aenter__(self):
+                return _EmptyStreamResponse()
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClient:
+            def stream(self, *_args, **_kwargs):
+                return _StreamCtx()
+
+        gateway = ConsoleProviderGateway()
+        monkeypatch.setattr(
+            ConsoleProviderGateway,
+            "_active_http_client",
+            lambda self: _FakeClient(),
+        )
+
+        retries: list[str] = []
+
+        async def fake_complete(self, **_kwargs):
+            assert retries == ["model_retry"]
+            return "recovered"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
+        )
+        signals = ConsoleProviderStreamSignals(
+            model_retry_callback=lambda: retries.append("model_retry")
+        )
+        out = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                self._resolution(streaming=True),
+                [{"role": "user", "content": "q"}],
+                signals=signals,
+            )
+        ]
+        assert out == ["recovered"]
+        assert retries == ["model_retry"]
+
+        def failing_callback() -> None:
+            raise RuntimeError("capture callback failed")
+
+        out_with_failed_capture = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                self._resolution(streaming=True),
+                [{"role": "user", "content": "q"}],
+                signals=ConsoleProviderStreamSignals(
+                    model_retry_callback=failing_callback
+                ),
+            )
+        ]
+        assert out_with_failed_capture == ["recovered"]
 
     @pytest.mark.asyncio
     async def test_llamacpp_non_streaming_abort_after_first_item_keeps_recorded_content(

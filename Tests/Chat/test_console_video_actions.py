@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMe
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.UI.Console_Modules import video as video_controller_module
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
+from Tests.UI.console_controller_stubs import stub_fleet_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore
@@ -74,6 +75,10 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         notify=lambda *args, **kwargs: notifications.append((args, kwargs)),
         push_screen=pushed.append,
     )
+    # Precedes the `_console_chat_store` assignment: that setter reaches
+    # `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    stub_fleet_controller(screen, context="video actions bare screen")
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
     screen._sync_native_console_chat_ui = AsyncMock()

@@ -310,7 +310,7 @@ async def _submit_batch(screen, pilot, monkeypatch, tmp_path, submitted):
     monkeypatch.setattr(
         library_screen_module,
         "analyze_path",
-        lambda path, scan_limit=1000: results["current"],
+        lambda path, scan_limit=1000, **_kwargs: results["current"],
     )
 
     form = screen._library_ingest_form

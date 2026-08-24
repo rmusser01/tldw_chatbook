@@ -20,6 +20,8 @@ from tldw_chatbook.Utils.private_paths import (
 )
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
+APPROVED_SESSION_DECISION = "approved-session"
+
 
 @dataclass(frozen=True)
 class ExecutionRecord:
@@ -105,7 +107,8 @@ def build_record(
         arguments: Call arguments used only for their keys.
         registered_argument_names: Schema-approved argument names.
         result: Result used only for its type and top-level size.
-        decision: Permission decision ("allowed" for user-initiated tests).
+        decision: Permission decision (for example, "allowed", "approved",
+            or "approved-session").
 
     Returns:
         A frozen metadata-only ExecutionRecord safe to persist.

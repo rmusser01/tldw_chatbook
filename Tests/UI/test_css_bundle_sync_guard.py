@@ -49,3 +49,19 @@ def test_generated_widget_and_screen_sheets_have_no_trailing_whitespace():
     )
     for path in paths:
         assert all(line == line.rstrip() for line in path.read_text().splitlines())
+
+
+def test_generated_widget_and_screen_sheets_end_with_one_newline():
+    """Selector filtering cannot leave generated blank lines at EOF."""
+
+    css_dir = Path(build_css.__file__).parent
+    paths = (
+        css_dir / build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+    )
+    for path in paths:
+        content = path.read_text()
+        assert content.endswith("\n"), path
+        assert not content.endswith("\n\n"), path

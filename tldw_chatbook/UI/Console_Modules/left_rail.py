@@ -41,13 +41,11 @@ message rather than matched by id prefix in the screen's
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from fractions import Fraction
-from math import ceil
 
-from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -61,7 +59,15 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     _summary_row_value,
 )
-from ...Widgets.Console import ConsoleBoundedSection, ConsoleWorkspaceContextTray
+from ...Widgets.Console import (
+    ConsoleBoundedSection,
+    ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
+    WorkspaceTreeContextChanged,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeFocusRecoveryRequested,
+    WorkspaceTreeStarRequested,
+)
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_BAR_ID,
     ConsoleAgentSteeringBar,
@@ -81,9 +87,7 @@ from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
 from .rail_section_layout import (
-    ContextAllocationResult,
     ContextSectionDemand,
-    allocate_context_sections,
     fallback_active_section,
     outer_hint_required,
 )
@@ -91,23 +95,36 @@ from .rail_section_layout import (
 
 OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
 
+CharacterAvatarBox = tuple[int, int]
+CharacterAvatarWidgetBuilder = Callable[[CharacterAvatarBox | None], Widget]
+CharacterAvatarFitBox = Callable[[int, int], CharacterAvatarBox | None]
+
 
 @dataclass(frozen=True, slots=True)
 class ContextSectionDescriptor:
-    """Stable direct Context-section identity in allocator/DOM order."""
+    """Stable direct Context-section identity and rendered-content ceiling."""
 
     section_id: str
     title: str
+    max_content_lines: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ContextFocusRecoveryIncident:
+    """Stable local-focus identity retained across one DOM mutation."""
+
+    target_id: str | None
+    target_index: int | None
 
 
 CONTEXT_SECTION_DESCRIPTORS = (
-    ContextSectionDescriptor("session", "Sessions"),
-    ContextSectionDescriptor("workspace", "Workspaces"),
-    ContextSectionDescriptor("conversations", "Conversations"),
-    ContextSectionDescriptor("model", "Model"),
-    ContextSectionDescriptor("agent", "Agent"),
-    ContextSectionDescriptor("details", "Details"),
-    ContextSectionDescriptor("character", "Character"),
+    ContextSectionDescriptor("session", "Sessions", 15),
+    ContextSectionDescriptor("workspace", "Workspaces", 20),
+    ContextSectionDescriptor("conversations", "Conversations", 20),
+    ContextSectionDescriptor("model", "Model", 15),
+    ContextSectionDescriptor("agent", "Agent", 15),
+    ContextSectionDescriptor("details", "Details", 15),
+    ContextSectionDescriptor("character", "Character", 35),
 )
 
 
@@ -119,6 +136,10 @@ class _ContextOuterBody(VerticalScroll):
         self._owner = owner
 
     def on_resize(self) -> None:
+        self._owner.note_character_avatar_viewport_size(
+            self.content_size.width,
+            self.content_size.height,
+        )
         self._owner.request_allocation_reconcile()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
@@ -135,12 +156,20 @@ class _ContextBoundedSection(ConsoleBoundedSection):
         *content: Widget,
         section_id: str,
         owner: "ConsoleLeftRail",
+        native_scroll_owner: ConsoleWorkspaceTree | None = None,
     ) -> None:
         self._allocation_owner = owner
+        descriptor = next(
+            item
+            for item in CONTEXT_SECTION_DESCRIPTORS
+            if item.section_id == section_id
+        )
         super().__init__(
             *content,
             section_id=section_id,
+            max_content_lines=descriptor.max_content_lines,
             on_focus_recovery=lambda: owner.recover_section_focus(section_id),
+            native_scroll_owner=native_scroll_owner,
         )
 
     def _run_scheduled_reconcile(self) -> None:
@@ -205,8 +234,13 @@ class ConsoleLeftRail(Vertical):
         agent_steering_state: ConsoleAgentSteeringState | None = None,
         agent_cancel_all_visible: bool = False,
         show_character_section: bool,
-        character_avatar_widget_builder: Callable[[], Widget] | None,
+        character_avatar_widget_builder: CharacterAvatarWidgetBuilder | None,
         character_avatar_name: str,
+        character_avatar_fit_box: CharacterAvatarFitBox | None = None,
+        workspace_tree_expanded_ids: frozenset[str] | None = None,
+        workspace_tree_expansion_preferences_changed: (
+            Callable[[frozenset[str]], None] | None
+        ) = None,
         manual_reaction_label: str | None = None,
         **kwargs,
     ) -> None:
@@ -258,9 +292,10 @@ class ConsoleLeftRail(Vertical):
             show_character_section: Whether the Character section is
                 composed at all (config-gated; matches
                 ``resolve_show_character_avatar``).
-            character_avatar_widget_builder: Zero-arg callable that builds
-                the avatar widget, when ``show_character_section`` is True
-                (``None`` otherwise). The screen still owns
+            character_avatar_widget_builder: Callable that builds the avatar
+                widget for an optional fitted cell box, when
+                ``show_character_section`` is True (``None`` otherwise). The
+                screen still owns
                 ``_build_character_avatar_widget`` and the spec it reads
                 (``self._active_character_avatar``); only the CALL is
                 deferred to this rail's own ``compose()``. A builder, not a
@@ -278,6 +313,10 @@ class ConsoleLeftRail(Vertical):
                 from the CURRENT ``self._active_character_avatar`` instead.
             character_avatar_name: Character name label text, when
                 ``show_character_section`` is True.
+            character_avatar_fit_box: Late-binding source-aware contain fitter.
+                It receives the mounted body's measured image budget and returns
+                the scale-down-only cell box, ``(0, 0)`` when no image rows
+                remain, or ``None`` when no valid image is available.
             manual_reaction_label: Active session-local manual reaction label,
                 or ``None`` while operational reactions remain automatic.
             kwargs: Forwarded to ``Vertical``.
@@ -303,29 +342,59 @@ class ConsoleLeftRail(Vertical):
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
+        self._character_avatar_fit_box = character_avatar_fit_box
+        self._character_avatar_box: CharacterAvatarBox | None = None
+        self._character_avatar_fit_generation = 0
+        self._character_avatar_geometry_epoch = 0
+        self._character_avatar_viewport_size: tuple[int, int] | None = None
+        self._character_avatar_fit_signature: tuple[int, int, int] | None = None
+        self._character_avatar_fit_result: CharacterAvatarBox | None = None
+        self._character_avatar_followup_pending = False
+        self._character_avatar_suppressed_epoch: int | None = None
+        self._character_avatar_mount_lock = asyncio.Lock()
+        self._workspace_tree_expanded_ids = workspace_tree_expanded_ids
+        self._workspace_tree_expansion_preferences_changed = (
+            workspace_tree_expansion_preferences_changed
+        )
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
         self._active_section_id: str | None = None
+        self._active_reveal_generation = 0
+        self._pending_active_reveal: tuple[int, str, str | None, bool] | None = None
         self._allocation_reconcile_scheduled = False
         self._last_allocation_state: (
-            tuple[
-                ContextAllocationResult,
-                bool,
-                tuple[ConsoleBoundedSection, ...],
-                str | None,
-            ]
-            | None
+            tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
         ) = None
-        self._active_transition_generation = 0
-        self._pending_active_reveal_generation: int | None = None
-        self._active_reveal_token = 0
-        self._no_room_section_ids: frozenset[str] = frozenset()
         self._outer_hint_exists = False
         self._outer_hint_text = ""
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
+        self._pending_focus_recoveries: dict[str, _ContextFocusRecoveryIncident] = {}
         self._pointer_activation_pending: str | None = None
         self._pointer_activation_waits_for_button = False
         self._pointer_activation_target: Widget | None = None
         self._pointer_activation_generation = 0
+
+    @property
+    def character_avatar_box(self) -> CharacterAvatarBox | None:
+        """Latest equality-guarded fitted image box, if a valid image exists."""
+
+        return self._character_avatar_box
+
+    def invalidate_character_avatar_geometry(self) -> None:
+        """Start a new source/viewport epoch for the Character contain fit."""
+
+        self._character_avatar_geometry_epoch += 1
+        self._character_avatar_fit_signature = None
+        self._character_avatar_followup_pending = False
+        self._character_avatar_suppressed_epoch = None
+
+    def note_character_avatar_viewport_size(self, width: int, height: int) -> None:
+        """Start a geometry epoch only for a genuinely new outer viewport."""
+
+        viewport_size = (max(0, int(width)), max(0, int(height)))
+        if viewport_size == self._character_avatar_viewport_size:
+            return
+        self._character_avatar_viewport_size = viewport_size
+        self.invalidate_character_avatar_geometry()
 
     @staticmethod
     def _section_header(
@@ -339,12 +408,21 @@ class ConsoleLeftRail(Vertical):
             for item in CONTEXT_SECTION_DESCRIPTORS
             if item.section_id == section_id
         )
-        return DestinationRailSectionHeader(
+        header = DestinationRailSectionHeader(
             descriptor.title,
             section_id=section_id,
             open=is_open,
             id=f"console-rail-section-header-{section_id}",
         )
+        # Keep the disclosure chrome structurally above its bounded body even
+        # in lightweight hosts that mount the Console screen without the app
+        # stylesheet.  The production CSS declares the same two constraints;
+        # owning them here prevents a late allocator pass from collapsing the
+        # default ``Horizontal`` 1fr height to zero and leaving the visible
+        # toggle painted over by the first body row.
+        header.styles.height = "auto"
+        header.styles.min_height = 2
+        return header
 
     @staticmethod
     def _section_body(
@@ -380,6 +458,19 @@ class ConsoleLeftRail(Vertical):
         """Allocate from the first complete mounted geometry snapshot."""
 
         self.request_allocation_reconcile()
+        self.call_after_refresh(self._request_initial_workspace_tree_pages)
+
+    def _request_initial_workspace_tree_pages(self) -> None:
+        """Route persisted/default-expanded nodes through the page loader once."""
+
+        try:
+            tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except (NoMatches, QueryError):
+            return
+        for workspace_id in sorted(tree.preferred_expanded_workspace_ids):
+            self.post_message(
+                WorkspaceTreeExpansionChanged(workspace_id, expanded=True)
+            )
 
     def on_resize(self) -> None:
         """Reallocate when the outer Context region changes height."""
@@ -406,18 +497,27 @@ class ConsoleLeftRail(Vertical):
         section_id: str,
         *,
         request_reconcile: bool = True,
+        reveal_target: Widget | None = None,
+        deliberate_reveal: bool = True,
     ) -> None:
-        """Prioritize one mounted direct Context section without persistence."""
+        """Activate and deliberately reveal one section without persistence."""
 
         if section_id not in {
             descriptor.section_id for descriptor in self._mounted_descriptors()
         }:
             return
-        if section_id != self._active_section_id:
-            self._active_section_id = section_id
-            self._active_transition_generation += 1
-            self._pending_active_reveal_generation = self._active_transition_generation
-            self._active_reveal_token += 1
+        self._active_section_id = section_id
+        self._active_reveal_generation += 1
+        self._pending_active_reveal = (
+            (
+                self._active_reveal_generation,
+                section_id,
+                reveal_target.id if reveal_target is not None else None,
+                reveal_target is not None,
+            )
+            if deliberate_reveal
+            else None
+        )
         if request_reconcile:
             self.request_allocation_reconcile()
 
@@ -467,11 +567,16 @@ class ConsoleLeftRail(Vertical):
             )
         except (NoMatches, QueryError):
             return ()
-        return tuple(
+        controls = tuple(
             widget
             for widget in bounded.viewport.query("*")
             if isinstance(widget, Widget) and self._is_enabled_focus_target(widget)
         )
+        if bounded.native_scroll_owner is not None and self._is_enabled_focus_target(
+            bounded.viewport
+        ):
+            return (bounded.viewport, *controls)
+        return controls
 
     def _record_section_focus(self, section_id: str, target: Widget) -> None:
         self._section_focus_history[section_id] = (
@@ -479,41 +584,102 @@ class ConsoleLeftRail(Vertical):
             self._focusable_body_controls(section_id),
         )
 
-    def recover_section_focus(self, section_id: str) -> None:
-        """Recover invalidated local focus next, previous, header, then rail toggle."""
+    @staticmethod
+    def _stable_focus_id(widget: Widget) -> str | None:
+        return widget.id or None
 
+    def _focus_recovery_incident(
+        self,
+        previous: Widget,
+        controls: tuple[Widget, ...],
+    ) -> _ContextFocusRecoveryIncident:
+        return _ContextFocusRecoveryIncident(
+            target_id=self._stable_focus_id(previous),
+            target_index=controls.index(previous) if previous in controls else None,
+        )
+
+    def _ensure_focus_recovery(
+        self,
+        section_id: str,
+    ) -> _ContextFocusRecoveryIncident | None:
+        """Freeze and schedule one semantic recovery incident per section."""
+
+        pending = self._pending_focus_recoveries.get(section_id)
+        if pending is not None:
+            self._section_focus_history.pop(section_id, None)
+            return pending
+        history = self._section_focus_history.pop(section_id, None)
+        if history is None:
+            return None
+        incident = self._focus_recovery_incident(*history)
+        self._pending_focus_recoveries[section_id] = incident
+        self.call_after_refresh(
+            self._recover_pending_focus,
+            section_id,
+            incident,
+        )
+        return incident
+
+    def _focus_is_valid_outside_rail(self, focused: Widget | None) -> bool:
+        return bool(
+            focused is not None
+            and self._is_enabled_focus_target(focused)
+            and focused is not self
+            and self not in focused.ancestors
+        )
+
+    def _recover_pending_focus(
+        self,
+        section_id: str,
+        incident: _ContextFocusRecoveryIncident,
+    ) -> None:
+        """Resolve one current incident against the section's current DOM."""
+
+        if self._pending_focus_recoveries.get(section_id) is not incident:
+            return
+        if not self.is_attached:
+            self._pending_focus_recoveries.pop(section_id, None)
+            return
+        if self._focus_is_valid_outside_rail(self.app.focused):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            return
         try:
             bounded = self.query_one(
                 f"#console-bounded-section-{section_id}", ConsoleBoundedSection
             )
         except (NoMatches, QueryError):
-            bounded = None
-        focused = self.app.focused
-        if focused is not None and self._is_enabled_focus_target(focused):
-            owned = bool(
-                bounded is not None
-                and (
-                    focused is bounded.viewport or bounded.viewport in focused.ancestors
-                )
-            )
-            if not owned:
-                return
+            self._pending_focus_recoveries.pop(section_id, None)
+            return
 
-        previous_target, previous_controls = self._section_focus_history.get(
-            section_id,
-            (bounded.viewport if bounded is not None else self, ()),
-        )
-        if previous_target in previous_controls:
-            previous_index = previous_controls.index(previous_target)
-            ordered_candidates = previous_controls[previous_index + 1 :] + tuple(
-                reversed(previous_controls[:previous_index])
+        controls = self._focusable_body_controls(section_id)
+        candidates: list[Widget] = []
+        if incident.target_id is not None:
+            candidates.extend(
+                control
+                for control in controls
+                if self._stable_focus_id(control) == incident.target_id
             )
+        if incident.target_index is None:
+            candidates.extend(controls)
         else:
-            ordered_candidates = previous_controls
-        for candidate in ordered_candidates:
+            index = min(incident.target_index, len(controls))
+            candidates.extend(controls[index:])
+            candidates.extend(reversed(controls[:index]))
+
+        seen: set[Widget] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
             if self._is_enabled_focus_target(candidate):
-                self._record_section_focus(section_id, candidate)
-                candidate.focus()
+                self._commit_focus_recovery(
+                    section_id,
+                    incident,
+                    bounded,
+                    candidate,
+                    controls,
+                )
                 return
 
         for selector in (
@@ -525,9 +691,69 @@ class ConsoleLeftRail(Vertical):
             except (NoMatches, QueryError):
                 continue
             if self._is_enabled_focus_target(candidate):
-                self._record_section_focus(section_id, candidate)
-                candidate.focus()
+                self._commit_focus_recovery(
+                    section_id,
+                    incident,
+                    bounded,
+                    candidate,
+                    controls,
+                )
                 return
+
+        self._pending_focus_recoveries.pop(section_id, None)
+        self._section_focus_history.pop(section_id, None)
+        bounded._acknowledge_focus_recovery(None)
+
+    def _commit_focus_recovery(
+        self,
+        section_id: str,
+        incident: _ContextFocusRecoveryIncident,
+        bounded: ConsoleBoundedSection,
+        candidate: Widget,
+        controls: tuple[Widget, ...],
+    ) -> None:
+        """Synchronously select and acknowledge one current recovery target."""
+
+        if self._pending_focus_recoveries.get(section_id) is not incident:
+            return
+        self._pending_focus_recoveries.pop(section_id, None)
+        self._section_focus_history[section_id] = (candidate, controls)
+        self.screen.set_focus(candidate)
+        bounded._acknowledge_focus_recovery(candidate)
+
+    def _section_is_outer_visible(self, section_id: str) -> bool:
+        """Return whether a section's header and first body rows are visible."""
+
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return False
+        return header.region.overlaps(
+            outer.content_region
+        ) and bounded.viewport.region.overlaps(outer.content_region)
+
+    def recover_section_focus(self, section_id: str) -> None:
+        """Coalesce one bounded invalidation into semantic local recovery."""
+
+        if self._focus_is_valid_outside_rail(self.app.focused):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            return
+        history = self._section_focus_history.get(section_id)
+        if (
+            history is not None
+            and self.app.focused is history[0]
+            and self._is_enabled_focus_target(history[0])
+        ):
+            return
+        self._ensure_focus_recovery(section_id)
 
     def _paint_scroll_focus_owner(
         self,
@@ -570,14 +796,14 @@ class ConsoleLeftRail(Vertical):
                 and not previous_target.is_attached
             )
             if removed_target_snapshot:
-                self.call_after_refresh(
-                    self._recover_removed_focus_snapshot,
-                    section_id,
-                    previous_target,
-                )
-            else:
+                self._ensure_focus_recovery(section_id)
+            elif section_id not in self._pending_focus_recoveries:
                 self._record_section_focus(section_id, target)
-            self.activate_section(section_id, request_reconcile=False)
+            self.activate_section(
+                section_id,
+                request_reconcile=False,
+                deliberate_reveal=False,
+            )
             self.call_after_refresh(
                 self._finish_focus_activation,
                 section_id,
@@ -589,20 +815,6 @@ class ConsoleLeftRail(Vertical):
             outer_active=outer_active,
         )
 
-    def _recover_removed_focus_snapshot(
-        self,
-        section_id: str,
-        removed_target: Widget,
-    ) -> None:
-        """Recover from Textual's incidental focus without replacing its snapshot."""
-
-        current_target, _controls = self._section_focus_history.get(
-            section_id,
-            (None, ()),
-        )
-        if current_target is removed_target and not removed_target.is_attached:
-            self.recover_section_focus(section_id)
-
     def _finish_focus_activation(self, section_id: str, target: Widget) -> None:
         """Reconcile keyboard focus unless a pointer press still owns the target."""
 
@@ -610,6 +822,13 @@ class ConsoleLeftRail(Vertical):
             self._pointer_activation_pending == section_id
             and self.app.focused is target
         ):
+            return
+        if (
+            self.app.focused is target
+            and target.is_mounted
+            and not self._section_is_outer_visible(section_id)
+        ):
+            self.activate_section(section_id, reveal_target=target)
             return
         self.request_allocation_reconcile()
 
@@ -627,6 +846,7 @@ class ConsoleLeftRail(Vertical):
         ):
             return
         self._section_focus_history.clear()
+        self._pending_focus_recoveries.clear()
         self._paint_scroll_focus_owner(section_id=None, outer_active=False)
 
     def on_mouse_down(self, event: MouseDown) -> None:
@@ -643,7 +863,11 @@ class ConsoleLeftRail(Vertical):
             isinstance(ancestor, DestinationRailSectionHeader)
             for ancestor in target.ancestors
         )
-        self.activate_section(section_id, request_reconcile=False)
+        self.activate_section(
+            section_id,
+            request_reconcile=False,
+            deliberate_reveal=False,
+        )
 
     def on_mouse_up(self, event: MouseUp) -> None:
         """Defer canceled-press cleanup until a native button action can win."""
@@ -669,15 +893,16 @@ class ConsoleLeftRail(Vertical):
         """Commit allocation after the pressed control has retained its target."""
 
         pending = self._pointer_activation_pending
+        target = self._pointer_activation_target
         self._pointer_activation_generation += 1
         self._pointer_activation_pending = None
         self._pointer_activation_waits_for_button = False
         self._pointer_activation_target = None
         if pending is not None:
-            self.request_allocation_reconcile()
+            self.activate_section(pending, reveal_target=target)
 
     def request_allocation_reconcile(self) -> None:
-        """Coalesce one post-refresh, all-sibling allocation reconciliation."""
+        """Coalesce one post-refresh local-then-outer reconciliation."""
 
         if not self.is_mounted or self._allocation_reconcile_scheduled:
             return
@@ -685,7 +910,7 @@ class ConsoleLeftRail(Vertical):
         self.call_after_refresh(self._prepare_allocation_reconcile)
 
     def _prepare_allocation_reconcile(self) -> None:
-        """Let every bounded body measure demand before the owner snapshots."""
+        """Let every bounded body commit its own ceiling before outer geometry."""
 
         if not self.is_mounted:
             self._allocation_reconcile_scheduled = False
@@ -698,24 +923,26 @@ class ConsoleLeftRail(Vertical):
                 )
             except (NoMatches, QueryError):
                 continue
+            section.set_allocation(None)
+            if section.native_scroll_owner is None:
+                section.styles.height = "auto"
             section.request_reconcile()
         self.call_after_refresh(self._run_allocation_reconcile)
 
     def _run_allocation_reconcile(self) -> None:
-        """Snapshot once, call the pure policy once, and commit one full state."""
+        """Snapshot committed complete sections and reconcile the outer owner."""
 
         try:
+            self._reconcile_character_avatar_geometry()
             descriptors = self._mounted_descriptors()
             if not descriptors:
                 return
             viewport_height = self._snapshot_outer_viewport_height()
             if viewport_height <= 0:
                 return
-            header_chrome_height = self._measure_visible_header_chrome_height(
-                descriptors
-            )
             sections: list[ConsoleBoundedSection] = []
             demands: list[ContextSectionDemand] = []
+            presentation_changed = False
             for descriptor in descriptors:
                 bounded = self.query_one(
                     f"#console-bounded-section-{descriptor.section_id}",
@@ -728,11 +955,24 @@ class ConsoleLeftRail(Vertical):
                 body = bounded.query_one(
                     f"#console-rail-section-body-{descriptor.section_id}"
                 )
+                title = header.query_one(
+                    f"#console-rail-section-title-{descriptor.section_id}", Static
+                )
+                presentation_changed |= self._present_header_title(
+                    title,
+                    base_title=header.title,
+                )
+                header.sync_open(header.open)
                 sections.append(bounded)
                 demands.append(
                     ContextSectionDemand(
                         section_id=descriptor.section_id,
-                        desired_content_rows=bounded.desired_content_lines,
+                        desired_content_rows=max(
+                            bounded.desired_content_lines,
+                            int(
+                                bounded.native_scroll_owner is not None and body.display
+                            ),
+                        ),
                         is_open=bool(header.open and body.display),
                     )
                 )
@@ -756,34 +996,151 @@ class ConsoleLeftRail(Vertical):
                     active_section_id,
                 )
                 if active_section_id != self._active_section_id:
-                    self._active_reveal_token += 1
-                    self._pending_active_reveal_generation = None
+                    self._active_reveal_generation += 1
+                    self._pending_active_reveal = None
                 self._active_section_id = active_section_id
-            result = allocate_context_sections(
-                viewport_height=viewport_height,
-                header_chrome_height=header_chrome_height,
-                sections=tuple(demands),
-                active_section_id=active_section_id,
-            )
-            desired_outer_rows = header_chrome_height + sum(
-                allocation.allocated_content_rows + int(allocation.hint_required)
-                for allocation in result.allocations
-            )
+
+            if presentation_changed:
+                self.call_after_refresh(self.request_allocation_reconcile)
+
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            desired_outer_rows = self._measure_outer_content_height(outer)
             needs_outer_hint = outer_hint_required(
                 desired_outer_rows,
                 viewport_height,
             )
             self._apply_allocation_state(
-                descriptors,
                 sections,
-                result,
+                desired_outer_rows=desired_outer_rows,
                 needs_outer_hint=needs_outer_hint,
             )
+            self._queue_pending_active_reveal()
         except (NoMatches, QueryError):
             # Recompose may briefly remove one member of the complete snapshot.
             return
         finally:
             self._allocation_reconcile_scheduled = False
+
+    def _reconcile_character_avatar_geometry(self) -> None:
+        """Measure controls and schedule one unequal Character image replacement."""
+
+        builder = self._character_avatar_widget_builder
+        fitter = self._character_avatar_fit_box
+        if builder is None or fitter is None:
+            return
+        try:
+            body = self.query_one("#console-rail-section-body-character", Vertical)
+            frame = self.query_one("#console-character-avatar-frame", Horizontal)
+            holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
+        except (NoMatches, QueryError):
+            return
+        if not body.display or not body.is_mounted or not holder.is_mounted:
+            return
+
+        complete_rows = max(0, body.virtual_region_with_margin.height)
+        image_rows = max(0, frame.virtual_region_with_margin.height)
+        measured_non_image_rows = max(0, complete_rows - image_rows)
+        available_rows = max(0, 35 - measured_non_image_rows)
+        available_cols = max(0, body.content_region.width)
+        is_followup = self._character_avatar_followup_pending
+        self._character_avatar_followup_pending = False
+        fit_signature = (
+            self._character_avatar_geometry_epoch,
+            available_cols,
+            available_rows,
+        )
+        if fit_signature == self._character_avatar_fit_signature:
+            target_box = self._character_avatar_fit_result
+        else:
+            target_box = fitter(available_cols, available_rows)
+            self._character_avatar_fit_signature = fit_signature
+            self._character_avatar_fit_result = target_box
+        if target_box == self._character_avatar_box:
+            return
+        if is_followup:
+            # A replacement gets one local-to-outer settle pass. If scrollbar
+            # feedback changes the measured box again, wait for a real source
+            # or viewport epoch instead of entering a fixed-point loop.
+            self._character_avatar_suppressed_epoch = (
+                self._character_avatar_geometry_epoch
+            )
+            return
+        if (
+            self._character_avatar_suppressed_epoch
+            == self._character_avatar_geometry_epoch
+        ):
+            return
+
+        self._character_avatar_box = target_box
+        self._character_avatar_fit_generation += 1
+        generation = self._character_avatar_fit_generation
+        self.run_worker(
+            self._replace_character_avatar_for_geometry(generation, target_box),
+            group="console-character-avatar-fit",
+            exclusive=True,
+        )
+
+    async def _replace_character_avatar_for_geometry(
+        self,
+        generation: int,
+        target_box: CharacterAvatarBox | None,
+    ) -> None:
+        """Apply one still-current fitted box and request its sole follow-up."""
+
+        builder = self._character_avatar_widget_builder
+        if builder is None:
+            return
+
+        def is_current() -> bool:
+            return bool(
+                generation == self._character_avatar_fit_generation and self.is_mounted
+            )
+
+        replaced = await self.replace_character_avatar_widget(
+            lambda: builder(target_box),
+            is_current=is_current,
+        )
+        if not replaced:
+            return
+        if generation != self._character_avatar_fit_generation:
+            return
+        self._character_avatar_followup_pending = True
+        try:
+            bounded = self.query_one(
+                "#console-bounded-section-character", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return
+        bounded.request_reconcile()
+        self.request_allocation_reconcile()
+
+    async def replace_character_avatar_widget(
+        self,
+        widget_builder: Callable[[], Widget],
+        *,
+        is_current: Callable[[], bool],
+    ) -> bool:
+        """Serialize one freshness-fenced replacement of the avatar child."""
+
+        async with self._character_avatar_mount_lock:
+            if not is_current() or not self.is_mounted:
+                return False
+            try:
+                holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
+            except (NoMatches, QueryError):
+                return False
+            await holder.remove_children()
+            if not is_current() or not holder.is_mounted:
+                return False
+            widget = widget_builder()
+            if not is_current():
+                return False
+            await holder.mount(widget)
+            if is_current():
+                return True
+            if widget.parent is holder:
+                await widget.remove()
+            return False
 
     def _snapshot_outer_viewport_height(self) -> int:
         """Return the no-hint Context viewport height for counterfactual policy."""
@@ -798,149 +1155,56 @@ class ConsoleLeftRail(Vertical):
             height += max(1, hint.outer_size.height)
         return height
 
-    def _measure_visible_header_chrome_height(
-        self,
-        descriptors: tuple[ContextSectionDescriptor, ...],
-    ) -> int:
-        """Measure fixed header demand from the constrained Textual box model.
+    @staticmethod
+    def _measure_outer_content_height(outer: VerticalScroll) -> int:
+        """Return the committed bottom edge of complete visible sections."""
 
-        ``Widget._get_box_model`` is intentionally isolated here. Textual 8.2.8
-        is exactly pinned by this project, and its ``constrain_width`` path is
-        the only source that includes the rail's actual available width while
-        avoiding the already-compressed arranged height.
-        """
-
-        outer = self.query_one("#console-left-rail-body", VerticalScroll)
-        container_size = outer.content_region.size
-        viewport_size = self.screen.size
-        width_fraction = Fraction(max(0, container_size.width))
-        height_fraction = Fraction(max(0, container_size.height))
-        total = 0
-        for descriptor in descriptors:
-            header = self.query_one(
-                f"#console-rail-section-header-{descriptor.section_id}",
-                DestinationRailSectionHeader,
-            )
-            box_model = header._get_box_model(
-                container_size,
-                viewport_size,
-                width_fraction,
-                height_fraction,
-                constrain_width=True,
-                greedy=False,
-            )
-            total += ceil(box_model.height) + header.styles.margin.height
-        return total
+        return max(
+            (
+                child.virtual_region_with_margin.bottom
+                for child in outer.children
+                if child.display
+            ),
+            default=0,
+        )
 
     def _apply_allocation_state(
         self,
-        descriptors: tuple[ContextSectionDescriptor, ...],
         sections: list[ConsoleBoundedSection],
-        result: ContextAllocationResult,
         *,
+        desired_outer_rows: int,
         needs_outer_hint: bool,
     ) -> None:
-        """Equality-guard and synchronously apply a complete owner snapshot."""
-
-        no_room_ids = frozenset(
-            allocation.section_id
-            for allocation in result.allocations
-            if allocation.no_room
-        )
-        presentation_changed = False
-        for descriptor in descriptors:
-            header = self.query_one(
-                f"#console-rail-section-header-{descriptor.section_id}",
-                DestinationRailSectionHeader,
-            )
-            title = header.query_one(
-                f"#console-rail-section-title-{descriptor.section_id}", Static
-            )
-            toggle = header.query_one(
-                f"#{RAIL_SECTION_TOGGLE_PREFIX}{descriptor.section_id}", Button
-            )
-            constrained = descriptor.section_id in no_room_ids
-            base_title = header.title
-            presentation_changed |= self._present_header_title(
-                title,
-                base_title=base_title,
-                constrained=constrained,
-            )
-            if constrained:
-                if str(toggle.label) != "[>]":
-                    toggle.label = "[>]"
-                toggle.tooltip = f"Prioritize {base_title}"
-            else:
-                header.sync_open(header.open)
-
-        if presentation_changed:
-            # The first paint installs dimension-stable one-line title chrome.
-            # Measure once more after Textual has laid it out; equality guards
-            # make the resulting fixed point a no-op rather than a refresh loop.
-            self.call_after_refresh(self.request_allocation_reconcile)
+        """Equality-guard and synchronously apply complete outer geometry."""
 
         complete_state = (
-            result,
             needs_outer_hint,
+            desired_outer_rows,
             tuple(sections),
-            self._active_section_id,
         )
         if complete_state == self._last_allocation_state:
             self._update_outer_hint()
             return
 
-        previous_result = (
-            self._last_allocation_state[0]
-            if self._last_allocation_state is not None
-            else None
-        )
-        entering_fallback = result.uses_outer_scroll and (
-            previous_result is None or not previous_result.uses_outer_scroll
-        )
-        if previous_result is not None and (
-            previous_result.uses_outer_scroll != result.uses_outer_scroll
-        ):
-            self._active_reveal_token += 1
-
-        for bounded, allocation in zip(sections, result.allocations):
-            bounded.set_allocation(allocation.allocated_content_rows)
-            bounded.styles.height = allocation.allocated_content_rows + int(
-                allocation.hint_required
-            )
-
         outer = self.query_one("#console-left-rail-body", VerticalScroll)
-        target_overflow = "auto" if result.uses_outer_scroll else "hidden"
-        if str(outer.styles.overflow_y) != target_overflow:
-            outer.styles.overflow_y = target_overflow
-        outer.can_focus = result.uses_outer_scroll
-        if not result.uses_outer_scroll and outer.scroll_y != 0:
+        if str(outer.styles.overflow_y) != "auto":
+            outer.styles.overflow_y = "auto"
+        outer.can_focus = needs_outer_hint
+        if not needs_outer_hint and outer.scroll_y != 0:
             outer.scroll_y = 0
 
         hint = self.query_one("#console-left-rail-outer-hint", Static)
         if hint.display is not needs_outer_hint:
             hint.display = needs_outer_hint
         self._outer_hint_exists = needs_outer_hint
-        self._no_room_section_ids = no_room_ids
         self._last_allocation_state = complete_state
         self._update_outer_hint()
-
-        activation_pending = self._pending_active_reveal_generation is not None
-        if (
-            result.uses_outer_scroll
-            and self._active_section_id is not None
-            and (entering_fallback or activation_pending)
-        ):
-            self._pending_active_reveal_generation = None
-            self._queue_active_reveal(self._active_section_id)
-        elif not result.uses_outer_scroll:
-            self._pending_active_reveal_generation = None
 
     @staticmethod
     def _present_header_title(
         title: Static,
         *,
         base_title: str,
-        constrained: bool,
     ) -> bool:
         """Paint one-line chrome while retaining the complete canonical title."""
 
@@ -955,116 +1219,9 @@ class ConsoleLeftRail(Vertical):
             changed = True
 
         title.tooltip = base_title
-        target_title = base_title
-        if constrained:
-            target_title = ConsoleLeftRail._title_with_no_room_suffix(
-                base_title,
-                title.content_region.width,
-            )
-        if str(title.renderable) != target_title:
-            title.update(target_title)
+        if str(title.renderable) != base_title:
+            title.update(base_title)
         return changed
-
-    @staticmethod
-    def _title_with_no_room_suffix(base_title: str, width: int) -> str:
-        """Fit the base into ``width`` while preserving the exact status suffix."""
-
-        suffix = " · no room"
-        full_title = f"{base_title}{suffix}"
-        if width <= 0 or cell_len(full_title) <= width:
-            return full_title
-
-        base_budget = width - cell_len(suffix)
-        if base_budget <= 0:
-            # At widths smaller than the suffix itself, keeping the complete
-            # status string is the only honest representation; one-line clipping
-            # remains dimensionally stable until space becomes available.
-            return suffix
-        if cell_len(base_title) <= base_budget:
-            return full_title
-
-        ellipsis = "…"
-        prefix_budget = max(0, base_budget - cell_len(ellipsis))
-        prefix = ""
-        for character in base_title:
-            candidate = f"{prefix}{character}"
-            if cell_len(candidate) > prefix_budget:
-                break
-            prefix = candidate
-        return f"{prefix}{ellipsis}{suffix}"
-
-    def _queue_active_reveal(self, section_id: str) -> None:
-        """Queue one reveal guarded by the current mode/activation token."""
-
-        self._active_reveal_token += 1
-        token = self._active_reveal_token
-        self.call_after_refresh(self._schedule_active_reveal, token, section_id)
-
-    def _schedule_active_reveal(self, token: int, section_id: str) -> None:
-        """Wait through bounded-body layout before revealing outer content."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        self.call_after_refresh(self._stage_active_reveal, token, section_id)
-
-    def _stage_active_reveal(self, token: int, section_id: str) -> None:
-        """Wait through the outer-scroll reflow before committing its offset."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        self.call_after_refresh(self._reveal_active_section, token, section_id)
-
-    def _active_reveal_is_current(self, token: int, section_id: str) -> bool:
-        """Return whether a delayed reveal still matches active fallback state."""
-
-        return bool(
-            self.is_attached
-            and token == self._active_reveal_token
-            and section_id == self._active_section_id
-            and self._last_allocation_state is not None
-            and self._last_allocation_state[0].uses_outer_scroll
-        )
-
-    def _reveal_active_section(self, token: int, section_id: str) -> None:
-        """Reveal the active header and its first content row in fallback mode."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        try:
-            outer = self.query_one("#console-left-rail-body", VerticalScroll)
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                DestinationRailSectionHeader,
-            )
-        except (NoMatches, QueryError):
-            return
-        outer.scroll_to(
-            y=max(0, header.virtual_region.y),
-            animate=False,
-            immediate=True,
-        )
-        self._update_outer_hint()
-        self.call_after_refresh(self._confirm_active_reveal, token, section_id)
-
-    def _confirm_active_reveal(self, token: int, section_id: str) -> None:
-        """Commit the transition reveal against the final outer virtual height."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        try:
-            outer = self.query_one("#console-left-rail-body", VerticalScroll)
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                DestinationRailSectionHeader,
-            )
-        except (NoMatches, QueryError):
-            return
-        outer.scroll_to(
-            y=max(0, header.virtual_region.y),
-            animate=False,
-            immediate=True,
-        )
-        self._update_outer_hint()
 
     def _update_outer_hint(self) -> None:
         """Keep the pinned outer slot blank at end and exact before end."""
@@ -1084,6 +1241,106 @@ class ConsoleLeftRail(Vertical):
             return
         self._outer_hint_text = text
         hint.update(text)
+
+    def _queue_pending_active_reveal(self) -> None:
+        """Queue one deliberate reveal after complete geometry is committed."""
+
+        pending = self._pending_active_reveal
+        self._pending_active_reveal = None
+        if pending is None:
+            return
+        generation, section_id, target_id, target_required = pending
+        self.call_after_refresh(
+            self._reveal_active_section,
+            generation,
+            section_id,
+            target_id,
+            target_required,
+        )
+
+    def _queue_active_reveal(
+        self,
+        section_id: str,
+        target: Widget | None,
+        *,
+        generation: int | None = None,
+    ) -> None:
+        """Queue one bounded reveal guarded by current activation intent."""
+
+        if generation is None:
+            self._active_reveal_generation += 1
+            generation = self._active_reveal_generation
+        self.call_after_refresh(
+            self._reveal_active_section,
+            generation,
+            section_id,
+            target.id if target is not None else None,
+            target is not None,
+        )
+
+    def _active_reveal_is_current(
+        self,
+        generation: int,
+        section_id: str,
+        target_id: str | None,
+        target_required: bool,
+    ) -> bool:
+        """Reject delayed reveals after newer intent, focus change, or unmount."""
+
+        if (
+            not self.is_attached
+            or generation != self._active_reveal_generation
+            or section_id != self._active_section_id
+        ):
+            return False
+        if target_required:
+            if target_id is None:
+                return False
+            try:
+                target = self.query_one(f"#{target_id}", Widget)
+            except (NoMatches, QueryError):
+                return False
+            if not target.is_mounted or self.app.focused is not target:
+                return False
+        return True
+
+    def _reveal_active_section(
+        self,
+        generation: int,
+        section_id: str,
+        target_id: str | None,
+        target_required: bool,
+    ) -> None:
+        """Physically reveal the active header and first complete body rows."""
+
+        if not self._active_reveal_is_current(
+            generation,
+            section_id,
+            target_id,
+            target_required,
+        ):
+            return
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}",
+                ConsoleBoundedSection,
+            )
+        except (NoMatches, QueryError):
+            return
+        if not (outer.is_mounted and header.is_mounted and bounded.display):
+            return
+        outer.scroll_to(
+            y=max(0, outer.scroll_y + header.region.y - outer.content_region.y),
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+        self._update_outer_hint()
 
     def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
         """Push one context snapshot into every scoped rail projection.
@@ -1114,6 +1371,54 @@ class ConsoleLeftRail(Vertical):
             pass
         else:
             details_tray.sync_state(state)
+        try:
+            tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            tree.star_enabled = state.workspace_marks_available
+            preferred = tree.preferred_expanded_workspace_ids
+            if not tree.workspace_nodes and self._workspace_tree_expanded_ids is None:
+                preferred = frozenset(
+                    workspace.workspace_id for workspace in state.workspace_tree
+                )
+            query_active = bool(state.workspace_query.strip())
+            if query_active and not tree.search_active:
+                tree.set_search_active(True)
+            tree.sync_projection(
+                state.workspace_tree,
+                expanded_workspace_ids=preferred,
+            )
+            if query_active:
+                tree.set_search_active(
+                    True,
+                    forced_workspace_ids={
+                        workspace.workspace_id for workspace in state.workspace_tree
+                    },
+                )
+            elif tree.search_active:
+                tree.set_search_active(False)
+            try:
+                workspace_tray = self.query_one(
+                    "#console-workspaces-context", ConsoleWorkspaceContextTray
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                cursor = tree.cursor_node
+                workspace_tray.sync_workspace_tree_context(
+                    cursor.data
+                    if cursor is not None and cursor is not tree.root
+                    else None
+                )
+            try:
+                bounded = self.query_one(
+                    "#console-bounded-section-workspace", ConsoleBoundedSection
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                bounded.request_reconcile()
         self.request_allocation_reconcile()
 
     def compose(self) -> ComposeResult:
@@ -1210,15 +1515,45 @@ class ConsoleLeftRail(Vertical):
             )
             workspace_context_tray.styles.width = "100%"
             workspace_context_tray.styles.min_width = 0
+            workspace_context_tray.styles.height = "auto"
+            workspace_context_tray.styles.max_height = 12
+            workspace_context_tray.styles.overflow_y = "hidden"
+            workspace_tree = ConsoleWorkspaceTree(id="console-workspace-tree")
+            workspace_tree.star_enabled = (
+                workspace_context_state.workspace_marks_available
+            )
+            workspace_tree.expansion_preferences_changed = (
+                self._workspace_tree_expansion_preferences_changed
+            )
+            initial_expanded = self._workspace_tree_expanded_ids
+            if initial_expanded is None:
+                initial_expanded = frozenset(
+                    workspace.workspace_id
+                    for workspace in workspace_context_state.workspace_tree
+                )
+            workspace_tree.sync_projection(
+                workspace_context_state.workspace_tree,
+                expanded_workspace_ids=initial_expanded,
+            )
+            if workspace_context_state.workspace_query.strip():
+                workspace_tree.set_search_active(
+                    True,
+                    forced_workspace_ids={
+                        workspace.workspace_id
+                        for workspace in workspace_context_state.workspace_tree
+                    },
+                )
             workspace_body = self._section_body(
                 "workspace",
                 rail_state.workspace_open,
                 frame_console_region(workspace_context_tray, variant="quiet"),
             )
+            workspace_body.styles.max_height = 12
             yield _ContextBoundedSection(
                 workspace_body,
                 section_id="workspace",
                 owner=self,
+                native_scroll_owner=workspace_tree,
             )
 
             yield self._section_header(
@@ -1490,7 +1825,11 @@ class ConsoleLeftRail(Vertical):
                 )
                 avatar_children = ()
                 if self._character_avatar_widget_builder is not None:
-                    avatar_children = (self._character_avatar_widget_builder(),)
+                    avatar_children = (
+                        self._character_avatar_widget_builder(
+                            self._character_avatar_box
+                        ),
+                    )
                 avatar_holder = ClickableAvatarBox(
                     *avatar_children,
                     id="console-character-avatar",
@@ -1498,6 +1837,13 @@ class ConsoleLeftRail(Vertical):
                 # task-1661: hug the image instead of claiming the rail.
                 avatar_holder.styles.width = "auto"
                 avatar_holder.styles.height = "auto"
+                avatar_frame = Horizontal(
+                    avatar_holder,
+                    id="console-character-avatar-frame",
+                )
+                avatar_frame.styles.width = "100%"
+                avatar_frame.styles.height = "auto"
+                avatar_frame.styles.align_horizontal = "center"
                 character_name = Static(
                     self._character_avatar_name,
                     id="console-character-name",
@@ -1524,7 +1870,7 @@ class ConsoleLeftRail(Vertical):
                 character_body = self._section_body(
                     "character",
                     rail_state.character_open,
-                    avatar_holder,
+                    avatar_frame,
                     character_name,
                     reaction_state,
                     reaction_button,
@@ -1575,13 +1921,24 @@ class ConsoleLeftRail(Vertical):
             event.stop()
             self.post_message(self.ReactionPickerRequested())
             return
+        if button_id == "console-workspace-tree-star":
+            event.stop()
+            workspace_id = getattr(event.button, "workspace_id", None)
+            conversation_id = getattr(event.button, "conversation_id", None)
+            if workspace_id and conversation_id:
+                self.post_message(
+                    WorkspaceTreeStarRequested(
+                        workspace_id,
+                        conversation_id,
+                        starred=bool(getattr(event.button, "starred", False)),
+                    )
+                )
+            return
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             return
         event.stop()
+        self.screen.set_focus(event.button)
         section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
-        was_constrained = section_id in self._no_room_section_ids
-        if was_constrained:
-            return
         try:
             header = self.query_one(
                 f"#console-rail-section-header-{section_id}",
@@ -1592,6 +1949,49 @@ class ConsoleLeftRail(Vertical):
         else:
             opened = not header.open
         self.post_message(self.SectionToggled(section_id=section_id, opened=opened))
+        self.call_after_refresh(self._restore_section_toggle_focus, button_id)
+
+    def _restore_section_toggle_focus(self, button_id: str) -> None:
+        """Retain pointer focus after the toggle's layout reconciliation."""
+
+        focused = self.app.focused
+        if focused is not self and getattr(focused, "id", None) != button_id:
+            return
+        try:
+            button = self.query_one(f"#{button_id}", Button)
+        except (NoMatches, QueryError):
+            return
+        if self._is_enabled_focus_target(button):
+            self.screen.set_focus(button)
+
+    def on_workspace_tree_context_changed(
+        self, event: WorkspaceTreeContextChanged
+    ) -> None:
+        """Project the native cursor into the visible contextual action."""
+
+        event.stop()
+        try:
+            tray = self.query_one(
+                "#console-workspaces-context", ConsoleWorkspaceContextTray
+            )
+        except (NoMatches, QueryError):
+            return
+        tray.sync_workspace_tree_context(event.data)
+
+    def on_workspace_tree_focus_recovery_requested(
+        self, event: WorkspaceTreeFocusRecoveryRequested
+    ) -> None:
+        """Return focus to the Workspaces disclosure when its Tree empties."""
+
+        event.stop()
+        try:
+            disclosure = self.query_one(
+                f"#{RAIL_SECTION_TOGGLE_PREFIX}workspace",
+                Button,
+            )
+        except (NoMatches, QueryError):
+            return
+        disclosure.focus()
 
     def sync_sections(self, rail_state: ConsoleRailState) -> None:
         """Apply section open flags to section bodies and headers.
@@ -1616,7 +2016,8 @@ class ConsoleLeftRail(Vertical):
     def apply_section_open(self, section_id: str, section_open: bool) -> None:
         """Sync one section's body display and header glyph to an open state.
 
-        Moved verbatim from ``ChatScreen._apply_console_rail_section_open``.
+        Preserves the extracted screen behavior while hiding the bounded owner
+        with its body so native local-scroll state survives collapse/reopen.
 
         Args:
             section_id: The section's id (e.g. ``"session"``), used to
@@ -1631,10 +2032,19 @@ class ConsoleLeftRail(Vertical):
                 f"#console-rail-section-header-{section_id}",
                 DestinationRailSectionHeader,
             )
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
         except (NoMatches, QueryError):
             return
         body.styles.display = "block" if section_open else "none"
+        # Hide the same bounded owner along with its body. Its reconcile path
+        # deliberately preserves scroll state while hidden, so reopening can
+        # clamp the prior local offset against the newly measured geometry.
+        bounded.styles.display = "block" if section_open else "none"
         header.sync_open(section_open)
         if not section_open and self._active_section_id == section_id:
             self.recover_section_focus(section_id)
+        elif section_open:
+            bounded.request_reconcile()
         self.request_allocation_reconcile()

@@ -1,9 +1,10 @@
 ---
 id: TASK-19639
 title: Keep Console workspace geometry inside the viewport at exactly 100 columns
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-20 07:07'
+updated_date: '2026-08-22 17:40'
 labels:
   - console
   - ux
@@ -19,7 +20,6 @@ Prevent the reproduced exact-100-column Console rail state from expanding the gr
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [x] #1 At exactly 100x30, all four stored Context/Inspector open-state combinations keep every displayed Console workspace child within the viewport; the default Context-only state gives `#console-main-column` at least 55 allocated columns and every state gives `#console-native-transcript` at least 40 readable content columns excluding borders and padding.
 - [x] #2 Effective rail priority, compact overrides, responsive focus handoff, selected-message and transcript-anchor state, stored preferences, and the 70/74-column usable-transcript floors remain consistent with ADR-043; cold start and responsive resize make no preference-save call.
@@ -27,12 +27,6 @@ Prevent the reproduced exact-100-column Console rail state from expanding the gr
 - [x] #4 Production-CSS Textual compositor regressions prove the exact-100 cold-start failure and the 101→100 live-resize failure, cover both directions across 99/100/101, and are mutation-checked independently against the inclusive override and exact-100 resize-boundary corrections.
 - [x] #5 The change is terminal-specific and does not alter TASK-18911's phone, pointer, hover, or served-browser ownership.
 <!-- AC:END -->
-
-## Design
-
-<!-- SECTION:DESIGN:BEGIN -->
-Approved design: `Docs/superpowers/specs/2026-08-20-task-19639-console-exact-100-column-containment-design.md`.
-<!-- SECTION:DESIGN:END -->
 
 ## Implementation Plan
 
@@ -58,13 +52,19 @@ Reason: direct defect correction within ADR-043's existing minimum-width-waiver 
 <!-- SECTION:NOTES:BEGIN -->
 - Corrected the Context compact boundary so the preferred default remains effectively open at exactly 100 columns and receives layout-minimum-waiver authority, while widths below 100 still collapse the default without rewriting preference. Added a distinct exact-100 resize band and cleared stale Context waiver authority when Inspector wins rail priority. The persisted-preference, explicit-toggle, 70/74 usable-transcript-floor, and ADR-043 priority contracts are unchanged.
 - Production-CSS compositor coverage separates the two geometry metrics required by the design: the default Context-only state allocates at least 55 columns to `#console-main-column`, while the native transcript retains at least 40 readable content columns in every state. The cold matrix covers Context-only, both closed, Inspector-only, and the both-open Inspector-priority conflict at first paint and settled state. Live coverage exercises all four adjacent transitions (101→100, 100→101, 99→100, and 100→99) and preserves responsive focus handoff, selected message, detached/tail-follow state, raw anchor flags, reading offset, stored rail intent, and zero preference-save calls.
-- Modified functionality files: `tldw_chatbook/Chat/console_rail_state.py`, `Tests/Chat/test_console_rail_state.py`, and `Tests/UI/test_console_shell_regions.py`. `tldw_chatbook/UI/Screens/chat_screen.py` received geometry/ADR comment corrections only. No CSS was changed by the committed task implementation; the CSS-integrity check's generated timestamp rewrite was restored before final review.
+- Modified functionality files: `tldw_chatbook/Chat/console_rail_state.py`, `Tests/Chat/test_console_rail_state.py`, and `Tests/UI/test_console_shell_regions.py`. `tldw_chatbook/UI/Screens/chat_screen.py` received geometry/ADR comment corrections only. Closeout mechanically normalized the two inherited Ruff-format drifts; parsed ASTs remain identical to `origin/dev`, and `chat_screen.py` remains at the same 20,486-line baseline rather than growing the architecture ratchet.
 - Mutation evidence from committed work: removing the inclusive waiver made the cold matrix 1 failed/3 passed before green 4; the compose-only first-paint mutation exposed the old oracle's false-green 4, then the strengthened oracle produced red 3/1 and green 4; removing the exact-width band made 101→100 fail before green 4; sabotaging transcript population made 101→100 fail with `max_scroll_y == 0 < 2` before green 4.
-- Fresh scoped verification: import provenance `1 passed, 1 warning in 0.37s` and resolved `tldw_chatbook/__init__.py` to this worktree; focused rail/shell/resize/compact-access/width-budget behavior `136 passed, 2 warnings in 149.12s`; production CSS build integrity `10 passed, 1 warning in 1.53s`; `git diff --check` passed. AST comparison from `52f03ef5c` to `HEAD` was identical for all four scoped Python files, proving the subsequent correction commits were comment-only.
-- Exact four-file static evidence is not green: `ruff check` exits 1 for the pre-existing unused `inspect` import at `chat_screen.py:8` (`F401`, one fixable error); `ruff format --check` exits 1 because it would reformat `console_rail_state.py` and `chat_screen.py` (two test files already formatted). These baselines were recorded without suppression or out-of-scope edits.
+- The closeout gate exposed a post-TASK-19428 one-cell regression at the 30-column rail minimum: the outer stable gutter, new section-local stable gutter, and symmetric body padding left 22 content cells for the documented 13+10 Workspace row. The bounded section now keeps its one-cell left indent and relies on the local gutter for right separation; the canonical CSS bundle was rebuilt. The pre-fix width test failed both 140x42 and 160x48 cases, then passed both after the single padding correction.
+- Fresh scoped verification: import provenance `1 passed, 1 warning`; the final related-only behavior/CSS/backlog gate `156 passed, 2 warnings`; expanded bounded-rail compositor geometry also passed within an earlier `18 passed, 1 baseline failure, 2 warnings` governance gate. The only failure is the pre-existing `chat_screen.py` architecture ceiling (20,486 lines versus 17,727), unchanged in line count from `origin/dev`. Exact four-file Ruff check and Ruff format check now pass, and `git diff --check` passes.
 - ADR required: no. Reused ADR-043 (`backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`) because the correction stays inside its responsive-priority and persistence boundary. No new reusable incident was produced beyond existing testing/backlog lessons, so no lessons entry was added.
-- Verification was intentionally limited to changed functionality at user direction; repository-wide governance, architecture, and full-suite gates are not part of this evidence. Status remains **In Progress** despite all acceptance criteria being supported because the repository Definition of Done requires green linter/formatter gates, and the exact scoped Ruff commands still reproduce the baselines above.
+- Verification was intentionally limited to changed functionality at user direction; no repository-wide test suite was run. All acceptance criteria and task-owned static gates are green, so the task is **Done**.
 <!-- SECTION:NOTES:END -->
+
+## Design
+
+<!-- SECTION:DESIGN:BEGIN -->
+Approved design: `Docs/superpowers/specs/2026-08-20-task-19639-console-exact-100-column-containment-design.md`.
+<!-- SECTION:DESIGN:END -->
 
 ## Renumbering provenance
 

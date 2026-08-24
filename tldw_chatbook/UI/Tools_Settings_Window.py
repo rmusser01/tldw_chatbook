@@ -78,6 +78,7 @@ from tldw_chatbook.config import (
     get_subscriptions_db_path,
     get_user_data_dir,
     coerce_bool_setting,
+    load_console_library_migration_seed,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -6320,7 +6321,11 @@ class ToolsSettingsWindow(Container):
                 return
 
             if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                db = CharactersRAGDB(
+                    str(chachanotes_path),
+                    "export_operation",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
                 conversations = db.list_all_active_conversations(limit=10000)
 
                 export_path = export_dir / f"conversations_{timestamp}.json"
@@ -6387,7 +6392,11 @@ class ToolsSettingsWindow(Container):
             # Export from ChaChaNotes database
             chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path and chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                db = CharactersRAGDB(
+                    str(chachanotes_path),
+                    "export_operation",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
                 notes = db.list_notes(limit=10000)
 
                 for note in notes:
@@ -6463,7 +6472,11 @@ class ToolsSettingsWindow(Container):
             # Export from ChaChaNotes database
             chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path and chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                db = CharactersRAGDB(
+                    str(chachanotes_path),
+                    "export_operation",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
                 # A backup must contain the avatar image, so opt into the
                 # image-bearing projection (task-15474 made image-free the
                 # default) and serialize through the BLOB-safe helper

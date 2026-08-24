@@ -42,23 +42,22 @@ default limit — the banner shows whatever your configured limit is.
 **Sessions section** (left rail). Names the active conversation ("None" when
 no conversation is active yet); hover the value to see its durable id.
 
-**Workspaces section** (left rail). Shows "Workspace" plus the active
-workspace name, with "Switch", "New", and "RAG Scope" buttons. "RAG Scope"
-narrows retrieval to this workspace's items — see
-[Context & RAG](context-and-rag.md).
+**Workspaces section** (left rail). Shows the active workspace on one compact
+line, keeps **Switch**, **New**, and **RAG** together, and renders every
+named workspace in a native Tree with its conversations as children. The
+built-in Default workspace is intentionally absent from the Tree; **Switch**
+is the route to it. **RAG** narrows retrieval to the active workspace's
+items — see [Context & RAG](context-and-rag.md).
 
-**Conversations section** (left rail). A "Search conversations" box with a
-"Clear" button, a "New conversation" button, and three collapsible groups:
-"Starred", "Workspaces", and "Chats".
-Empty groups start collapsed as quiet one-line headers — expand one to see
-its empty copy (for example "No starred conversations."); while you search,
-groups with no matches stay expanded so the "No ... conversations." feedback
-stays visible. Each row shows the conversation title
-plus a secondary line of `<workspace> - <state> - <age>` (for example
-"Chats - active session - 1m"), and ends with a star toggle ("☆" / "★").
+**Conversations section** (left rail). A separate **Search conversations**
+box with **Clear**, a **New conversation** button, and a flat list containing
+only Default-workspace and unassigned conversations. A conversation assigned
+to a named workspace appears under that workspace in the Tree instead, never
+in both places. Starred entries sort first inside their one owner; starring is
+a property and action, not a duplicate Starred group.
 
 **Details section** (left rail, collapsed by default). Status lines for
-"Storage", "Sync", "File tools", "Server", and "ACP", plus a "Handoff" list.
+"Storage", "Sync", "Local file tools", "Server", and "ACP", plus a "Handoff" list.
 On a local-only setup the server lines collapse into one line:
 "Server features (sync, handoff, ACP): not configured. Chats stay local."
 
@@ -85,15 +84,14 @@ filter, press Enter to activate the top result, or move through results with
 ↑/↓ and press Enter (or click) on the one you want. F2 renames the
 highlighted result when it is an open tab. Esc cancels.
 
-### Conversation browser
+### Conversations (Default and unassigned)
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters the row list, settling about a fifth of a second after you stop typing; "Clear" resets it immediately |
+| "Search conversations" + "Clear" | Filters only Default and unassigned conversations; "Clear" resets it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
-| "Starred" / "Workspaces" / "Chats" | Groups; click a header's ▸/▾ toggle to expand or collapse |
 | Conversation row | Click to open it in the Console |
-| "☆" / "★" | Stars or unstars the conversation — starred rows collect under "Starred" |
+| "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
 
 ### Workspaces
 
@@ -103,7 +101,17 @@ highlighted result when it is an open tab. Esc cancels.
 | "New" | Opens the "New Workspace" dialog — see below |
 | "Rename" (in the switcher) | Opens "Rename Workspace" — edit the name, then "Save" |
 | "Archive" (in the switcher) | Opens "Archive workspace?" — "Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." Confirm with "Archive" |
-| "RAG Scope" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+| "RAG" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+| "Search workspaces" | Searches named workspace names and their associated conversation titles independently of Conversations search; delete the query to clear it |
+| Workspace disclosure marker / Space | Expands or collapses that workspace without changing the selected workspace |
+| Workspace or conversation label / Enter | Selects the workspace or opens the conversation; Right expands or enters children, Left collapses or returns to the parent |
+| Up/Down, Page Up/Page Down, Home/End | Navigates and pages the native Tree |
+| "Load more…" / "Retry" | Loads the next bounded page for that workspace or retries a failed page without discarding settled children |
+| "Star" / "Unstar" or `s` on a conversation leaf | Changes its starred property in place; starred leaves sort first inside that workspace |
+
+Workspaces search can reveal matching conversation results whose parent branch
+was closed. Those temporary disclosure changes are discarded when the search
+is cleared, restoring the exact disclosure state from before the search.
 
 **The "New Workspace" dialog** is the same creation dialog Settings ▸
 Workspaces and Library use. It opens with a **name** prefilled "Workspace N"
@@ -141,18 +149,34 @@ Alt+W.
 
 ### Session project folders
 
+Every live Console Chat starts with its own private temporary scratch space.
+Creating or sending a Chat never asks for a folder. Relative local file-tool
+paths use that scratch space, and closing then reopening a saved conversation
+starts with a new empty scratch space. Scratch is removed with ordinary
+best-effort deletion; it is not secure erase, and a hard process or OS crash
+can leave unreferenced temporary residue that later Chatbook processes never
+discover or attach.
+
+A named Workspace may add explicit folder bindings to its Chat's private
+scratch authority. Folders are optional: a Workspace without one still works
+with scratch only. Built-in file tools can use private scratch plus the
+Workspace's live bound folders. Local `fs_*` and Git tools use private scratch
+unless project instructions explicitly select one binding; that selected
+binding then remains their single working root and keeps its read-only or
+read-write guard.
+
 Project instructions are local per-session state. A new session starts
 enabled and asks you to choose when more than one eligible local-filesystem
 binding exists; exactly one eligible binding may be selected. That binding is
-both the instruction authority root and the working directory for local and
-built-in file/git tools. Chatbook never searches global or personal
+both the instruction authority root and the working directory for local
+`fs_*` and Git tools. Chatbook never searches global or personal
 instruction files and never ascends above the selected root.
 
-Legacy sessions and sessions where project instructions are disabled keep the
-older local-tool behavior: `[console] workspace_root` is the confinement root,
-or the app's startup working directory when it is empty. A selected
-project-instruction binding takes precedence over that fallback only while the
-feature is enabled for that session. Bindings marked read-only expose only
+When project instructions are disabled or no project folder is selected, local
+`fs_*` and Git tools return to this Chat's private scratch space. The legacy
+`[console] workspace_root` setting remains available to non-Console callers;
+it never grants a Console Chat access, and Console does not fall back to the
+app's startup working directory. Bindings marked read-only expose only
 read-capable tools. Folder names and instruction contents are not synchronized;
 the local control fields stay with the local conversation record.
 
@@ -166,11 +190,15 @@ the file that records which tools you approved.
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:
-"Storage" (local database status), "Sync", "File tools", "Server", and "ACP"
+"Storage" (local database status), "Sync", "Local file tools", "Server", and "ACP"
 lines (for example "Sync: Off", "Server: Not configured"), and a "Handoff"
 list that reads "No handoff package is ready." until a handoff package
 exists. If none of the server features are configured, the section shows the
 single summary line quoted in the layout tour instead.
+
+For Chats, the file row reads **Private scratch**. A named Workspace with live
+folder bindings reads **Private scratch + N folders**. A missing binding is
+reported separately instead of making the scratch status look unavailable.
 
 ## Common tasks
 
@@ -182,6 +210,10 @@ single summary line quoted in the layout tour instead.
 3. Switch back with Alt+1 (or click the first tab). A ● marker on the other
    tab means its run is still going; ✓ means it finished while you were away.
 
+Each tab's private scratch is independent. A relative file created in one Chat
+is absent from the other, even when both tabs resume the same saved
+conversation.
+
 **Rename a tab**
 
 1. Click the tab to make it active (skip if it already is).
@@ -192,14 +224,18 @@ single summary line quoted in the layout tour instead.
 
 1. Press Ctrl+K, type a few characters of the title, and press Enter to open
    the top match — or,
-2. In the left rail, type into "Search conversations" and click the row you
-   want under "Starred", "Workspaces", or "Chats".
+2. For a named-workspace conversation, search in **Workspaces**, disclose its
+   parent if needed, and select the conversation leaf.
+3. For a Default or unassigned conversation, search in **Conversations** and
+   select its flat row.
 
 **Star a conversation**
 
-1. Find its row in the "Conversations" browser.
-2. Click the "☆" at the end of the row. It becomes "★" and the conversation
-   is pinned under "Starred". Click "★" to unstar.
+1. Find it under its named workspace in the Tree, or in the flat
+   **Conversations** list when it belongs to Default or no workspace.
+2. Use **Star**/**Unstar** (or press `s` while its Tree leaf has the cursor),
+   or click the flat row's "☆"/"★" control. The row stays in the same owner
+   and moves within that owner's starred-first order.
 
 **Create and switch to a new workspace**
 
@@ -267,6 +303,8 @@ nothing is created, no matter what you had typed or added.
 - A brand-new conversation can't be starred until it has been sent or saved —
   the star's tooltip says "Send or save this conversation before starring."
 - The Default workspace can't be renamed or archived.
+- Chats never require a folder. Use a named Workspace only when local file
+  tools need access outside private scratch.
 - Launching the app from inside a project with a `.SKILLS/` folder can pop
   its own import prompt on startup, separately from anything workspace- or
   tab-related — see [Project skills](../library/skills.md#project-skills-skills).
@@ -290,3 +328,6 @@ the registry; Console now reconciles its own session against it on the
 next resume instead of staying stale until an in-Console switch, so the
 Default-workspace paragraph above gained a one-sentence note on that; the
 rest of this page's content unchanged from the prior stamp).*
+*Reconciled against the TASK-20937 native Workspace Tree and exclusive
+Default/unassigned ownership implementation — 2026-08-23. Same-cell iTerm2
+and Windows Terminal verification remains tracked by TASK-20937.6.*

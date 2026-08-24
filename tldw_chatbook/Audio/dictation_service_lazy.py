@@ -1376,13 +1376,22 @@ class LazyLiveDictationService:
             return []
 
     def set_buffer_duration(self, duration_ms: int):
-        """Set audio buffer duration dynamically."""
+        """Set audio buffer duration dynamically (in-memory only).
+
+        task-21124: this used to ALSO write `dictation.buffer_duration_ms`
+        to config.toml synchronously -- a full read-rewrite-reload cycle
+        holding the global config write lock, fired once per parsing
+        keystroke from `Dictation_Window_Improved.on_input_changed` (its
+        caller), and once more on every service init. Persistence of this
+        exact key already belongs to the owning widget, which batches it
+        into its debounced task-15470 settings snapshot (with an unmount
+        flush) -- the write here was a duplicate that turned each keystroke
+        into an event-loop config rewrite. The service now only updates its
+        in-memory value.
+        """
         self.buffer_duration_ms = max(
             100, min(2000, duration_ms)
         )  # Clamp between 100-2000ms
-        save_setting_to_cli_config(
-            "dictation", "buffer_duration_ms", self.buffer_duration_ms
-        )
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):

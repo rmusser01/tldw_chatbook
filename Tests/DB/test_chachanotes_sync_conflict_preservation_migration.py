@@ -6,12 +6,11 @@ it, so the discarded text was unrecoverable. This migration adds the three
 columns (``losing_side``, ``losing_content``, ``preserved_file_path``) that
 make the row a real second copy behind the on-disk sidecar.
 
-This module also carries the repo's EXACT current-schema-version pin, which
-moved here from ``test_chachanotes_message_exchanges.py`` when v44 landed:
-the pin belongs to the newest migration's own file, so a schema bump touches
-the file that caused it rather than an unrelated older one (older files assert
-``>= their own version`` instead). Updating the number here is a deliberate
-schema-review act.
+This module owns only the v43→v44 floor. The repo's exact current-schema-version
+pin now lives in
+``test_chachanotes_console_library_policy_migration.py::test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows``.
+The newest migration owns that deliberate exact assertion while older modules
+remain valid at or beyond their own version.
 """
 
 from __future__ import annotations
@@ -21,7 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
@@ -49,10 +51,16 @@ def db(tmp_path: Path):
     instance.close_connection()
 
 
-def test_schema_version_is_44(db):
-    """The one exact current-version pin (see this module's docstring)."""
-    assert _version(db.get_connection()) == 44
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 44
+def test_schema_version_includes_v44_preservation(db):
+    """This migration's own floor, not a current-schema pin.
+
+    The exact ``==`` pin belongs to the NEWEST migration's own test file
+    (TASK-19554's convention, repaired by TASK-19568), so it has moved on past
+    this one twice now; an older file asserts only that its own step is
+    present. Kept as ``>=`` so a schema bump touches the file that caused it.
+    """
+    assert _version(db.get_connection()) >= 44
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 44
 
 
 def test_fresh_schema_has_the_preservation_columns(db):
@@ -65,7 +73,7 @@ def test_fresh_schema_has_the_preservation_columns(db):
 
 
 def test_migrate_from_v43_to_v44_requires_version_43(db):
-    """A fresh DB is already at 44, so re-entering the step must refuse."""
+    """A fresh DB is already past v44, so re-entering the step must refuse."""
     with pytest.raises(SchemaError, match="requires schema version"):
         db._migrate_from_v43_to_v44(db.get_connection())
 
@@ -100,7 +108,9 @@ def test_upgrade_from_a_real_v43_database_adds_the_columns(tmp_path: Path):
                 """
             )
 
-    migrated = CharactersRAGDB(db_path, client_id="v44-upgrade")
+    migrated = open_current_chachanotes_from_legacy(
+        db_path, client_id="v44-upgrade"
+    )
     try:
         connection = migrated.get_connection()
         # Dynamic, not a literal 44: this reopen is UNPATCHED, so it replays
@@ -108,7 +118,8 @@ def test_upgrade_from_a_real_v43_database_adds_the_columns(tmp_path: Path):
         # here made a schema bump red this test on version arithmetic and
         # short-circuit the column/row assertions below it -- the exact shape
         # task-19568 removed from the persona-visual migration test. The one
-        # deliberate exact pin stays in ``test_schema_version_is_44``.
+        # deliberate exact pin now lives in
+        # ``test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows``.
         assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         columns = _columns(connection)
         for name in NEW_COLUMNS:
@@ -143,7 +154,9 @@ def test_upgrade_is_re_enterable_after_a_half_applied_run(tmp_path: Path):
     finally:
         connection.close()
 
-    migrated = CharactersRAGDB(db_path, client_id="v44-reentry")
+    migrated = open_current_chachanotes_from_legacy(
+        db_path, client_id="v44-reentry"
+    )
     try:
         # Dynamic for the same reason as the sibling test above: the reopen
         # is unpatched, so the literal would red on the next schema bump and

@@ -3,7 +3,7 @@ id: TASK-19574
 title: >-
   A test clones 1 GiB from GitHub with no cleanup, vendored trees carry no
   provenance, and the repo is 47 GiB with gc suppressed
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-21 20:27'
 labels:
@@ -106,15 +106,17 @@ to remove them."*
 
 ## Acceptance Criteria
 
-- [ ] `Tests/Chunking/test_sync_script.py` **skips** when its source clone is
+- [x] `Tests/Chunking/test_sync_script.py` **skips** when its source clone is
       absent; it never initiates a network clone from inside a test
-- [ ] Any temporary clone the sync script creates is removed on both success
+- [x] Any temporary clone the sync script creates is removed on both success
       and failure paths
 - [ ] The test cannot leave a corrupted vendored tree if it dies mid-run
+      (partially addressed — see Implementation Notes for the residual risk)
 - [ ] The 3.9 GiB of leaked clones under `TMPDIR` are removed **after** being
       confirmed as leaked temp clones (inspect, then delete — do not glob-delete)
-- [ ] The default source path moves off `/private/tmp`, per the standing rule
-- [ ] The six copies of the vendor pin are reduced to one source of truth, or a
+      (inspected and reported, NOT deleted — see Implementation Notes)
+- [x] The default source path moves off `/private/tmp`, per the standing rule
+- [x] The six copies of the vendor pin are reduced to one source of truth, or a
       test cross-checks them; a documented upgrade path exists for bumping it
 - [ ] `Third_Party/` gains provenance: upstream URL and a **commit SHA** per
       vendored tree, and a drift test that fails when a vendored file diverges
@@ -128,3 +130,217 @@ to remove them."*
 - [ ] The 12 dirty-but-merged worktrees are individually inspected and their
       owners consulted before anything is removed
 - [ ] Before/after sizes are recorded
+
+## Implementation Plan
+
+This pass scopes to the description's **A** section (the leaking test/clone)
+plus the six-copy vendor-pin duplication called out at the end of A. The
+Third_Party/ provenance work (description's B) and repo-hygiene work
+(description's C — `rr-cache`, worktree pruning, `gc.log`) are explicitly
+out of scope for this pass; task stays **In Progress** rather than Done.
+
+1. Reproduce born-red: with `subprocess.run` monkeypatched (no real clone),
+   confirm the CURRENT `test_sync_script.py::_run_sync()` builds a command
+   with no `--source` when the source path is absent — i.e. it would fall
+   through to the script's no-arg network-clone path.
+2. Fix `Tests/Chunking/test_sync_script.py`: remove the `/tmp/tldw_server_sync`
+   default (moves the default off `/private/tmp` entirely — no default at
+   all), and make `test_sync_idempotent_and_rejects_local_edits` `pytest.skip`
+   explicitly when `TLDW_SERVER_SYNC_SOURCE` is unset or the path doesn't
+   exist, instead of silently falling through.
+3. Fix `Helper_Scripts/sync_chunking_engine.py`: wrap the no-arg temp-clone
+   path in `try`/`finally` so `shutil.rmtree` always removes it (success,
+   loud `sys.exit`, or an uncaught exception). Split the vendored-file and
+   ported-test write loops into validate-then-write passes (mirroring the
+   existing step-1 local-modification check) so a FATAL patch-anchor failure
+   can't happen mid-write.
+4. Prove cleanup on both the success path and a forced mid-sync failure path,
+   with everything network-related mocked and all writes redirected to an
+   isolated sandbox (never touching the real vendored tree).
+5. Run the real end-to-end sync against a local `tldw_server` worktree at the
+   pin (no network — the commit is already present in a local `tldw_server2`
+   checkout) to confirm the refactor doesn't change output.
+6. Investigate the "six authoritative pin copies" claim: confirm they are
+   actually TWO independent pins (Chunking vendoring vs. Samira visual-identity
+   compatibility) that coincidentally share one value today. Add a guard test
+   cross-checking each cluster against its own designated source of truth,
+   plus a documented upgrade path for bumping either one.
+7. Bite-proof the guard: mutate one copy in each cluster, confirm the
+   corresponding (and only that) test reds, Edit-restore, confirm clean diff.
+8. Inspect and report leaked clones under `$TMPDIR` — do not delete.
+9. Run `Tests/Chunking/`, the new guard test, and a repo-wide
+   `--collect-only` sweep; hand-edit this task file (no `backlog` CLI on a
+   five-digit id).
+
+## Implementation Notes
+
+**Scope.** This pass covers the leaking-test/clone problem and the
+vendor-pin-duplication guard only. `Third_Party/` provenance and repo-hygiene
+(rr-cache/worktree pruning/gc.log) are untouched — separate work, left To Do
+on this same task; status stays In Progress rather than Done since not all
+ACs are met.
+
+**A — test skip + script cleanup.**
+- `Tests/Chunking/test_sync_script.py`: `SOURCE` no longer defaults to
+  `/tmp/tldw_server_sync` (a `/private/tmp` path — the standing rule is never
+  to keep work there). It now reads only `TLDW_SERVER_SYNC_SOURCE`.
+  `test_sync_idempotent_and_rejects_local_edits` (the only caller of
+  `_run_sync()`) `pytest.skip`s with an actionable message when that path is
+  unset or absent; `_run_sync()` itself now asserts the source exists rather
+  than silently omitting `--source`, so this module can never trigger the
+  no-arg network-clone path from any test.
+  Born-red proof (against the unedited file, `subprocess.run` monkeypatched
+  so nothing real ran): absent source → `_run_sync()` built
+  `[python, sync_chunking_engine.py]` with no `--source` — confirmed the
+  vulnerable fallthrough existed, including on THIS machine right now (the
+  local reference worktree the review's snapshot referenced,
+  `/private/tmp/tldw_server_sync`, is gone as of this session — probably
+  reaped by the same tmp cleaner the standing rule warns about).
+- `Helper_Scripts/sync_chunking_engine.py`: chose to make the script clean up
+  after itself (a `finally: shutil.rmtree(tmp, ignore_errors=True)` around the
+  whole sync flow) rather than relying solely on the test-level fix, since the
+  script is invoked outside tests too and every other caller was equally
+  exposed to the leak. `SystemExit` (the script's own `sys.exit(...)` FATAL
+  path) still runs `finally`, so both the happy path and a loud failure clean
+  up. Also split the two write loops (vendored-file copy, step 2; ported-test
+  copy, step 4) into validate-then-write passes, matching the pattern the
+  existing step 1 (local-modification check) already used for the vendored
+  files: every output is computed first (a missing patch anchor can still
+  FATAL here, e.g. on a first-time sync of a newly-vendored file with no
+  local copy for step 1 to diff against), and only written once the full set
+  succeeds. This closes the most likely real trigger for "crash mid-test
+  corrupts the tree" (a `_fail()`/`sys.exit` firing partway through a write
+  loop) but does **not** make the write itself atomic — a true `kill -9` or
+  power loss mid-write-loop can still leave a partial tree; a full
+  transactional swap (write to staging dir, then rename into place) would be
+  needed to close that residual gap and was judged out of proportion for this
+  pass, hence that AC is left unticked with this caveat rather than claimed.
+  Cleanup proof: a sandboxed harness (writes redirected via `TARGET_ROOT`/
+  `TARGET_TESTS_ROOT` monkeypatch, `subprocess.run` replaced with an
+  in-process fake — no real clone/network at any point) exercised both the
+  success path and a forced mid-sync FATAL (missing upstream file), and
+  confirmed no `tldw_server_sync_*` temp dir survived either scenario.
+  A real end-to-end run against a local `tldw_server` worktree at the pin
+  (created from the pre-existing local `~/Documents/GitHub/tldw_server2`
+  checkout, which already had the pin commit — no network touched) confirmed
+  the refactor is byte-identical: `Tests/Chunking/test_sync_script.py` 10/10
+  passed, `git status` clean afterward (idempotent re-sync).
+- **Leaked clones found, NOT deleted (owner's call):** 17 directories under
+  `$TMPDIR` (`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/`), each 1.0
+  GiB, **17 GiB total** — worse than the review's 4/3.9 GiB snapshot, and all
+  dated *today* (18:47–21:06), confirming other concurrent sessions on this
+  machine kept hitting the bug throughout the day:
+  `tldw_server_sync_{te2lh67f,0bcgwtmx,lj_0wrm8,9uskt8c1,5ty_150w,hwyawdaj,
+  mp3v13pz,hddj3sqk,uyp403d9,34uk7snw,p6g2i9cn,h3wg9z7c,vsuoltrq,8pi4b5ux,
+  vd4394v7,v9xrvg2o,eel_6wvp}`.
+
+**B (pin duplication) — cross-check guard.** Investigated the "six
+authoritative places" claim: they are actually **two independent pins**
+that happen to share one commit SHA today — the Chunking-engine vendoring
+pin (code copied from `app/core/Chunking`) and the Samira visual-identity
+compatibility pin (`app/core/Visual_Identities/expression_slots.py`
+normalization contract + bundled asset pack). Nothing requires them to move
+together, so the new guard (`Tests/Architecture/test_vendor_pin_consistency.py`)
+does **not** assert cross-cluster equality — only that every hand-maintained
+copy in each cluster agrees with that cluster's own source of truth:
+`Helper_Scripts/sync_chunking_engine.py`'s `PIN` for Chunking (checked
+against `VENDOR_MANIFEST.toml` and `test_sync_script.py`'s own `PIN`), and
+`Character_Chat/visual_identity.py`'s `SAMIRA_SERVER_COMMIT` for Samira
+(checked against its own docstring comment, `visual_identity_pack.json`'s
+two fields, and `test_visual_identity_contract.py`'s hardcoded literal). The
+module docstring documents the upgrade path for bumping either pin. The
+further ~19 copies scattered across `backlog/` decision records and
+`Docs/superpowers/` planning docs are deliberately excluded — they are
+point-in-time historical snapshots, not live configuration; rewriting them on
+every future pin bump would misrepresent history.
+Bite-proof: mutated `VENDOR_MANIFEST.toml`'s `commit` (Chunking cluster) —
+exactly `test_vendor_manifest_matches_sync_script_pin` reddened, the other 6
+guard tests stayed green; Edit-restored, `git diff` clean. Repeated for
+`visual_identity_pack.json`'s `source_server_commit` (Samira cluster) —
+exactly `test_samira_pack_matches_visual_identity_pin` reddened; Edit-restored,
+`git diff` clean.
+
+**Verification.** `Tests/Chunking/` (no `TLDW_SERVER_SYNC_SOURCE`): 600
+passed, 26 skipped (incl. the new explicit skip), 1 xfailed, **2 pre-existing
+failures unrelated to this change** (`test_process_text_tokenizer_override`,
+`test_golden_parity[tokens-cjk]` — both fail on this machine's stale/missing
+real gpt2 tokenizer cache reaching out to huggingface.co; `git diff origin/dev`
+on the touched files is empty, confirming they're environmental, not caused
+by this branch). `Tests/Architecture/test_vendor_pin_consistency.py`: 7/7
+passed. Repo-wide `--collect-only -q`: 56862 tests collected, 1 collection
+error — `Tests/UI/test_library_file_notes_workspace.py` (TASK-20972, a
+pre-existing dev red, not from this branch).
+
+**Files changed:**
+- `Tests/Chunking/test_sync_script.py`
+- `Helper_Scripts/sync_chunking_engine.py`
+- `Tests/Architecture/test_vendor_pin_consistency.py` (new)
+
+**Follow-up.** `Third_Party/` provenance (upstream URL + commit SHA + drift
+test for `aider`/`textual_fspicker`, and the wrong `repomap.py:1` comment) and
+repo hygiene (rr-cache expiry, merged-worktree pruning, clearing `gc.log`)
+remain — same task, To Do. The 17 GiB of leaked clones listed above are
+reported, not deleted, per instruction (owner's call).
+
+**Qodo review fix round (PR #1999).** Four findings.
+
+- **Finding 1 (Bug, unchecked `git show`).** Step 3's EXTRA_FILES loop wrote
+  `subprocess.run(...).stdout` straight to disk without checking
+  `returncode` — the same shape as the already-fixed silent-`rmtree`
+  defect. Checked every other `git show` call site in the script
+  (`git_show()` at the vendored-file steps, the test-porting loop's inline
+  `git show`): both already FATAL on a non-zero return code; EXTRA_FILES was
+  the only unchecked one. Added `git_show_bytes()` (matches `git_show()`'s
+  FATAL idiom) and switched step 3 to the same validate-then-write split
+  already used in steps 2/4. Born-red proof: a sandboxed namespace-rebinding
+  harness (rebinds `subprocess`/`tempfile` inside the loaded module's own
+  namespace only; no real git/network at any point) faked `git show` to
+  return code 1 with empty stdout for the one EXTRA_FILES entry. At the
+  pre-fix commit (`8e4081c40`, reconstructed via a local `git show <sha>:
+  <path>` blob read — not a clone) this reproduced the bug exactly: an empty
+  `LICENSE` file was written to disk, `main()` returned 0, and stdout
+  contained "Synced ...". Against the fixed script the same harness now hits
+  `SystemExit` from `git_show_bytes()` before any write happens (no file on
+  disk).
+- **Finding 4 (path validation on `--source`/`TLDW_SERVER_SYNC_SOURCE`).**
+  Declined `path_validation.py` on the merits: both inputs are a
+  maintainer's own local filesystem path on their own machine, not user- or
+  model-supplied input reaching the app at runtime, and `validate_path_
+  simple()`/`validate_path()` exist to confine untrusted paths inside an
+  app-managed workspace root — the opposite relationship of `--source`,
+  which is deliberately a path *outside* this repo (and `validate_path_
+  simple()` would actively reject a legitimate `--source ~/repos/
+  tldw_server`). Instead improved the actual failure mode: `--source` is
+  now `.expanduser()`d, and `main()` gives an explicit FATAL for "does not
+  exist" / "is not a directory" / "is not a git repository (no .git)" before
+  ever reaching `verify_clean()`, which previously was the only diagnostic —
+  a missing path made `git -C <path> rev-parse HEAD` fail with empty stdout,
+  surfacing as the misleading "worktree HEAD  != pin 385afa95" pin-mismatch
+  message. Folded in the reviewer's separate residual: `if args.source:` was
+  a truthy check, so `--source ""` on a direct CLI run (not reachable from
+  the test module, which always passes a real path) silently fell through to
+  the no-arg network-clone path; changed to `if args.source is not None:`
+  with an explicit empty-value FATAL. Added matching disposition comments at
+  both call sites (the script's `main()` and `Tests/Chunking/
+  test_sync_script.py`'s `SOURCE` env-var read) so the reasoning doesn't need
+  rediscovering next review.
+- **Findings 2/3 (rule violations — missing docstrings/type hints).** Added
+  Google-style docstrings and `-> None` return annotations to all 7
+  `test_*` functions in `Tests/Architecture/test_vendor_pin_consistency.py`
+  (all new in this branch), plus to the parts of `Tests/Chunking/
+  test_sync_script.py` this branch actually changed: `_run_sync()` (gained a
+  docstring; already had its return type hint) and
+  `test_sync_idempotent_and_rejects_local_edits()` (gained both). Left every
+  other pre-existing test in both files untouched, per instruction not to
+  sweep unrelated tests.
+
+**Re-verification.** `Tests/Chunking/` + `Tests/Architecture/
+test_vendor_pin_consistency.py`: **607 passed, 26 skipped, 1 xfailed**, plus
+the same 2 pre-existing failures as the prior verification pass
+(`test_chunker_v2.py::test_process_text_tokenizer_override`,
+`test_golden_parity.py::test_golden_parity[tokens-cjk]`) — reconfirmed
+unrelated to this branch via a 3-dot merge-base diff
+(`origin/dev...HEAD -- Tests/Chunking/test_chunker_v2.py Tests/Chunking/
+test_golden_parity.py` is empty). The new pin-consistency guard stayed 7/7.
+Leaked-clone count under `$TMPDIR` after this run: still **17** — unchanged,
+confirming the cleanup fix still holds and this round didn't add any.

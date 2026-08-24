@@ -22,6 +22,9 @@ from tldw_chatbook.Agents.library_rag_tool_provider import (
     SUPPORTED_RAG_SOURCE_TYPES,
 )
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+)
 from tldw_chatbook.Library.library_tool_contract import (
     LIBRARY_TOOL_DESCRIPTORS,
     MAX_RESULT_BYTES,
@@ -60,10 +63,10 @@ def _error_payload(tool_result: ToolResult) -> dict:
 # --------------------------------------------------------------------------
 
 
-def test_direct_catalog_lists_all_18_descriptor_tools():
+def test_direct_catalog_lists_all_24_descriptor_tools():
     provider = LibraryToolProvider(FakeLibraryService())
     catalog = provider.list_catalog()
-    assert len(catalog) == 18
+    assert len(catalog) == 24
     assert [entry.name for entry in catalog] == list(LIBRARY_TOOL_DESCRIPTORS)
     for entry in catalog:
         assert entry.id == f"library:{entry.name}"
@@ -91,6 +94,68 @@ def test_direct_provider_methods_are_synchronous():
     assert not inspect.iscoroutinefunction(provider.load_schema)
     assert not inspect.iscoroutinefunction(provider.invoke)
     assert not inspect.isawaitable(provider.list_catalog())
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        LibraryToolProvider(FakeLibraryService()),
+        LibraryRagToolProvider(None),
+    ],
+    ids=["direct", "rag"],
+)
+def test_builtin_provider_authority_is_live_instance_bound(provider):
+    """Copying every public marker field must not authenticate a new object."""
+    from tldw_chatbook.Agents.library_tool_provider import BuiltinLibraryAuthority
+    from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+
+    authority = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    spoof = BuiltinLibraryAuthority(
+        provider_instance_id=authority.provider_instance_id,
+        reserved_names=authority.reserved_names,
+        assistant_access=authority.assistant_access,
+    )
+
+    assert provider.authenticates_builtin_authority(authority) is True
+    assert provider.authenticates_builtin_authority(spoof) is False
+    assert len(authority.provider_instance_id) <= 64
+    assert authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        LibraryToolProvider(FakeLibraryService()),
+        LibraryRagToolProvider(None),
+    ],
+    ids=["direct", "rag"],
+)
+def test_builtin_provider_authenticates_multiple_live_exact_authorities(provider):
+    """Overlapping runs retain independent exact-object capabilities."""
+    from tldw_chatbook.Agents.library_tool_provider import BuiltinLibraryAuthority
+    from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+
+    first = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    second = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+    )
+    copied = BuiltinLibraryAuthority(
+        provider_instance_id=first.provider_instance_id,
+        reserved_names=first.reserved_names,
+        assistant_access=first.assistant_access,
+    )
+
+    assert provider.authenticates_builtin_authority(first) is True
+    assert provider.authenticates_builtin_authority(second) is True
+    assert first == copied
+    assert provider.authenticates_builtin_authority(copied) is False
 
 
 # --------------------------------------------------------------------------

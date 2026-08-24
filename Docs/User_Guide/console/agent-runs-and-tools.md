@@ -96,8 +96,9 @@ appears above the transcript:
 - Watch the badges on a row's header: **(definition changed)** means the
   tool's definition differs from what you previously approved; **(high risk)**
   flags reads that could exfiltrate file contents; and a path warning —
-  "path outside allowed folders; will fail even if approved" — means the file
-  path will be rejected regardless of your decision.
+  "path outside private scratch and bound Workspace folders; will fail even
+  if approved" — means the file path will be rejected regardless of your
+  decision.
 
 An armed approval card does not expire — the run waits for your decision
 however long you take. Stopping the run or closing the session withdraws a
@@ -445,7 +446,14 @@ open, so checking earlier could only promise something that later stops
 being true.)
 
 **Push (`p` / the Push… button).** Always confirms in a dialog first,
-naming the repository, the branch, and where it's going. A branch with no
+naming the repository, the branch, and where it's going — including the
+remote's actual **URL**, not just its name. That matters when the
+repository redirects pushes to a different host than it fetches from
+(`remote.<name>.pushurl`, or `url.<other>.pushInsteadOf`), which is a
+perfectly normal setup — fetching over https and pushing over ssh, say.
+Those redirects are honoured rather than refused; the dialog simply tells
+you where the push will actually land, so the confirmation says as much as
+`git remote -v` would. A branch with no
 upstream yet gets one set on this push; with an upstream already
 configured, push targets exactly that upstream's remote and ref — never
 "whatever the repository's push configuration would have done" (see the
@@ -1008,6 +1016,36 @@ in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
 
+### Local file authority
+
+Every live Console Chat owns an independent private temporary scratch space.
+No folder setup is required. Relative paths used by Chatbook's built-in file
+tools and local `fs_*`/Git tools resolve in that Chat's scratch space unless a
+named Workspace explicitly adds authority:
+
+| Console context | Built-in file tools | Local `fs_*` / Git |
+|---|---|---|
+| Chat in Default | Private scratch only | Private scratch only |
+| Named Workspace, no selected project folder | Private scratch plus live explicit folder bindings | Private scratch only |
+| Named Workspace, selected project folder | Private scratch plus live explicit folder bindings | The selected binding only |
+
+Workspace folders are optional and start read-only. Approval still applies:
+path confinement cannot turn Ask into Allow, bypass a tool kill switch, expose
+a protected credential path, or make a read-only binding writable. A denial
+outside every allowed root says that Chats do not need a folder and points to a
+named Workspace only when access to that external folder is intended.
+
+Scratch belongs to the live tab, not the saved conversation. Two tabs for the
+same conversation have different scratch spaces; closing and reopening starts
+empty. Retained skill-script output and fallback agent run logs stay with the
+owning Chat's scratch instead of a shared container. Normal cleanup is
+best-effort deletion, not secure erase. A hard crash can leave unreferenced OS
+temporary residue, but a later process never discovers or attaches it.
+
+This boundary describes Chatbook-managed local tools only. Attachments,
+Library/RAG content, generated media, provider-hosted tools, and external MCP
+servers keep their own storage and authority contracts.
+
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the
@@ -1057,7 +1095,9 @@ appears above the transcript:
 - **Skill script** — "An agent wants to run a script from a skill:" with the
   target and arguments, buttons **Allow once** / **Always allow this skill** /
   **Deny**, and the note: "It runs with a scrubbed environment in a temporary
-  folder (not the skill's own folder); only its output comes back."
+  folder (not the skill's own folder); only its output comes back." Files the
+  script intentionally produces are retained inside the owning Chat's private
+  scratch space for that live session.
 
 ### MCP tools
 
@@ -1065,22 +1105,84 @@ Servers you configure on the [MCP screen](../mcp.md) 🚧 surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
-"Approval required" card as everything else.
+"Approval required" card as everything else. An external MCP server is not
+confined by the Chatbook-local scratch boundary unless that server implements
+an equivalent boundary itself; review its arguments and permission policy.
 
 ### Web research tools
 
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
-by default. Configure the master switch and confinement directory in **MCP →
-Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each
-tool in MCP Permissions. Master/root changes apply to the next Console agent
-run. `[mcp] expose_local_tools` is only for external MCP clients and does not
-enable these tools in Console.
+by default. Configure their master switch in **MCP → Tools → Local workspace,
+web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
+Permissions. Console file authority comes from the Chat's private scratch plus
+explicit Workspace bindings, not a global confinement-directory field.
+`[mcp] expose_local_tools` is only for external MCP clients and does not enable
+these tools in Console.
 
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
+
+### Library media chunk tools
+
+Console agents get five `library_*` tools for reading ingested media by its
+stored chunks — the difference between an agent that walks a book in blind
+8,000-character windows and one that asks "where are the chapters?", fetches
+Chapter 7 by address, and writes notes from it. `library_get_media_structure`
+returns a book's heading tree with per-chapter chunk addresses;
+`library_get_media_chunk` fetches one unit **from the chunks already stored
+at ingestion** — deterministic and version-stamped; nothing is silently
+re-chunked on a read. `library_list_chunk_specs` lists the saved chunking
+specs. Items imported with "Chunk content" off degrade honestly: the
+structure still shows the chapters, and the fetch error names the way out.
+
+Two of the five write, and only when you opt in from the agent's side:
+`library_save_chunk_spec` saves a custom chunking spec, and
+`library_rechunk_media` re-chunks one item (an explicit tool call with a
+spec — never a side effect of a read). Both run under runtime-policy actions
+(`library.templates.save`, `library.media.rechunk`) that can be denied, they
+write only your local Library database, and re-indexing the item into the
+semantic index is a separate `reindex: true` opt-in. They advertise
+themselves as writing tools in the approval card's tool description. Full
+contracts: [Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+The tools ride the same `[console].direct_library_tools` setting as the
+other Library tools.
+
+### The study-notes fan-out pattern
+
+A sixth `library_*` tool — and the third that writes — `library_save_note`, closes the student story the
+chunk tools set up: *"make me per-chapter notes of this book"* (or
+flashcards per section) runs as a fan-out over the ordinary sub-agent
+machinery — no special orchestration:
+
+1. **Structure.** `library_get_media_structure(id)` returns the chapter map
+   with each chapter's chunk addresses.
+2. **Spawn per chapter.** For each chapter the agent spawns a sub-agent
+   (`spawn_subagent`, under the usual `[agents]` caps) with a narrow brief:
+   fetch the chapter's units by address (`library_get_media_chunk`), derive
+   the notes — or Q/A flashcard pairs — and save them with
+   `library_save_note`: one note titled per chapter, content starting with
+   the provenance header (`source`, `revision`, `chapter`, `chunks`), every
+   save naming the same one-level folder for the book (the folder is
+   created on first save; concurrent savers converge on one folder).
+3. **Fetch and save.** Each sub-agent reuses the chunks stored at
+   ingestion — nothing re-chunks behind anyone's back — and its note lands
+   in the notes screen, grouped in the book's folder, the moment it is
+   saved.
+4. **Re-run.** Asked again later (new chapters, a re-chunk), the convention
+   is search-first: `library_search_notes(query=<note title>)` finds the
+   existing note — the list tool has no folder filter — and the agent
+   updates it via `note_id` + `expected_version` instead of creating a
+   duplicate.
+
+Flashcards are Q/A markdown inside notes (`Q:`/`A:` pairs) — a deliberate
+ruling: the real flashcards data layer has no screen route yet, so notes
+are the one output a student can actually see. `library_save_note` is the
+third policy-gated writing tool in the `library_*` namespace
+(`library.notes.save`); full contract:
+[Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
 
 ### Watchlists evidence tools
 
@@ -1248,7 +1350,9 @@ unbounded bill.
 3 steps (think, call, result) and the closing reply costs 1, so N turns need
 `3*(N-1)+1` steps. Set steps below that and runs stop on "step budget
 exhausted" well before your turn limit — Settings warns you when the two
-disagree.
+disagree. The runtime-wide maximum is 199,999 steps; that ceiling keeps the
+control, trace, capture-diagnostic, and lifecycle storage-index bands disjoint.
+The other run-budget ceilings are unchanged.
 
 ## Common tasks
 
@@ -1295,8 +1399,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   one run: token budget, wall-clock, per-tool-call, model turns, and steps
   (saved as `console.agent_max_total_tokens`,
   `console.agent_max_wall_seconds`, `console.agent_max_tool_call_seconds`,
-  `console.agent_max_model_turns`, `console.agent_max_steps`). No upper
-  bounds. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
+  `console.agent_max_model_turns`, `console.agent_max_steps`). Steps have a
+  runtime-wide maximum of 199,999; the other four retain their existing
+  ranges. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
   above for why the token budget, not the turn cap, is what stops a long run.
 - **`[agents] run_log_evict_enabled`** in `config.toml` — whether older
   rounds are trimmed out of what gets re-sent to the provider each turn
@@ -1661,19 +1766,15 @@ without which `diff.external` rendered `TOTALLY FABRICATED DIFF OUTPUT`
 and a constant-output textconv driver rendered 0 bytes for a file the
 same read counted as `1 1`. One correction against this task's own brief: the
 brief described the live workspace root as driven by `[console]
-workspace_root`; on a real mounted Console session that config key is
-NOT what feeds `current` mode's live candidate root — the wired
-`_turn_context_provider`
-(`UI/Console_Modules/session.py`'s `_build_console_turn_execution_context`)
-derives it from the conversation's WORKSPACE folder bindings instead
-(`Tools/workspace_file_roots.py`'s `folder_binding_roots`), the same
-roots the change-tracker itself tracks a turn's writes against; the
-`[console] workspace_root`-only fallback in
-`Chat/console_chat_controller.py`'s `resolve_turn_execution_context`
-only runs for a controller built without that override, which a
-mounted `ChatScreen` never is. This page describes the folder-binding
-source; see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)
-for where those bindings are set. One thing this pass could NOT verify:
+workspace_root`; that config key is not Console authority. The mounted
+Console derives external roots from the conversation's explicit Workspace
+folder bindings (`Tools/workspace_file_roots.py`'s `folder_binding_roots`),
+and ADR-082 later removed the compatibility controller's config/cwd fallback
+as well: every Console Chat now starts from private scratch. This page
+describes that current authority source; see
+[Sessions, tabs & workspaces](sessions-tabs-workspaces.md) for where folders
+are optionally bound. One
+thing this pass could NOT verify:
 whether `current` mode is reachable at all from a conversation on the
 **Default** workspace, since `Workspaces/registry_service.py` refuses
 runtime bindings ("Default workspace does not allow runtime bindings")
@@ -1685,3 +1786,27 @@ verbatim, not something Task 9 changed, and it is not re-verified live
 here.)*
 
 *Git-actions placement corrected @ TASK-19703 — 2026-08-22: the mid-merge/rebase/cherry-pick refusal was documented here as happening "before the dialog even opens", which is true of the active-run refusal but not of this one — it fires when you confirm. Not driven live; corrected by reading the shipped code (`commit_selected`'s `in-progress-check` step) against this page's claim, and the design spec was amended to match rather than the code changed (a pre-modal check could only be advisory, since the repository can enter a merge while the dialog is open).*
+
+*Push-destination disclosure added @ TASK-19701 — 2026-08-22: the confirm dialog now names the remote's effective push URL. Not driven live; verified against real repositories in tests configured with `remote.<name>.pushurl` and with `url.<other>.pushInsteadOf`, plus a control with no redirect.*
+
+*"Library media chunk tools" section added @ `1a392f1c4` — 2026-08-21
+(chunking-agent-tools Task 6). Not driven live in tmux: the section
+documents tool contracts, and every claim is verified against the
+descriptor table (`Library/library_tool_contract.py`), the service
+(`Library/local_media_chunk_tool_service.py`), and the end-to-end story
+test (`Tests/Library/test_agent_chunk_student_story.py`, which ingests a
+real fixture book through the real parse → persist → chunk-rows pipeline
+and reads Chapter 7 back from the stored chunks). The rest of this page
+is unchanged from the prior stamp.*
+
+*"The study-notes fan-out pattern" section added — 2026-08-23
+(student-workflow Task 2). Not driven live in tmux: the pattern rides
+machinery this page already documents (`spawn_subagent` and the `[agents]`
+caps, verified above in the sub-agent sections) plus the
+`library_save_note` contract, verified against the descriptor table, the
+save handler (`Library/local_library_tool_service.py`), the policy
+registration (`library.notes.save.local` in
+`runtime_policy/registry.py`), and the story test — which now runs the
+whole loop (structure → chunk fetches → provenance-headered save →
+re-read → search-based re-run update → Q/A flashcard note) against real
+databases. The rest of this page is unchanged from the prior stamp.*

@@ -4,8 +4,9 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_phase3_3_sanitizers.py
-# Skipped: FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class). Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
+# Skipped: FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class). Terminal disposition (2026-08-23 program close):
+# pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
+# this block verbatim.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
                     reason="skipped: FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class)")
 from fastapi import HTTPException

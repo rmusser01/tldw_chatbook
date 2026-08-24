@@ -17,8 +17,12 @@ BRANCH = "dev"
 PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 CLONE_TIMEOUT_SECONDS = 900
 
-# Phase-1 file set (spec §5.1); excludes #2/#3/#6-deferred modules and
-# upstream's own __init__.py (chatbook-authored instead, §5.1).
+# Phase-1 file set (spec §5.1) plus templates.py (template-parity task 4,
+# spec §6.1), auto_planner.py (auto-selection task 1, spec §4.1), and
+# strategies/propositions.py (2026-08-23 propositions vendoring, spec §5 —
+# the 39th file). The excluded remainder is the descope ledger: see the
+# manifest's excluded comments and TESTS_MODULE_SKIPPED below; upstream's
+# own __init__.py stays out (chatbook-authored instead, §5.1).
 VENDORED = [
     "base.py",
     "chunker.py",
@@ -30,6 +34,8 @@ VENDORED = [
     "security_logger.py",
     "multilingual.py",
     "llm_context.py",
+    "templates.py",
+    "auto_planner.py",
     "process_text/__init__.py",
     "process_text/models.py",
     "process_text/options.py",
@@ -54,6 +60,7 @@ VENDORED = [
     "strategies/fixed_size.py",
     "strategies/semantic.py",
     "strategies/rolling_summarize.py",
+    "strategies/propositions.py",
     "utils/metrics.py",
 ]
 UPSTREAM_ROOT = "tldw_Server_API/app/core/Chunking"
@@ -78,7 +85,13 @@ TESTS_EXCLUDED = {
     "test_chunking_templates_endpoint_sanitization.py",
     "test_async_batch_processor.py",
     "test_async_template_return_type.py",
-    # #6-deferred runtime snapshot (spec §10.1: "the propositions one lands with #6")
+    # Terminal disposition (2026-08-23 program close): the proposition
+    # runtime-snapshot suite pins the server's credential-snapshot kwargs
+    # (app_config/credentials_resolved/provider_credentials — the spec §5.1
+    # guarded keys chatbook's llm_config never passes), so it cannot pass
+    # without the server AuthNZ runtime it rotates credentials against.
+    # test_propositions_strategy.py and test_hierarchical_rewrite_offsets.py
+    # ARE revived by the propositions vendoring (un-skipped below).
     "test_propositions_runtime_snapshot.py",
 }
 UPSTREAM_TESTS_ROOT = "tldw_Server_API/tests/Chunking"
@@ -89,51 +102,78 @@ TEST_RENAMES = {"test_chunking_templates.py": "test_upstream_chunking_templates.
 # ---------------------------------------------------------------------------
 # Chatbook-side test patches (spec §10.1/§10.2).
 #
-# The ported tests need skips/guards for surfaces that are NOT vendored in
-# Phase A: #2/#3/#6-deferred modules (templates, auto_planner,
-# auto_boundary_assistant, propositions, async_chunker), server-only fixtures
-# (FastAPI endpoints, AuthNZ, Metrics registry), and the HF-hub tokenizer
-# download that chatbook's network guard blocks. Applying these patches here —
+# The ported tests need skips/guards for surfaces that are NOT vendored:
+# descope-ruled modules (auto_boundary_assistant, async_chunker — the
+# 2026-08-23 program-close ledger), server-only fixtures (FastAPI endpoints,
+# AuthNZ, Metrics registry), and the HF-hub tokenizer download that
+# chatbook's network guard blocks. templates.py, auto_planner.py, and
+# strategies/propositions.py were vendored by later sub-projects; their
+# suites' skip entries are gone — the propositions vendoring (2026-08-23)
+# likewise revived test_propositions_strategy.py and
+# test_hierarchical_rewrite_offsets.py. Applying these patches here —
 # rather than as one-time manual edits — keeps `sync_chunking_engine.py`
 # idempotent: a re-sync reproduces the exact ported tree, and an upstream
 # drift that breaks an anchor fails loudly instead of silently dropping a
 # skip (which would surface as a collection error or a network-guard failure).
+# Every reason below is a TERMINAL disposition: the rulings are recorded in
+# the manifest's excluded comments and pinned by test_descope_ledger.py.
 # ---------------------------------------------------------------------------
 
 # whole-module skips: file -> reason
 TESTS_MODULE_SKIPPED = {
-    "test_auto_apply_selection.py": "templates (TemplateClassifier) is deferred to sub-project #2; not in the Phase-A vendored set",
-    "test_auto_boundary_assistant.py": "auto_boundary_assistant + server Chat/AuthNZ deps deferred to #6",
-    "test_auto_chunking_planner.py": "auto_planner is deferred to sub-project #3; not in the Phase-A vendored set",
-    "test_auto_chunking_resolver.py": "Ingestion_Media_Processing.chunking_options is server-side; deferred to #3",
-    "test_chunker_process_metrics.py": "server Metrics registry not vendored; engine degrades gracefully to no-op metrics",
+    "test_auto_boundary_assistant.py": (
+        "auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 "
+        "spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + "
+        "providerCredentialRuntime, Chat bounded_daemon + chat_helpers, "
+        "LLM_Calls adapter_registry, api.v1.schemas at function level) with no "
+        "chatbook consumer; the capability is covered by #3's auto-selection "
+        "and #4's agent surface; revisit only if a consumer appears"
+    ),
+    "test_auto_chunking_resolver.py": (
+        "Ingestion_Media_Processing.chunking_options — the resolver that "
+        "consumes the auto-planner — remains server-side by the descope "
+        "rulings (#3 is merged); the resolver behavior is covered by the "
+        "ported planner suite (test_auto_chunking_planner.py)"
+    ),
+    "test_chunker_process_metrics.py": (
+        "server Metrics registry not vendored; engine degrades gracefully to "
+        "no-op metrics — descope 2026-08-23 spec §4.3 REAFFIRMS the no-op "
+        "ruling: no Metrics shim is ever built without a consumer"
+    ),
     "test_chunking_runtime_lifecycle.py": "exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored",
-    "test_chunking_templates.py": "templates + template endpoints/DB fixtures are server-side, deferred to #2 (spec §10.1)",
-    "test_chunking_templates_validate_schema.py": "FastAPI TestClient endpoint fixture (spec §10.1 endpoint class); lands with #2",
+    "test_chunking_templates.py": (
+        "TERMINAL disposition (2026-08-23 program close): templates and the "
+        "template endpoints remain server-side by #2's ruling — this suite "
+        "imports the server repo's FastAPI router/schemas (tldw_Server_API), "
+        "the not-vendored template_initialization (spec §13 decision 5), and "
+        "_shims/DB_Management + _shims/AuthNZ fixtures chatbook does not "
+        "carry; the propositions vendoring does not change it; chatbook-side "
+        "parity is pinned by test_template_runtime/test_chunking_interop_v7"
+    ),
+    "test_chunking_templates_validate_schema.py": "the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against",
     "test_phase3_3_sanitizers.py": "FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class)",
-    "test_propositions_strategy.py": "strategies/propositions.py is deferred to sub-project #6; not in the Phase-A vendored set",
-    "test_template_classifier.py": "templates is deferred to sub-project #2; not in the Phase-A vendored set",
-    "test_template_hierarchical_options.py": "templates is deferred to sub-project #2; not in the Phase-A vendored set",
-    "test_template_learner.py": "templates is deferred to sub-project #2; not in the Phase-A vendored set",
-    "test_hierarchical_rewrite_offsets.py": "strategies/propositions.py deferred to #6; not in the Phase-A vendored set",
 }
 
 MODULE_SKIP_FMT = (
     "# --- Ported (chunking-engine-parity Task 4) ---------------------------------\n"
     "# Upstream file: tldw_Server_API/tests/Chunking/{upstream}\n"
-    "# Skipped: {reason}. Remove this block when the module is vendored in\n"
-    "# its own sub-project and re-sync the test from upstream.\n"
+    "# Skipped: {reason}. Terminal disposition (2026-08-23 program close):\n"
+    "# pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates\n"
+    "# this block verbatim.\n"
     'pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",\n'
     '                    reason="skipped: {reason}")\n'
 )
 
 ASYNC_GUARD = (
     "{i}# --- Ported (chunking-engine-parity Task 4) -------------------------\n"
-    "{i}# async_chunker depends on server-only http_client/exceptions modules\n"
-    "{i}# and is deferred to sub-project #6 (spec §5.1 deferrals).\n"
+    "{i}# async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec\n"
+    "{i}# §4.2): server-only http_client/exceptions deps and no chatbook\n"
+    "{i}# consumer (chatbook chunks in-process).\n"
     "{i}pytest.importorskip(\n"
     '{i}    "tldw_chatbook.Chunking.engine.async_chunker",\n'
-    '{i}    reason="async_chunker deferred to #6 (server http_client/exceptions deps)",\n'
+    '{i}    reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "\n'
+    '{i}            "§4.2: server http_client/exceptions deps; chatbook "\n'
+    '{i}            "chunks in-process — no consumer)",\n'
     "{i})\n"
 )
 
@@ -651,6 +691,29 @@ def git_show(worktree: Path, path: str) -> str:
     return r.stdout
 
 
+def git_show_bytes(worktree: Path, repo_relative_path: str) -> bytes:
+    """Like git_show(), but for a repo-root-relative path (EXTRA_FILES),
+    returned as raw bytes.
+
+    TASK-19574 Qodo review (PR #1999 finding 1): step 3 used to write
+    `subprocess.run(...).stdout` straight to disk without checking
+    `returncode`, so a missing path or failed `git show` silently wrote an
+    empty/truncated file while the script went on to print "Synced" --
+    breaking this script's own fail-loudly contract. Match git_show()'s
+    FATAL idiom instead of inventing a new one.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(worktree), "show", f"{PIN}:{repo_relative_path}"],
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        sys.exit(
+            f"FATAL: {repo_relative_path} not found at pinned SHA {PIN}: "
+            f"{r.stderr.decode(errors='replace')}"
+        )
+    return r.stdout
+
+
 def verify_clean(worktree: Path) -> None:
     """Wrong-tree hazard (spec §0): the source must match the pin exactly."""
     r = subprocess.run(
@@ -683,29 +746,42 @@ def _sync_worktree(worktree: Path) -> int:
                     f"revert it or move the change to a shim/subclass"
                 )
 
-    # 2. Copy + rewrite + chatbook-side engine patches
-    for rel in VENDORED:
-        dst = TARGET_ROOT / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(
-            patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel)))
+    # 2. Copy + rewrite + chatbook-side engine patches. Compute every
+    # output FIRST -- this can still FATAL on a missing patch anchor for a
+    # file step 1 had no prior local copy to diff (e.g. a first-time sync
+    # of a newly-vendored file) -- and only write once every output has
+    # been computed successfully, so a drift failure here can never leave
+    # a partially-rewritten vendored tree on disk.
+    vendored_writes = [
+        (
+            TARGET_ROOT / rel,
+            patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel))),
         )
+        for rel in VENDORED
+    ]
+    for dst, content in vendored_writes:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(content)
 
-    # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
-    for rel in EXTRA_FILES:
-        dst = TARGET_ROOT / rel
+    # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree).
+    # Same validate-then-write split as steps 2/4: every EXTRA_FILES
+    # entry is read (and FATALs loudly via git_show_bytes() on a missing
+    # path or failed `git show`) before anything is written, so a
+    # mid-loop failure can never leave a partially-synced extra file.
+    extra_writes = [
+        (TARGET_ROOT / rel, git_show_bytes(worktree, rel)) for rel in EXTRA_FILES
+    ]
+    for dst, content in extra_writes:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(
-            subprocess.run(
-                ["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
-                capture_output=True,
-            ).stdout
-        )
+        dst.write_bytes(content)
     print(f"Synced {len(VENDORED)} files from {REPO} @ {PIN}")
 
     # 4. Tests (spec §10.1): port with the same import rewrite + chatbook-side
     # patches (see TESTS_MODULE_SKIPPED / TEST_PATCHES above) so a re-sync
-    # reproduces the ported tree exactly.
+    # reproduces the ported tree exactly. Same validate-then-write split as
+    # step 2: every ported file is read + patched first (may FATAL on a
+    # missing upstream file or patch anchor), and only written once the
+    # full set has been computed.
     r = subprocess.run(
         [
             "git",
@@ -731,6 +807,7 @@ def _sync_worktree(worktree: Path) -> int:
         and line.split("/")[-1].startswith("test_")
     )
     to_port = [t for t in upstream_tests if t.split("/")[-1] not in TESTS_EXCLUDED]
+    test_writes = []
     for rel in to_port:
         rel_path = Path(rel)
         dst_name = TEST_RENAMES.get(rel_path.name, rel_path.name)
@@ -739,7 +816,6 @@ def _sync_worktree(worktree: Path) -> int:
             if rel_path.parent != Path(".")
             else TARGET_TESTS_ROOT / dst_name
         )
-        dst.parent.mkdir(parents=True, exist_ok=True)
         src = subprocess.run(
             ["git", "-C", str(worktree), "show", f"{PIN}:{UPSTREAM_TESTS_ROOT}/{rel}"],
             capture_output=True,
@@ -747,7 +823,12 @@ def _sync_worktree(worktree: Path) -> int:
         )
         if src.returncode != 0:
             sys.exit(f"FATAL: {rel} not found at pinned SHA {PIN}: {src.stderr}")
-        dst.write_text(patch_ported_test(rel_path.name, rewrite_imports(src.stdout)))
+        test_writes.append(
+            (dst, patch_ported_test(rel_path.name, rewrite_imports(src.stdout)))
+        )
+    for dst, content in test_writes:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(content)
     print(
         f"Ported {len(to_port)} test files into {TARGET_TESTS_ROOT} "
         f"({len(upstream_tests) - len(to_port)} excluded per spec §10.1)"
@@ -755,10 +836,30 @@ def _sync_worktree(worktree: Path) -> int:
     return 0
 
 
+def _validated_source(source: str) -> Path:
+    """Resolve a caller-owned source and fail clearly before invoking Git."""
+    if not source:
+        sys.exit(
+            "FATAL: --source was given an empty value; pass a path to a local "
+            "tldw_server worktree checked out at the pin, or omit --source entirely"
+        )
+    worktree = Path(source).expanduser().resolve()
+    if not worktree.exists():
+        sys.exit(f"FATAL: --source {worktree} does not exist")
+    if not worktree.is_dir():
+        sys.exit(f"FATAL: --source {worktree} is not a directory")
+    if not (worktree / ".git").exists():
+        sys.exit(
+            f"FATAL: --source {worktree} is not a git repository (no .git found) "
+            f"-- checkout tldw_server at the pin first"
+        )
+    return worktree
+
+
 def _run_with_source(source: str | None) -> int:
-    """Run a sync and remove only a temporary clone created by this call."""
-    if source:
-        worktree = Path(source).expanduser().resolve()
+    """Run one sync, cleaning up only a temporary clone owned by this call."""
+    if source is not None:
+        worktree = _validated_source(source)
         verify_clean(worktree)
         return _sync_worktree(worktree)
 
@@ -776,7 +877,12 @@ def _run_with_source(source: str | None) -> int:
         )
         return _sync_worktree(owned_tmp)
     finally:
-        shutil.rmtree(owned_tmp)
+        shutil.rmtree(owned_tmp, ignore_errors=True)
+        if owned_tmp.exists():
+            print(
+                f"WARNING: failed to fully remove temp clone {owned_tmp} -- remove it manually",
+                file=sys.stderr,
+            )
 
 
 def main() -> int:
@@ -786,8 +892,7 @@ def main() -> int:
         default=None,
         help="Existing tldw_server worktree already at the pinned SHA",
     )
-    args = ap.parse_args()
-    return _run_with_source(args.source)
+    return _run_with_source(ap.parse_args().source)
 
 
 if __name__ == "__main__":

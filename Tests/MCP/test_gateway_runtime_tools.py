@@ -2,49 +2,64 @@
 
 from __future__ import annotations
 
+# `mcp-unified` ships in the optional `[mcp]` extra, so a plain checkout can
+# legitimately lack it. The skip has to run before the import section below --
+# both `mcp_unified.gateway` and `tldw_chatbook.MCP.gateway_runtime` resolve the
+# extra at module scope -- so it sits here, ahead of the three import groups,
+# rather than between them. The `pytest.importorskip` form used by the sibling
+# gateway modules splits third-party from local and forces E402 suppressions on
+# every import below it; this probe-and-skip keeps the groups contiguous while
+# producing the same module-level skip.
+try:
+    # Probe only; the symbols this module actually uses are imported below.
+    import mcp_unified.gateway  # noqa: F401
+except ImportError:  # pragma: no cover - only reachable without the extra
+    import pytest
+
+    pytest.skip("mcp-unified extra not installed", allow_module_level=True)
+
 import asyncio
 import copy
-from functools import partial
 import json
 import threading
+from functools import partial
 from typing import Any
 
 import pytest
 from loguru import logger
-
-gateway = pytest.importorskip(
-    "mcp_unified.gateway", reason="mcp-unified extra not installed"
+from mcp_unified.gateway import (
+    PROTOCOL_PROFILES,
+    GatewayLimits,
+    GatewayProtocolConnection,
+    GatewayRequestContext,
+    GatewayToolExecutionError,
 )
-GatewayRequestContext = gateway.GatewayRequestContext
-GatewayToolExecutionError = gateway.GatewayToolExecutionError
-GatewayProtocolConnection = gateway.GatewayProtocolConnection
-GatewayLimits = gateway.GatewayLimits
-PROTOCOL_PROFILES = gateway.PROTOCOL_PROFILES
 
-from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
-from tldw_chatbook.Agents.agent_models import ToolResult  # noqa: E402
-from tldw_chatbook.Agents.local_tool_provider import (  # noqa: E402
+from tldw_chatbook.Agents.agent_models import ToolResult
+from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
 )
-from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB  # noqa: E402
-import tldw_chatbook.MCP.local_server_tools as local_server_tools  # noqa: E402
-from tldw_chatbook.MCP.local_server_tools import (  # noqa: E402
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.MCP import local_server_tools
+from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
+from tldw_chatbook.MCP.local_server_tools import (
     EXTERNAL_NO_CALLBACK_REFUSAL,
     LocalToolRegistration,
     _local_agent_tool_registrations,
     build_server_local_provider,
 )
-from tldw_chatbook.MCP.permission_store import (  # noqa: E402
+from tldw_chatbook.MCP.permission_store import (
     MCPPermissionStore,
     definition_hash,
 )
-from tldw_chatbook.MCP.server import (  # noqa: E402
+from tldw_chatbook.MCP.server import (
     TldwMCPServer,
     _describe_local_tools,
 )
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
 BUILTIN_TOOL_NAMES = [
@@ -1054,17 +1069,10 @@ async def test_real_watchlists_provider_preserves_structured_domain_outcomes(
     mutable.close()
     source = {"value": "local"}
 
-    class RuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return source["value"]
-
     monkeypatch.setattr(
         local_server_tools, "get_subscriptions_db_path", lambda: db_path
     )
-    monkeypatch.setattr(local_server_tools, "RuntimeSourceStateStore", RuntimeStore)
+    _pin_runtime_source(monkeypatch, lambda: source["value"])
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     provider = build_server_local_provider(workspace, store)
     _grant_local_tool(store, provider, "watchlists_search_items")
@@ -1149,18 +1157,11 @@ async def test_real_watchlists_gateway_permission_failures_precede_storage(
 
 @pytest.mark.asyncio
 async def test_real_watchlists_provider_scrubs_unexpected_failures(
-    monkeypatch, tmp_path, capsys
+    monkeypatch, tmp_path, capsys, caplog
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     sentinel = "SENTINEL /private/db.sqlite API_KEY=secret"
-
-    class RuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
 
     def fail_database(*_args, **_kwargs):
         raise RuntimeError(sentinel)
@@ -1168,7 +1169,7 @@ async def test_real_watchlists_provider_scrubs_unexpected_failures(
     monkeypatch.setattr(
         local_server_tools, "get_subscriptions_db_path", lambda: tmp_path / "db.sqlite"
     )
-    monkeypatch.setattr(local_server_tools, "RuntimeSourceStateStore", RuntimeStore)
+    _pin_runtime_source(monkeypatch, "local")
     monkeypatch.setattr(local_server_tools, "SubscriptionsDB", fail_database)
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     provider = build_server_local_provider(workspace, store)
@@ -1192,6 +1193,15 @@ async def test_real_watchlists_provider_scrubs_unexpected_failures(
     assert sentinel not in captured.out
     assert sentinel not in captured.err
     assert all(sentinel not in record for record in records)
+    # TASK-19569: the stdlib-`logging` channel was NOT covered here, and
+    # `WatchlistsToolService._raise_unexpected` -- the scrubber on this very
+    # path -- logs through `logging.getLogger(__name__)`, not loguru. Adding
+    # `detail=%s` to that call leaked the sentinel into the captured log and
+    # this test still passed; the loguru sink and capsys never see stdlib
+    # records. The sibling guard in `Tests/MCP/test_local_server_tools.py`
+    # (`..._blocks_replacement_until_failed_close_succeeds`) already asserts
+    # against `caplog.text`; this one now does too.
+    assert sentinel not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1202,13 +1212,6 @@ async def test_real_watchlists_database_resolution_runs_off_event_loop(
     workspace.mkdir()
     entered = threading.Event()
     release = threading.Event()
-
-    class RuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
 
     class BlockingDatabase:
         def __init__(self):
@@ -1233,7 +1236,7 @@ async def test_real_watchlists_database_resolution_runs_off_event_loop(
     monkeypatch.setattr(
         local_server_tools, "get_subscriptions_db_path", lambda: tmp_path / "db.sqlite"
     )
-    monkeypatch.setattr(local_server_tools, "RuntimeSourceStateStore", RuntimeStore)
+    _pin_runtime_source(monkeypatch, "local")
     monkeypatch.setattr(
         local_server_tools,
         "SubscriptionsDB",
@@ -1267,6 +1270,30 @@ async def test_real_watchlists_database_resolution_runs_off_event_loop(
     result = await call_task
     await heartbeat_task
     assert json.loads(result)["status"] == "ok"
+
+
+def _pin_runtime_source(monkeypatch, source) -> None:
+    """Pin the runtime source the composed watchlists service will read.
+
+    The seam is ``local_server_tools.load_default_runtime_source_state`` --
+    the owner-module loader ``build_server_local_provider`` injects as
+    ``runtime_source_loader=`` (TASK-18609). These tests kept patching the
+    ``RuntimeSourceStateStore`` name it replaced, which no longer exists on
+    the module, so all three errored at the monkeypatch line (TASK-19569).
+
+    ``source`` may be a literal ``"local"``/``"server"`` or a zero-arg
+    callable, so a test can flip the source between gateway calls. The
+    loader returns a real ``RuntimeSourceState`` -- production's shape.
+
+    Deliberately NOT ``raising=False``: a renamed seam must fail loudly at
+    the patch line rather than silently install a never-read attribute.
+    """
+    resolve = source if callable(source) else (lambda: source)
+    monkeypatch.setattr(
+        local_server_tools,
+        "load_default_runtime_source_state",
+        lambda: RuntimeSourceState(active_source=resolve()),
+    )
 
 
 def _grant_local_tool(

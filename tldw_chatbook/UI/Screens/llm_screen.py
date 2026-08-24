@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
+from functools import partial
 from pathlib import Path
 import threading
+import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
@@ -19,6 +23,11 @@ from ...Local_Ingestion.parakeet_v2_artifact import parakeet_reference
 from ...Model_Artifacts.remote_huggingface import (
     RemoteGGUFCandidate,
     ResolvedRemoteCatalog,
+)
+from ...Model_Artifacts.machine_memory import (
+    MachineMemorySnapshot,
+    ProbeReason,
+    SystemMemoryState,
 )
 from ...Model_Artifacts.service import ArtifactRef, ModelArtifactService
 from ...STT.parakeet_sources import (
@@ -38,6 +47,7 @@ from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.ModelArtifacts import (
     InstallProgressed,
     InstallStatusChanged,
+    ManagedGGUFRuntimeChoiceModal,
     ModelInstallModal,
 )
 from ..Navigation.audio_cpp_model_handoff import (
@@ -68,6 +78,7 @@ from .model_browser_state import install_failure_message
 from .model_curated_view import CuratedView
 from .model_external_view import ExternalModelView
 from .model_installed_view import InstalledView
+from .model_memory_presenter import build_machine_memory_presentation
 from .model_remote_view import RemoteView
 
 if TYPE_CHECKING:
@@ -181,11 +192,22 @@ class LLMScreen(LabScreen):
     and re-synced on every ``refresh_lab_status()`` pass.
     """
 
-    def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        *,
+        machine_memory_wall_clock: Callable[[], datetime] | None = None,
+        machine_memory_monotonic_clock: Callable[[], float] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Create the Models screen.
 
         Args:
             app_instance: The running application.
+            machine_memory_wall_clock: Injectable local wall clock for the fixed
+                accepted-observation label.
+            machine_memory_monotonic_clock: Injectable monotonic clock retained
+                with accepted machine facts.
             kwargs: Forwarded to ``LabScreen``.
         """
         super().__init__(app_instance, "llm", **kwargs)
@@ -306,6 +328,32 @@ class LLMScreen(LabScreen):
         self._remote_install_terminal_candidate: "RemoteGGUFCandidate | None" = None
         self._remote_install_terminal_action: str | None = None
         self._remote_install_terminal_message: str | None = None
+        #: Last verified Remote root and its frozen discovery context. Unlike
+        #: the narrow terminal-presentation bridge above, this remains after
+        #: delivery so a later screen recompose preserves the adoption CTA.
+        self._remote_install_completed_catalog: "ResolvedRemoteCatalog | None" = None
+        self._remote_install_completed_candidate: "RemoteGGUFCandidate | None" = None
+        self._remote_install_completed_reference: ArtifactRef | None = None
+        self._remote_install_completed_message: str | None = None
+        #: Exact runtime adoption intent retained by the screen while the
+        #: current LLMManagementWindow validates a freshly-downloaded root.
+        #: LabScreen recomposition replaces that window, so window-local
+        #: ownership alone would strand the handoff with the detached worker.
+        self._remote_runtime_handoff: tuple[str, ArtifactRef] | None = None
+        self._machine_memory_snapshot: MachineMemorySnapshot | None = None
+        self._machine_memory_observed_label: str | None = None
+        self._machine_memory_observed_monotonic: float | None = None
+        self._machine_memory_generation = 0
+        self._machine_memory_worker: Worker | None = None
+        self._machine_memory_active = False
+        self._machine_memory_failure: ProbeReason | None = None
+        self._machine_memory_wall_clock = machine_memory_wall_clock or datetime.now
+        self._machine_memory_monotonic_clock = (
+            machine_memory_monotonic_clock or time.monotonic
+        )
+        self._machine_memory_probe_factory: (
+            Callable[[], MachineMemorySnapshot] | None
+        ) = None
         self._audio_cpp_model_request_claim: (
             HandoffClaim[AudioCppModelLibraryRequest] | None
         ) = None
@@ -532,6 +580,121 @@ class LLMScreen(LabScreen):
             return self.llm_window.query_one(RemoteView)
         except NoMatches:
             return None
+
+    def _request_remote_machine_memory(self, *, force: bool) -> None:
+        """Start or hydrate the one process-session machine observation."""
+        if self._machine_memory_active and not force:
+            self._hydrate_remote_machine_memory()
+            return
+        if not force and (
+            self._machine_memory_snapshot is not None
+            or self._machine_memory_generation > 0
+        ):
+            self._hydrate_remote_machine_memory()
+            return
+        self._machine_memory_generation += 1
+        generation = self._machine_memory_generation
+        self._machine_memory_active = True
+        self._machine_memory_failure = None
+        self._hydrate_remote_machine_memory()
+        self._machine_memory_worker = self._run_machine_memory_probe(generation)
+
+    @work(
+        thread=True,
+        group="remote_machine_memory",
+        exclusive=True,
+        exit_on_error=False,
+        description="Observe local model memory capacity",
+    )
+    def _run_machine_memory_probe(self, generation: int) -> None:
+        """Observe bounded local memory off-loop and return only safe facts."""
+        factory = self._machine_memory_probe_factory
+        if factory is None:
+            from ...Model_Artifacts.machine_memory_probe import observe_machine_memory
+
+            factory = observe_machine_memory
+        try:
+            result = factory()
+        except Exception:
+            result = None
+        self.app.call_from_thread(
+            self._apply_machine_memory_result,
+            generation,
+            result,
+        )
+
+    def _apply_machine_memory_result(
+        self,
+        generation: int,
+        result: MachineMemorySnapshot | None,
+    ) -> None:
+        """Apply only the current probe, retaining valid RAM across failures."""
+        if generation != self._machine_memory_generation:
+            return
+        self._machine_memory_active = False
+        self._machine_memory_worker = None
+        accepted = (
+            type(result) is MachineMemorySnapshot
+            and result.system_state
+            in {SystemMemoryState.OBSERVED, SystemMemoryState.PARTIAL}
+            and result.total_bytes is not None
+        )
+        current_is_valid = (
+            type(self._machine_memory_snapshot) is MachineMemorySnapshot
+            and self._machine_memory_snapshot.system_state
+            in {SystemMemoryState.OBSERVED, SystemMemoryState.PARTIAL}
+            and self._machine_memory_snapshot.total_bytes is not None
+        )
+        if accepted:
+            self._machine_memory_snapshot = result
+            self._machine_memory_observed_label = (
+                self._machine_memory_wall_clock().strftime("%H:%M")
+            )
+            self._machine_memory_observed_monotonic = (
+                self._machine_memory_monotonic_clock()
+            )
+            self._machine_memory_failure = None
+        elif current_is_valid:
+            self._machine_memory_failure = (
+                result.system_reason
+                if type(result) is MachineMemorySnapshot
+                and result.system_reason is not None
+                else ProbeReason.INVALID_MEMORY_VALUE
+            )
+        else:
+            self._machine_memory_snapshot = (
+                result if type(result) is MachineMemorySnapshot else None
+            )
+            self._machine_memory_failure = (
+                result.system_reason
+                if type(result) is MachineMemorySnapshot
+                and result.system_reason is not None
+                else ProbeReason.INVALID_MEMORY_VALUE
+            )
+        self._hydrate_remote_machine_memory()
+
+    def _hydrate_remote_machine_memory(self) -> bool:
+        """Publish retained machine facts into the currently mounted RemoteView."""
+        view = self._remote_view()
+        if view is None:
+            return False
+        presentation_snapshot = (
+            self._machine_memory_snapshot
+            if not self._machine_memory_active
+            or (
+                self._machine_memory_snapshot is not None
+                and self._machine_memory_snapshot.total_bytes is not None
+            )
+            else None
+        )
+        presentation = build_machine_memory_presentation(
+            presentation_snapshot,
+            active=self._machine_memory_active,
+            observed_at_label=self._machine_memory_observed_label,
+            failure=self._machine_memory_failure,
+        )
+        view.apply_machine_memory_state(presentation, self._machine_memory_snapshot)
+        return True
 
     def _active_install_view(self) -> "CuratedView | RemoteView | None":
         """Return the view rendering the currently in-flight install, if any.
@@ -2340,6 +2503,101 @@ class LLMScreen(LabScreen):
     # steps below are duplicated, exactly as the curated block duplicates
     # LibraryScreen's own Parakeet v2 shape.
 
+    @on(RemoteView.MachineMemoryRequested)
+    def _remote_machine_memory_requested(
+        self,
+        event: RemoteView.MachineMemoryRequested,
+    ) -> None:
+        """Delegate the presentation-only intent to screen-owned acquisition."""
+        event.stop()
+        self._request_remote_machine_memory(force=event.force)
+
+    @on(RemoteView.OpenInstalledRequested)
+    def _remote_open_installed_requested(
+        self, event: RemoteView.OpenInstalledRequested
+    ) -> None:
+        """Open the exact verified row without activating or starting it."""
+        event.stop()
+        if self.llm_window is None or type(event.reference) is not ArtifactRef:
+            return
+        installed = self._installed_view()
+        self.llm_window.active_view = "installed"
+        if installed is not None:
+            self.call_after_refresh(installed.reveal_reference, event.reference)
+
+    @on(RemoteView.ConfigureRuntimeRequested)
+    def _remote_configure_runtime_requested(
+        self, event: RemoteView.ConfigureRuntimeRequested
+    ) -> None:
+        """Present compatible runtime destinations for one verified root."""
+        event.stop()
+        if type(event.reference) is not ArtifactRef:
+            return
+        self.app.push_screen(
+            ManagedGGUFRuntimeChoiceModal(),
+            partial(self._remote_runtime_selected, event.reference),
+        )
+
+    def _remote_runtime_selected(
+        self,
+        reference: ArtifactRef,
+        provider: str | None,
+    ) -> None:
+        """Apply one explicit runtime choice without activating or starting it."""
+        if provider not in {"llamacpp", "llamafile"} or self.llm_window is None:
+            return
+        self._remote_runtime_handoff = (provider, reference)
+        if not self.llm_window.configure_managed_gguf(provider, reference):
+            self._remote_runtime_handoff = None
+            self.notify(
+                "Stop the active Llama.cpp or Llamafile server, then configure "
+                "this managed model again.",
+                severity="warning",
+            )
+
+    def _replay_remote_runtime_handoff(self) -> None:
+        """Resume an exact runtime handoff in the current management window."""
+        if self.llm_window is None or self._remote_runtime_handoff is None:
+            return
+        provider, reference = self._remote_runtime_handoff
+        if not self.llm_window.configure_managed_gguf(provider, reference):
+            self._remote_runtime_handoff = None
+            self.notify(
+                "Stop the active Llama.cpp or Llamafile server, then configure "
+                "this managed model again.",
+                severity="warning",
+            )
+
+    @on(LLMManagementWindow.ManagedGGUFHandoffResolved)
+    def _managed_gguf_handoff_resolved(
+        self,
+        event: LLMManagementWindow.ManagedGGUFHandoffResolved,
+    ) -> None:
+        """Clear only the exact screen-owned handoff a window resolved."""
+        event.stop()
+        pending = getattr(self, "_remote_runtime_handoff", None)
+        if pending != (event.provider, event.reference):
+            return
+        self._remote_runtime_handoff = None
+        if event.succeeded:
+            return
+        if event.reason == "inventory-error":
+            message = (
+                "Managed models could not be loaded. Refresh Installed models, "
+                "then try again."
+            )
+        elif event.reason == "server-active":
+            message = (
+                "Stop the active Llama.cpp or Llamafile server, then configure "
+                "this managed model again."
+            )
+        else:
+            message = (
+                "That managed model is no longer available. Refresh Installed "
+                "models, then try again."
+            )
+        self.notify(message, severity="warning")
+
     @on(RemoteView.InstallRequested)
     def _remote_install_requested(self, event: RemoteView.InstallRequested) -> None:
         """Resolve an install plan for a reviewed remote candidate, off the Textual event loop.
@@ -2384,6 +2642,7 @@ class LLMScreen(LabScreen):
             self._clear_remote_install_state()
             return
         self._clear_remote_terminal_presentation()
+        self._clear_remote_completed_presentation()
         self._model_install_kind = "remote"
         self._model_install_reference = event.catalog.artifact.reference
         self._model_install_service = event.service
@@ -2611,6 +2870,15 @@ class LLMScreen(LabScreen):
                 "not been verified."
             )
             self.notify(message, severity="information")
+            if (
+                isinstance(reference, ArtifactRef)
+                and isinstance(self._model_install_catalog, ResolvedRemoteCatalog)
+                and isinstance(self._model_install_candidate, RemoteGGUFCandidate)
+            ):
+                self._remote_install_completed_catalog = self._model_install_catalog
+                self._remote_install_completed_candidate = self._model_install_candidate
+                self._remote_install_completed_reference = reference
+                self._remote_install_completed_message = message
         if reference is not None:
             self._deliver_curated(
                 InstallStatusChanged(reference, active=False, succeeded=error is None)
@@ -2659,6 +2927,19 @@ class LLMScreen(LabScreen):
         self._remote_install_terminal_action = None
         self._remote_install_terminal_message = None
 
+    def _clear_remote_completed_presentation(self) -> None:
+        """Discard the last success when a new Remote journey supersedes it."""
+        self._remote_install_completed_catalog = None
+        self._remote_install_completed_candidate = None
+        self._remote_install_completed_reference = None
+        self._remote_install_completed_message = None
+
+    @on(RemoteView.DiscoveryStarted)
+    def _remote_discovery_started(self, event: RemoteView.DiscoveryStarted) -> None:
+        """Make a submitted discovery the new Remote lifecycle authority."""
+        event.stop()
+        self._clear_remote_completed_presentation()
+
     def _deliver_or_retain_remote_terminal_presentation(
         self,
         action: str,
@@ -2680,7 +2961,11 @@ class LLMScreen(LabScreen):
             ):
                 view.restore_install_context(catalog, candidate)
             if action == _REMOTE_INSTALL_TERMINAL_FINISH:
-                view.finish_install(message)
+                completed = getattr(self, "_remote_install_completed_reference", None)
+                if isinstance(completed, ArtifactRef):
+                    view.finish_install(message, completed_reference=completed)
+                else:
+                    view.finish_install(message)
             else:
                 view.cancel_pending_install(message)
             self._clear_remote_terminal_presentation()
@@ -2711,10 +2996,36 @@ class LLMScreen(LabScreen):
             return False
         message = getattr(self, "_remote_install_terminal_message", None)
         if action == _REMOTE_INSTALL_TERMINAL_FINISH:
-            view.finish_install(message)
+            completed = getattr(self, "_remote_install_completed_reference", None)
+            if isinstance(completed, ArtifactRef):
+                view.finish_install(message, completed_reference=completed)
+            else:
+                view.finish_install(message)
         else:
             view.cancel_pending_install(message)
         self._clear_remote_terminal_presentation()
+        return True
+
+    def _hydrate_remote_completed_presentation(self) -> bool:
+        """Restore the durable verified completion into a fresh Remote view."""
+        catalog = getattr(self, "_remote_install_completed_catalog", None)
+        candidate = getattr(self, "_remote_install_completed_candidate", None)
+        reference = getattr(self, "_remote_install_completed_reference", None)
+        if (
+            not isinstance(catalog, ResolvedRemoteCatalog)
+            or not isinstance(candidate, RemoteGGUFCandidate)
+            or not isinstance(reference, ArtifactRef)
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        if not view.restore_install_context(catalog, candidate):
+            return False
+        view.finish_install(
+            getattr(self, "_remote_install_completed_message", None),
+            completed_reference=reference,
+        )
         return True
 
     def _model_install_presentation_pending(self) -> bool:
@@ -2727,6 +3038,7 @@ class LLMScreen(LabScreen):
                 and self._model_install_candidate is not None
             )
             or getattr(self, "_remote_install_terminal_action", None) is not None
+            or getattr(self, "_remote_install_completed_reference", None) is not None
         )
 
     def _remote_install_context_status(self) -> str:
@@ -2869,6 +3181,8 @@ class LLMScreen(LabScreen):
         if self._model_install_presentation_pending():
             self._hydrate_model_install_progress()
         self._hydrate_external_status()
+        self._hydrate_remote_machine_memory()
+        self._replay_remote_runtime_handoff()
 
     def _hydrate_model_install_progress(self) -> None:
         """Re-apply selected-model context and progress after a recompose.
@@ -2909,7 +3223,8 @@ class LLMScreen(LabScreen):
         every (re)mount, rather than by trying to identify and replay
         whichever specific message the gap happened to swallow.
         """
-        self._hydrate_remote_terminal_presentation()
+        if not self._hydrate_remote_terminal_presentation():
+            self._hydrate_remote_completed_presentation()
         view = self._active_install_view()
         if (
             isinstance(view, RemoteView)

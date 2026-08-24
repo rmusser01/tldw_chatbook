@@ -16,9 +16,11 @@ a full pilot-driven screen.
 
 import asyncio
 import threading
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import AsyncMock
 
 import pytest
@@ -31,7 +33,7 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -40,9 +42,15 @@ from tldw_chatbook.Character_Chat.visual_identity import (
     VisualIdentityPublicationResult,
     VisualIdentityResolution,
 )
+from tldw_chatbook.Character_Chat.emote_directives import (
+    CharacterEmoteAssetReference,
+    CharacterEmoteRunSnapshot,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
+import tldw_chatbook.UI.Console_Modules.character as character_module
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import (
     CharacterSessionPromptSeed,
@@ -61,6 +69,19 @@ def _avatar_png(color: tuple[int, int, int]) -> bytes:
     output = BytesIO()
     PILImage.new("RGB", (32, 32), color).save(output, format="PNG")
     return output.getvalue()
+
+
+def test_avatar_request_source_types_manual_at_the_display_override_boundary() -> None:
+    source_type = getattr(character_module, "AvatarRequestSource", None)
+
+    assert source_type is not None
+    assert set(get_args(source_type)) == {
+        "idle",
+        "operational",
+        "explicit",
+        "historical",
+        "manual",
+    }
 
 
 def _resolution(
@@ -133,6 +154,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         actor_scope_accessor=lambda: None,
         manual_reaction_key=lambda _scope: None,
         resolve_visual_identity=lambda *_args: None,
+        resolve_historical_visual_identity=lambda *_args: None,
         ensure_console_image_view=lambda: (None, None),
         console_image_default_mode=lambda: None,
         is_mounted=lambda: False,
@@ -386,6 +408,25 @@ async def console_screen_with_db(avatar_db):
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
         yield app, screen, avatar_db
+
+
+@pytest_asyncio.fixture
+async def console_screen_with_db_and_pilot(avatar_db):
+    """Mounted real Character rail plus Pilot for post-refresh geometry checks."""
+
+    class CharacterGeometryHarness(ConsoleHarness):
+        """Load the same app-tier bundle that owns production rail geometry."""
+
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    app = _build_test_app()
+    app.chachanotes_db = avatar_db
+    _set_chat_images_setting(app, "default_render_mode", "pixels")
+    host = CharacterGeometryHarness(app)
+    async with host.run_test(size=(180, 72)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
+        yield app, screen, avatar_db, pilot
 
 
 @pytest_asyncio.fixture
@@ -676,6 +717,216 @@ async def test_avatar_swaps_across_expression_states(
     )
 
 
+def _arm_live_emotes(screen, character_id: int, *states: str):
+    store = screen._console_chat_controller.store
+    session_id = store.active_session_id
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_character_emote_capture(
+        assistant.id,
+        CharacterEmoteRunSnapshot(
+            actor_id=character_id,
+            pack_id=11,
+            pack_version_id=13,
+            states=tuple(states),
+            assets=tuple(
+                CharacterEmoteAssetReference(
+                    state=state,
+                    expression_key=(
+                        state if state in {"happy", "sad"} else f"custom:{state}"
+                    ),
+                    asset_id=index,
+                )
+                for index, state in enumerate(states, start=17)
+            ),
+        ),
+    )
+    store.append_stream_chunk(
+        assistant.id,
+        "".join(f"Emote: {state}\n" for state in states),
+    )
+    return store, assistant
+
+
+@pytest.mark.asyncio
+async def test_live_emote_feed_paints_every_event_in_stream_order(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+    store, assistant = _arm_live_emotes(screen, character_id, "happy", "sad")
+    painted_states: list[str] = []
+
+    def resolve(_scope, state, _manual):
+        return _resolution(
+            character_id,
+            requested=state,
+            manual=None,
+            source="pack_explicit",
+            identity_suffix=f"sha256={state}",
+            image=_avatar_png((20, 30, 40)),
+        )
+
+    async def render(**kwargs):
+        painted_states.append(kwargs["spec"]["state"])
+
+    screen._character._resolve_visual_identity = resolve
+    screen._character._render_character_avatar = render
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    assert painted_states == ["happy", "sad"]
+    events = store.character_emote_events_after(store.active_session_id, 0)
+    assert (
+        screen._character._character_emote_cursor_by_session[store.active_session_id]
+        == events[-1].sequence
+    )
+    assert screen._character._character_emote_explicit_by_session[
+        store.active_session_id
+    ] == (assistant.id, "sad")
+
+
+@pytest.mark.asyncio
+async def test_manual_override_advances_live_emote_feed_without_repainting(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    screen._character._resolve_visual_identity = lambda _scope, state, manual: (
+        _resolution(
+            character_id,
+            requested=state,
+            manual=manual,
+            source="pack_manual",
+            identity_suffix="sha256=manual",
+            image=_avatar_png((60, 70, 80)),
+        )
+    )
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    original_identity = screen._active_character_avatar["resolution_cache_identity"]
+    render = AsyncMock()
+    screen._character._render_character_avatar = render
+    store, assistant = _arm_live_emotes(screen, character_id, "happy", "sad")
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    render.assert_not_awaited()
+    assert (
+        screen._active_character_avatar["resolution_cache_identity"]
+        == original_identity
+    )
+    assert screen._character._character_emote_explicit_by_session[
+        store.active_session_id
+    ] == (assistant.id, "sad")
+    assert (
+        screen._character._character_emote_cursor_by_session[store.active_session_id]
+        == store.character_emote_events_after(store.active_session_id, 0)[-1].sequence
+    )
+
+
+@pytest.mark.parametrize("failure", ("missing", "raises"))
+@pytest.mark.asyncio
+async def test_unavailable_live_explicit_asset_retains_current_portrait(
+    console_screen_with_db,
+    failure,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+
+    def resolve(_scope, state, manual):
+        if state == "custom:smug":
+            if failure == "raises":
+                raise RuntimeError("resolver unavailable")
+            return replace(
+                _resolution(
+                    character_id,
+                    requested=state,
+                    manual=manual,
+                    source="card_portrait",
+                    identity_suffix="sha256=fallback",
+                    image=_avatar_png((90, 90, 90)),
+                ),
+                pack_id=None,
+                pack_version_id=None,
+                asset_id=None,
+            )
+        return _resolution(
+            character_id,
+            requested=state,
+            manual=manual,
+            source="pack_operational",
+            identity_suffix="sha256=base",
+            image=_avatar_png((30, 30, 30)),
+        )
+
+    screen._character._resolve_visual_identity = resolve
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    original_identity = screen._active_character_avatar["resolution_cache_identity"]
+    render = AsyncMock()
+    screen._character._render_character_avatar = render
+    _arm_live_emotes(screen, character_id, "smug")
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    render.assert_not_awaited()
+    assert (
+        screen._active_character_avatar["resolution_cache_identity"]
+        == original_identity
+    )
+
+
+@pytest.mark.asyncio
+async def test_completed_history_restores_one_final_identity_without_replaying_beats(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+    store, assistant = _arm_live_emotes(screen, character_id, "happy", "sad")
+    store.mark_message_complete(assistant.id)
+    history_calls = []
+
+    def resolve_history(_scope, identity):
+        history_calls.append(identity)
+        return _resolution(
+            character_id,
+            requested=identity.expression_key,
+            manual=None,
+            source="history_immutable",
+            identity_suffix=f"asset_id={identity.asset_id}",
+            image=_avatar_png((100, 110, 120)),
+        )
+
+    painted_states: list[str] = []
+
+    async def render(**kwargs):
+        painted_states.append(kwargs["spec"]["state"])
+
+    screen._character._resolve_historical_visual_identity = resolve_history
+    screen._character._resolve_visual_identity = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("history must not walk the current resolver")
+    )
+    screen._character._render_character_avatar = render
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    assert painted_states == ["sad"]
+    assert {identity.expression_key for identity in history_calls} == {"sad"}
+    assert screen._character._character_emote_explicit_by_session == {}
+    assert (
+        screen._character._character_emote_cursor_by_session[store.active_session_id]
+        == store.character_emote_events_after(store.active_session_id, 0)[-1].sequence
+    )
+
+
 @pytest.mark.asyncio
 async def test_expression_state_falls_back_to_idle_image(
     console_screen_with_db, monkeypatch
@@ -957,11 +1208,11 @@ async def test_decode_completion_live_fences_every_avatar_request_input(
     painted: list[tuple[str, ...] | None] = []
     original_build = screen._build_character_avatar_widget
 
-    def build(spec):
+    def build(spec, *, box=None):
         painted.append(
             tuple(spec["resolution_cache_identity"]) if spec is not None else None
         )
-        return original_build(spec)
+        return original_build(spec, box=box)
 
     monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
 
@@ -1020,7 +1271,7 @@ async def test_decode_completion_live_fences_every_avatar_request_input(
 async def test_render_awaits_never_resume_a_stale_avatar_paint(
     console_screen_with_db, monkeypatch, blocked_await
 ):
-    """Once B paints, A may not mount or update labels after either await."""
+    """Once B supersedes A, serialized A may not leave stale DOM or labels."""
 
     _app, screen, db = console_screen_with_db
     character_id = db.add_character_card(
@@ -1071,11 +1322,11 @@ async def test_render_awaits_never_resume_a_stale_avatar_paint(
     builds: list[tuple[str, ...] | None] = []
     original_build = screen._build_character_avatar_widget
 
-    def build(spec):
+    def build(spec, *, box=None):
         builds.append(
             tuple(spec["resolution_cache_identity"]) if spec is not None else None
         )
-        return original_build(spec)
+        return original_build(spec, box=box)
 
     monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
     name = screen.query_one("#console-character-name", Static)
@@ -1100,22 +1351,22 @@ async def test_render_awaits_never_resume_a_stale_avatar_paint(
     )
     await asyncio.wait_for(started.wait(), timeout=5)
     screen._session._set_manual_reaction(actor_scope, "custom:relief")
-    await screen._character._refresh_active_character_avatar_if_scope_changed(
-        force=True
+    current = asyncio.create_task(
+        screen._character._refresh_active_character_avatar_if_scope_changed(force=True)
     )
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(stale, current)
     current_identity = tuple(
         screen._active_character_avatar["resolution_cache_identity"]
     )
-    builds_after_current = len(builds)
-    updates_after_current = len(updates)
-    release.set()
-    await stale
 
     assert tuple(screen._active_character_avatar["resolution_cache_identity"]) == (
         current_identity
     )
-    assert builds[builds_after_current:] == []
-    assert updates[updates_after_current:] == []
+    assert builds[-1] == current_identity
+    assert updates[-2:] == ["name", "reaction"]
+    assert len(holder.children) == 1
 
 
 def test_visual_identity_expected_errors_fail_soft(monkeypatch):
@@ -1413,6 +1664,455 @@ async def test_successful_actor_replacement_clears_old_actor_override(
 # ---- task-1661: rail-derived avatar box + hugging holder ----
 
 
+@pytest.mark.parametrize(
+    ("source_size", "available_box", "expected_box"),
+    (
+        ((8, 8), (40, 30), (8, 4)),
+        ((1200, 300), (30, 30), (30, 4)),
+        ((300, 1200), (30, 30), (15, 30)),
+        ((600, 600), (30, 30), (30, 15)),
+    ),
+)
+def test_character_avatar_fit_is_scale_down_only_and_aspect_preserving(
+    source_size,
+    available_box,
+    expected_box,
+):
+    """Character art may shrink to contain, but never grows to fill 35 rows."""
+
+    from tldw_chatbook.UI.Console_Modules.character_avatar_layout import (
+        fit_character_avatar_cell_box,
+    )
+
+    image = PILImage.new("RGB", source_size, (20, 40, 60))
+
+    assert fit_character_avatar_cell_box(image, *available_box) == expected_box
+
+
+@pytest.mark.parametrize(
+    ("source_size", "available_box"),
+    (
+        ((1200, 300), (30, 30)),
+        ((300, 1200), (30, 30)),
+        ((600, 600), (30, 30)),
+        ((8, 8), (40, 30)),
+    ),
+)
+def test_character_avatar_graphics_and_mosaic_paths_share_the_fitted_cell_box(
+    source_size,
+    available_box,
+):
+    """The shared contain box must also be the fallback mosaic's real grid."""
+
+    from tldw_chatbook.UI.Console_Modules.character_avatar_layout import (
+        fit_character_avatar_cell_box,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        _character_avatar_fallback_renderable,
+    )
+    from tldw_chatbook.Utils.mosaic_render import explicit_cell_size
+
+    image = PILImage.new("RGB", source_size, (20, 40, 60))
+    fitted_box = fit_character_avatar_cell_box(image, *available_box)
+
+    renderable = _character_avatar_fallback_renderable(
+        image,
+        box_cols=fitted_box[0],
+        box_lines=fitted_box[1],
+    )
+
+    assert explicit_cell_size(renderable) == fitted_box
+
+
+def test_character_avatar_fit_omits_the_image_when_no_cell_box_remains():
+    """Measured controls win when they consume the complete 35-row ceiling."""
+
+    from tldw_chatbook.UI.Console_Modules.character_avatar_layout import (
+        fit_character_avatar_cell_box,
+    )
+
+    image = PILImage.new("RGB", (600, 600), (20, 40, 60))
+
+    assert fit_character_avatar_cell_box(image, 30, 0) == (0, 0)
+    assert fit_character_avatar_cell_box(image, 0, 30) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("source_size", "mode"),
+    (
+        ((300, 1200), "pixels"),
+        ((1200, 300), "graphics"),
+        ((600, 600), "pixels"),
+        ((8, 8), "graphics"),
+        ((2400, 2400), "pixels"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_character_shapes_and_controls_settle_inside_35_rows(
+    console_screen_with_db_and_pilot,
+    source_size,
+    mode,
+):
+    """Production CSS contains representative art and all Character controls."""
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+    from tldw_chatbook.Widgets.Console.console_bounded_section import (
+        ConsoleBoundedSection,
+    )
+
+    _app, screen, db, pilot = console_screen_with_db_and_pilot
+    output = BytesIO()
+    PILImage.new("RGB", source_size, (20, 40, 60)).save(output, format="PNG")
+    character_id = db.add_character_card(
+        {"name": "A roleplay character", "image": output.getvalue()}
+    )
+    _set_active_console_character(screen, character_id, "A roleplay character")
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    spec = screen._active_character_avatar
+    assert spec is not None
+    spec["mode"] = mode
+    await screen._render_character_avatar_into_section(
+        spec=spec,
+        name="A roleplay character",
+        manual_label=None,
+        is_current=lambda: True,
+    )
+    left_rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    left_rail.apply_section_open("character", True)
+    left_rail.request_allocation_reconcile()
+    await pilot.pause()
+    await pilot.pause()
+
+    bounded = screen.query_one(
+        "#console-bounded-section-character", ConsoleBoundedSection
+    )
+    body = screen.query_one("#console-rail-section-body-character")
+    holder = screen.query_one("#console-character-avatar", ClickableAvatarBox)
+    frame = screen.query_one("#console-character-avatar-frame")
+    reaction_button = screen.query_one("#console-character-reaction-open")
+
+    assert left_rail.character_avatar_box is not None
+    fitted_width, fitted_height = left_rail.character_avatar_box
+    assert fitted_width <= source_size[0]
+    assert fitted_height <= (source_size[1] + 1) // 2
+    assert body.virtual_region_with_margin.height <= 35
+    assert bounded.desired_content_lines <= 35
+    assert not bounded.hint.display
+    assert reaction_button.virtual_region_with_margin.bottom <= (
+        body.virtual_region_with_margin.bottom
+    )
+    assert holder.outer_size.height == left_rail.character_avatar_box[1]
+    assert holder.outer_size.width == left_rail.character_avatar_box[0]
+    assert (
+        abs(
+            (holder.region.x * 2 + holder.region.width)
+            - (frame.content_region.x * 2 + frame.content_region.width)
+        )
+        <= 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversized_character_controls_use_local_scroll_and_keep_offset(
+    console_screen_with_db_and_pilot,
+):
+    """Controls beyond 35 rows stay reachable and retain their local offset."""
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+    from tldw_chatbook.Widgets.Console.console_bounded_section import (
+        ConsoleBoundedSection,
+    )
+
+    _app, screen, db, pilot = console_screen_with_db_and_pilot
+    output = BytesIO()
+    PILImage.new("RGB", (600, 600), (20, 40, 60)).save(output, format="PNG")
+    character_id = db.add_character_card(
+        {"name": "A roleplay character", "image": output.getvalue()}
+    )
+    _set_active_console_character(screen, character_id, "A roleplay character")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    left_rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    bounded = screen.query_one(
+        "#console-bounded-section-character", ConsoleBoundedSection
+    )
+    name = screen.query_one("#console-character-name", Static)
+    reaction_button = screen.query_one("#console-character-reaction-open")
+    name.styles.height = 36
+    left_rail.apply_section_open("character", True)
+    left_rail.request_allocation_reconcile()
+    await pilot.pause()
+    await pilot.pause()
+
+    assert left_rail.character_avatar_box == (0, 0)
+    assert bounded.desired_content_lines > 35
+    assert bounded.hint.display
+    assert bounded.viewport.max_scroll_y > 0
+
+    reaction_button.focus()
+    reaction_button.scroll_visible(animate=False, force=True)
+    await pilot.pause()
+    retained_offset = bounded.viewport.scroll_y
+    assert retained_offset > 0
+    assert screen.app.focused is reaction_button
+
+    header = screen.query_one("#console-rail-section-header-character")
+    header.focus()
+    bounded.viewport.scroll_to(y=retained_offset, animate=False, immediate=True)
+    await pilot.pause()
+    left_rail.apply_section_open("character", False)
+    await pilot.pause()
+    left_rail.apply_section_open("character", True)
+    left_rail.request_allocation_reconcile()
+    await pilot.pause()
+    await pilot.pause()
+
+    assert bounded.viewport.scroll_y == min(
+        retained_offset,
+        bounded.viewport.max_scroll_y,
+    )
+    assert bounded.hint.display
+
+
+@pytest.mark.parametrize("recovery_kind", ("missing", "unsupported"))
+@pytest.mark.asyncio
+async def test_character_recovery_body_stays_natural_and_reachable(
+    console_screen_with_db_and_pilot,
+    monkeypatch,
+    recovery_kind,
+):
+    """Missing/unsupported art keeps short copy and usable controls."""
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+    from tldw_chatbook.Utils import mosaic_render
+    from tldw_chatbook.Widgets.Console.console_bounded_section import (
+        ConsoleBoundedSection,
+    )
+
+    _app, screen, _db, pilot = console_screen_with_db_and_pilot
+    spec = None
+    if recovery_kind == "unsupported":
+        spec = {
+            "character_id": 7,
+            "name": "Ada",
+            "mode": "pixels",
+            "pil": PILImage.new("RGB", (64, 64), (20, 40, 60)),
+            "pixels": None,
+        }
+
+        def fail_render(*_args, **_kwargs):
+            raise RuntimeError("unsupported image")
+
+        monkeypatch.setattr(mosaic_render, "mosaic_from_image", fail_render)
+
+    await screen._render_character_avatar_into_section(
+        spec=spec,
+        name="Ada" if spec is not None else None,
+        manual_label=None,
+        is_current=lambda: True,
+    )
+    left_rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    left_rail.apply_section_open("character", True)
+    left_rail.request_allocation_reconcile()
+    await pilot.pause()
+    await pilot.pause()
+
+    bounded = screen.query_one(
+        "#console-bounded-section-character", ConsoleBoundedSection
+    )
+    body = screen.query_one("#console-rail-section-body-character")
+    placeholder = screen.query_one("#console-character-avatar-empty", Static)
+    reaction_button = screen.query_one("#console-character-reaction-open")
+
+    assert str(placeholder.renderable) in {"No character in this chat", "no avatar"}
+    assert body.virtual_region_with_margin.height < 35
+    assert bounded.desired_content_lines < 35
+    assert not bounded.hint.display
+    left_rail.activate_section("character", reveal_target=reaction_button)
+    await pilot.pause()
+    await pilot.pause()
+    reaction_button.focus()
+    reaction_button.scroll_visible(animate=False, force=True, immediate=True)
+    await pilot.pause()
+    assert screen.app.focused is reaction_button
+
+
+@pytest.mark.asyncio
+async def test_character_geometry_replacement_is_equality_guarded_and_keeps_focus(
+    console_screen_with_db_and_pilot,
+    monkeypatch,
+):
+    """One changed box remounts once; the equality follow-up leaves it alone."""
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    _app, screen, db, pilot = console_screen_with_db_and_pilot
+    output = BytesIO()
+    PILImage.new("RGB", (300, 1200), (20, 40, 60)).save(output, format="PNG")
+    character_id = db.add_character_card(
+        {"name": "A roleplay character", "image": output.getvalue()}
+    )
+    _set_active_console_character(screen, character_id, "A roleplay character")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    left_rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    reaction_button = screen.query_one("#console-character-reaction-open")
+    reaction_button.focus()
+    await pilot.pause()
+    original_builder = left_rail._character_avatar_widget_builder
+    assert original_builder is not None
+    calls: list[tuple[int, int] | None] = []
+
+    def counted_builder(box=None):
+        calls.append(box)
+        return original_builder(box)
+
+    monkeypatch.setattr(left_rail, "_character_avatar_widget_builder", counted_builder)
+    left_rail._character_avatar_box = None
+    left_rail.request_allocation_reconcile()
+    await pilot.pause()
+    await pilot.pause()
+    settled_calls = tuple(calls)
+    left_rail.request_allocation_reconcile()
+    await pilot.pause()
+
+    assert len(settled_calls) == 1
+    assert tuple(calls) == settled_calls
+    assert screen.app.focused is reaction_button
+
+
+@pytest.mark.asyncio
+async def test_character_geometry_epoch_consumes_only_one_followup(
+    console_screen_with_db_and_pilot,
+    monkeypatch,
+):
+    """Scrollbar feedback cannot recursively start another fit/remount pass."""
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    _app, screen, db, pilot = console_screen_with_db_and_pilot
+    output = BytesIO()
+    PILImage.new("RGB", (600, 600), (20, 40, 60)).save(output, format="PNG")
+    character_id = db.add_character_card(
+        {"name": "A roleplay character", "image": output.getvalue()}
+    )
+    _set_active_console_character(screen, character_id, "A roleplay character")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    await pilot.pause()
+
+    left_rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    if left_rail.character_avatar_box is None:
+        left_rail._reconcile_character_avatar_geometry()
+        await pilot.pause()
+        await pilot.pause()
+    settled_box = left_rail.character_avatar_box
+    assert settled_box is not None
+    feedback_box = (max(1, settled_box[0] - 1), settled_box[1])
+    original_builder = left_rail._character_avatar_widget_builder
+    assert original_builder is not None
+    builds: list[tuple[int, int] | None] = []
+
+    def counted_builder(box=None):
+        builds.append(box)
+        return original_builder(box)
+
+    monkeypatch.setattr(left_rail, "_character_avatar_widget_builder", counted_builder)
+    monkeypatch.setattr(
+        left_rail,
+        "_character_avatar_fit_box",
+        lambda _cols, _lines: feedback_box,
+    )
+    left_rail._character_avatar_fit_signature = None
+    left_rail._character_avatar_followup_pending = True
+    left_rail._reconcile_character_avatar_geometry()
+
+    assert builds == []
+    assert left_rail.character_avatar_box == settled_box
+
+    left_rail._reconcile_character_avatar_geometry()
+
+    assert builds == []
+    assert left_rail.character_avatar_box == settled_box
+
+    left_rail.invalidate_character_avatar_geometry()
+    left_rail._reconcile_character_avatar_geometry()
+    await pilot.pause()
+    await pilot.pause()
+
+    assert builds == [feedback_box]
+    assert left_rail.character_avatar_box == feedback_box
+
+
+@pytest.mark.asyncio
+async def test_character_paint_and_geometry_replacement_are_serialized(
+    console_screen_with_db_and_pilot,
+    monkeypatch,
+):
+    """A live expression paint cannot interleave mounts with geometry fitting."""
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    _app, screen, db, pilot = console_screen_with_db_and_pilot
+    output = BytesIO()
+    PILImage.new("RGB", (300, 1200), (20, 40, 60)).save(output, format="PNG")
+    character_id = db.add_character_card(
+        {"name": "A roleplay character", "image": output.getvalue()}
+    )
+    _set_active_console_character(screen, character_id, "A roleplay character")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    await pilot.pause()
+
+    left_rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    holder = screen.query_one("#console-character-avatar", ClickableAvatarBox)
+    spec = screen._active_character_avatar
+    assert spec is not None
+    target_box = left_rail.character_avatar_box or (10, 10)
+    original_mount = holder.mount
+    first_mount_waiting = asyncio.Event()
+    second_mount_completed = asyncio.Event()
+    release_first_mount = asyncio.Event()
+    first = True
+
+    async def mount(*widgets, **kwargs):
+        nonlocal first
+        if first:
+            first = False
+            first_mount_waiting.set()
+            await release_first_mount.wait()
+        else:
+            await original_mount(*widgets, **kwargs)
+            second_mount_completed.set()
+            return
+        await original_mount(*widgets, **kwargs)
+
+    monkeypatch.setattr(holder, "mount", mount)
+    left_rail._character_avatar_fit_generation += 1
+    generation = left_rail._character_avatar_fit_generation
+    geometry = asyncio.create_task(
+        left_rail._replace_character_avatar_for_geometry(generation, target_box)
+    )
+    await asyncio.wait_for(first_mount_waiting.wait(), timeout=1)
+    paint = asyncio.create_task(
+        screen._render_character_avatar_into_section(
+            spec=spec,
+            name="A roleplay character",
+            manual_label=None,
+            is_current=lambda: True,
+        )
+    )
+    try:
+        await asyncio.wait_for(second_mount_completed.wait(), timeout=0.1)
+    except TimeoutError:
+        pass
+    finally:
+        release_first_mount.set()
+    results = await asyncio.gather(geometry, paint, return_exceptions=True)
+
+    assert not [result for result in results if isinstance(result, Exception)]
+    assert len(holder.children) == 1
+
+
 def test_avatar_box_scales_with_rail_width():
     """A wider rail yields a bigger box, clamped at both ends.
 
@@ -1553,6 +2253,9 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
         def apply_section_open(self, section_id, section_open):
             applied.append((section_id, section_open))
 
+        def request_allocation_reconcile(self):
+            pass
+
     def _fake_query_one(selector, expect_type=None):
         # Final review finding 5: a wildcard fake here would still pass even
         # if `_toggle_console_rail_section` queried the wrong id or type --
@@ -1590,10 +2293,17 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
 class _AvatarHolderApp(ConsolidatedCSSApp):
     """Host mirroring the rail's auto/auto avatar holder (task-1661 shape)."""
 
-    def __init__(self, screen: ChatScreen, spec: dict | None):
+    def __init__(
+        self,
+        screen: ChatScreen,
+        spec: dict | None,
+        *,
+        box: tuple[int, int] | None = None,
+    ):
         super().__init__()
         self._avatar_screen = screen
         self._avatar_spec = spec
+        self._avatar_box = box
 
     def compose(self) -> ComposeResult:
         holder = ClickableAvatarBox(id="console-character-avatar")
@@ -1603,7 +2313,10 @@ class _AvatarHolderApp(ConsolidatedCSSApp):
             # Built HERE, inside the active app context: the pixels fallback
             # reads `self.app.no_color` for its monochrome guard, which needs
             # a running app (a bare unit call degrades to the placeholder).
-            yield self._avatar_screen._build_character_avatar_widget(self._avatar_spec)
+            yield self._avatar_screen._build_character_avatar_widget(
+                self._avatar_spec,
+                box=self._avatar_box,
+            )
 
 
 @pytest.mark.asyncio
@@ -1638,6 +2351,29 @@ async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
         box_cols, box_lines = character_avatar_box(0)
         assert 1 <= widget.styles.width.value <= box_cols
         assert 1 <= widget.styles.height.value <= box_lines
+
+
+@pytest.mark.parametrize("initial_box", (None, (30, 30)))
+@pytest.mark.asyncio
+async def test_initial_tiny_avatar_uses_intrinsic_size_before_rail_reconciliation(
+    initial_box,
+):
+    """Neither a missing nor a stale large box may upscale the first paint."""
+
+    screen = _bare_console_screen(ConsoleChatStore())
+    spec = {
+        "character_id": 7,
+        "name": "Ada",
+        "mode": "pixels",
+        "pil": PILImage.new("RGB", (8, 8), (10, 180, 200)),
+        "pixels": None,
+    }
+    app = _AvatarHolderApp(screen, spec, box=initial_box)
+
+    async with app.run_test(size=(60, 30)):
+        widget = app.query_one("#console-character-avatar-image", Static)
+        assert widget.styles.width.value == 8
+        assert widget.styles.height.value == 4
 
 
 @pytest.mark.asyncio

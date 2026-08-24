@@ -630,7 +630,7 @@ prerequisites have unique task identities and accepted plans.
   ABA.
 - Disabled workspaces create no shadow snapshot thread on binding or turn.
 - Settings disclose retention; history deletion is a separate follow-up.
-- ADR-079 is accepted before this slice changes the existing default.
+- ADR-084 is accepted before this slice changes the existing default.
 
 ### Slice A2 — nonblocking finalization and publication (P0)
 
@@ -743,7 +743,7 @@ queue outcome without recording prompt or file content.
 
 ADR required: yes.
 
-- Create ADR-079 for Change Review opt-in state, shadow-content ownership and
+- Create ADR-084 for Change Review opt-in state, shadow-content ownership and
   retention disclosure, ordered asynchronous finalization, durable publication
   joins, and bounded conservative mutation gating. It supersedes the default-on
   and synchronous completion portions of the 2026-08-02 design.
@@ -760,7 +760,7 @@ ADR required: yes.
   and document the one-time schema/approval change plus non-path spec
   preservation. Existing permission and kill-switch ownership is unchanged.
 - The atomic-confinement task writes its own ADR for the cross-platform
-  execution lease. ADR-079 references but does not duplicate that runtime and
+  execution lease. ADR-084 references but does not duplicate that runtime and
   security boundary.
 - ADR-046 remains unchanged unless implementation discovers that its existing
   confirmed-discard navigation contract is not actually enforced. Queue

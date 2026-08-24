@@ -1943,6 +1943,22 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_list_collections": ("library.collections.list.local", "library_collections"),
     "library_get_collection": ("library.collections.detail.local", "library_collections"),
     "library_search_collections": ("library.collections.list.local", "library_collections"),
+    # chunking-agent-tools siblings: the read tools ride the existing media
+    # read path (spec §6 "no new verbs") at the matching LEVEL -- structure
+    # and chunk fetch are single-item detail reads (by id, like get), spec
+    # list is a browse-level listing. spec_save resolves to its OWN write
+    # action (Task 4's deadline carry: the moment the save handler went
+    # live, the provisional derived READ mapping had to stop -- a live
+    # write must never resolve to a read action under policy).
+    "library_get_media_structure": ("media.reading.detail.local", "media_reading_ingestion_sources"),
+    "library_get_media_chunk": ("media.reading.detail.local", "media_reading_ingestion_sources"),
+    "library_list_chunk_specs": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
+    "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),
+    # student-workflow (Task 1, spec §4): the note write resolves to its OWN
+    # local Library write action -- never the derived notes read a note-typed
+    # tool would otherwise fall to.
+    "library_save_note": ("library.notes.save.local", "library_collections"),
 }
 
 
@@ -2025,3 +2041,22 @@ async def test_library_collections_deny_rule_blocks_execute_and_tools_call():
             "tools/call",
             {"name": "library_search_collections", "arguments": {"query": "x"}},
         )
+
+
+def test_control_service_forwards_its_policy_enforcer_to_the_default_delegate():
+    """Task 5 (chunking-agent-tools, spec §6): the control service's
+    enforcer rides into the runtime delegate it builds by default, so the
+    lazily-composed shared Library service (and through it the chunk tools)
+    is gated on the local MCP surface."""
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+
+    enforcer = object()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        policy_enforcer=enforcer,
+    )
+
+    assert service.runtime_delegate._policy_enforcer is enforcer

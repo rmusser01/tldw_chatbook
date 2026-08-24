@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
+from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 
@@ -509,8 +511,8 @@ def test_root_and_child_lifecycle_propagation_rolls_back_together(
     store.create_binding(_binding())
     original_connect = store._connect
 
-    def rejecting_connect(*, read_only: bool = False, must_exist: bool = False):
-        connection = original_connect(read_only=read_only, must_exist=must_exist)
+    def rejecting_connect(**kwargs):
+        connection = original_connect(**kwargs)
 
         def authorize(
             action: int,
@@ -527,11 +529,25 @@ def test_root_and_child_lifecycle_propagation_rolls_back_together(
         return connection
 
     monkeypatch.setattr(store, "_connect", rejecting_connect)
+    store.close()  # force the next operation to reconnect through the seam
 
     with pytest.raises(sqlite3.DatabaseError):
         store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
+    # Prove through an independent connection -- before close() below could
+    # implicitly roll back -- that the denied transaction neither committed
+    # its first UPDATE (bindings stay active) nor still holds the write slot
+    # open un-rolled-back (BEGIN IMMEDIATE at zero busy timeout must win).
+    with closing(sqlite3.connect(database)) as independent:
+        independent.execute("PRAGMA busy_timeout = 0")
+        assert independent.execute(
+            "SELECT state FROM notes_sync_bindings WHERE binding_id = 'binding-1'"
+        ).fetchone() == ("active",)
+        independent.execute("BEGIN IMMEDIATE")
+        independent.rollback()
+
     monkeypatch.setattr(store, "_connect", original_connect)
+    store.close()
     assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
     assert store.get_binding("binding-1").state is NotesSyncBindingState.ACTIVE
 
@@ -1043,6 +1059,146 @@ def test_store_settings_accept_canonical_values_and_fail_closed_on_corrupt_rows(
         store.get_setting("recovery_capacity")
 
 
+def test_held_connection_reads_back_wal_normal_and_true_autocommit(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    store = NotesDeviceStateStore(database)
+    store.initialize()
+
+    with store.transaction() as connection:
+        held = connection
+    with store.transaction() as connection:
+        assert connection is held
+
+    assert held.isolation_level is None
+    assert held.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+    assert held.execute("PRAGMA synchronous").fetchone() == (1,)
+    assert held.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    with closing(sqlite3.connect(database)) as independent:
+        assert independent.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+
+
+def test_schema_census_runs_once_per_connection_lifetime_not_per_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    census_calls = 0
+    real_initialize = notes_device_state_schema.initialize_notes_device_schema
+
+    def counting_initialize(connection: sqlite3.Connection) -> None:
+        nonlocal census_calls
+        census_calls += 1
+        real_initialize(connection)
+
+    monkeypatch.setattr(
+        notes_device_state_schema,
+        "initialize_notes_device_schema",
+        counting_initialize,
+    )
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.initialize()
+    assert census_calls == 1
+
+    store.create_root(_root())
+    store.get_root("root-1")
+    store.list_root_summaries()
+    with store.transaction() as connection:
+        held = connection
+    assert census_calls == 1
+
+    statements: list[str] = []
+    held.set_trace_callback(statements.append)
+    try:
+        store.get_root("root-1")
+    finally:
+        held.set_trace_callback(None)
+    assert 1 <= len(statements) <= 5
+    joined = "\n".join(statements).upper()
+    assert "SQLITE_SCHEMA" not in joined
+    assert "CREATE INDEX" not in joined
+
+
+def test_each_thread_holds_its_own_connection_and_work_is_visible_across_threads(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.initialize()
+    with store.transaction() as connection:
+        main_thread_connection = connection
+
+    worker_connections: list[sqlite3.Connection] = []
+
+    def create_in_worker() -> None:
+        store.create_root(_root())
+        with store.transaction() as connection:
+            worker_connections.append(connection)
+        with store.transaction() as connection:
+            worker_connections.append(connection)
+
+    worker = threading.Thread(target=create_in_worker)
+    worker.start()
+    worker.join()
+
+    assert len(worker_connections) == 2
+    assert worker_connections[0] is worker_connections[1]
+    assert worker_connections[0] is not main_thread_connection
+    assert store.get_root("root-1").state is NotesSyncRootState.PENDING
+
+
+def test_close_releases_held_connections_of_every_thread_and_the_store_reopens(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(_root())
+    with store.transaction() as connection:
+        main_thread_connection = connection
+    worker_connections: list[sqlite3.Connection] = []
+
+    def observe_in_worker() -> None:
+        with store.transaction() as connection:
+            worker_connections.append(connection)
+
+    worker = threading.Thread(target=observe_in_worker)
+    worker.start()
+    worker.join()
+
+    store.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        main_thread_connection.execute("SELECT 1")
+    with pytest.raises(sqlite3.ProgrammingError):
+        worker_connections[0].execute("SELECT 1")
+    assert store.get_root("root-1").state is NotesSyncRootState.PENDING
+    store.close()
+
+
+def test_transaction_error_is_not_masked_by_rollback_on_a_closed_connection(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.initialize()
+
+    with pytest.raises(ValueError, match="original private failure"):
+        with store.transaction():
+            store.close()  # a racing shutdown closed the held connection
+            raise ValueError("original private failure")
+
+
+def test_refused_foreign_database_is_never_switched_to_wal(tmp_path: Path) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("CREATE TABLE unrelated_private_owner (value TEXT)")
+        connection.commit()
+    database.chmod(0o600)
+
+    with pytest.raises(NotesDeviceStateError, match="incompatible"):
+        NotesDeviceStateStore(database).initialize()
+
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+
+
 def test_read_only_connect_requires_existing_database_and_cannot_write(
     tmp_path: Path,
 ) -> None:
@@ -1059,3 +1215,170 @@ def test_read_only_connect_requires_existing_database_and_cannot_write(
             connection.execute("DELETE FROM notes_sync_roots")
     finally:
         connection.close()
+
+
+def _seeded_binding_store(tmp_path: Path) -> NotesDeviceStateStore:
+    """One active root carrying a binding in every durable binding state."""
+
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    for index, state in enumerate(NotesSyncBindingState):
+        store.create_binding(
+            _binding(
+                binding_id=f"binding-{index}",
+                note_id=f"note-{index}",
+                relative_path=f"folder/note-{index}.md",
+                identity_digest=f"{index:064d}",
+                state=NotesSyncBindingState.ACTIVE,
+            )
+        )
+        if state is not NotesSyncBindingState.ACTIVE:
+            with store.transaction(immediate=True) as connection:
+                connection.execute(
+                    "UPDATE notes_sync_bindings SET state = ? WHERE binding_id = ?",
+                    (state.value, f"binding-{index}"),
+                )
+    # A second root proves the projections never leak across owners.
+    store.create_root(
+        _root(
+            root_id="root-2",
+            logical_folder_id="folder-2",
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    # Deliberately values that exist ONLY here, so a probe that forgot its
+    # root filter would answer True for root-1 and be caught.
+    store.create_binding(
+        _binding(
+            binding_id="binding-other",
+            root_id="root-2",
+            note_id="note-only-on-root-2",
+            relative_path="folder/only-on-root-2.md",
+            identity_digest=f"{99:064d}",
+        )
+    )
+    return store
+
+
+def test_active_binding_note_ids_matches_the_full_scan_it_replaces(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the narrow projection is byte-identical to the old read."""
+
+    store = _seeded_binding_store(tmp_path)
+
+    def retired_projection(root_id: str, exclude: str | None = None) -> tuple[str, ...]:
+        return tuple(
+            binding.note_id
+            for binding in store.list_bindings(root_id)
+            if binding.state is NotesSyncBindingState.ACTIVE
+            and binding.binding_id != exclude
+        )
+
+    assert store.active_binding_note_ids("root-1") == retired_projection("root-1")
+    assert store.active_binding_note_ids("root-1") == ("note-1",)
+    assert store.active_binding_note_ids(
+        "root-1", exclude_binding_id="binding-1"
+    ) == retired_projection("root-1", "binding-1")
+    assert store.active_binding_note_ids("root-1", exclude_binding_id="binding-1") == ()
+    assert store.active_binding_note_ids("root-2") == ("note-only-on-root-2",)
+    # Excluding an id that belongs to another root removes nothing.
+    assert store.active_binding_note_ids(
+        "root-1", exclude_binding_id="binding-other"
+    ) == ("note-1",)
+    with pytest.raises(ValueError, match="root_id"):
+        store.active_binding_note_ids("folder/root")
+    with pytest.raises(ValueError, match="exclude_binding_id"):
+        store.active_binding_note_ids("root-1", exclude_binding_id="folder/binding")
+
+
+def test_active_binding_note_ids_orders_by_binding_id_and_is_empty_on_a_bare_root(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: order is the contract the reconcile input depends on."""
+
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    assert store.active_binding_note_ids("root-1") == ()
+
+    for suffix in ("c", "a", "b"):
+        store.create_binding(
+            _binding(
+                binding_id=f"binding-{suffix}",
+                note_id=f"note-{suffix}",
+                relative_path=f"folder/note-{suffix}.md",
+                identity_digest=hashlib.sha256(suffix.encode()).hexdigest(),
+            )
+        )
+
+    assert store.active_binding_note_ids("root-1") == ("note-a", "note-b", "note-c")
+    assert store.active_binding_note_ids("root-1") == tuple(
+        binding.note_id for binding in store.list_bindings("root-1")
+    )
+
+
+def test_has_binding_for_note_or_path_matches_the_any_scan_it_replaces(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the LIMIT-1 probe answers the retired predicate exactly."""
+
+    store = _seeded_binding_store(tmp_path)
+
+    def retired_probe(root_id: str, scope: str, note: str, path: str) -> bool:
+        return any(
+            (binding.note_scope_id == scope and binding.note_id == note)
+            or binding.normalized_relative_path == path
+            for binding in store.list_bindings(root_id)
+        )
+
+    cases = (
+        # (scope, note, path) -- note identity, path, both, neither, blanks.
+        ("scope-1", "note-1", "folder/absent.md"),
+        ("scope-1", "absent", "folder/note-1.md"),
+        ("scope-1", "note-1", "folder/note-1.md"),
+        ("scope-1", "absent", "folder/absent.md"),
+        ("", "", ""),
+        ("scope-1", "", "folder/note-3.md"),
+        # A non-active binding still owns its note and path.
+        ("scope-1", "note-0", "folder/absent.md"),
+        ("scope-1", "absent", "folder/note-4.md"),
+        # The scope half is conjunctive: a right note under a wrong scope misses.
+        ("scope-other", "note-1", "folder/absent.md"),
+    )
+    for scope, note, path in cases:
+        expected = retired_probe("root-1", scope, note, path)
+        assert (
+            store.has_binding_for_note_or_path(
+                "root-1", note_scope_id=scope, note_id=note, relative_path=path
+            )
+            is expected
+        ), (scope, note, path)
+
+    # The probe never sees another root's bindings -- and root-2 really does
+    # hold this note and this path, so the assertion is not vacuous.
+    assert store.has_binding_for_note_or_path(
+        "root-2",
+        note_scope_id="scope-1",
+        note_id="note-only-on-root-2",
+        relative_path="folder/absent.md",
+    )
+    assert store.has_binding_for_note_or_path(
+        "root-2",
+        note_scope_id="scope-1",
+        note_id="absent",
+        relative_path="folder/only-on-root-2.md",
+    )
+    assert not store.has_binding_for_note_or_path(
+        "root-1",
+        note_scope_id="scope-1",
+        note_id="note-only-on-root-2",
+        relative_path="folder/only-on-root-2.md",
+    )
+    with pytest.raises(ValueError, match="root_id"):
+        store.has_binding_for_note_or_path(
+            "folder/root", note_scope_id="s", note_id="n", relative_path="p"
+        )

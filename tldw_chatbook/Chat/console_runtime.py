@@ -119,11 +119,18 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
+)
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.config import coerce_bool_setting
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -137,6 +144,26 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 #: or a read-only double). Never the production path — `TldwCli.__init__`
 #: always takes `CONSOLE_RUNTIME_ATTR`.
 _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
+
+
+def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
+    """Read fresh future-session defaults from the app's current config."""
+    config = getattr(app, "app_config", None)
+    if not isinstance(config, Mapping):
+        config = {}
+    console = config.get("console", {})
+    if not isinstance(console, Mapping):
+        console = {}
+    return ConsoleLibraryPolicyDefaults(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=(
+            ConsoleAssistantLibraryAccess.ALLOWED
+            if coerce_bool_setting(
+                console.get("assistant_library_access_default", False), False
+            )
+            else ConsoleAssistantLibraryAccess.BLOCKED
+        ),
+    )
 
 __all__ = [
     "CONSOLE_RUNTIME_ATTR",
@@ -467,6 +494,7 @@ class ConsoleRuntime:
         self._agent_runs_db: Any | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
+        self._scratch_spaces = ConsoleScratchSpaceManager()
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
         )
@@ -518,6 +546,11 @@ class ConsoleRuntime:
     def chat_controller(self) -> "ConsoleChatController | None":
         """The built chat controller, or `None`."""
         return self._chat_controller
+
+    @property
+    def scratch_spaces(self) -> ConsoleScratchSpaceManager:
+        """The process-lifetime scratch authority shared by Console visits."""
+        return self._scratch_spaces
 
     @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
@@ -580,6 +613,9 @@ class ConsoleRuntime:
             ChatPersistenceService,
         )
         from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.Chat.console_library_policy_coordinator import (
+            ConsoleLibraryPolicyCoordinator,
+        )
 
         persistence = None
         db = getattr(self._app, "chachanotes_db", None)
@@ -607,6 +643,16 @@ class ConsoleRuntime:
             persistence=persistence,
             workspace_context=workspace_context,
             on_scope_flushed=on_scope_flushed,
+            library_policy_coordinator=(
+                ConsoleLibraryPolicyCoordinator(
+                    persistence.console_library_policy_repository
+                )
+                if persistence is not None
+                else None
+            ),
+            library_policy_defaults_provider=lambda: _current_library_policy_defaults(
+                self._app
+            ),
         )
         self._bind_view_hooks()
         return self._chat_store
@@ -767,6 +813,7 @@ class ConsoleRuntime:
         )
 
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
+        kwargs.setdefault("scratch_spaces", self._scratch_spaces)
         self._chat_controller = ConsoleChatController(**kwargs)
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
@@ -1029,6 +1076,7 @@ class ConsoleRuntime:
         is exactly the right answer at exit.
         """
         self._disposed = True
+        self._scratch_spaces.tombstone_all()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
         coordinator, runs_db = (
@@ -1043,6 +1091,17 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+        if self._chat_store is not None:
+            end_app_runtime = getattr(self._chat_store, "end_app_runtime", None)
+            if callable(end_app_runtime):
+                end_app_runtime()
+        try:
+            await asyncio.to_thread(self._scratch_spaces.dispose)
+        except Exception as exc:  # noqa: BLE001 - quit must continue after cleanup failure
+            logger.warning(
+                "Console runtime: scratch cleanup failed at dispose category={}",
+                type(exc).__name__,
+            )
         # Controller shutdown begins by terminally fencing the fleet-wake
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.

@@ -15,7 +15,7 @@
 - Modify `Tests/Performance/run_console_three_turn_profile.py`: schedule phases, exact raw-sequence validation, original-runner loading, target/protocol preflight, campaign ledger/lock, review digest, and atomic promotion.
 - Modify `Tests/Performance/test_console_three_turn_profile.py`: all RED/GREEN unit and subprocess coverage; no live network calls.
 - Rename `backlog/tasks/task-19641 - Measure-real-provider-three-turn-Console-latency.md` to `backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md`: remove the latest-dev task-ID collision without changing retained evidence bytes.
-- Rename `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md` to `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`: preserve dev's canonical ADR-077 and renumber this branch's Change Review ADR.
+- Rename `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md` to `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md`: preserve dev's canonical ADR-077 and renumber this branch's Change Review ADR.
 - Generate only after approved promotion `Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/README.md`.
 - Generate only after approved promotion `Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/real-provider-three-turn.raw.jsonl`.
 - Generate only after approved promotion `Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/real-provider-three-turn.manifest.json`.
@@ -27,15 +27,15 @@
 
 ADR required: no
 
-ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md` after latest-dev integration (existing governing ADR, renumbered from the branch-local ADR-077)
+ADR path: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md` after latest-dev integration (existing governing ADR, renumbered after latest-dev integration)
 
-Reason: TASK-20010 changes benchmark-only tooling and retained evidence. It does not change production storage, provider/runtime boundaries, privacy ownership, security policy, or user-visible behavior; the renumbered ADR-079 already governs the Change Review behavior being measured.
+Reason: TASK-20010 changes benchmark-only tooling and retained evidence. It does not change production storage, provider/runtime boundaries, privacy ownership, security policy, or user-visible behavior; the renumbered ADR-084 already governs the Change Review behavior being measured.
 
 ### Task 0: Integrate the work with the latest dev without rewriting benchmark evidence
 
 **Files:**
 - Rename: `backlog/tasks/task-19641 - Measure-real-provider-three-turn-Console-latency.md` → `backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md`
-- Rename: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md` → `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
+- Rename: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md` → `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md`
 - Modify: branch-owned specs, plans, tasks, decision index, and lessons that point to those two identities
 - Preserve byte-for-byte: `Docs/superpowers/qa/console-three-turn-real-provider/`
 - Preserve protocol fixture strings and original runner digest: `Tests/Performance/run_console_three_turn_profile.py`
@@ -50,7 +50,7 @@ git cat-file -e 'eb8225a32f88ea43c337aff99804d360384e7668^{commit}'
 git update-ref refs/benchmarks/task-20009-candidate eb8225a32f88ea43c337aff99804d360384e7668
 ```
 
-Also scan every fetched ref, not only `origin/dev`. Require TASK-20009, TASK-20010, and ADR-079 to be unused outside this branch before proceeding. Record the current original QA hashes from the approved spec. The private benchmark ref keeps the digest-pinned pre-rebase candidate object reachable while branch commits are rewritten; verify it still resolves to the exact commit after rebase.
+Also scan every fetched ref, not only `origin/dev`. Require TASK-20009, TASK-20010, and ADR-084 to be unused outside this branch before proceeding. Record the current original QA hashes from the approved spec. The private benchmark ref keeps the digest-pinned pre-rebase candidate object reachable while branch commits are rewritten; verify it still resolves to the exact commit after rebase.
 
 - [ ] **Step 2: Rebase onto the exact refreshed `origin/dev`**
 
@@ -58,11 +58,11 @@ Also scan every fetched ref, not only `origin/dev`. Require TASK-20009, TASK-200
 git rebase origin/dev
 ```
 
-Resolve the known identity conflicts explicitly: retain dev's unrelated TASK-19641 and canonical server-offload ADR-077, while preserving this branch's benchmark task as TASK-20009 and Change Review ADR as ADR-079. Never resolve by dropping either side's work. Re-run the all-ref uniqueness scan after the rebase.
+Resolve the known identity conflicts explicitly: retain dev's unrelated TASK-19641 and canonical server-offload ADR-077, while preserving this branch's benchmark task as TASK-20009 and Change Review ADR as ADR-084. Never resolve by dropping either side's work. Re-run the all-ref uniqueness scan after the rebase.
 
 - [ ] **Step 3: Update only mutable identity references**
 
-Set the renamed task frontmatter to `TASK-20009`, renumber the Change Review decision heading/index/links to ADR-079, and update branch-owned specs, plans, tasks, and lessons accordingly. In the confirmation spec, state that the immutable original artifacts internally retain their pre-integration `TASK-19641` label. Do not edit the original QA directory or the original runner's task-labeled fixture strings, because both are digest-pinned protocol inputs.
+Set the renamed task frontmatter to `TASK-20009`, renumber the Change Review decision heading/index/links to ADR-084, and update branch-owned specs, plans, tasks, and lessons accordingly. In the confirmation spec, state that the immutable original artifacts internally retain their pre-integration `TASK-19641` label. Do not edit the original QA directory or the original runner's task-labeled fixture strings, because both are digest-pinned protocol inputs.
 
 - [ ] **Step 4: Revalidate and pin the exact post-integration baseline**
 
@@ -541,7 +541,7 @@ Give the reviewer the spec, plan, task, harness/tests, campaign lineage, publish
 
 - [ ] **Step 4: Complete TASK-20010 hygiene only after every gate passes**
 
-Check all eight acceptance criteria, add concise Implementation Notes with the commands and measured verdict, document the ADR-079 link/no-new-ADR decision, add a lessons entry only for a genuinely reusable incident, and set TASK-20010 to Done with Backlog CLI. Keep it In Progress if any review, evidence, test, documentation, or publication requirement remains.
+Check all eight acceptance criteria, add concise Implementation Notes with the commands and measured verdict, document the ADR-084 link/no-new-ADR decision, add a lessons entry only for a genuinely reusable incident, and set TASK-20010 to Done with Backlog CLI. Keep it In Progress if any review, evidence, test, documentation, or publication requirement remains.
 
 - [ ] **Step 5: Commit closeout and verify a clean branch**
 

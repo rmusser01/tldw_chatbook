@@ -1588,3 +1588,135 @@ async def test_a_bug_inside_push_submit_reports_itself(monkeypatch, tmp_path):
     assert any("Could not submit" in note for note in notes), (
         f"a bug in push submit must tell the user; got {notes!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-19701: the confirm dialog names where the push will actually land.
+#
+# `remote.<name>.pushurl` and `url.<other>.pushInsteadOf` both send a push to
+# a DIFFERENT host than the fetch URL. Verified against real git: both are
+# reflected in `git remote -v`'s (push) line and in `git remote get-url
+# --push`, and detection already parses that line — so the effective URL was
+# in hand all along and only the dialog was withholding it, naming the
+# remote alias but never its destination. A terminal told the user more than
+# the confirm dialog did, on the one screen whose job is to state what a
+# button will do before they press it.
+#
+# Decision (AC #1): SURFACE, do not refuse. Both settings are legitimate,
+# widely used git configuration (fetch over https, push over ssh is a
+# standard corporate setup); refusing would break normal workflows to
+# protect against nothing this app is entitled to override.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_push_dialog_names_the_effective_url_under_pushurl(
+    monkeypatch, tmp_path
+):
+    """`remote.origin.pushurl` redirects the push to another host."""
+    _patch_git_actions(monkeypatch, True)
+    repo, _bare = _repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("changed\n")
+    _git(repo, "config", "remote.origin.pushurl", "ssh://git@pushtarget.invalid/r.git")
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-pushurl")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        screen.action_git_push()
+        modal = await _wait_for_push_modal(pilot, app)
+        text = "\n".join(
+            str(w.renderable) for w in modal.query(Static)
+        )
+
+    assert "pushtarget.invalid" in text, (
+        f"the dialog must name where the push actually lands; got {text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_push_dialog_names_the_effective_url_under_pushinsteadof(
+    monkeypatch, tmp_path
+):
+    """`url.<other>.pushInsteadOf` rewrites the push URL by prefix."""
+    _patch_git_actions(monkeypatch, True)
+    repo, bare = _repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("changed\n")
+    _git(
+        repo,
+        "config",
+        "url.ssh://git@insteadof.invalid/.pushInsteadOf",
+        str(bare),
+    )
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-insteadof")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        screen.action_git_push()
+        modal = await _wait_for_push_modal(pilot, app)
+        text = "\n".join(
+            str(w.renderable) for w in modal.query(Static)
+        )
+
+    assert "insteadof.invalid" in text, (
+        f"the dialog must name the rewritten destination; got {text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_push_dialog_shows_the_plain_url_without_a_redirect(
+    monkeypatch, tmp_path
+):
+    """Control: with no redirect configured the destination is still named,
+    so the disclosure is normal copy rather than a scary special case."""
+    _patch_git_actions(monkeypatch, True)
+    repo, bare = _repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("changed\n")
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-plain")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        screen.action_git_push()
+        modal = await _wait_for_push_modal(pilot, app)
+        text = "\n".join(
+            str(w.renderable) for w in modal.query(Static)
+        )
+
+    assert str(bare) in text, (
+        f"the ordinary destination must be named too; got {text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_push_dialog_names_every_destination_of_a_multi_pushurl_remote(
+    monkeypatch, tmp_path
+):
+    """Qodo #2 (PR #1959): a remote may push to SEVERAL destinations.
+
+    Naming only the first would make the dialog state a smaller
+    destination set than reality — worse than saying nothing, since the
+    user would believe it.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo, bare = _repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("changed\n")
+    second = tmp_path / "second.git"
+    _git(repo, "init", "-q", "--bare", str(second)) if False else subprocess.run(
+        ["git", "init", "-q", "--bare", str(second)], check=True
+    )
+    _git(repo, "config", "--add", "remote.origin.pushurl", str(bare))
+    _git(repo, "config", "--add", "remote.origin.pushurl", str(second))
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-multi-pushurl")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        screen.action_git_push()
+        modal = await _wait_for_push_modal(pilot, app)
+        text = "\n".join(str(w.renderable) for w in modal.query(Static))
+
+    assert str(bare) in text and str(second) in text, (
+        f"BOTH destinations must be named; got {text!r}"
+    )

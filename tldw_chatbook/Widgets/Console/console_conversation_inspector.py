@@ -239,7 +239,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     shape for the Costs tab's rows/totals.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleConversationInspector { align: center middle; }
     #console-inspector-modal {
         width: 110; max-width: 95%; height: 42; max-height: 90%;
@@ -1491,7 +1491,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     def _update_view(self) -> None:
         # LY-13 (TASK-2154.23) compaction was DROPPED here (task-10 review
-        # finding 1) -- see this class's DEFAULT_CSS comment for why. The
+        # finding 1) -- see this class's BUNDLED_CSS comment for why. The
         # empty state still renders its own guidance copy below
         # (``_build_current_context_widgets``); it just no longer resizes
         # the pane's own container to match.

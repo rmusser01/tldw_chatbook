@@ -70,6 +70,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 from Tests.Agents.conftest import (
@@ -419,6 +420,14 @@ def test_two_children_run_concurrently_and_wait_collects_both(db):
     assert "answer one" in final_payload and "answer two" in final_payload
     assert coordinator.all_finished()
     assert [h.status for h in coordinator.snapshot()] == [RUN_DONE, RUN_DONE]
+    parent = db.get_run(run_id)
+    spawn_events = {
+        f"agent-step:{run_id}:{step['index']}"
+        for step in parent["steps"]
+        if step["kind"] == "spawn"
+    }
+    children = [row for row in db.list_runs("c") if row["agent_kind"] == "subagent"]
+    assert {row["spawn_event_id"] for row in children} == spawn_events
 
 
 def test_parent_and_fleet_child_share_todo_store_for_concurrent_creates(db, tmp_path):
@@ -606,9 +615,13 @@ def test_spawn_returns_handle_without_blocking(db):
     assert outcome.status == RUN_DONE
     spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
     assert len(spawn_results) == 1
-    handle_id = coordinator.snapshot()[0].handle_id
+    handle = coordinator.snapshot()[0]
+    handle_id = handle.handle_id
+    assert handle.run_id
     assert spawn_results[0].startswith("started ")
-    assert handle_id in spawn_results[0]
+    assert handle_id not in spawn_results[0]
+    assert f"run:{handle.run_id}" in spawn_results[0]
+    assert any(handle_id in (step.result or "") for step in outcome.steps)
     assert "task one" in spawn_results[0]
     # The child's answer is NOT what spawn returned.
     assert "answer one" not in spawn_results[0]
@@ -649,13 +662,16 @@ def test_check_agents_reports_status_without_blocking(db):
     assert outcome.status == RUN_DONE
     checks = _tool_results(db.get_run(run_id), CHECK_AGENTS_TOOL_NAME)
     assert len(checks) == 2
-    handle_id = coordinator.snapshot()[0].handle_id
-    assert handle_id in checks[0] and "running" in checks[0]
+    handle = coordinator.snapshot()[0]
+    assert handle.run_id
+    assert handle.handle_id not in checks[0]
+    assert f"run:{handle.run_id}" in checks[0] and "running" in checks[0]
     assert "slow task" in checks[0]
     # check_agents never blocks: the first snapshot was taken while the
     # child was still gated, and it did NOT contain the child's answer.
     assert "child answer" not in checks[0]
-    assert handle_id in checks[1] and RUN_DONE in checks[1]
+    assert handle.handle_id not in checks[1]
+    assert f"run:{handle.run_id}" in checks[1] and RUN_DONE in checks[1]
 
 
 def test_live_cap_refuses_beyond_max_live_subagents(db):
@@ -1331,6 +1347,10 @@ def test_max_live_of_one_keeps_spawn_inline(db, monkeypatch):
     assert spawn_results == ["sub answer: 42"]
     child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
     assert child["result"] == "sub answer: 42"
+    parent_spawn = next(
+        step for step in db.get_run(run_id)["steps"] if step["kind"] == "spawn"
+    )
+    assert child["spawn_event_id"] == f"agent-step:{run_id}:{parent_spawn['index']}"
 
 
 def test_fleet_tools_are_not_offered_at_max_live_of_one(db, monkeypatch):
@@ -2607,6 +2627,41 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
         never.set()
     runner.join(10)
     assert not runner.is_alive(), "run_turn never returned"
+    _wait_until(
+        lambda: db.get_run(handle.run_id)["status"] == RUN_CANCELLED,
+        "cancelled child never persisted its terminal status",
+    )
+    child = db.get_run(handle.run_id)
+    assert child["status"] == RUN_CANCELLED
+    assert any(
+        step["kind"] == "agent_run_cancelled" for step in child["steps"]
+    )
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="cancel-reload")
+    runs = reopened.list_runs("c", include_superseded=True)
+    records = [
+        record
+        for turn in derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=runs,
+            agent_steps=[
+                {**step, "run_id": row["id"], "conversation_id": "c"}
+                for row in runs
+                for step in row["steps"]
+            ],
+        ).turns
+        for record in turn.records
+    ]
+    assert any(
+        record.run_id == handle.run_id and record.kind == "agent_run_cancelled"
+        for record in records
+    )
+    reopened.close()
 
 
 def test_cancel_subagent_returns_false_with_no_fleet_yet(db):
@@ -2978,15 +3033,181 @@ def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     doomed = next(h for h in coordinator.snapshot() if h.task == "doomed")
     assert doomed.status == RUN_ERROR
     assert "could not start" in doomed.error
-    # The model was told, and no child run row was ever created for it.
+    # The model was told, and the pre-dispatch durable owner records the
+    # failed launch even though the child thread never ran.
     spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
     assert len(spawn_results) == 2
     assert "could not start sub-agent" in spawn_results[0]
     # The spawn slot was given back: the second spawn started for real.
     assert spawn_results[1].startswith("started ")
-    assert db.count_subagent_runs("c") == 1
+    assert db.count_subagent_runs("c") == 2
+    doomed_row = next(row for row in db.list_runs("c") if row["task"] == "doomed")
+    assert doomed_row["status"] == RUN_ERROR
+    assert [
+        step["kind"]
+        for step in doomed_row["steps"]
+        if step["kind"].startswith("agent_run_")
+    ] == ["agent_run_reserved", "agent_run_created", "agent_run_failed"]
     waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
     assert waits and "answer two" in waits[0]
+
+
+def test_thread_start_and_transient_terminal_status_failure_are_both_contained(
+    db, monkeypatch
+):
+    real_start = threading.Thread.start
+    start_failed = False
+
+    def fail_fleet_start_once(self):
+        nonlocal start_failed
+        if self.name.startswith("fleet-") and not start_failed:
+            start_failed = True
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+
+    real_set_terminal = db.set_terminal_with_step
+    status_attempts = 0
+
+    def fail_child_terminal_once(run_id, status, result, terminal_step):
+        nonlocal status_attempts
+        row = db.get_run(run_id)
+        if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
+            status_attempts += 1
+            if status_attempts == 1:
+                raise RuntimeError("transient terminal write failure")
+        return real_set_terminal(run_id, status, result, terminal_step)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_fleet_start_once)
+    monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal_once)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "doomed"}), "parent completed"],
+        {},
+    )
+
+    _parent_id, outcome = service.run_turn(
+        conversation_id="thread-and-status-failure",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert status_attempts == 2
+    assert coordinator.all_finished()
+    child = next(
+        row
+        for row in db.list_runs("thread-and-status-failure")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == RUN_ERROR
+    assert any(step["kind"] == "agent_run_failed" for step in child["steps"])
+
+
+def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
+    db, monkeypatch
+):
+    real_start = threading.Thread.start
+    real_terminal = db.set_terminal_with_step
+
+    def fail_fleet_start(self):
+        if self.name.startswith("fleet-"):
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+
+    def fail_child_terminal(run_id, status, result, terminal_step):
+        row = db.get_run(run_id)
+        if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
+            raise RuntimeError("persistent terminal write failure")
+        return real_terminal(run_id, status, result, terminal_step)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
+    monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "doomed"}), "parent completed"],
+        {},
+    )
+
+    _parent_id, outcome = service.run_turn(
+        conversation_id="persistent-thread-status-failure",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert coordinator.all_finished()
+    child = next(
+        row
+        for row in db.list_runs("persistent-thread-status-failure")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == RUN_ERROR
+    assert any(step["kind"] == "capture_failed" for step in child["steps"])
+    path = db.db_path
+    db.close()
+    AgentRunsDB._swept_paths.discard(str(path))
+
+    reopened = AgentRunsDB(path, client_id="persistent-launch-reload")
+    repaired = reopened.get_run(child["id"])
+    assert repaired["status"] == RUN_ERROR
+    assert repaired["result"] is None
+    assert len(
+        [step for step in repaired["steps"] if step["kind"] == "capture_failed"]
+    ) == 2
+    reopened.close()
+
+
+def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
+    db, monkeypatch
+):
+    real_start = threading.Thread.start
+    real_terminal = db.set_terminal_with_step
+    real_status = db.set_status
+
+    def fail_fleet_start(self):
+        if self.name.startswith("fleet-"):
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+
+    def fail_child_terminal(run_id, status, result, terminal_step):
+        row = db.get_run(run_id)
+        if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
+            raise RuntimeError("persistent atomic failure")
+        return real_terminal(run_id, status, result, terminal_step)
+
+    def fail_child_status(run_id, status, result=None):
+        row = db.get_run(run_id)
+        if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
+            raise RuntimeError("persistent status fallback failure")
+        return real_status(run_id, status, result)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
+    monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
+    monkeypatch.setattr(db, "set_status", fail_child_status)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "doomed"}), "parent completed"],
+        {},
+    )
+
+    _parent_id, outcome = service.run_turn(
+        conversation_id="persistent-all-terminal-failure",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert coordinator.all_finished()
+    child = next(
+        row
+        for row in db.list_runs("persistent-all-terminal-failure")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == "running"
+    assert any(step["kind"] == "capture_failed" for step in child["steps"])
 
 
 def test_a_settled_child_is_settled_before_the_manifest_is_written(

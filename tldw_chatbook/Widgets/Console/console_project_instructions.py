@@ -271,7 +271,7 @@ def sync_project_instruction_status_for_screen(screen: Any) -> None:
 class ConsoleProjectInstructionStatusRow(Widget):
     """Compact Inspector authority row that opens the shared Context surface."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleProjectInstructionStatusRow {
         width: 100%;
         height: 1;
@@ -318,7 +318,7 @@ class ConsoleProjectInstructionStatusRow(Widget):
 class ConsoleProjectInstructionContextPanel(VerticalScroll):
     """Metadata-only Project Instructions section for Context."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleProjectInstructionContextPanel {
         width: 100%;
         height: auto;
@@ -464,7 +464,7 @@ class ConsoleProjectInstructionContextPanel(VerticalScroll):
 class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
     """Choose one eligible binding, disable the feature, or cancel."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ProjectInstructionSetupModal { align: center middle; }
     #console-project-setup-modal {
         width: 90%;
@@ -556,7 +556,7 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
 class ProjectInstructionNoticeModal(ModalScreen[str]):
     """First-use disclosure for one session and sanitized provider destination."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ProjectInstructionNoticeModal { align: center middle; }
     #console-project-notice-modal {
         width: 90%;

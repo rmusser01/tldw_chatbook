@@ -12,6 +12,10 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
+)
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -178,6 +182,7 @@ class SyncEnvelopeBuilder:
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
         provider_continuation_json: str | None = None,
+        assistant_generation_state: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
@@ -195,6 +200,7 @@ class SyncEnvelopeBuilder:
             variant_count: Optional number of available variants for the message.
             selected_variant_id: Optional selected variant identifier.
             provider_continuation_json: Optional canonical private continuation.
+            assistant_generation_state: Portable assistant generation lifecycle state.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after this mutation.
 
@@ -218,13 +224,38 @@ class SyncEnvelopeBuilder:
             routing_metadata["variant_count"] = variant_count
         if selected_variant_id is not None:
             routing_metadata["selected_variant_id"] = selected_variant_id
-        payload = {"content": content, "role": role}
+        checkpoint = None
         if provider_continuation_json is not None and provider_continuation_json != "":
             if role != "assistant":
                 raise ContinuationValidationError(
                     "Invalid provider continuation data."
                 ) from None
             checkpoint = parse_provider_continuation_json(provider_continuation_json)
+        if assistant_generation_state is not None and role != "assistant":
+            raise ValueError("Invalid assistant generation state.")
+        try:
+            normalized_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=assistant_generation_state,
+                has_valid_active_continuation=(
+                    checkpoint is not None and checkpoint.state == "active"
+                ),
+            )
+        except ValueError:
+            raise ValueError("Invalid assistant generation state.") from None
+        if (
+            normalized_state is AssistantGenerationState.CONTINUATION_ACTIVE
+            and (checkpoint is None or checkpoint.state != "active")
+        ):
+            raise ValueError("Invalid assistant generation state.")
+        payload = {
+            "assistant_generation_state": normalized_state.value
+            if normalized_state is not None
+            else None,
+            "content": content,
+            "role": role,
+        }
+        if checkpoint is not None:
             payload["provider_continuation_json"] = dump_provider_continuation_json(
                 checkpoint
             )

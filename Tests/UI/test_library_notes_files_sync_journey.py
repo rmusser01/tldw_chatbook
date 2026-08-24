@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import ast
 from dataclasses import replace
+import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -50,13 +53,36 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Actor_Packs.persona_coordinator import (
+    PersonaActorPackCoordinator,
+    PersonaActorPackRecoveryResult,
+)
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.note_import_execution_models import (
     ImportExecutionReceipt,
     ImportSessionState,
 )
 from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
-from tldw_chatbook.Notes.notes_sync_models import NotesSyncOperationState
+from tldw_chatbook.Notes.notes_device_state_store import (
+    NotesSyncBindingRecord,
+    NotesSyncRootRecord,
+    NotesSyncStoreSetting,
+)
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictApplyResult,
+    ConflictComparison,
+    NotesSyncConflictChoice,
+)
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncExecutionResult,
+    NotesSyncExecutor,
+)
+from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncBindingState,
+    NotesSyncDirection,
+    NotesSyncOperationState,
+    NotesSyncRootState,
+)
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
@@ -77,11 +103,23 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationAttention,
     ReconciliationAttentionKind,
     ReconciliationPlan,
+    plan_reconciliation,
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
+    NotesSyncRuntimeOwner,
     NotesSyncControlResult,
     NotesSyncRootRuntimeSnapshot,
     NotesSyncRuntimeSnapshot,
+    RuntimeConflictLabel,
+    RuntimeConflictReceipt,
+    build_notes_sync_runtime_owner,
+)
+from tldw_chatbook.Notes.notes_sync_filesystem import (
+    NotesSyncFilesystemError,
+    PosixNotesSyncFilesystem,
+)
+from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+    LibraryNotesSyncController,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
@@ -103,6 +141,20 @@ class _JourneyHarness(LibraryHarness):
     CSS_PATH = TldwCli.CSS_PATH
 
 
+@pytest.fixture(autouse=True)
+def _isolate_actor_pack_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unrelated startup recovery off the Notes journey test database."""
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.first_profile_created_this_session", lambda: False
+    )
+    monkeypatch.setattr(
+        PersonaActorPackCoordinator,
+        "recover",
+        lambda _self: PersonaActorPackRecoveryResult(0, 0, 0, ()),
+    )
+
+
 def _runtime(*roots: NotesSyncRootRuntimeSnapshot):
     return SimpleNamespace(
         snapshot=lambda: NotesSyncRuntimeSnapshot("active", "sync_now", roots)
@@ -117,6 +169,169 @@ def _assert_inside(outer, inner) -> None:
 
 def _painted_text(app) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+def _seed_real_conflict_authority(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create one real two-sided conflict in disposable Notes authorities."""
+
+    notes_path = tmp_path / "notes.sqlite3"
+    state_path = tmp_path / "sync.sqlite3"
+    sync_root = tmp_path / "folder"
+    sync_root.mkdir()
+    target = sync_root / "note.md"
+    target.write_text("baseline", encoding="utf-8")
+    database = CharactersRAGDB(notes_path, client_id="task-97-seed")
+    folders = LocalNoteFolderRepository(database)
+    assert database.add_note("Joined conflict", "baseline", "note-1") == "note-1"
+    folders.create_folder(name="Synced notes", parent_id=None, folder_id="folder-1")
+    folders.reconcile_managed(owner_id="root-1", desired=(("folder-1", "note-1"),))
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        baseline_file = filesystem.observe("note.md")
+    baseline_note = database.get_note_by_id("note-1")
+    assert baseline_note is not None
+    store = NotesDeviceStateStore(state_path)
+    store.initialize()
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-1",
+            note_scope_id="local_note",
+            logical_folder_id="folder-1",
+            canonical_path=str(sync_root.resolve()),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(
+                baseline_file
+            ),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=baseline_file.observation.serialization,
+            content_digest=hashlib.sha256(b"baseline").hexdigest(),
+            note_version=int(baseline_note["version"]),
+        )
+    )
+    assert database.update_note(
+        "note-1",
+        {"title": "Joined conflict", "content": "note side"},
+        int(baseline_note["version"]),
+    )
+    target.write_text("file side", encoding="utf-8")
+    database.close_connection()
+    return notes_path, state_path, sync_root
+
+
+async def _start_real_conflict_stack(
+    notes_path: Path, state_path: Path
+) -> tuple[
+    NotesSyncRuntimeOwner,
+    CharactersRAGDB,
+    NotesInteropService,
+    LibraryNotesSyncController,
+]:
+    """Build fresh production runtime/executor/controller objects over disk state."""
+
+    database = CharactersRAGDB(notes_path, client_id="task-97-runtime")
+    interop = NotesInteropService(
+        base_db_directory=notes_path.parent,
+        api_client_id="task-97-runtime",
+        global_db_to_use=database,
+    )
+    scope_service = NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        folder_repository=LocalNoteFolderRepository(database),
+    )
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=scope_service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=state_path,
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    controller = LibraryNotesSyncController(
+        runtime=owner,
+        import_controller=SimpleNamespace(begin_selection=lambda: None),
+    )
+    return owner, database, interop, controller
+
+
+async def _close_real_conflict_stack(
+    owner: NotesSyncRuntimeOwner,
+    database: CharactersRAGDB,
+    interop: NotesInteropService,
+) -> None:
+    await owner.shutdown()
+    interop.close_all_user_connections()
+    database.close_connection()
+
+
+def test_notes_guide_uses_only_shipped_sync_action_labels() -> None:
+    guide = (_REPO_ROOT / "Docs/User_Guide/library/notes.md").read_text()
+    normalized = " ".join(guide.split())
+
+    assert "Check changes" in normalized
+    assert all(
+        label not in normalized
+        for label in ("Check folder", "Review attention", "Sync now")
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_runtime_applies_admitted_safe_action_beside_blocked_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _runtime_input()
+    base_plan = plan_reconciliation(observed)
+    update = base_plan.safe_actions[0]
+    move = NotesSyncAction(
+        "blocked-move",
+        NotesSyncActionKind.MOVE_FILE,
+        update.binding_id,
+    )
+    mixed_plan = replace(base_plan, safe_actions=(move, update))
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.notes_sync_runtime.plan_reconciliation",
+        lambda _observed: mixed_plan,
+    )
+    adapter = _RuntimeAdapter([observed] * 4)
+    owner, _, _ = _runtime_owner(
+        store=_runtime_store(tmp_path),
+        admitted=True,
+        adapter=adapter,
+    )
+    await owner.start()
+    adapter.executor.executed.clear()
+    controller = LibraryNotesSyncController(
+        runtime=owner,
+        import_controller=SimpleNamespace(begin_selection=lambda: None),
+    )
+    try:
+        await controller.check_root("root-1")
+        reviewed = controller.snapshot.review
+        assert reviewed.can_apply is True
+
+        await controller.apply_reviewed("root-1", reviewed.observation_token)
+
+        assert [action.kind for action in adapter.executor.executed] == [
+            NotesSyncActionKind.UPDATE_NOTE
+        ]
+        assert controller.snapshot.phase == "receipt"
+        assert controller.snapshot.receipt_line.startswith("1 applied")
+        assert "invalid review" not in controller.snapshot.status_line
+    finally:
+        await owner.shutdown()
 
 
 def test_live_verifier_is_a_checked_in_isolated_entry_point(tmp_path: Path) -> None:
@@ -433,6 +648,269 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
             screen.query_one("#notes-sync-back", Button)
             in host.screen._compositor.visible_widgets
         )
+        screen.query_one("#notes-sync-back", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        assert screen._library_notes_view == "list"
+
+
+@pytest.mark.asyncio
+async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_moved_focus() -> (
+    None
+):
+    """A delayed comparison publishes inline but respects newer keyboard focus."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    root = NotesSyncRootRuntimeSnapshot("root-1", "needs_attention", "review_changes")
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token="c" * 64,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT,
+                "both_sides_changed",
+                "bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    class _ComparisonRuntime:
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+
+        async def check_root(self, root_id: str) -> ReconciliationPlan:
+            assert root_id == "root-1"
+            return plan
+
+        async def compare_conflict(
+            self, root_id: str, observation_token: str, binding_id: str
+        ) -> ConflictComparison:
+            assert (root_id, observation_token, binding_id) == (
+                "root-1",
+                "c" * 64,
+                "bind-1",
+            )
+            started.set()
+            await release.wait()
+            return ConflictComparison(
+                binding_id="bind-1",
+                note_title="Release note",
+                relative_path="notes/release.md",
+                note_version=3,
+                note_updated_at=None,
+                file_modified_ns=42,
+                note_character_count=12,
+                note_line_count=2,
+                file_character_count=20,
+                file_line_count=2,
+                diff="--- Note\n+++ File\n-old\n+new\n",
+                input_elided=False,
+                output_elided=False,
+            )
+
+        async def conflict_labels(
+            self, root_id: str, observation_token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            assert (root_id, observation_token) == ("root-1", "c" * 64)
+            return (RuntimeConflictLabel("bind-1", "Release note", "notes/release.md"),)
+
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = _ComparisonRuntime()
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        manage = await _wait_for_selector(
+            screen, pilot, "#library-notes-manage-sync-folders"
+        )
+        manage.press()
+        review = await _wait_for_selector(screen, pilot, "#notes-sync-root-review-0")
+        review.press()
+        view = await _wait_for_selector(screen, pilot, "#notes-sync-conflict-view-0")
+        view.focus()
+        view.press()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        comparison_workers = [
+            worker
+            for worker in screen.workers
+            if worker.group == "library_notes_sync_comparison"
+        ]
+        assert len(comparison_workers) == 1
+
+        moved_focus = screen.query_one("#notes-sync-history-open", Button)
+        moved_focus.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is moved_focus,
+            message="focus did not move away from the originating View button",
+        )
+        release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen.query("#notes-sync-comparison-diff-0"))
+                and screen.query_one("#notes-sync-comparison-0").display
+            ),
+            message="named comparison worker did not publish inline",
+        )
+        assert screen.focused is moved_focus
+
+        returned = screen.query_one("#notes-sync-comparison-return-0", Button)
+        returned.scroll_visible(immediate=True)
+        returned.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is view,
+            message="Return did not restore the originating View control",
+        )
+
+        started.clear()
+        release.clear()
+        view.press()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        back = screen.query_one("#notes-sync-back", Button)
+        back.press()
+        await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+        release.set()
+        await pilot.pause()
+        assert screen._library_notes_view == "lasting_roots"
+        assert screen._library_notes_sync_controller.snapshot.comparison is None
+        assert not screen.query("#notes-sync-comparison-diff-0")
+
+
+def test_library_unmount_invalidates_lasting_review_before_first_await() -> None:
+    """The screen fence is synchronous; controller races cover late facts."""
+
+    tree = ast.parse(
+        textwrap.dedent(
+            inspect.getsource(library_screen_module.LibraryScreen.on_unmount)
+        )
+    )
+    function = tree.body[0]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    first_statement = function.body[1]
+    assert isinstance(first_statement, ast.Expr)
+    assert isinstance(first_statement.value, ast.Call)
+    call = first_statement.value.func
+    assert isinstance(call, ast.Attribute)
+    assert call.attr == "invalidate_for_remount"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_action", ("apply", "undo"))
+async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
+    recovery_action: str,
+) -> None:
+    token = "c" * 64
+    root = NotesSyncRootRuntimeSnapshot("root-1", "needs_attention", "review_changes")
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=token,
+        safe_actions=(
+            NotesSyncAction("action-1", NotesSyncActionKind.UPDATE_NOTE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    class _RecoveryRuntime:
+        def __init__(self) -> None:
+            self.receipts: tuple[RuntimeConflictReceipt, ...] = ()
+
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+
+        async def check_root(self, root_id: str) -> ReconciliationPlan:
+            assert root_id == "root-1"
+            return plan
+
+        async def conflict_labels(
+            self, root_id: str, observation_token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            assert (root_id, observation_token) == ("root-1", token)
+            return ()
+
+        async def active_conflict_receipts(
+            self, root_id: str
+        ) -> tuple[RuntimeConflictReceipt, ...]:
+            assert root_id == "root-1"
+            return self.receipts
+
+        async def apply_reviewed(
+            self,
+            root_id: str,
+            observation_token: str,
+            action_ids: tuple[str, ...],
+            selections: tuple[object, ...],
+        ) -> ConflictApplyResult:
+            assert (root_id, observation_token, action_ids, selections) == (
+                "root-1",
+                token,
+                ("action-1",),
+                (),
+            )
+            return ConflictApplyResult((), 0, 0, 0, False, True, True, None)
+
+        async def undo_resolution(
+            self, root_id: str, operation_id: str
+        ) -> NotesSyncExecutionResult:
+            assert (root_id, operation_id) == ("root-1", "operation-1")
+            return NotesSyncExecutionResult(
+                "undo-operation-1", NotesSyncOperationState.VERIFIED, False
+            )
+
+    runtime = _RecoveryRuntime()
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = runtime
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        manage = await _wait_for_selector(
+            screen, pilot, "#library-notes-manage-sync-folders"
+        )
+        manage.press()
+        review = await _wait_for_selector(screen, pilot, "#notes-sync-root-review-0")
+        review.press()
+        await _wait_for_selector(screen, pilot, "#notes-sync-apply")
+
+        if recovery_action == "apply":
+            screen.query_one("#notes-sync-apply", Button).press()
+        else:
+            runtime.receipts = (
+                RuntimeConflictReceipt(
+                    "operation-1",
+                    "Release note",
+                    NotesSyncConflictChoice.KEEP_FILE,
+                    "completed",
+                    True,
+                ),
+            )
+            controller = screen._library_notes_sync_controller
+            await controller.refresh_conflict_receipts("root-1")
+            controller._state = replace(  # noqa: SLF001 - mounted receipt setup
+                controller.snapshot,
+                phase="receipt",
+                receipt_line="1 applied · durable receipt recorded",
+            )
+            controller._publish()  # noqa: SLF001 - mounted receipt setup
+            undo = await _wait_for_selector(screen, pilot, "#notes-sync-receipt-undo-0")
+            undo.press()
+
+        await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+        assert screen._library_notes_view == "lasting_roots"
+        assert not screen.query("#notes-sync-apply")
+        assert screen._library_notes_sync_controller.snapshot.phase == "roots"
 
 
 @pytest.mark.asyncio
@@ -478,6 +956,12 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
                 managed_placement_effects=(),
                 deletion_groups=(),
             )
+
+        async def conflict_labels(
+            self, root_id: str, observation_token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            del root_id, observation_token
+            return ()
 
         async def abandon_setup(self, root_id: str) -> None:
             self.calls.append(("abandon_setup", root_id))
@@ -583,8 +1067,224 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
             lambda: ("resolve_cleanup", "setup-root", "operation-1") in runtime.calls,
             message="restart recovery did not reach the runtime",
         )
-        assert "Recovery reviewed" in _painted_text(restarted)
+        await _wait_for_condition(
+            pilot,
+            lambda: "Recovery reviewed" in _painted_text(restarted),
+            message="recovery status did not reach the compositor",
+        )
         assert runtime.roots[0].status == "up_to_date"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ("setup", "root", "migration"))
+async def test_check_again_routes_to_its_rendered_review_source(
+    tmp_path: Path, source: str
+) -> None:
+    token = "a" * 64
+    root_id = "root-1"
+    folder = tmp_path / source
+    folder.mkdir()
+    root = (
+        NotesSyncRootRuntimeSnapshot(
+            root_id,
+            "paused" if source == "migration" else "needs_attention",
+            "review_migration" if source == "migration" else "review_changes",
+        ),
+    )
+    release_migration = asyncio.Event()
+
+    class _SourceRuntime:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot(
+                "active", "sync_now", () if source == "setup" else root
+            )
+
+        @staticmethod
+        def _plan(selected_root: str) -> ReconciliationPlan:
+            return ReconciliationPlan(
+                root_id=selected_root,
+                observation_token=token,
+                safe_actions=(
+                    NotesSyncAction(
+                        "action-1", NotesSyncActionKind.UPDATE_NOTE, "binding-1"
+                    ),
+                ),
+                attention=(),
+                skips=(),
+                managed_placement_effects=(),
+                deletion_groups=(),
+            )
+
+        async def review_setup(self, _setup: object) -> ReconciliationPlan:
+            self.calls.append(("review_setup", "setup-root"))
+            return self._plan("setup-root")
+
+        async def check_root(self, selected_root: str) -> ReconciliationPlan:
+            self.calls.append(("check_root", selected_root))
+            check_count = len([call for call in self.calls if call[0] == "check_root"])
+            if source == "migration" and check_count == 1:
+                await release_migration.wait()
+            return self._plan(selected_root)
+
+        async def conflict_labels(
+            self, _root_id: str, _token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            return ()
+
+        async def apply_reviewed(self, *_args: object) -> ConflictApplyResult:
+            raise ValueError("stale_review")
+
+        async def activate_root(self, *_args: object) -> NotesSyncControlResult:
+            raise RuntimeError("activation failed")
+
+        async def abandon_setup(self, selected_root: str) -> None:
+            self.calls.append(("abandon_setup", selected_root))
+
+    runtime = _SourceRuntime()
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = runtime
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        if source == "setup":
+            screen.query_one("#library-notes-add-from-files", Button).press()
+            await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
+            screen.query_one("#notes-add-keep-synced", Button).press()
+            await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
+            controller = screen._library_notes_sync_controller
+            controller.set_setup("display_name", "Source review")
+            controller.set_setup("folder", str(folder))
+            screen.query_one("#notes-sync-check", Button).press()
+        else:
+            screen.query_one("#library-notes-manage-sync-folders", Button).press()
+            selector = (
+                "#notes-sync-root-migration-0"
+                if source == "migration"
+                else "#notes-sync-root-review-0"
+            )
+            action = await _wait_for_selector(screen, pilot, selector)
+            action.press()
+            if source == "migration":
+                await _wait_for_condition(
+                    pilot,
+                    lambda: any(call[0] == "check_root" for call in runtime.calls),
+                    message="migration review did not reach its awaited check",
+                )
+                opened_before_await = (
+                    screen._library_notes_view == "lasting_add"
+                    and screen._library_notes_lasting_origin == "roots"
+                )
+                release_migration.set()
+                assert opened_before_await
+
+        action_selector = (
+            "#notes-sync-apply" if source == "root" else "#notes-sync-activate"
+        )
+        action = await _wait_for_selector(screen, pilot, action_selector)
+        assert screen._library_notes_sync_controller.snapshot.review.source == source
+        action.press()
+        check_again = await _wait_for_selector(screen, pilot, "#notes-sync-check-again")
+        call_name = "review_setup" if source == "setup" else "check_root"
+        before = len([call for call in runtime.calls if call[0] == call_name])
+        check_again.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                len([call for call in runtime.calls if call[0] == call_name])
+                == before + 1
+            ),
+            message=f"{source} Check again did not route to {call_name}",
+        )
+        assert screen._library_notes_sync_controller.snapshot.review.source == source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ("root", "migration"))
+@pytest.mark.parametrize("outcome", ("exception", "malformed"))
+async def test_failed_persisted_check_again_uses_rendered_source_in_mounted_screen(
+    source: str, outcome: str
+) -> None:
+    token = "a" * 64
+    root_id = "root-1"
+    root = NotesSyncRootRuntimeSnapshot(
+        root_id,
+        "paused" if source == "migration" else "needs_attention",
+        "review_migration" if source == "migration" else "review_changes",
+    )
+
+    class _FailedCheckRuntime:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+            self.attempts = 0
+
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+
+        async def check_root(self, selected_root: str) -> ReconciliationPlan:
+            self.attempts += 1
+            self.calls.append(("check_root", selected_root))
+            if self.attempts == 1:
+                if outcome == "exception":
+                    raise RuntimeError("check failed")
+                return object()  # type: ignore[return-value]
+            return ReconciliationPlan(
+                root_id=selected_root,
+                observation_token=token,
+                safe_actions=(),
+                attention=(),
+                skips=(),
+                managed_placement_effects=(),
+                deletion_groups=(),
+            )
+
+        async def conflict_labels(
+            self, _root_id: str, _token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            return ()
+
+    runtime = _FailedCheckRuntime()
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = runtime
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        screen.query_one("#library-notes-manage-sync-folders", Button).press()
+        selector = (
+            "#notes-sync-root-migration-0"
+            if source == "migration"
+            else "#notes-sync-root-review-0"
+        )
+        (await _wait_for_selector(screen, pilot, selector)).press()
+        retry = await _wait_for_selector(screen, pilot, "#notes-sync-check-again")
+        failed = screen._library_notes_sync_controller.snapshot.review
+
+        assert failed.source == source
+        assert failed.root_id == root_id
+        assert failed.activation is (source == "migration")
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: runtime.attempts == 2,
+            message=f"{source} failed Check again did not reach check_root",
+        )
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#notes-sync-activate" if source == "migration" else "#notes-sync-apply",
+        )
+
+    assert runtime.calls == [("check_root", root_id), ("check_root", root_id)]
 
 
 @pytest.mark.asyncio
@@ -663,6 +1363,127 @@ async def test_lasting_runtime_reopens_and_resumes_a_durable_incomplete_journal(
         assert owner.snapshot().roots[0].status == "up_to_date"
     finally:
         await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("choice", "label"),
+    (
+        (NotesSyncConflictChoice.KEEP_FILE, "Keep file"),
+        (NotesSyncConflictChoice.KEEP_NOTE, "Keep note"),
+        (NotesSyncConflictChoice.KEEP_BOTH, "Keep both"),
+        (NotesSyncConflictChoice.SKIP, "Skip for now"),
+    ),
+)
+async def test_real_authority_conflict_choice_journey_is_durable_and_undoable(
+    tmp_path: Path,
+    choice: NotesSyncConflictChoice,
+    label: str,
+) -> None:
+    """Join Check, comparison, staging, apply, restart, history, and Undo."""
+
+    case = tmp_path / choice.value
+    case.mkdir()
+    notes_path, state_path, sync_root = _seed_real_conflict_authority(case)
+    outside = case / "outside.md"
+    outside.write_text("outside sentinel", encoding="utf-8")
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    operation_id: str | None = None
+    try:
+        await controller.check_root("root-1")
+        reviewed = controller.snapshot.review
+        assert reviewed.rows, controller.snapshot.status_line
+        row = next(item for item in reviewed.rows if item.item_id == "binding-1")
+        assert row.conflict_eligible
+        await controller.show_conflict_comparison(
+            "root-1", reviewed.observation_token, "binding-1"
+        )
+        comparison = controller.snapshot.comparison
+        assert comparison is not None
+        assert comparison.diff.startswith("--- Note\n+++ File\n")
+        controller.return_to_conflict_choices(
+            "root-1", reviewed.observation_token, "binding-1"
+        )
+        controller.stage_attention_choice(
+            "root-1", reviewed.observation_token, "binding-1", label
+        )
+        staged_note = database.get_note_by_id("note-1")
+        assert staged_note is not None and staged_note["content"] == "note side"
+        assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
+
+        await controller.apply_reviewed("root-1", reviewed.observation_token)
+
+        if choice is NotesSyncConflictChoice.SKIP:
+            assert controller.snapshot.review.can_apply is False
+            assert controller.snapshot.receipts == ()
+            assert "cannot be applied" in controller.snapshot.status_line
+        else:
+            receipt = controller.snapshot.receipts
+            assert len(receipt) == 1
+            assert receipt[0].choice is choice
+            assert receipt[0].undo_available
+            operation_id = receipt[0].operation_id
+            note = database.get_note_by_id("note-1")
+            assert note is not None
+            expected_note = (
+                "note side"
+                if choice is NotesSyncConflictChoice.KEEP_NOTE
+                else "file side"
+            )
+            expected_file = (
+                "note side"
+                if choice is NotesSyncConflictChoice.KEEP_NOTE
+                else "file side"
+            )
+            assert note["content"] == expected_note
+            assert (sync_root / "note.md").read_text(encoding="utf-8") == expected_file
+            assert database.count_notes() == (
+                2 if choice is NotesSyncConflictChoice.KEEP_BOTH else 1
+            )
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+    assert outside.read_text(encoding="utf-8") == "outside sentinel"
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        with pytest.raises(NotesSyncFilesystemError, match="invalid_relative_path"):
+            filesystem.observe("../outside.md")
+
+    (
+        fresh_owner,
+        fresh_database,
+        fresh_interop,
+        fresh_controller,
+    ) = await _start_real_conflict_stack(notes_path, state_path)
+    try:
+        await fresh_controller.check_root("root-1")
+        fresh_token = fresh_controller.snapshot.review.observation_token
+        await fresh_controller.show_resolution_history("root-1")
+        history = fresh_controller.snapshot.history
+        if choice is NotesSyncConflictChoice.SKIP:
+            assert history.rows == ()
+            unchanged_note = fresh_database.get_note_by_id("note-1")
+            assert unchanged_note is not None
+            assert unchanged_note["content"] == "note side"
+            assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
+            return
+
+        assert operation_id is not None
+        assert len(history.rows) == 1
+        assert history.rows[0].operation_id == operation_id
+        assert history.rows[0].choice is choice
+        assert history.rows[0].undo_available
+        await fresh_controller.undo_conflict_resolution(
+            "root-1", fresh_token, operation_id, history_page=1
+        )
+        restored = fresh_database.get_note_by_id("note-1")
+        assert restored is not None and restored["content"] == "note side"
+        assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
+        assert fresh_database.count_notes() == 1
+        assert fresh_controller.snapshot.history.rows[0].state == "undone"
+    finally:
+        await _close_real_conflict_stack(fresh_owner, fresh_database, fresh_interop)
 
 
 @pytest.mark.asyncio

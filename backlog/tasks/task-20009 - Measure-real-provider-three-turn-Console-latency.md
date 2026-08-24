@@ -41,8 +41,8 @@ Measure the reported three-turn Console failure path against a real local LLM so
 5. Independently recompute the report, run a live three-turn smoke through the product send path, document conclusions without conflating model latency with application latency, and close only if every acceptance criterion is supported.
 
 ADR required: no
-ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
-Reason: this task adds opt-in performance instrumentation and retained evidence only; it does not change runtime ownership, provider contracts, storage, or user-visible behavior. ADR-079 governs the consent and finalization behavior being measured.
+ADR path: `backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
+Reason: this task adds opt-in performance instrumentation and retained evidence only; it does not change runtime ownership, provider contracts, storage, or user-visible behavior. ADR-084 governs the consent and finalization behavior being measured.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -77,6 +77,6 @@ Reason: this task adds opt-in performance instrumentation and retained evidence 
 - Verification: 86 benchmark tests and 582 changed-surface Console/agent/review
   tests passed; Ruff, `py_compile`, JSON parsing, `git diff --check`, recursive
   privacy scans, and the independent evidence audit passed.
-- ADR required: no new ADR. Existing ADR-079 continues to govern Change Review
+- ADR required: no new ADR. Existing ADR-084 continues to govern Change Review
   consent/finalization; this work changes benchmark instrumentation and retained
   evidence only.

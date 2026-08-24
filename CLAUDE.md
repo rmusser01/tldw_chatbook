@@ -225,7 +225,13 @@ Key sections:
 
 ## Project-Specific Gotchas
 
-1. **Schema migrations** - Always increment version, add to migrations/
+1. **Schema migrations** - Always increment version, add to migrations/. Read
+   `tldw_chatbook/DB/migrations/README.md` first: a `CREATE TABLE` also
+   requires a `VALID_TABLES['chachanotes']` entry in `DB/sql_validation.py`
+   and a `CREATE INDEX` also requires an `EXPECTED_CHACHANOTES_INDEXES` entry,
+   both in the same commit. `./scripts/preflight.sh` checks the first and
+   prints the lines to paste (TASK-20971: that allowlist went stale, was
+   repaired, and went stale again 14.5 hours later).
 2. **Optional deps** - Check with `optional_deps.py` before importing
 3. **Thread safety** - Use transaction() context manager
 4. **Tab constants** - Must match IDs in compose()
@@ -429,17 +435,25 @@ A task is **Done** only when **ALL** of the following are complete:
 2. **Implementation plan** was followed or deviations were documented in Implementation Notes.
 3. **Automated tests** (unit + integration) cover new logic.
 4. **Static analysis**: linter & formatter succeed.
-5. **Documentation**:
+5. **Derived artifacts**: run `./scripts/preflight.sh` before opening a PR -- it
+   runs the same four checks as the required `Derived artifacts reproduce from
+   their sources` CI job (CSS bundle sync, profile-owned-path census, production
+   diagnostic inventory, duplicate backlog task ids), and reports every failure
+   rather than stopping at the first. It takes ~35s and installs nothing. If the
+   diagnostic inventory reports drift, read the rows it names before
+   regenerating -- `--write` without reading is the failure that artifact exists
+   to prevent.
+6. **Documentation**:
     - All relevant docs updated (any relevant README file, backlog/docs, backlog/decisions, etc.).
     - Task file **MUST** have an `## Implementation Notes` section added summarising:
         - Approach taken
         - Features implemented or modified
         - Technical decisions and trade-offs
         - Modified or added files
-6. **Review**: self review code.
-7. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
-8. **No regressions**: performance, security and licence checks green.
-9. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
+7. **Review**: self review code.
+8. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
+9. **No regressions**: performance, security and licence checks green.
+10. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
    trap, a wrong assumption that cost time, a verification that only worked one way —
    add or update an entry in `backlog/docs/lessons-*.md`. **State the incident, not
    just the rule**: a lesson without the evidence that produced it decays into folklore

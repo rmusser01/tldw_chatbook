@@ -22,120 +22,11 @@ returning the raw cell fails here.
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
 import threading
 
 import pytest
 
 import tldw_chatbook.config as config_module
-
-
-def test_settings_rebuild_and_runtime_publication_share_one_lock_order(
-    tmp_path: Path,
-) -> None:
-    """A reader and writer cannot retain opposite config/rebuild locks."""
-    config_path = tmp_path / "config.toml"
-    config_path.write_text('[general]\nusers_name = "lock-order"\n', encoding="utf-8")
-    script = r"""
-import json
-import sys
-import threading
-import traceback
-
-from tldw_chatbook import config as config_module
-
-writer_holds_config = threading.Event()
-reader_attempting_config = threading.Event()
-errors = []
-
-
-class InstrumentedConfigLock:
-    def __init__(self):
-        self._lock = threading.RLock()
-
-    def __enter__(self):
-        if threading.current_thread().name == "settings-reader":
-            reader_attempting_config.set()
-        self._lock.acquire()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback_value):
-        del exc_type, exc_value, traceback_value
-        self._lock.release()
-
-
-config_module._CONFIG_FILE_LOCK = InstrumentedConfigLock()
-config_module._SETTINGS_REBUILD_LOCK = threading.RLock()
-with config_module._SETTINGS_CACHE_LOCK:
-    config_module._SETTINGS_CACHE = None
-    config_module._SETTINGS_CACHE_SOURCE = None
-
-
-def writer():
-    try:
-        with config_module._config_file_lock():
-            writer_holds_config.set()
-            if not reader_attempting_config.wait(timeout=5):
-                raise AssertionError("reader never attempted the config lock")
-            config_module._publish_runtime_config_unlocked()
-    except BaseException as exc:
-        errors.append(f"writer: {exc!r}")
-
-
-def reader():
-    try:
-        if not writer_holds_config.wait(timeout=5):
-            raise AssertionError("writer never acquired the config lock")
-        config_module.load_settings(force_reload=True)
-    except BaseException as exc:
-        errors.append(f"reader: {exc!r}")
-
-
-threads = [
-    threading.Thread(target=writer, name="config-writer", daemon=True),
-    threading.Thread(target=reader, name="settings-reader", daemon=True),
-]
-for thread in threads:
-    thread.start()
-for thread in threads:
-    thread.join(timeout=5)
-
-alive = [thread.name for thread in threads if thread.is_alive()]
-stacks = {}
-if alive:
-    frames = sys._current_frames()
-    for thread in threads:
-        if thread.is_alive() and thread.ident in frames:
-            stacks[thread.name] = [
-                frame.name for frame in traceback.extract_stack(frames[thread.ident])
-            ]
-print(json.dumps({"alive": alive, "errors": errors, "stacks": stacks}))
-raise SystemExit(1 if alive or errors else 0)
-"""
-    environment = os.environ.copy()
-    environment["TLDW_CONFIG_PATH"] = str(config_path)
-    repository_root = Path(__file__).resolve().parents[1]
-    environment["PYTHONPATH"] = os.pathsep.join(
-        filter(None, (str(repository_root), environment.get("PYTHONPATH", "")))
-    )
-
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=repository_root,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-
-    evidence = json.loads(completed.stdout.strip().splitlines()[-1])
-    assert completed.returncode == 0, evidence
-    assert evidence == {"alive": [], "errors": [], "stacks": {}}
 
 
 def _invalidate() -> None:
@@ -238,3 +129,65 @@ def test_cache_hit_path_does_no_rebuild(counting_bootstrap):
     for _ in range(5):
         assert isinstance(config_module.load_settings(), dict)
     assert counting_bootstrap == [], "a cache hit must not rebuild"
+
+
+def test_config_write_waits_for_settings_rebuild_before_file_lock(tmp_path):
+    """A writer must not invert the settings-rebuild/config-file lock order."""
+    config_module.load_settings()
+    entered_write = threading.Event()
+    release_write = threading.Event()
+
+    def writer() -> None:
+        with config_module._config_write_lock(tmp_path / "config.toml"):
+            entered_write.set()
+            release_write.wait(timeout=5)
+
+    with config_module._SETTINGS_REBUILD_LOCK:
+        thread = threading.Thread(target=writer)
+        thread.start()
+        entered_while_rebuilding = entered_write.wait(timeout=0.25)
+        file_lock_was_free = config_module._CONFIG_FILE_LOCK.acquire(blocking=False)
+        if file_lock_was_free:
+            config_module._CONFIG_FILE_LOCK.release()
+        release_write.set()
+
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert entered_while_rebuilding is False
+    assert file_lock_was_free is True
+
+
+def test_runtime_snapshot_takes_rebuild_lock_before_file_lock(monkeypatch):
+    """Runtime snapshots must follow the global rebuild -> file lock order."""
+    events: list[str] = []
+
+    class TrackingLock:
+        def __init__(self, name: str) -> None:
+            self._name = name
+            self._lock = threading.RLock()
+
+        def __enter__(self):
+            events.append(self._name)
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback) -> None:
+            del exc_type, exc_value, traceback
+            self._lock.release()
+
+    rebuild_lock = TrackingLock("rebuild")
+    file_lock = TrackingLock("file")
+    monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", rebuild_lock)
+    monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", file_lock)
+
+    def load_settings(*, force_reload: bool = False) -> dict:
+        del force_reload
+        with config_module._settings_rebuild_lock():
+            return {"source": "test"}
+
+    monkeypatch.setattr(config_module, "load_settings", load_settings)
+
+    snapshot = config_module.get_runtime_config_snapshot(force_reload=True)
+
+    assert snapshot.values == {"source": "test"}
+    assert events[:2] == ["rebuild", "file"]

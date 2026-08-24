@@ -93,6 +93,48 @@ def test_skill_tool_routes_through_spawn(tmp_path):
     assert db.count_subagent_runs("c1") == 1  # skill ran as a budget-counted sub-agent
 
 
+def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    original_insert = db.insert_steps_at_indices
+
+    def fail_spawn_capture(run_id, indexed_steps):
+        if any(
+            step["kind"] == "tool_call" and step.get("tool_name") == "code-review"
+            for _index, step in indexed_steps
+        ):
+            raise RuntimeError("persistent skill spawn capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_spawn_capture)
+    reg = _registry_with_code_review_skill()
+    script = [
+        {"choices": [{"message": {"content": _fence("code-review", {"args": "x"})}}]},
+        {"choices": [{"message": {"content": "child answer"}}]},
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    service = AgentService(
+        db, reg, chat_call=lambda **_kwargs: script.pop(0), skill_runner=_FakeSkillRunner()
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="skill-spawn-capture",
+        messages=[{"role": "user", "content": "review"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    rows = db.list_runs("skill-spawn-capture", include_superseded=True)
+    parent = next(row for row in rows if row["id"] == parent_id)
+    child = next(row for row in rows if row["agent_kind"] == "subagent")
+    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
+    assert child["spawn_event_id"] == diagnostic_id
+
+
 def test_skill_tool_respects_subagent_budget(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_code_review_skill()

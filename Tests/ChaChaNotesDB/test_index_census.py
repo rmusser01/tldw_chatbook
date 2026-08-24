@@ -37,6 +37,8 @@ as integrity-bearing:
   trajectory ledger's ordering identity; duplicate seq rows would corrupt
   replay order. Also pinned by a dedicated test below so a mechanical
   literal update cannot silently ride along with a schema downgrade.
+* ``idx_actor_pack_persona_intents_state`` — deterministic startup recovery
+  scans over unresolved Actor Pack Persona intents.
 * ``idx_messages_conversation_id_id`` — message identity within a
   conversation; backs keyset pagination over (conversation_id, id).
 * ``idx_notes_file_path_unique`` — at most one note per on-disk file path
@@ -70,6 +72,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     MINIMUM_BOOTSTRAP_VERSION,
     chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
 )
 
 _THIS_FILE = "Tests/ChaChaNotesDB/test_index_census.py"
@@ -88,6 +91,9 @@ class IndexPin(NamedTuple):
 #: it only as part of a deliberate schema change, in the same commit as the
 #: migration that adds, drops, renames, or reshapes an index. Sorted by name.
 EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
+    "idx_actor_pack_persona_intents_state": IndexPin(
+        "actor_pack_persona_intents", False, ("state", "created_at", "intent_id")
+    ),
     "idx_char_expr_images_char": IndexPin(
         "character_expression_images", False, ("character_id",)
     ),
@@ -97,6 +103,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_collkw_kw": IndexPin("collection_keywords", False, ("keyword_id",)),
     "idx_console_aux_attempts_conversation_started": IndexPin(
         "console_auxiliary_attempts", False, ("conversation_id", "started_at")
+    ),
+    "idx_console_dispatch_checkpoint_conversation": IndexPin(
+        "console_dispatch_checkpoints", False, ("conversation_id",)
     ),
     "idx_console_memories_boundary": IndexPin(
         "console_conversation_memories",
@@ -363,7 +372,9 @@ def live_index_census(request, tmp_path_factory) -> dict[str, IndexPin]:
     db_path = tmp_path_factory.mktemp("index_census") / "chain_migrated.sqlite"
     with chachanotes_db_at_version(db_path, MINIMUM_BOOTSTRAP_VERSION):
         pass  # bootstrap a genuinely-v4 DB, then close it
-    db = CharactersRAGDB(str(db_path), client_id="index-census-chain")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="index-census-chain"
+    )
     try:
         return _census(db.get_connection())
     finally:

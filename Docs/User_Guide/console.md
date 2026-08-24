@@ -36,9 +36,10 @@ Top to bottom:
   **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
 - **Left rail: "Console context"** — separate sections for **Sessions**
-  (the active conversation), **Workspaces** (workspace switching and RAG
-  scope), **Conversations** (search and resume), **Model**, **Agent**, and
-  **Details**, plus **Character** when character avatars are enabled. The
+  (the active conversation), **Workspaces** (named workspaces and their
+  conversations), **Conversations** (Default and unassigned conversations),
+  **Model**, **Agent**, and **Details**, plus **Character** when character
+  avatars are enabled. The
   full-width **<---------|Context** header button collapses the rail; while
   collapsed, the **Context->** handle on the far left brings it back.
 - **Conversation pane** — titled "Conversation", extended to
@@ -93,9 +94,12 @@ Top to bottom:
 
 ### Rail scrolling and focus
 
-Long rail sections show up to 20 lines of content. **▼ more — scroll** means
-more content remains in the current section; **▼ more sections — scroll** means
-later sections remain below, so scroll the whole Context or Inspector rail.
+Context sections keep complete reading bodies up to their own limits: 15 rows
+for Sessions, Model, Agent, and Details; 20 for Workspaces and Conversations;
+and 35 for Character. Inspector sections keep a 20-row limit. **▼ more —
+scroll** means more content remains inside the current section; **▼ more
+sections — scroll** means complete later sections remain below, so scroll the
+whole Context or Inspector rail.
 See [Reading long Context and Inspector sections](console/context-and-rag.md#reading-long-context-and-inspector-sections)
 for pointer and keyboard navigation.
 
@@ -117,9 +121,8 @@ the Context rail, ~74 for the Inspector); the preference itself survives and
 the rail returns when the terminal widens again.
 
 The full-width layout on larger terminals remains primary, while short
-terminals keep every Context header and open section reachable by scrolling the
-rail. If an open section is marked **· no room**, **[>]** temporarily gives it
-room to show its contents without changing your saved open/closed choices.
+terminals keep every Context header and complete open section reachable by
+scrolling the rail.
 
 ### Focus mode
 
@@ -185,14 +188,13 @@ composer-level strip below shows once setup completes.
 | **<---------\|Context** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
 | **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
 | **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
-| **[>]** on a Context section marked **· no room** | Temporarily gives that already-open section priority when vertical space is constrained; it does not change saved open/closed choices. |
 | **Sessions** section | Names the active conversation. |
-| **Workspaces** section | Shows the active workspace and provides **Switch**, **New**, and **RAG Scope** actions. |
-| **Conversations** section | Searches, starts, stars, and resumes conversations — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
+| **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
+| **Conversations** section | Independently searches, starts, stars, and resumes only Default and unassigned conversations; starred entries sort first — see [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
 | **Model** section | Read-only Provider / Model / Temperature / Max tokens lines plus a **Configure** button that opens Console Settings. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
-| **Character** section | Appears only when the character-avatar preference is on: the active character's portrait (click to enlarge) and name. |
+| **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
 
 ### Status chips
 

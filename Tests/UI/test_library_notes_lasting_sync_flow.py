@@ -34,7 +34,11 @@ def test_production_screen_derives_lasting_route_from_the_app_runtime() -> None:
     controller_source = Path(
         "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py"
     ).read_text(encoding="utf-8")
-    assert 'runtime.snapshot().status == "active"' in controller_source
+    # TASK-21112: availability still derives from the runtime snapshot;
+    # 'not_configured' (boot-deferred) also offers first-time setup.
+    assert (
+        "runtime.snapshot().status in _SETUP_READY_STATUSES" in controller_source
+    )
     assert "lasting_available=" not in source
     assert "LibraryNotesAddFromFilesCanvas" in source
     assert "LibraryNotesSyncRootsCanvas" in source

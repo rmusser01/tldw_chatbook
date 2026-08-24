@@ -6,8 +6,10 @@ import asyncio
 import difflib
 import re
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from time import monotonic
-from typing import Any, Callable, Iterable, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping
+from weakref import WeakSet
 
 from loguru import logger
 from PIL import Image as PILImage
@@ -36,6 +38,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleMessageRole,
     FEEDBACK_ACTIVE_RUN_STATUSES,
+)
+from tldw_chatbook.Chat.assistant_generation_state import (
+    render_exported_assistant_content,
 )
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
@@ -96,6 +101,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
+    selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
@@ -105,6 +111,9 @@ from tldw_chatbook.Widgets.Console.console_video_card import (
 )
 from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from textual.screen import Screen
 
 
 # TASK-17658: rule separators paint via the stylesheet's hatch fill
@@ -302,6 +311,11 @@ def _message_body(
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
+    content = render_exported_assistant_content(
+        role=message.role.value,
+        content=content,
+        state=message.assistant_generation_state,
+    )
     if (
         message.role is not ConsoleMessageRole.USER
         and message.status == "failed"
@@ -940,10 +954,19 @@ def _assistant_markdown_body(
     its header line and feeds the Markdown widget content only.
     """
     if presentation is not None:
-        return presentation.content
-    if message.variants is not None:
-        return message.variants.current.content
-    return message.content
+        content = presentation.content
+    elif message.variants is not None:
+        content = message.variants.current.content
+    else:
+        content = message.content
+    if _row_is_in_flight(message) and not content.strip():
+        # The grouped Markdown header owns healthy live/generating copy.
+        return content
+    return render_exported_assistant_content(
+        role=message.role.value,
+        content=content,
+        state=message.assistant_generation_state,
+    )
 
 
 #: TASK-15456. A line that -- with <=3 leading spaces, per CommonMark's fence
@@ -1159,7 +1182,7 @@ def _sync_message_classes(
 class ConsoleMessageHeader(Horizontal):
     """Stable one-line speaker header with its sole visible speech control."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleMessageHeader {
         width: 100%;
         height: 1;
@@ -1422,10 +1445,14 @@ class ConsoleMarkdownMessage(Vertical):
             self.clear_selection()
             return
         text = self.get_display_text()
-        self._selection_line_range = (
-            max(0, start),
-            min(end, len(text)),
-        )
+        new_range = (max(0, start), min(end, len(text)))
+        if self._selection_line_range == new_range:
+            # TASK-21114: unchanged effective range -- the strip already
+            # shows it; skip the strip re-render (drags re-send the same
+            # range at mouse-move rate). Text changes re-render via
+            # ``_clamp_selection_to_text`` on sync.
+            return
+        self._selection_line_range = new_range
         self._refresh_selection_strip()
 
     def clear_selection(self) -> None:
@@ -1682,6 +1709,13 @@ class ConsoleTranscriptMessage(Vertical):
         # Text-selection range over the BODY text domain (header excluded),
         # console selection phase 1. None = no highlight.
         self._selection_range: tuple[int, int] | None = None
+        # TASK-21114: cached body render (``get_display_text`` derives its
+        # ``.plain`` from it). Rebuilt lazily; invalidated in ``sync_message``
+        # -- the single seam where ``_message``/``_presentation`` are
+        # reassigned after construction -- mirroring how the markdown row's
+        # ``_body_text`` only ever changes there. A stale entry here would
+        # corrupt selection offsets and copied quotes.
+        self._body_render_cache: Content | None = None
         super().__init__(
             id=f"console-message-{message.id}",
             classes=" ".join(
@@ -1712,7 +1746,7 @@ class ConsoleTranscriptMessage(Vertical):
                 markdown=False,
             )
         yield Static(
-            _message_body_render_text(self._message, self._presentation),
+            self._body_render_content(),
             classes="console-transcript-message-body",
             markup=False,
         )
@@ -1724,9 +1758,21 @@ class ConsoleTranscriptMessage(Vertical):
     # Offsets are BODY-only: the speaker header is a separate child widget and
     # never part of the selection domain.
 
+    def _body_render_content(self) -> Content:
+        """Return the (cached) body render Content (TASK-21114).
+
+        Derived purely from ``_message`` + ``_presentation``; both are only
+        reassigned in ``sync_message``, which invalidates this cache first.
+        """
+        if self._body_render_cache is None:
+            self._body_render_cache = _message_body_render_text(
+                self._message, self._presentation
+            )
+        return self._body_render_cache
+
     def get_display_text(self) -> str:
         """Return the plain body text this row renders (selection domain)."""
-        return _message_body_render_text(self._message, self._presentation).plain
+        return self._body_render_content().plain
 
     def get_selection_text(self) -> str:
         """Return the currently highlighted text, capped for quoting."""
@@ -1739,6 +1785,11 @@ class ConsoleTranscriptMessage(Vertical):
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight ``[start, end)`` in the body and re-render it."""
+        if self._selection_range == (start, end):
+            # TASK-21114: unchanged range -- the highlight already shows it;
+            # skip the full-body re-render (drags re-send the same range at
+            # mouse-move rate). Text changes re-render via ``sync_message``.
+            return
         self._selection_range = (start, end)
         self._refresh_body_highlight()
 
@@ -1776,7 +1827,7 @@ class ConsoleTranscriptMessage(Vertical):
         except NoMatches:
             return  # row not composed yet -- protocol state stays valid
         if self._selection_range is None:
-            body.update(_message_body_render_text(self._message, self._presentation))
+            body.update(self._body_render_content())
             return
         plain = self.get_display_text()
         start, end = sorted(self._selection_range)
@@ -1799,6 +1850,10 @@ class ConsoleTranscriptMessage(Vertical):
         self.message_id = message.id
         self._message = message
         self._presentation = presentation
+        # TASK-21114: the body render derives from the two fields reassigned
+        # above -- invalidate BEFORE anything below (the selection clamp
+        # included) reads ``get_display_text``.
+        self._body_render_cache = None
         self._selected = selected
         self._speech_state = speech_state
         _sync_message_classes(
@@ -1974,6 +2029,11 @@ class ConsoleToolDiffRow(Vertical):
         start, end = _snap_to_line_bounds(text, start, end)
         if end <= start:
             self.clear_selection()
+            return
+        if self._selection_range == (start, end):
+            # TASK-21114: unchanged snapped range -- skip the strip
+            # re-render (drags re-send the same range at mouse-move rate;
+            # line snapping makes repeats especially common here).
             return
         self._selection_range = (start, end)
         self._refresh_selection_strip()
@@ -2275,6 +2335,53 @@ class ConsoleAnnotationMarker(Static):
         self.post_message(ConsoleReviewNotesRequested(self.anchor_message_id))
 
 
+@lru_cache(maxsize=4)
+def _body_wrap_table(text: str, width: int) -> tuple[tuple[tuple[int, str], ...], int]:
+    """Memoized wrap table: each wrapped body line with its source offset.
+
+    TASK-21114: a drag delivers MouseMove at 50-100 Hz and every event needs
+    the wrapped layout of the SAME (text, width) -- re-running
+    ``Content.wrap`` plus the offset-alignment scan over a multi-KB body per
+    event was the dominant per-move cost. The table is pure in its key, so a
+    small LRU covers a drag's lifetime while text growth (streaming) and
+    width changes (resize mid-drag) each miss into a fresh entry and the old
+    one ages out.
+
+    Returns:
+        ``(table, total_lines)`` where ``table[i]`` is ``(source_start,
+        line_text)`` for wrapped line ``i`` and ``total_lines`` counts ALL
+        wrapped lines. ``len(table) < total_lines`` means the alignment scan
+        hit a wrap edge case it does not model at index ``len(table)`` --
+        cells on or below that line fall back to the single-line mapping
+        (exactly where the pre-memoization loop bailed out).
+    """
+    wrapped = [
+        line.plain
+        for line in Content(text, strip_control_codes=False).wrap(width)
+    ]
+    table: list[tuple[int, str]] = []
+    source_offset = 0
+    for line in wrapped:
+        if line:
+            start = text.find(line, source_offset)
+            if start == -1 or text[source_offset:start].strip():
+                # Wrap edge case not modeled (defensive): stop here; the
+                # caller falls back to the single-line mapping for this
+                # line and everything after it.
+                break
+            table.append((start, line))
+            source_offset = start + len(line)
+        else:
+            # Blank wrapped line: anchors at the current position.
+            table.append((source_offset, ""))
+            # Consume the blank line's own break so later lines stay
+            # aligned; any other inter-line whitespace is absorbed by the
+            # next line's find() above.
+            if source_offset < len(text) and text[source_offset] in "\r\n":
+                source_offset += 1
+    return tuple(table), len(wrapped)
+
+
 def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int:
     """Map a body-local screen cell to a character offset in ``text``.
 
@@ -2284,7 +2391,9 @@ def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int
     ``Content.wrap`` mirrors the widget's own fold (leading indentation is
     preserved, the fold space is dropped), so each wrapped line is aligned
     back to its source offset by skipping the whitespace the fold dropped --
-    mapping choice verified against ``Content.wrap`` on Textual 8.2.8.
+    mapping choice verified against ``Content.wrap`` on Textual 8.2.8. The
+    wrap-plus-alignment work is memoized per (text, width) in
+    ``_body_wrap_table`` (TASK-21114).
 
     Cells above the body clamp to offset 0, cells below the last wrapped
     line to the end of the text; on the hovered line the x cell maps through
@@ -2303,35 +2412,17 @@ def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int
     if width <= 0 or not text:
         # Not laid out (or nothing to select): monotone single-line mapping.
         return offset_for_cell(text, cell_x)
-    wrapped = [
-        line.plain
-        for line in Content(text, strip_control_codes=False).wrap(width)
-    ]
+    table, total_lines = _body_wrap_table(text, width)
     if cell_y < 0:
         return 0
-    if cell_y >= len(wrapped):
+    if cell_y >= total_lines:
         return len(text)
-    source_offset = 0
-    for index, line in enumerate(wrapped):
-        if line:
-            start = text.find(line, source_offset)
-            if start == -1 or text[source_offset:start].strip():
-                # Wrap edge case not modeled (defensive): fall back to the
-                # single-line mapping rather than mis-anchor the drag.
-                return offset_for_cell(text, cell_x)
-            if index == cell_y:
-                return start + offset_for_cell(line, cell_x)
-            source_offset = start + len(line)
-        else:
-            if index == cell_y:
-                # Blank wrapped line: anchor at the current position.
-                return source_offset
-            # Consume the blank line's own break so later lines stay
-            # aligned; any other inter-line whitespace is absorbed by the
-            # next line's find() above.
-            if source_offset < len(text) and text[source_offset] in "\r\n":
-                source_offset += 1
-    return len(text)
+    if cell_y >= len(table):
+        # On or below an unmodeled wrap edge: fall back to the single-line
+        # mapping rather than mis-anchor the drag.
+        return offset_for_cell(text, cell_x)
+    start, line = table[cell_y]
+    return start + offset_for_cell(line, cell_x)
 
 
 def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
@@ -2473,6 +2564,44 @@ def _kb_selection_hint_text(
     if isinstance(row, ConsoleToolDiffRow):
         return _KB_DIFF_SELECTION_HINT
     return _KB_CHAR_SELECTION_HINT
+
+
+#: Every constructed, not-yet-collected transcript (TASK-21119).
+#:
+#: Same contract as ``_LIVE_SELECTION_MENUS``, and now the same two hooks:
+#: registration in ``__init__`` is synchronous and strictly precedes DOM
+#: attachment, so the registry can never MISS a mounted transcript (the
+#: direction that would silently break the click-outside cleanup); it may
+#: over-report, and attachment is always re-derived from the DOM in
+#: ``console_transcripts_on_screen``. ``_on_unmount`` prunes recomposed
+#: transcripts out of the candidate set, which is an optimization only.
+_LIVE_TRANSCRIPTS: "WeakSet[ConsoleTranscript]" = WeakSet()
+
+
+def console_transcripts_on_screen(screen: "Screen[object]") -> list["ConsoleTranscript"]:
+    """Transcripts currently attached under ``screen``.
+
+    Replaces ``screen.query(ConsoleTranscript)`` (a full-screen DOM walk) on
+    the per-press dismissal path. A Console screen holds one transcript
+    (side chats add at most a handful), so the candidate scan is a couple of
+    parent-chain walks, not a walk of the whole screen.
+
+    Args:
+        screen: The screen whose subtree is being inspected.
+
+    Returns:
+        The attached transcripts, in unspecified order.
+    """
+    transcripts: list[ConsoleTranscript] = []
+    for transcript in _LIVE_TRANSCRIPTS:
+        if transcript.parent is None:
+            continue  # never mounted, or already detached (cheap arm)
+        try:
+            if transcript.screen is screen:
+                transcripts.append(transcript)
+        except NoScreen:
+            continue  # attached to an orphaned subtree mid-teardown
+    return transcripts
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -2698,6 +2827,40 @@ class ConsoleTranscript(VerticalScroll):
         #: until Task 3 wires the motion keys.
         self._kb_anchor: int | None = None
         self._kb_end: int | None = None
+        # TASK-21119: register BEFORE any mount can happen (Textual delivers
+        # ``Mount`` asynchronously), so the screen's click-outside gate can
+        # never miss a transcript that is already in the DOM.
+        _LIVE_TRANSCRIPTS.add(self)
+
+    def _on_unmount(self) -> None:
+        """Prune the transcript registry (TASK-21119).
+
+        Best-effort only, exactly like the menu's: correctness never depends
+        on it (``console_transcripts_on_screen`` re-checks attachment, and
+        the weak reference expires on its own), it just keeps the candidate
+        set from carrying every recomposed transcript until the next
+        collection. No ``super()`` call is needed -- Textual dispatches
+        ``_on_unmount`` from every class in the MRO, so ``Widget``'s own
+        teardown still runs.
+        """
+        _LIVE_TRANSCRIPTS.discard(self)
+
+    @property
+    def has_pending_selection_ui(self) -> bool:
+        """Whether the screen's click-outside cleanup would change anything.
+
+        The screen-level dismissal (``ChatScreen._dismiss_console_selection_
+        menus_outside_transcript``) does three things per transcript: clear
+        the highlighted row, cancel the selection manager, and drop the
+        origin row. All three are no-ops when the manager is idle and no
+        origin row is held -- including the keyboard-selection mode, which
+        arms the manager without mounting a menu (so a menu-only gate would
+        leave its reverse-video strip painted after a click elsewhere).
+        """
+        return (
+            self._selection_origin_row is not None
+            or not self.selection_manager.is_idle
+        )
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -5027,11 +5190,36 @@ class ConsoleTranscript(VerticalScroll):
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
         self.selection_manager.begin_drag(row.id, offset)
         self._selection_origin_row = row
+        # TASK-21114: the stale-highlight sweep over every mounted row used
+        # to run on EVERY MouseMove (hundreds of rows under the 20k/12k-line
+        # watermarks, at 50-100 Hz). One sweep when the drag arms keeps the
+        # same guarantee -- no other row can GAIN a highlight mid-drag (the
+        # only writers are this drag's origin row and keyboard mode, which
+        # exits above) -- so the moves only ever touch the origin row.
+        self._clear_other_selection_highlights(row)
         # Capture the mouse so the terminal MouseUp reaches this transcript
         # even when the pointer is released outside it; otherwise the
         # manager stays active and suppresses row clicks until the next
         # MouseDown (ported from the reference implementation's fix).
         self.capture_mouse(True)
+
+    def _clear_other_selection_highlights(self, active_row: Widget) -> None:
+        """Clear any stale text-selection highlight on every OTHER row.
+
+        TASK-21114: called once per drag (at arm time) instead of per
+        MouseMove. ``clear_selection`` is a guarded no-op on rows without a
+        stored range, so the sweep costs one attribute check per mounted
+        selectable row.
+        """
+        for other in self._row_widgets.values():
+            if (
+                isinstance(
+                    other,
+                    (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
+                )
+                and other.id != active_row.id
+            ):
+                other.clear_selection()
 
     def on_mouse_move(self, event: MouseMove) -> None:
         """Extend the active drag over the origin row's body text."""
@@ -5048,19 +5236,14 @@ class ConsoleTranscript(VerticalScroll):
         ):
             return  # origin row went away: hold the last position
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
-        self.selection_manager.extend_drag(row.id, offset)
+        if not self.selection_manager.extend_drag(row.id, offset):
+            # TASK-21114: the pointer moved within the same character cell --
+            # nothing to re-render. (Stale highlights on OTHER rows were
+            # already swept once when the drag armed, in ``on_mouse_down``.)
+            return
         updated = self.selection_manager.state.selection
         if updated is None:
             return
-        for other in self._row_widgets.values():
-            if (
-                isinstance(
-                    other,
-                    (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
-                )
-                and other.id != row.id
-            ):
-                other.clear_selection()
         row.set_selection_range(updated.start, updated.end)
 
     def on_mouse_up(self, event: MouseUp) -> None:
@@ -5386,13 +5569,20 @@ class ConsoleTranscript(VerticalScroll):
 
         Textual marks a widget ``_pruning`` synchronously inside
         ``remove()`` but detaches it only when the prune message is
-        processed, so a menu can appear in ``query`` twice across two
-        removal calls; already-pruning menus are skipped to keep
-        ``remove()`` single-shot per menu.
+        processed, so a menu can survive two removal calls; already-pruning
+        menus are skipped to keep ``remove()`` single-shot per menu.
+
+        TASK-21119: sourced from the menu registry rather than
+        ``self.screen.query(ConsoleSelectionMenu)`` -- same screen scope,
+        same result, without a full-screen DOM walk. This runs on every
+        in-transcript press (``on_mouse_down``), not just on dismissal.
+        ``self.screen`` still resolves first, so a detached transcript
+        raises ``NoScreen`` exactly as before.
         """
+        screen = self.screen
         return [
             menu
-            for menu in self.screen.query(ConsoleSelectionMenu)
+            for menu in selection_menus_on_screen(screen)
             if not getattr(menu, "_pruning", False)
         ]
 

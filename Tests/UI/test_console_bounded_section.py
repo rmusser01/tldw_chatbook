@@ -13,8 +13,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    BoundedSectionViewport,
     ConsoleBoundedSection,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_tree import ConsoleWorkspaceTree
+
+from .test_console_workspace_tree import _workspace
 
 
 LOCAL_HINT = "▼ more — scroll"
@@ -95,6 +99,7 @@ def _section(
     count: int,
     *,
     allocation: int | None = None,
+    max_content_lines: int = 20,
     on_focus_recovery: Callable[[], None] | None = None,
 ) -> tuple[ConsoleBoundedSection, Static]:
     content = Static(_lines(count), id="content")
@@ -104,10 +109,123 @@ def _section(
             content,
             section_id="run",
             allocation=allocation,
+            max_content_lines=max_content_lines,
             on_focus_recovery=on_focus_recovery,
         ),
         content,
     )
+
+
+def _native_section(
+    node_count: int,
+    *,
+    fixed_lines: int = 2,
+    allocation: int | None = None,
+) -> tuple[ConsoleBoundedSection, ConsoleWorkspaceTree, Static]:
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace(
+                "w",
+                "Workspace",
+                *(
+                    (f"c{index}", f"Conversation {index}")
+                    for index in range(node_count - 1)
+                ),
+            ),
+        )
+        if node_count
+        else (),
+        expanded_workspace_ids={"w"} if node_count > 1 else set(),
+    )
+    fixed = Static(_lines(fixed_lines), id="fixed-chrome")
+    return (
+        ConsoleBoundedSection(
+            fixed,
+            section_id="native",
+            allocation=allocation,
+            native_scroll_owner=tree,
+        ),
+        tree,
+        fixed,
+    )
+
+
+def test_native_owner_cannot_also_be_wrapped_content() -> None:
+    tree = ConsoleWorkspaceTree()
+    with pytest.raises(ValueError, match="native_scroll_owner"):
+        ConsoleBoundedSection(
+            tree,
+            section_id="invalid-native",
+            native_scroll_owner=tree,
+        )
+
+
+@pytest.mark.asyncio
+async def test_native_mode_mounts_tree_directly_without_nested_viewport() -> None:
+    section, tree, fixed = _native_section(3)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        assert tuple(section.children) == (fixed, tree, section.hint)
+        assert tree.parent is section
+        assert section.viewport is tree
+        assert not tuple(section.query(BoundedSectionViewport))
+        assert not tuple(tree.ancestors).count(BoundedSectionViewport)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("nodes", "expected_tree_height", "overflow"),
+    [(1, 1, False), (8, 8, False), (25, 18, True)],
+)
+async def test_native_tree_gets_natural_then_capped_height_with_hint_outside(
+    nodes: int,
+    expected_tree_height: int,
+    overflow: bool,
+) -> None:
+    section, tree, _fixed = _native_section(nodes)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 40)) as pilot:
+        await _settle(pilot)
+        assert section.desired_content_lines == 2 + nodes
+        assert tree.content_region.height == expected_tree_height
+        assert section.hint.display is overflow
+        assert section.hint.parent is section
+        assert tree.can_focus is True
+        assert section.region.height == 2 + expected_tree_height + int(overflow)
+
+
+@pytest.mark.asyncio
+async def test_native_tree_stays_focusable_when_nonoverflowing_and_recovers_as_owner() -> (
+    None
+):
+    recovered: list[None] = []
+    section, tree, _fixed = _native_section(1)
+    section._on_focus_recovery = lambda: recovered.append(None)
+    app = _FocusHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        tree.focus()
+        await pilot.pause()
+        assert app.focused is tree
+        assert tree.can_focus is True
+        assert section._owns_widget(tree)
+
+        tree.can_focus = False
+        section._notify_focus_recovery()
+        assert recovered == [None]
+
+
+@pytest.mark.asyncio
+async def test_default_mode_remains_one_bounded_viewport() -> None:
+    section, _content = _section(3)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        assert isinstance(section.viewport, BoundedSectionViewport)
+        assert tuple(section.viewport.children)
+        assert section.native_scroll_owner is None
 
 
 @pytest.mark.asyncio
@@ -146,6 +264,67 @@ async def test_physical_content_line_boundaries(
         assert hint.display is has_overflow
         assert hint.region.height == int(has_overflow)
         assert str(hint.render()) == (LOCAL_HINT if has_overflow else "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ceiling", "demand", "viewport_height", "hint_required"),
+    [
+        (15, 14, 14, False),
+        (15, 15, 15, False),
+        (15, 16, 15, True),
+        (20, 19, 19, False),
+        (20, 20, 20, False),
+        (20, 21, 20, True),
+        (35, 34, 34, False),
+        (35, 35, 35, False),
+        (35, 36, 35, True),
+    ],
+)
+async def test_instance_ceiling_controls_physical_content_and_hint_boundary(
+    ceiling: int,
+    demand: int,
+    viewport_height: int,
+    hint_required: bool,
+) -> None:
+    section, _content = _section(demand, max_content_lines=ceiling)
+    app = _Harness(section)
+
+    async with app.run_test(size=(60, 50)) as pilot:
+        await _settle(pilot)
+
+        assert section.max_content_lines == ceiling
+        assert section.desired_content_lines == demand
+        assert section.viewport.content_region.height == viewport_height
+        assert section.viewport.max_scroll_y == int(hint_required)
+        assert section.hint.display is hint_required
+        assert section.hint.region.height == int(hint_required)
+        assert str(section.hint.render()) == (LOCAL_HINT if hint_required else "")
+
+
+@pytest.mark.parametrize("invalid", [True, False, 0, -1, 1.5, "15", None])
+def test_max_content_lines_rejects_non_positive_and_non_integer_values(
+    invalid: object,
+) -> None:
+    expected_error = (
+        TypeError
+        if isinstance(invalid, bool) or not isinstance(invalid, int)
+        else ValueError
+    )
+    with pytest.raises(expected_error):
+        ConsoleBoundedSection(
+            Static("row"),
+            section_id="invalid-ceiling",
+            max_content_lines=invalid,  # type: ignore[arg-type]
+        )
+
+
+def test_allocation_normalizes_against_the_instance_ceiling() -> None:
+    section, _content = _section(40, allocation=35, max_content_lines=15)
+
+    assert section.allocation == 15
+    section.set_allocation(20)
+    assert section.allocation == 15
 
 
 @pytest.mark.asyncio
@@ -377,6 +556,41 @@ def test_missing_callback_does_not_consume_focus_recovery_incident() -> None:
     section._notify_focus_recovery()
 
     assert recovered == [None]
+
+
+@pytest.mark.asyncio
+async def test_focus_recovery_acknowledgement_suppresses_the_observer_second_signal() -> (
+    None
+):
+    recovered: list[None] = []
+    removed = Button("Removed", id="ack-removed")
+    replacement = Button("Replacement", id="ack-replacement")
+    section = ConsoleBoundedSection(
+        removed,
+        replacement,
+        section_id="acknowledgement",
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        removed.focus()
+        await pilot.pause()
+        await removed.remove()
+        section._on_focus_recovery = lambda: recovered.append(None)
+
+        app.screen.set_focus(replacement)
+        section._acknowledge_focus_recovery(replacement)
+        section._recover_removed_focus_target()
+        assert section._focused_descendant is replacement
+        assert section._focus_recovery_notified is True
+        assert recovered == []
+
+        section._acknowledge_focus_recovery(None)
+        section._recover_removed_focus_target()
+        assert section._focused_descendant is None
+        assert section._focus_recovery_notified is True
+        assert recovered == []
 
 
 @pytest.mark.asyncio

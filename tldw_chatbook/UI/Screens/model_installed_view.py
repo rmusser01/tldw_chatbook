@@ -200,6 +200,11 @@ class InstalledView(Widget):
         border: solid $surface-lighten-1;
     }
 
+    InstalledView .installed-model-row.-revealed {
+        border: solid $accent;
+        background: $accent 8%;
+    }
+
     InstalledView .installed-model-title {
         text-style: bold;
     }
@@ -281,6 +286,9 @@ class InstalledView(Widget):
         self._import_status: str | None = None
         self._import_retry_available = False
         self._restore_header_focus_id: str | None = None
+        self._revealed_reference: ArtifactRef | None = None
+        self._reveal_status: str | None = None
+        self._reveal_focus_attempts = 0
         self._observation_generation = 0
         self._observation_focus_locator: ModelLibraryFocusLocator | None = None
         # TASK-19563: monotonic inventory-read counter; see `_apply_inventory`.
@@ -356,6 +364,13 @@ class InstalledView(Widget):
             yield Static(
                 self._lifecycle_status,
                 id="installed-lifecycle-status",
+                classes="installed-recovery-status",
+                markup=False,
+            )
+        if self._reveal_status is not None:
+            yield Static(
+                self._reveal_status,
+                id="installed-reveal-status",
                 classes="installed-recovery-status",
                 markup=False,
             )
@@ -518,6 +533,8 @@ class InstalledView(Widget):
             if audio_cpp is not None
             else "installed-model-row"
         )
+        if row.reference == self._revealed_reference:
+            classes += " -revealed"
         widget = Vertical(*children, classes=classes)
         widget.reference = row.reference
         return widget
@@ -736,6 +753,16 @@ class InstalledView(Widget):
             self._audio_cpp_projections = audio_cpp
         reload_after_load = self._reload_after_load
         self._reload_after_load = False
+        revealed = self._revealed_reference
+        if error is None and revealed is not None and not reload_after_load:
+            if any(row.reference == revealed for row in rows):
+                self._reveal_status = None
+            else:
+                self._revealed_reference = None
+                self._reveal_status = (
+                    "That managed model is no longer available. Refresh Installed "
+                    "models and try again."
+                )
         if reload_after_load:
             self.ensure_loaded(force=True)
         elif self.is_attached:
@@ -748,6 +775,75 @@ class InstalledView(Widget):
                 focus_id = self._restore_header_focus_id
                 self._restore_header_focus_id = None
                 self.call_after_refresh(self.restore_focus, focus_id)
+            elif self._revealed_reference is not None:
+                self._schedule_revealed_focus()
+
+    def reveal_reference(self, reference: ArtifactRef) -> None:
+        """Reveal and focus one exact managed row without activating it.
+
+        Args:
+            reference: Verified managed identity selected by another Models view.
+        """
+        if type(reference) is not ArtifactRef:
+            return
+        had_recovery = self._reveal_status is not None
+        self._reveal_status = None
+        self._revealed_reference = reference
+        if any(row.reference == reference for row in self._rows):
+            if had_recovery and self.is_attached:
+                self.refresh(recompose=True)
+                self._schedule_revealed_focus()
+                return
+            for row in self.query(".installed-model-row"):
+                row.set_class(
+                    getattr(row, "reference", None) == reference,
+                    "-revealed",
+                )
+            self._focus_revealed_reference()
+            return
+        self.ensure_loaded(force=True)
+
+    def _schedule_revealed_focus(self) -> None:
+        """Focus after recompose, retrying across Textual's child-mount gap."""
+        self._reveal_focus_attempts = 3
+        self.call_after_refresh(self._focus_revealed_after_recompose)
+
+    def _focus_revealed_after_recompose(self) -> None:
+        """Resolve one bounded post-recompose focus attempt."""
+        if self._focus_revealed_reference():
+            self._reveal_focus_attempts = 0
+            return
+        self._reveal_focus_attempts -= 1
+        if self._reveal_focus_attempts > 0:
+            self.set_timer(0.01, self._focus_revealed_after_recompose)
+
+    def _focus_revealed_reference(self) -> bool:
+        """Scroll the revealed row into view and focus activation when available."""
+        reference = self._revealed_reference
+        if reference is None:
+            return False
+        row = next(
+            (
+                widget
+                for widget in self.query(".installed-model-row")
+                if getattr(widget, "reference", None) == reference
+            ),
+            None,
+        )
+        if row is None:
+            return False
+        row.scroll_visible(animate=False, immediate=True, force=True)
+        action = next(
+            (
+                button
+                for button in row.query(".model-activate").results(Button)
+                if not button.disabled
+            ),
+            None,
+        )
+        if action is not None:
+            action.focus()
+        return True
 
     def refresh_observations(self) -> None:
         """Refresh current exact refs without re-reading managed inventory."""

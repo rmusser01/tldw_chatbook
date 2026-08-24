@@ -36,11 +36,21 @@ def _kanban_owner(path: Path) -> tuple[object, Callable[[], None]]:
 
 
 def _writing_owner(path: Path) -> tuple[object, Callable[[], None]]:
-    return local_writing_service.LocalWritingService(path), lambda: None
+    # TASK-21105: file-backed stores open on FIRST USE, not construction,
+    # so the factory performs one operation -- the seam/rejection contracts
+    # under test now apply at that moment.
+    service = local_writing_service.LocalWritingService(path)
+    service.list_projects()
+    # TASK-21125: the connection opened above is now HELD, so the owner has a
+    # real closer to hand back.
+    return service, service.close
 
 
 def _research_owner(path: Path) -> tuple[object, Callable[[], None]]:
-    return local_research_service.LocalResearchService(path), lambda: None
+    # TASK-21105: see _writing_owner.
+    service = local_research_service.LocalResearchService(path)
+    service.list_runs()
+    return service, lambda: None
 
 
 def _notes_mirror_owner(path: Path) -> tuple[object, Callable[[], None]]:

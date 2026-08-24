@@ -128,7 +128,7 @@ def _note_matches_snapshot(note: dict, current_snapshot_id: "int | None") -> boo
 class ConsoleTurnFileCard(Vertical):
     """Stacked, expandable per-file diff card rendered under a turn marker."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleTurnFileCard {
         height: auto;
         min-height: 1;
@@ -190,7 +190,7 @@ class ConsoleTurnFileCard(Vertical):
     """
 
     # Selection styling (parity with `.console-transcript-message-selected`)
-    # deliberately does NOT live in DEFAULT_CSS: it needs the app bundle's
+    # deliberately does NOT live in BUNDLED_CSS: it needs the app bundle's
     # `$ds-focus-bg`/`$ds-focus-fg` tokens, and Textual resolves `$vars`
     # per CSS source, so a local "fallback" here would unconditionally
     # shadow the bundle's values (TASK-16811, caught again by Qodo on
@@ -883,7 +883,7 @@ class ConsoleTurnFileCard(Vertical):
         ``Resize`` does not bubble (``textual.events.Resize(bubble=False)``)
         so this fires only when THIS card's own width changes -- exactly
         the right trigger, since every row Button spans the card's full
-        width (``DEFAULT_CSS``'s ``.console-turn-file-row { width: 100%;
+        width (``BUNDLED_CSS``'s ``.console-turn-file-row { width: 100%;
         }``).
 
         Args:

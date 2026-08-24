@@ -46,15 +46,28 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
+from textual.css.query import QueryError
+
+from tldw_chatbook.Chat.console_fleet_attention import (
+    FLEET_UNSEEN_REVISION_ATTR,
+    clear_fleet_unseen_completion,
+    fleet_unseen_conversation_ids,
+)
+from tldw_chatbook.Chat.console_runtime import leave_console_runtime
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
+)
+from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
+from tldw_chatbook.Widgets.Console.console_speech_controls import (
+    ConsoleSpeechControls,
 )
 
 from .agent import ConsoleAgentController
 from .character import ConsoleCharacterController
 from .dictation import ConsoleDictationController
+from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
 from .message import ConsoleMessageController
@@ -68,12 +81,110 @@ from .retrieval import ConsoleRetrievalController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
 from .video import ConsoleVideoController
-from .workspace import ConsoleWorkspaceController
+from .workspace import (
+    ConsoleWorkspaceController,
+    persist_console_workspace_tree_expansion_preferences,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..Screens.chat_screen import ChatScreen
 
 __all__ = ["build_console_controllers"]
+
+
+def _displayed_console_composer_draft(screen: Any) -> str | None:
+    """Return the draft from the Console composer receiving user input."""
+    try:
+        displayed = screen.app.screen
+    except Exception:  # noqa: BLE001 -- no reachable app: use own composer
+        displayed = None
+    composer = None
+    if displayed is not None and displayed is not screen:
+        resolve = getattr(displayed, "_console_composer_or_none", None)
+        if callable(resolve):
+            try:
+                composer = resolve()
+            except Exception:  # noqa: BLE001 -- broken foreign resolver: fall back
+                composer = None
+    if composer is None:
+        composer = screen._console_composer_or_none()
+    return composer.draft_text() if composer is not None else None
+
+
+def _console_screen_is_displayed(screen: Any) -> bool:
+    """Return whether ``screen`` is displayed, preserving fixture fallback."""
+    try:
+        return screen.app.screen is screen
+    except Exception:  # noqa: BLE001 -- no reachable app: unmounted fixtures
+        return True
+
+
+def _apply_first_chat_control_selection(
+    screen: Any,
+    provider: Any,
+    model: Any,
+) -> None:
+    """Project one first-chat provider/model selection onto screen controls."""
+
+    screen._console_control_provider = provider
+    screen._console_control_model = model
+
+
+def _restore_first_chat_focus(screen: Any, token: object | None) -> None:
+    """Restore an opaque focus token only while both it and the screen are mounted."""
+
+    if screen.is_mounted and getattr(token, "is_mounted", False):
+        token.focus()
+
+
+def _sync_auto_speak_presentation(
+    screen: Any,
+    enabled: bool,
+    paused: bool,
+    retry_available: bool,
+) -> None:
+    """Project authoritative auto-speak state onto mounted controls."""
+    try:
+        speech_controls = screen.query_one(
+            "#console-speech-controls", ConsoleSpeechControls
+        )
+    except QueryError:
+        speech_controls = None
+    if speech_controls is not None:
+        speech_controls.sync_auto_speak(enabled=enabled, paused=paused)
+    try:
+        control_bar = screen.query_one("#console-control-bar", ConsoleControlBar)
+    except QueryError:
+        return
+    control_bar.sync_auto_speak(
+        enabled=enabled,
+        paused=paused,
+        retry_available=retry_available,
+    )
+
+
+def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
+    """Project the live Hands-free session state onto the mounted switch."""
+    try:
+        speech_controls = screen.query_one(
+            "#console-speech-controls", ConsoleSpeechControls
+        )
+    except QueryError:
+        return
+    speech_controls.sync_hands_free_state(active)
+
+
+def _query_console_owner(
+    screen: Any,
+    selector: str,
+    fallback: object | None,
+) -> object | None:
+    """Return a mounted Console owner or its stable lifecycle fallback."""
+
+    try:
+        return screen.query_one(selector)
+    except QueryError:
+        return fallback
 
 
 def build_console_controllers(
@@ -82,12 +193,12 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's thirteen controllers and attach them.
+    """Construct the Console screen's fourteen controllers and attach them.
 
     Assigns, in this order, `screen._image`, `screen._video`,
     `screen._retrieval`, `screen._skill`, `screen._workspace`,
-    `screen._character`, `screen._session`, `screen._dictation`, `screen._hands_free`,
-    `screen._message`, `screen._prompts`, `screen._agent`, and
+    `screen._character`, `screen._fleet`, `screen._session`, `screen._dictation`,
+    `screen._hands_free`, `screen._message`, `screen._prompts`, `screen._agent`, and
     `screen._prompt_queue`. The order is documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
     module docstring), so no controller reads a sibling that does not exist
@@ -96,7 +207,7 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the thirteen constructors reads mutable state off `screen` eagerly
+    none of the fourteen constructors reads mutable state off `screen` eagerly
     (each stores its inputs and callables), so the call needs to sit where it
     can see everything the pre-move constructions could.
 
@@ -327,11 +438,10 @@ def build_console_controllers(
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
         screen_running_accessor=lambda: screen.is_running,
         current_chat_controller_accessor=lambda: screen._console_chat_controller,
-        fleet_unseen_ids_accessor=lambda: screen._console_fleet_unseen_ids(),
+        fleet_unseen_ids_accessor=lambda: screen._fleet._console_fleet_unseen_ids(),
         run_marker_with_unseen=(
             lambda controller, session, unseen_ids: (
-                screen._console_run_marker_with_unseen(
-                    controller,
+                screen._fleet._console_run_marker_with_unseen(
                     session,
                     unseen_ids,
                 )
@@ -352,8 +462,53 @@ def build_console_controllers(
         ),
         # task-15864 AC#2: session-open (the resume flow) is a wake retry
         # trigger -- late-binding like every sibling above.
-        wake_retry_poke=lambda: screen._poke_console_wake_retry(),
+        wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
+        workspace_tree_owner_accessor=(
+            lambda: _query_console_owner(
+                screen,
+                "#console-workspace-tree",
+                None,
+            )
+        ),
+        flat_conversation_owner_accessor=(
+            lambda: (
+                getattr(screen, "_console_conversation_browser_owner", None)
+                or _query_console_owner(
+                    screen,
+                    "#console-workspace-context",
+                    screen,
+                )
+            )
+        ),
+        screen_lifecycle_token_accessor=lambda: getattr(screen, "_task", screen),
+        persist_workspace_tree_expansion_preferences=(
+            lambda workspace_ids: screen.run_worker(
+                lambda: persist_console_workspace_tree_expansion_preferences(
+                    workspace_ids
+                ),
+                thread=True,
+                group="console-workspace-tree-preferences",
+                exclusive=True,
+            )
+        ),
+        session_id_for_browser_row=(
+            lambda row: screen._session._console_session_id_for_browser_row(row)
+        ),
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        set_conversation_row_loading=(
+            lambda conversation_id, loading: (
+                screen._set_console_conversation_row_loading(
+                    conversation_id,
+                    loading,
+                )
+            )
+        ),
+        mark_conversation_row_broken=(
+            lambda conversation_id: screen._mark_console_conversation_row_broken(
+                conversation_id
+            )
+        ),
     )
     screen._character = ConsoleCharacterController(
         app_config_accessor=(
@@ -402,11 +557,201 @@ def build_console_controllers(
                 scope, state, manual
             )
         ),
+        resolve_historical_visual_identity=(
+            lambda scope, identity: screen._session._resolve_historical_visual_identity(
+                scope, identity
+            )
+        ),
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         console_image_default_mode=lambda: screen._console_image_default_mode,
         is_mounted=lambda: screen.is_mounted,
         render_character_avatar=(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
+        ),
+    )
+
+    screen._fleet = ConsoleFleetLifecycleController(
+        pending_handoffs_accessor=lambda: screen.app_instance.pending_handoffs,
+        ensure_chat_store=lambda: screen._ensure_console_chat_store(),
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        activate_workspace_for_session=(
+            lambda session_id: (
+                screen._workspace._set_active_workspace_for_console_session(session_id)
+            )
+        ),
+        switch_chat_session=(
+            lambda session_id: screen._console_chat_controller.switch_session(
+                session_id
+            )
+        ),
+        schedule_native_console_sync=(
+            lambda: screen.run_worker(
+                screen._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+        ),
+        ensure_agent_bridge=lambda: screen._ensure_console_agent_bridge(),
+        wire_wake_coordinator=(
+            lambda: (
+                (wake.wire(app=screen.app_instance), True)[1]
+                if (
+                    wake := getattr(
+                        screen._console_chat_controller
+                        or screen._ensure_console_chat_controller(),
+                        "fleet_wake",
+                        None,
+                    )
+                )
+                is not None
+                else False
+            )
+        ),
+        seed_wake_from_marks=(
+            lambda: bool(
+                wake.seed_from_marks()
+                if (
+                    wake := getattr(
+                        screen._console_chat_controller,
+                        "fleet_wake",
+                        None,
+                    )
+                )
+                is not None
+                else False
+            )
+        ),
+        retry_wake_soon=(
+            lambda: (
+                retry()
+                if callable(
+                    retry := getattr(
+                        getattr(
+                            screen._console_chat_controller,
+                            "fleet_wake",
+                            None,
+                        ),
+                        "retry_soon",
+                        None,
+                    )
+                )
+                else None
+            )
+        ),
+        wake_has_pending=(
+            lambda conversation_id: bool(
+                has_pending(conversation_id)
+                if callable(
+                    has_pending := getattr(
+                        getattr(
+                            screen._console_chat_controller,
+                            "fleet_wake",
+                            None,
+                        ),
+                        "has_pending",
+                        None,
+                    )
+                )
+                else False
+            )
+        ),
+        wake_delivering_conversation_id=(
+            lambda: (
+                delivering()
+                if callable(
+                    delivering := getattr(
+                        getattr(
+                            screen._console_chat_controller,
+                            "fleet_wake",
+                            None,
+                        ),
+                        "delivering_conversation_id",
+                        None,
+                    )
+                )
+                else None
+            )
+        ),
+        displayed_composer_draft_accessor=(
+            lambda: _displayed_console_composer_draft(screen)
+        ),
+        screen_displayed_accessor=lambda: _console_screen_is_displayed(screen),
+        screen_mounted_accessor=lambda: screen.is_mounted,
+        active_session_id_accessor=(
+            lambda: getattr(screen._console_chat_store, "active_session_id", None)
+        ),
+        chat_sessions_accessor=(
+            lambda: (
+                tuple(screen._console_chat_store.sessions())
+                if screen._console_chat_store is not None
+                else ()
+            )
+        ),
+        defer_on_message_pump=lambda callback: screen.call_later(callback),
+        start_transcript_sync_timer=(
+            lambda: screen._start_console_transcript_sync_timer()
+        ),
+        transcript_sync_timer_active=(
+            lambda: screen._console_transcript_sync_timer is not None
+        ),
+        sync_native_console_ui=lambda: screen._sync_native_console_chat_ui(),
+        create_interval=(
+            lambda seconds, callback: screen.set_interval(seconds, callback)
+        ),
+        record_timer_created=lambda name: screen._record_ui_timer_created(name),
+        record_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
+        chat_controller_available=(lambda: screen._console_chat_controller is not None),
+        fleet_has_unsettled_children=(
+            lambda: (
+                bool(checker())
+                if callable(
+                    checker := getattr(
+                        screen._console_chat_controller,
+                        "fleet_has_unsettled_children",
+                        None,
+                    )
+                )
+                else False
+            )
+        ),
+        run_marker_for_session=(
+            lambda session_id: screen._console_chat_controller.run_marker_for(
+                session_id
+            )
+        ),
+        fleet_teardown_split=(
+            lambda: screen._console_chat_controller.fleet_teardown_split()
+        ),
+        leave_runtime=(lambda: leave_console_runtime(screen.app_instance, view=screen)),
+        stage_teardown_notices=(
+            lambda killed, surviving: (
+                setattr(
+                    screen.app_instance,
+                    "_console_fleet_teardown_notice",
+                    killed,
+                )
+                if killed
+                else None,
+                setattr(
+                    screen.app_instance,
+                    "_console_fleet_survivor_notice",
+                    surviving,
+                )
+                if surviving
+                else None,
+            )
+        ),
+        fleet_unseen_revision_accessor=(
+            lambda: getattr(screen.app_instance, FLEET_UNSEEN_REVISION_ATTR, 0)
+        ),
+        read_fleet_unseen_ids=(
+            lambda: fleet_unseen_conversation_ids(screen.app_instance)
+        ),
+        clear_fleet_unseen=(
+            lambda conversation_id: clear_fleet_unseen_completion(
+                screen.app_instance,
+                conversation_id,
+            )
         ),
     )
 
@@ -439,6 +784,11 @@ def build_console_controllers(
         provider_readiness_app_config=(lambda: screen._provider_readiness_app_config()),
         build_provider_selection=(
             lambda session_id: screen._build_console_provider_selection(session_id)
+        ),
+        scratch_snapshot_provider=(
+            lambda session_id: screen._console_runtime().scratch_spaces.snapshot(
+                session_id
+            )
         ),
         rag_source_types_accessor=rag_source_types_accessor,
         rag_top_k_accessor=rag_top_k_accessor,
@@ -522,6 +872,24 @@ def build_console_controllers(
                     force=True, **kwargs
                 )
             )
+        ),
+        screen_mounted_accessor=lambda: screen.is_mounted,
+        first_chat_presentation_snapshot=(
+            lambda: (
+                screen._console_control_provider,
+                screen._console_control_model,
+                screen.app.focused if screen.is_mounted else None,
+            )
+        ),
+        apply_first_chat_control_selection=(
+            lambda provider, model: _apply_first_chat_control_selection(
+                screen,
+                provider,
+                model,
+            )
+        ),
+        restore_first_chat_focus=(
+            lambda token: _restore_first_chat_focus(screen, token)
         ),
     )
     #: Dictation's own state and lifecycle moved to
@@ -632,6 +1000,22 @@ def build_console_controllers(
             lambda capture_live: screen._enter_console_realtime_loop(
                 capture_live=capture_live
             )
+        ),
+        request_auto_speak_enabled=(
+            lambda enabled: screen._console_auto_speak.request_enabled(enabled)
+        ),
+        request_auto_speak_resume=(lambda: screen._console_auto_speak.request_resume()),
+        request_auto_speak_retry=(lambda: screen._console_auto_speak.request_retry()),
+        sync_auto_speak_controls=(
+            lambda enabled, paused, retry_available: _sync_auto_speak_presentation(
+                screen,
+                enabled,
+                paused,
+                retry_available,
+            )
+        ),
+        sync_hands_free_state=(
+            lambda active: _sync_hands_free_presentation(screen, active)
         ),
     )
     #: The native message-transcript cluster -- serialize/restore,
@@ -748,7 +1132,7 @@ def build_console_controllers(
         store_accessor=lambda: screen._ensure_console_chat_store(),
         resolve_destination=(
             lambda assistant_kind, character_ref: (
-                screen._resolve_console_auto_speak_destination(
+                screen._hands_free._resolve_console_auto_speak_destination(
                     assistant_kind,
                     character_ref,
                 )
@@ -774,7 +1158,7 @@ def build_console_controllers(
             )
         ),
         sync_controls=lambda enabled, paused, retry_available: (
-            screen._sync_console_auto_speak_controls(
+            screen._hands_free._sync_console_auto_speak_controls(
                 enabled,
                 paused,
                 retry_available,

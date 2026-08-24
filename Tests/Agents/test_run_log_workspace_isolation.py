@@ -44,6 +44,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     RunBudget,
 )
+from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import RunLogRecord, encode_record
@@ -97,9 +98,45 @@ def _workspace_seams(monkeypatch, sandbox: Path, workspace: Path) -> None:
     sandbox.mkdir(parents=True, exist_ok=True)
     workspace.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(file_tools, "_tool_sandbox_root", lambda: sandbox)
-    fake_roots = lambda write=False, sandbox_root=None: (sandbox, workspace)
+
+    def fake_roots(write=False, sandbox_root=None):
+        return sandbox, workspace
+
     monkeypatch.setattr(ws_roots, "allowed_file_roots", fake_roots)
     monkeypatch.setattr(file_tools, "allowed_file_roots", fake_roots)
+
+
+def test_explicit_console_resolution_preserves_writable_workspace_preference(
+    tmp_path,
+    monkeypatch,
+):
+    from tldw_chatbook.Tools import workspace_file_roots as ws_roots
+
+    scratch = tmp_path / "chat"
+    workspace = tmp_path / "workspace"
+    scratch.mkdir()
+    workspace.mkdir()
+    observed = {}
+
+    def roots(*, write, sandbox_root):
+        observed["write"] = write
+        observed["sandbox_root"] = sandbox_root
+        observed["workspace_id"] = ws_roots.current_run_workspace_id()
+        return scratch, workspace
+
+    monkeypatch.setattr(ws_roots, "allowed_file_roots", roots)
+
+    resolved = run_log_module.resolve_log_root(
+        sandbox_root=scratch,
+        workspace_id="ws-a",
+    )
+
+    assert resolved == workspace
+    assert observed == {
+        "write": True,
+        "sandbox_root": scratch.resolve(),
+        "workspace_id": "ws-a",
+    }
 
 
 def _grep(pattern: str) -> list[dict]:

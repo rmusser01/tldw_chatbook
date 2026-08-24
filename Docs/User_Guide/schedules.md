@@ -15,7 +15,7 @@ panels for the Schedule Queue, Task Detail, and Inspector.
 - Press **Ctrl+7**, click **⌃7 Schedules** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Schedules".
 
-## Missed while away — what happens to overdue reminders
+## Ran late — what happens to overdue reminders
 
 Reminders only fire while the app is running (they execute locally, even
 with no server configured). If the app is closed — or asleep — when a
@@ -23,9 +23,20 @@ reminder's scheduled time passes, the reminder is **not replayed**: when you
 next open the app, the overdue occurrence fires once, immediately, and the
 task records honestly that it was late.
 
+Other causes produce the same "ran late" state, which is why the notice no
+longer claims the app was closed. The scheduler runs each poll's due
+handlers one after another, so a slow handler (a watchlist check may run up
+to its 300-second execution timeout) holds the loop and pushes the *next*
+poll — and everything due by then — past the grace window. A machine that
+sleeps or suspends with the app still open does the same thing without any
+handler being slow. The app log names which it was: `busy` when the previous
+poll's handlers account for the delay, `stalled` when the scheduler was up
+but nothing it ran explains it, and `away` when the scheduler genuinely was
+not running at the scheduled time.
+
 - **One-time reminders** fire once, late, and then complete as usual. Their
-  detail pane shows "Missed while away: the \<scheduled time\> occurrence
-  ran late".
+  detail pane shows "Ran late: the \<scheduled time\> occurrence dispatched
+  well after its scheduled time".
 - **Recurring reminders** fire once for the overdue occurrence and count
   how many earlier occurrences were skipped ("2 earlier occurrence(s) were
   skipped, not replayed") — the schedule then continues from the current
@@ -39,12 +50,13 @@ task records honestly that it was late.
 This state describes the **last** dispatch and heals itself: the next
 on-time firing clears the marker and the notice.
 
-**"Missed" vs "Missed while away".** A task whose *status* reads **Missed**
-had a dispatch that ran and *failed* (its handler raised — it tried and
-errored). "Missed while away" (the ◇ marker and detail notice) means the
-scheduled time passed with the scheduler not running at all — the work
-never ran until it fired late. A task can be one, the other, or neither;
-neither implies the other.
+**"Missed" vs "Ran late".** A task whose *status* reads **Missed** had a
+dispatch that ran and *failed* (its handler raised — it tried and errored).
+"Ran late" (the ◇ marker and detail notice) means the scheduled time passed
+without the work being dispatched — because the app was away, or because
+the scheduler was busy with an earlier task in the same tick — and it then
+fired late. A task can be one, the other, or neither; neither implies the
+other.
 
 ### Tuning the grace window
 

@@ -20,12 +20,14 @@ integration surface.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_trace_repository import ActiveCitationTraceState
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_repository import (
@@ -34,7 +36,11 @@ from tldw_chatbook.Chat.console_context_repository import (
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen, _build_trajectory_snapshot
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_WORKBENCH_SHORTCUTS,
+    ChatScreen,
+    _build_trajectory_snapshot,
+)
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
 # ---------------------------------------------------------------------------
@@ -90,11 +96,23 @@ def snapshot_with_turns(turn_count: int):
         assistant_id = f"a{index}"
         turn_id = f"t{index}"
         messages.append(
-            msg(user_id, "user", content=f"question {index}", ts=_T0 + index * 10.0, parent=parent)
+            msg(
+                user_id,
+                "user",
+                content=f"question {index}",
+                ts=_T0 + index * 10.0,
+                parent=parent,
+            )
         )
         seq += 1
         rows.append(
-            TrajRow(user_id, turn_id=turn_id, seq=seq, event_kind="user", step_started_at=_T0 + index * 10.0)
+            TrajRow(
+                user_id,
+                turn_id=turn_id,
+                seq=seq,
+                event_kind="user",
+                step_started_at=_T0 + index * 10.0,
+            )
         )
         messages.append(
             msg(
@@ -221,9 +239,7 @@ async def test_live_revision_change_appends_rows_and_follows_tail():
             await pilot.pause(0.01)
         assert table.scroll_y == table.max_scroll_y
         # live screen advertises the follow key
-        assert "follow" in str(
-            screen.query_one("#trajectory-hints").render()
-        )
+        assert "follow" in str(screen.query_one("#trajectory-hints").render())
 
 
 async def test_scrolling_up_suspends_follow_until_f_resumes():
@@ -301,6 +317,7 @@ def test_follow_binding_registered_and_hints_stay_one_to_one():
 def test_console_binds_single_letter_trajectory_launch():
     bindings = {b.key: b.action for b in ChatScreen.BINDINGS}
     assert bindings.get("y") == "open_trajectory_view"
+    assert ("Y", "trace") in CONSOLE_WORKBENCH_SHORTCUTS
     assert hasattr(ChatScreen, "action_open_trajectory_view")
     # 'j' stays owned by the focused transcript (next-message selection in
     # console_transcript.on_key); the launch key must not collide with it.
@@ -376,6 +393,221 @@ def test_build_trajectory_snapshot_renders_compaction_and_variants(tmp_path):
         db.close()
 
 
+def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
+    """The off-thread builder joins public durable owner read seams."""
+
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return [
+                {
+                    "id": "a1",
+                    "sender": "assistant",
+                    "content": "answer",
+                    "timestamp": 1.0,
+                    "parent_message_id": None,
+                    "deleted": False,
+                    "usage_json": None,
+                }
+            ]
+
+        def get_trajectory_rows(self, _conversation_id):
+            return [TrajRow("a1", turn_id="t1", seq=1, event_kind="assistant")]
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            return "a1"
+
+    evidence_run = SimpleNamespace(
+        model_dump=lambda mode="python": {
+            "run_id": "rag-1",
+            "run_ordinal": 1,
+            "stage": "search",
+            "started_at": "2026-08-22T12:00:00Z",
+            "ended_at": "2026-08-22T12:00:01Z",
+        }
+    )
+    active_result = SimpleNamespace(
+        state=ActiveCitationTraceState.ACTIVE,
+        summary=SimpleNamespace(trace=SimpleNamespace(evidence_runs=(evidence_run,))),
+    )
+
+    class _CitationRepository:
+        def active_owner_candidate_message_ids(self, message_ids):
+            assert message_ids == ["a1"]
+            return {"a1"}
+
+        def get_active_trace_for_current_message(self, message_id, current_body):
+            assert (message_id, current_body) == ("a1", "answer")
+            return active_result
+
+        def verify_active_trace_result(self, result):
+            return result is active_result
+
+    class _RunsDB:
+        def list_runs(self, conversation_id):
+            assert conversation_id == "conv-1"
+            return [
+                {
+                    "id": "run-1",
+                    "conversation_id": conversation_id,
+                    "agent_kind": "primary",
+                    "status": "done",
+                    "created_at": "2026-08-22T12:00:02Z",
+                    "assistant_message_id": "a1",
+                    "steps": [
+                        {
+                            "index": 0,
+                            "kind": "model",
+                            "summary": "answered",
+                            "created_at": "2026-08-22T12:00:03Z",
+                        }
+                    ],
+                }
+            ]
+
+    persistence = SimpleNamespace(
+        db=_DB(),
+        context_repository=None,
+        citation_repository=_CitationRepository(),
+    )
+    store = SimpleNamespace(
+        persistence=persistence,
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+
+    snapshot = _build_trajectory_snapshot(
+        store,
+        "conv-1",
+        agent_runs_db=_RunsDB(),
+    )
+    event_ids = {record.event_id for turn in snapshot.turns for record in turn.records}
+
+    assert "agent-run:run-1" in event_ids
+    assert "agent-step:run-1:0" in event_ids
+    assert "retrieval-run:rag-1" in event_ids
+    ordered_ids = [
+        record.event_id for turn in snapshot.turns for record in turn.records
+    ]
+    assert ordered_ids.index("retrieval-run:rag-1") < ordered_ids.index("message:a1")
+    retrieval = next(
+        record
+        for turn in snapshot.turns
+        for record in turn.records
+        if record.event_id == "retrieval-run:rag-1"
+    )
+    assert retrieval.parent_event_id is None
+    agent_run = next(
+        record
+        for turn in snapshot.turns
+        for record in turn.records
+        if record.event_id == "agent-run:run-1"
+    )
+    assert agent_run.turn_id == "t1"
+
+
+def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return [msg(f"a{i}", "assistant", content="x", ts=i) for i in range(20)]
+
+        def get_trajectory_rows(self, _conversation_id):
+            return []
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            raise RuntimeError("leaf unavailable")
+
+    class _Context:
+        def __init__(self):
+            self.offsets = []
+
+        def list_auxiliary_attempts(self, _conversation_id, *, limit, offset):
+            self.offsets.append(offset)
+            if offset:
+                raise RuntimeError("late context failure")
+            return [{"operation_id": f"op-{i}"} for i in range(500)]
+
+    class _Runs:
+        def list_runs(self, _conversation_id):
+            yield {"id": "retained-run", "conversation_id": "conv-1"}
+            raise RuntimeError("late agent failure")
+
+    class _Citations:
+        candidate_calls = 0
+        detail_calls = 0
+
+        def active_owner_candidate_message_ids(self, message_ids):
+            self.candidate_calls += 1
+            assert len(message_ids) == 20
+            return set()
+
+        def get_active_trace_for_current_message(self, *_args):
+            self.detail_calls += 1
+            raise AssertionError("prefilter should skip detail reads")
+
+    context = _Context()
+    citations = _Citations()
+    store = SimpleNamespace(
+        persistence=SimpleNamespace(
+            db=_DB(), context_repository=context, citation_repository=citations
+        ),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+
+    snapshot = _build_trajectory_snapshot(store, "conv-1", agent_runs_db=_Runs())
+    records = [record for turn in snapshot.turns for record in turn.records]
+
+    assert context.offsets == [0, 500]
+    assert citations.candidate_calls == 1
+    assert citations.detail_calls == 0
+    assert sum(record.kind == "compaction" for record in records) == 500
+    assert any(record.event_id == "agent-run:retained-run" for record in records)
+    failure = next(record for record in records if record.kind == "capture_failed")
+    assert failure.status == "capture_failed"
+    assert failure.field_states == {"source": "capture_failed"}
+    assert failure.sensitivity == "diagnostic"
+
+
+def test_retrieval_failures_are_distinct_and_message_owned():
+    messages = [
+        msg("a1", "assistant", content="x", ts=1),
+        msg("a2", "assistant", content="x", ts=2),
+    ]
+
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return messages
+
+        def get_trajectory_rows(self, _conversation_id):
+            return []
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            return None
+
+    class _Citations:
+        def active_owner_candidate_message_ids(self, message_ids):
+            return set(message_ids)
+
+        def get_active_trace_for_current_message(self, *_args):
+            raise RuntimeError("SECRET")
+
+    store = SimpleNamespace(
+        persistence=SimpleNamespace(
+            db=_DB(), context_repository=None, citation_repository=_Citations()
+        ),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+    records = [
+        r
+        for turn in _build_trajectory_snapshot(store, "conv-1").turns
+        for r in turn.records
+    ]
+    failures = [r for r in records if r.kind == "capture_failed"]
+
+    assert {record.message_id for record in failures} == {"a1", "a2"}
+    assert len({record.event_id for record in failures}) == 2
+    assert all("SECRET" not in record.content_preview for record in failures)
+    assert all(record.field_states["message_id"] == "observed" for record in failures)
+
+
 async def test_trajectory_launch_action_presents_screen():
     """The `y` action builds off-thread and pushes a real TrajectoryScreen.
 
@@ -417,7 +649,11 @@ async def test_trajectory_launch_action_presents_screen():
         # attribute the production code must reach through) resolves.
         Screen.__init__(instance)
         instance._parent = app
-        instance._console_chat_store = _Store()
+        # Latest dev owns the store through the app-scoped ConsoleRuntime.
+        # Seed that public ownership seam directly: assigning the property
+        # would try to attach this intentionally bare test screen as a full
+        # Console view and require every decomposed controller.
+        instance._console_runtime_ref = SimpleNamespace(chat_store=_Store())
         instance.notify = lambda *args, **kwargs: None  # not under test
 
         ChatScreen.action_open_trajectory_view(instance)

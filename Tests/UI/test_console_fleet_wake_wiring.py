@@ -18,6 +18,7 @@ real ``ChatScreen`` can break:
 4. **the composer-empty poke**: clearing the draft through the composer's
    own mutation path retries a deferred wake.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -31,6 +32,9 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.fleet import (
+    ConsoleFleetLifecycleController,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -53,7 +57,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
     app = _build_test_app()
     _attach_real_dbs(app, tmp_path)
     order: list[str] = []
-    real_claim = ChatScreen._claim_console_fleet_wake_marks
+    real_claim = ConsoleFleetLifecycleController._claim_console_fleet_wake_marks
     real_sync = ChatScreen._sync_console_native_session_tabs
 
     def recording_claim(self):
@@ -64,7 +68,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
         order.append("sync")
         return await real_sync(self)
 
-    ChatScreen._claim_console_fleet_wake_marks = recording_claim
+    ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = recording_claim
     ChatScreen._sync_console_native_session_tabs = recording_sync
     try:
         host = ConsoleHarness(app)
@@ -75,7 +79,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
             await _wait_for_selector(console, pilot, "#console-session-surface")
             await pilot.pause()
     finally:
-        ChatScreen._claim_console_fleet_wake_marks = real_claim
+        ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = real_claim
         ChatScreen._sync_console_native_session_tabs = real_sync
     assert "claim" in order, "the mount never ran the wake mark claim"
     assert "sync" in order, (
@@ -110,9 +114,7 @@ async def test_the_mount_claim_seeds_pending_from_mark_and_runs_db(tmp_path):
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         runs_db = bridge.runs_db
-        parent_id = runs_db.create_run(
-            conversation_id=session.id, agent_kind="primary"
-        )
+        parent_id = runs_db.create_run(conversation_id=session.id, agent_kind="primary")
         runs_db.set_status(parent_id, "done", "turn final")
         child_id = runs_db.create_run(
             conversation_id=session.id,
@@ -123,10 +125,9 @@ async def test_the_mount_claim_seeds_pending_from_mark_and_runs_db(tmp_path):
         marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
         runs_db.set_status(child_id, "done", "staged answer")
 
-        console._claim_console_fleet_wake_marks()
+        console._fleet._claim_console_fleet_wake_marks()
         assert controller.fleet_wake.has_pending(session.id), (
-            "the mount-claim seam must turn mark + runs-DB state into a "
-            "pending wake"
+            "the mount-claim seam must turn mark + runs-DB state into a pending wake"
         )
 
 
@@ -146,16 +147,13 @@ async def test_user_priority_probe_reads_the_live_composer_draft(tmp_path):
         controller = console._ensure_console_chat_controller()
         probe = controller.wake_user_priority_probe
         assert callable(probe), "the screen must wire the user-wins-ties probe"
-        composer = console.query_one(
-            "#console-native-composer", ConsoleComposerBar
-        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         session_id = console._ensure_console_chat_store().ensure_session().id
         assert probe(session_id) is False, "an empty composer holds no claim"
         composer.load_draft("half-typed message")
         await pilot.pause()
         assert probe(session_id) is True, (
-            "a non-empty draft is the user's sending claim; the wake must "
-            "see it"
+            "a non-empty draft is the user's sending claim; the wake must see it"
         )
         composer.load_draft("")
         await pilot.pause()
@@ -182,9 +180,7 @@ async def test_emptying_the_composer_pokes_the_wake_retry(tmp_path):
         controller = console._ensure_console_chat_controller()
         pokes: list[str] = []
         controller.fleet_wake.retry_soon = lambda: pokes.append("poke")
-        composer = console.query_one(
-            "#console-native-composer", ConsoleComposerBar
-        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("about to change my mind")
         await pilot.pause()
         emptied_before = len(pokes)

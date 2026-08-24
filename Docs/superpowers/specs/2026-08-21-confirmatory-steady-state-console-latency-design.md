@@ -365,5 +365,5 @@ ADR required: no.
 
 This task changes opt-in benchmark tooling and adds separate retained evidence. It does
 not alter production storage, runtime boundaries, provider contracts, ownership,
-security posture, or long-lived UX. ADR-079 remains the governing decision for Change
+security posture, or long-lived UX. ADR-084 remains the governing decision for Change
 Review consent, asynchronous finalization, and advisory behavior.

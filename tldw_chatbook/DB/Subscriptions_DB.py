@@ -21,10 +21,12 @@
 #
 #########################################
 
+import atexit
 import json
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +42,7 @@ from .base_db import BaseDB
 from .sql_validation import validate_identifier
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.fts5_match_forms import quote_fts5_token
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -48,6 +51,168 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #: `auto_pause_after_failures = 10`, so a broken/hand-edited config still
 #: produces the same default a fresh install would get.
 _DEFAULT_AUTO_PAUSE_THRESHOLD = 10
+
+#: Lock-wait ceiling for every connection this database opens, in
+#: milliseconds (task-19562 AC4).
+#:
+#: **Measured, not assumed** -- the acceptance criterion demanded exactly
+#: that. Against a real `SubscriptionsDB`, with one connection holding
+#: `BEGIN IMMEDIATE` for 1.0 s while a second timed its own:
+#:
+#:     busy_timeout (ms): 5000        <- inherited, nothing set it
+#:     journal_mode     : wal
+#:     second writer blocked for 1.07s -> acquired
+#:
+#: So the lane's PLAUSIBLE rating is CONFIRMED: nothing in this file,
+#: `base_db.py` or the private-path connector ever set `busy_timeout`, and
+#: Python's `sqlite3.connect(timeout=5.0)` default made it 5 s -- a writer
+#: collision really does block its caller for as long as the lock is held,
+#: up to that ceiling, and then raises `OperationalError`.
+#:
+#: Two narrowings the number does NOT support, both worth stating because
+#: the obvious readings are wrong:
+#:
+#: * `journal_mode = wal`, so readers never block writers and writers never
+#:   block readers. The exposure is **writer-vs-writer only**, not "any of
+#:   the 22 async service methods".
+#: * Setting this pragma is **not** the fix for the stall. 5000 is what the
+#:   connection already had; the value is written down here so it is pinned
+#:   and cannot drift silently if the connector ever passes its own
+#:   `timeout=`. Lowering it would only convert a stall into an earlier
+#:   `database is locked` exception on a path with no retry. The stall stops
+#:   mattering because the sqlite work no longer runs on the event loop
+#:   (part B, `Subscriptions/db_offload.py`), not because of this line.
+BUSY_TIMEOUT_MS = 5000
+
+#: Every live, writable `SubscriptionsDB`, weakly held, so the interpreter
+#: can checkpoint their WALs on the way out (see
+#: `_checkpoint_open_databases_at_exit`).
+_OPEN_SUBSCRIPTIONS_DBS: "weakref.WeakSet[SubscriptionsDB]" = weakref.WeakSet()
+_OPEN_DBS_LOCK = threading.Lock()
+_ATEXIT_REGISTERED = False
+
+#: True once the exit hook is running. Checked before every `logger` call on
+#: the settle path, and it is not defensive decoration: the first version of
+#: this hook logged a genuine warning from a test process whose temporary
+#: database directory had already been removed, and loguru's sink was gone
+#: too -- so the *diagnostic* raised `ValueError: I/O operation on closed
+#: file` and printed a logging traceback on every exit. A settle running
+#: during teardown reports nothing; there is nobody left to report to.
+_INTERPRETER_EXITING = False
+
+
+class _ThreadExitCleanup:
+    """Close and de-register one thread's connection when that thread ends.
+
+    Review of PR #1964. `SubscriptionsDB._connections` holds a **strong**
+    reference to every thread's connection so shutdown can count them, but
+    `close()` only removes the *calling* thread's entry. A worker thread that
+    ended without calling `close()` therefore left its connection pinned by
+    that dict for the life of the process -- descriptor, `-wal` and `-shm`
+    handles included. Measured over 20 concurrent short-lived threads: the
+    registry stayed at 21 entries and 43 open descriptors, permanently, and a
+    `gc.collect()` could not reclaim any of it.
+
+    Nothing outside the owning thread may close a sqlite3 connection --
+
+        ProgrammingError: SQLite objects created in a thread can only be
+        used in that same thread.
+
+    -- which is why `close_all_connections` reports other threads' connections
+    instead of closing them. The one place the rule *is* satisfied is the
+    dying thread itself: CPython clears a thread's `threading.local` storage
+    on that thread as it exits, so an object living only in that storage gets
+    finalized there. That is this class. Verified rather than assumed: over 10
+    threads, `__del__` ran 10 times, `threading.get_ident()` inside it matched
+    the ident recorded at construction every time, and the descriptor count on
+    the database returned to its pre-thread baseline (20 -> 0).
+
+    It deliberately does not checkpoint. The `-wal` is settled by SQLite when
+    the last connection to the database closes, and by `checkpoint_wal` /
+    `close_all_connections` on the shutdown path; a thread ending is not the
+    place to add I/O that could raise.
+
+    The instance must be reachable ONLY from the owning thread's local
+    storage. Handing a reference to anything longer-lived (the registry
+    included) would postpone the finalization this exists to trigger.
+    """
+
+    __slots__ = ("_connection", "_registry", "_lock", "_ident")
+
+    def __init__(self, connection, registry, lock, ident: int) -> None:
+        self._connection = connection
+        self._registry = registry
+        self._lock = lock
+        self._ident = ident
+
+    def detach(self) -> None:
+        """Give up ownership -- the connection was closed explicitly instead."""
+        self._connection = None
+
+    def __del__(self) -> None:
+        connection = self._connection
+        if connection is None:
+            return
+        self._connection = None
+        # Best-effort throughout: this runs during thread teardown, where a
+        # raised exception becomes an "Exception ignored in" traceback on
+        # stderr and helps nobody.
+        try:
+            with self._lock:
+                if self._registry.get(self._ident) is connection:
+                    del self._registry[self._ident]
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+
+
+def _checkpoint_open_databases_at_exit() -> None:
+    """Settle every open subscriptions database at interpreter exit.
+
+    task-19562, and the measurement matters more than the intent here.
+    `SubscriptionsDB` keeps **thread-local** connections and nothing ever
+    closed them, so an app that ran watchlist checks exited with a
+    connection still open per worker thread. The obvious conclusion --
+    that the `-wal` is therefore left behind -- was **tested and is false
+    for a clean exit**: a child process that wrote a 4.1 MB `-wal` and
+    exited normally left only `subs.db` on disk, with this hook suppressed
+    exactly as with it enabled. CPython finalizes the connection objects,
+    and SQLite checkpoints and removes the `-wal` when the last connection
+    to a database closes.
+
+    So this hook is not what saves the `-wal` on the ordinary path. What it
+    does buy is a *defined* moment and a defined error path: `atexit` runs
+    while imports and sqlite are still usable, rather than depending on
+    garbage-collection order during interpreter teardown (the regime that
+    produces "Exception ignored in:" noise). The behaviour it performs is
+    covered directly by
+    `Tests/Subscriptions/test_subscriptions_db_connection_lifecycle.py`.
+
+    The path where the `-wal` genuinely does survive is `app.py`'s
+    SIGINT/SIGTERM handler, which calls `os._exit(0)` -- that skips
+    `atexit` too, so no hook here can reach it. Recorded rather than
+    papered over; the hard-exit itself is task-19561's subject.
+
+    Deliberately best-effort and silent on failure: a diagnostic must never
+    be the thing that breaks the exit.
+    """
+    global _INTERPRETER_EXITING
+    _INTERPRETER_EXITING = True
+    with _OPEN_DBS_LOCK:
+        databases = list(_OPEN_SUBSCRIPTIONS_DBS)
+    for database in databases:
+        try:
+            if not Path(database.db_path_str).exists():
+                # The file went away under a still-live instance (routine
+                # for a temporary-directory test). There is nothing to
+                # settle, and touching it would only re-create it.
+                continue
+            database.close_all_connections()
+        except Exception:  # noqa: BLE001 -- interpreter shutdown, best effort
+            pass
 
 
 def _sqlite_unicode_casefold(value: Any) -> str:
@@ -259,6 +424,24 @@ class SubscriptionsDB(BaseDB):
             read_only: Open an existing database without initializing schema
         """
         self._local = threading.local()
+        # Every thread-local connection this instance has open, keyed by the
+        # ident of the thread that owns it (task-19562). `threading.local` is
+        # invisible from any other thread, so without this registry nothing --
+        # not shutdown, not a test -- could even *count* the connections, let
+        # alone checkpoint behind them. Assigned before `super().__init__`
+        # because schema initialization touches `self.conn`.
+        #
+        # The reference held here is a STRONG one, which is why every entry is
+        # paired with a `_ThreadExitCleanup` in the owning thread's local
+        # storage (review of PR #1964): without that, a thread that ended
+        # without calling `close()` left its connection pinned by this dict for
+        # the life of the process -- descriptor and WAL lock included --
+        # inverting the very leak the registry was added to expose. A
+        # `weakref.WeakValueDictionary` would be tidier and is not available:
+        # CPython raises `TypeError: cannot create weak reference to
+        # 'sqlite3.Connection' object` (measured on 3.12.11).
+        self._connections: Dict[int, sqlite3.Connection] = {}
+        self._connections_lock = threading.Lock()
         self._read_only = read_only
         # Only the monotonic complete state is retained. A false/incomplete
         # probe is deliberately not cached: a background FTS backfill may
@@ -271,6 +454,10 @@ class SubscriptionsDB(BaseDB):
             except Exception:
                 self.close()
                 raise SubscriptionsDBUnavailableError() from None
+        elif not self.is_memory_db:
+            # Read-only instances have no `-wal` of their own to settle, and
+            # an in-memory database ceases to exist with its connection.
+            self._register_for_exit_checkpoint()
 
     def _get_connection(self) -> sqlite3.Connection:
         """Return a connection with foreign-key enforcement enabled.
@@ -298,6 +485,7 @@ class SubscriptionsDB(BaseDB):
                     deterministic=True,
                 )
                 conn.execute("PRAGMA foreign_keys = ON;")
+                conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
                 conn.execute("PRAGMA query_only = ON;")
             except Exception:
                 conn.close()
@@ -312,6 +500,12 @@ class SubscriptionsDB(BaseDB):
             deterministic=True,
         )
         conn.execute("PRAGMA foreign_keys = ON;")
+        # Written down rather than inherited (task-19562 AC4, see
+        # `BUSY_TIMEOUT_MS` for the measurement). Set BEFORE the WAL
+        # conversion below for the reason `AgentRuns_DB` documents: turning a
+        # rollback-journal file into a WAL one briefly needs an exclusive
+        # lock, and that conversion must not run with no lock-wait budget.
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL;")
         # NORMAL is safe under WAL (SQLite-documented pairing: app-crash-safe,
@@ -1385,10 +1579,122 @@ class SubscriptionsDB(BaseDB):
 
     @property
     def conn(self):
-        """Thread-local database connection."""
+        """Thread-local database connection, registered for shutdown."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = self._get_connection()
+            connection = self._get_connection()
+            self._local.conn = connection
+            with self._connections_lock:
+                self._connections[threading.get_ident()] = connection
+            # Assigned LAST, and only into this thread's local storage: from
+            # here the cleanup owns closing and de-registering this connection
+            # when the thread ends (review of PR #1964). Nothing else may hold
+            # a reference to it, or it would never be finalized.
+            self._local.connection_cleanup = _ThreadExitCleanup(
+                connection,
+                self._connections,
+                self._connections_lock,
+                threading.get_ident(),
+            )
         return self._local.conn
+
+    def _register_for_exit_checkpoint(self) -> None:
+        """Join the set of databases the interpreter settles on the way out."""
+        global _ATEXIT_REGISTERED
+        with _OPEN_DBS_LOCK:
+            _OPEN_SUBSCRIPTIONS_DBS.add(self)
+            if not _ATEXIT_REGISTERED:
+                atexit.register(_checkpoint_open_databases_at_exit)
+                _ATEXIT_REGISTERED = True
+
+    def checkpoint_wal(self) -> bool:
+        """Fold the `-wal` back into the database file and truncate it.
+
+        task-19562. Nothing in this app ever checkpointed this database
+        explicitly. SQLite's automatic checkpoint keeps the `-wal` bounded
+        but never truncates it, so a long-running app carries whatever the
+        last burst of writes left there -- measured at 4.1 MB after 300
+        inserts, and 0 bytes after one `wal_checkpoint(TRUNCATE)`. That is
+        the standing cost this addresses; the file is separately (and
+        adequately) settled by SQLite itself when the last connection to it
+        closes, which is why the exit hook's own docstring is careful about
+        what it does and does not buy.
+
+        `TRUNCATE` needs every other connection to be idle; when one is not,
+        SQLite reports busy rather than raising, and this falls back to
+        `PASSIVE`, which folds in what it can without waiting. Either way the
+        database file is complete afterwards.
+
+        Returns:
+            True when the `-wal` was truncated, False when only a partial
+            (or no) checkpoint was possible -- including for an in-memory or
+            read-only database, which have nothing to checkpoint.
+        """
+        if self.is_memory_db or self._read_only:
+            return False
+        try:
+            connection = self.conn
+            if connection.in_transaction:
+                # A checkpoint cannot see past this connection's own open
+                # transaction; committing here would durably persist work the
+                # caller has not finished, so the honest answer is to decline.
+                return False
+            row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+        except Exception:  # noqa: BLE001
+            # Broader than sqlite3.Error on purpose: `self.conn` above can
+            # also raise from the private-path connector (the database file
+            # deleted under a still-live instance -- routine in tests, and
+            # possible at shutdown). A settle that cannot happen is a
+            # warning, never a raise out of a close path.
+            if not _INTERPRETER_EXITING:
+                logger.warning("SubscriptionsDB WAL checkpoint failed during shutdown")
+            return False
+        # (busy, log_pages, checkpointed_pages); busy=0 means TRUNCATE ran.
+        if row is not None and row[0] == 0:
+            return True
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+        except sqlite3.Error:
+            pass
+        return False
+
+    def close_all_connections(self) -> int:
+        """Settle this database for shutdown: checkpoint, then close.
+
+        task-19562. Closes the CALLING thread's connection after
+        checkpointing the `-wal` (the checkpoint is database-wide, so one
+        connection settles the file for all of them).
+
+        Connections owned by *other, still-live* threads are counted and
+        reported, not closed. That is a measured limitation, not an oversight:
+        sqlite3 refuses a cross-thread close --
+
+            ProgrammingError: SQLite objects created in a thread can only be
+            used in that same thread.
+
+        -- and an exception raised out of a shutdown path is worse than a
+        connection the operating system is about to reclaim anyway. The part
+        that actually matters for the file on disk (the checkpoint) is done
+        regardless of which thread calls this.
+
+        Connections whose thread has already EXITED are neither counted nor
+        retained: `_ThreadExitCleanup` closed and de-registered each of them on
+        its own thread as that thread ended (review of PR #1964). So the number
+        returned is the number of connections a still-live thread could
+        actually be using, and the registry itself holds no descriptor open.
+
+        Returns:
+            The number of connections still open on other live threads.
+        """
+        self.checkpoint_wal()
+        self.close()
+        with self._connections_lock:
+            remaining = len(self._connections)
+        if remaining and not _INTERPRETER_EXITING:
+            logger.debug(
+                "SubscriptionsDB connections remain open on other threads after "
+                "WAL checkpoint"
+            )
+        return remaining
 
     @contextmanager
     def transaction(self):
@@ -1408,11 +1714,24 @@ class SubscriptionsDB(BaseDB):
         exception still propagates outward, so the outermost block rolls the
         whole unit back as a caller would expect.
 
-        Measured note for the record: at the time this was written
-        `record_check_result` -- the call site the task named -- did **not**
-        nest (instrumented depth 1). The hazard was latent, not live; this
-        makes it structurally impossible rather than relying on no one ever
-        nesting.
+        Measured, and the earlier note here was wrong. It claimed
+        `record_check_result` -- the call site the task named -- did not nest
+        ("instrumented depth 1"). Re-instrumented per argument shape:
+
+            record_check_result WITH stats    -> 2 entries, depths [1, 2]
+            record_check_result WITHOUT stats -> 1 entry,  depths [1]
+
+        The nesting is `record_check_result` -> `_update_subscription_stats`
+        -> `update_subscription_stats`, which opens its own `transaction()`
+        for the `subscription_stats` upsert. It is reached whenever `stats`
+        is truthy -- which is every real check, since `execute_run` always
+        passes stats. The earlier measurement can only have exercised the
+        `stats=None` path. So this was **live**, not latent: before this
+        change, the daily-statistics write durably committed the enclosing
+        subscription-health UPDATE. Nothing after that point in
+        `record_check_result` can fail today (only metric logging follows),
+        which is why no incident was ever observed -- but the ordering was
+        one added statement away from silent partial persistence.
 
         Yields:
             The thread-local `sqlite3.Connection`. The same object is yielded
@@ -2105,7 +2424,7 @@ class SubscriptionsDB(BaseDB):
         Library's plural/singular widening is deliberately NOT copied: a
         reader scanning for a feed's own words wants exactly those words.
         """
-        return '"' + term.replace('"', '""') + '"'
+        return quote_fts5_token(term)
 
     #: The list-page projection shared by `get_new_items` and its
     #: `_search_items_rows` search half (TASK-15464). Deliberately NOT
@@ -4569,10 +4888,47 @@ class SubscriptionsDB(BaseDB):
         return results
 
     def close(self):
-        """Close database connections."""
-        if hasattr(self._local, "conn") and self._local.conn:
-            self._local.conn.close()
+        """Close THIS thread's connection, checkpointing the `-wal` first.
+
+        Scope is unchanged from before task-19562 and is load-bearing: this
+        closes only the calling thread's connection and clears that thread's
+        slot, and the `conn` property reopens lazily, which is what makes it
+        safe for `app.py`'s FTS backfill to call it from a *pooled* thread
+        that will later serve other watchlists work. Do not "improve" it into
+        a close of the instance.
+
+        What is new is that the connection is checkpointed on the way out
+        (task-19562) and dropped from `_connections`, so the registry never
+        reports a connection that is already gone. Use
+        `close_all_connections` for the shutdown path, which adds the
+        database-wide settle.
+
+        The thread-exit cleanup is detached first (review of PR #1964): this
+        thread has closed and de-registered its own connection, so the
+        finalizer has nothing left to do and must not act on a connection this
+        thread may since have reopened.
+        """
+        cleanup = getattr(self._local, "connection_cleanup", None)
+        if cleanup is not None:
+            cleanup.detach()
+            self._local.connection_cleanup = None
+        connection = getattr(self._local, "conn", None)
+        if connection:
+            try:
+                if not self.is_memory_db and not connection.in_transaction:
+                    mode = connection.execute("PRAGMA journal_mode;").fetchone()
+                    if mode and str(mode[0]).lower() == "wal":
+                        connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except sqlite3.Error as exc:
+                if not _INTERPRETER_EXITING:
+                    logger.warning(
+                        f"WAL checkpoint before close failed for "
+                        f"{self.db_path_str}: {exc}"
+                    )
+            connection.close()
             self._local.conn = None
+        with self._connections_lock:
+            self._connections.pop(threading.get_ident(), None)
 
 
 # End of Subscriptions_DB.py

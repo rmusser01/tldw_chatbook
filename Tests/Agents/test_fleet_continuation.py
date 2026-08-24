@@ -533,6 +533,17 @@ def test_retention_survives_prune_terminal_by_both_ids():
     assert c.get_retained(h.handle_id) is not None
     assert c.get_retained("run-xyz") is not None
     assert c.get_retained("run-xyz").run_id == "run-xyz"
+    assert c.durable_handle_map() == {h.handle_id: "run-xyz"}
+
+
+def test_pruned_handle_without_retention_has_no_false_durable_mapping():
+    c = _coord(retained_transcripts=0)
+    h = c.reserve(task="child", agent=None)
+    c.attach_run(h.handle_id, "run-not-retained")
+    c.finish(h.handle_id, RUN_DONE, result="r")
+    assert c.prune_terminal() == 1
+    assert c.get_retained(h.handle_id) is None
+    assert h.handle_id not in c.durable_handle_map()
 
 
 def test_get_retained_resolves_handle_id_before_a_colliding_run_id():
@@ -821,6 +832,33 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     resumed_row = next(r for r in rows if r["id"] != old_run_id)
     assert resumed_row["resumed_from_run_id"] == old_run_id
     assert resumed_row["parent_run_id"] == run2
+    steering_step = next(
+        step
+        for step in db.get_run(run2)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    assert resumed_row["spawn_event_id"] == (
+        f"agent-step:{run2}:{steering_step['index']}"
+    )
+    resumed_lifecycle = [
+        step
+        for step in resumed_row["steps"]
+        if step["kind"].startswith("agent_run_")
+    ]
+    assert [step["kind"] for step in resumed_lifecycle] == [
+        "agent_run_reserved",
+        "agent_run_created",
+        "agent_run_resumed",
+        "agent_run_started",
+        "agent_run_completed",
+    ]
+    resumed_event = next(
+        step
+        for step in resumed_lifecycle
+        if step["kind"] == "agent_run_resumed"
+    )
+    assert resumed_event["source_event_id"] == f"agent-run:{old_run_id}"
     old_row = next(r for r in rows if r["id"] == old_run_id)
     assert old_row["resumed_from_run_id"] is None
     assert old_row["parent_run_id"] == run1
@@ -833,10 +871,93 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" not in sends[0]
     assert "resumed" in sends[0] and "new run" in sends[0].lower()
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{old_run_id}" in sends[0]
     new_handle = next(
         h for h in coordinator.snapshot() if h.run_id == resumed_row["id"]
     )
-    assert new_handle.handle_id in sends[0]
+    assert new_handle.handle_id not in sends[0]
+    assert f"run:{resumed_row['id']}" in sends[0]
+
+
+def test_resumed_lifecycle_capture_failure_starts_from_actual_diagnostic_after_reload(
+    db, monkeypatch
+):
+    holder: dict[str, str] = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "check again"},
+        )
+
+    original_insert = db.insert_steps_at_indices
+    failed = False
+
+    def fail_resumed_once(run_id, indexed_steps):
+        nonlocal failed
+        if not failed and any(
+            step["kind"] == "agent_run_resumed"
+            for _index, step in indexed_steps
+        ):
+            failed = True
+            raise RuntimeError("simulated resumed lifecycle failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_resumed_once)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"inspect": ["first answer", "second answer"]},
+    )
+    _run(service)
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    assert old_run_id
+    _await_retained(coordinator, finished.handle_id)
+    _run(service)
+    resumed_id = next(
+        row["id"]
+        for row in _subagent_rows(db)
+        if row["resumed_from_run_id"] == old_run_id
+    )
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="resumed-failure-reload")
+    row = reopened.get_run(resumed_id)
+    assert row["status"] == RUN_DONE
+    steps = row["steps"]
+    diagnostics = [step for step in steps if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    lifecycle_kinds = [
+        step["kind"] for step in steps if step["kind"].startswith("agent_run_")
+    ]
+    assert len(lifecycle_kinds) == len(set(lifecycle_kinds))
+    started = next(step for step in steps if step["kind"] == "agent_run_started")
+    diagnostic_id = f"agent-step:{resumed_id}:{diagnostic['index']}"
+    assert diagnostic["field_states"]["agent_run_resumed"] == "not_observed"
+    assert started["parent_event_id"] == diagnostic_id
+    assert not any(step["kind"] == "agent_run_resumed" for step in steps)
+    rows = reopened.list_runs("c", include_superseded=True)
+    event_ids = {
+        f"agent-step:{candidate['id']}:{step['index']}"
+        for candidate in rows
+        for step in candidate["steps"]
+    } | {f"agent-run:{candidate['id']}" for candidate in rows}
+    for step in steps:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    reopened.close()
 
 
 def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
@@ -1012,6 +1133,110 @@ def test_undelivered_queued_steering_rides_the_seed_with_original_labels(db):
     # supervisor message LAST.
     assert resumed_payload[-2] == {"role": "user", "content": user_labeled}
     assert resumed_payload[-1] == {"role": "user", "content": supervisor_labeled}
+
+
+def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
+    in_final_call = threading.Event()
+    release_final = threading.Event()
+    holder: dict[str, str] = {}
+
+    def gated_final():
+        in_final_call.set()
+        assert release_final.wait(_JOIN_TIMEOUT)
+        return "first run done"
+
+    def send_while_child_is_finishing():
+        assert in_final_call.wait(_JOIN_TIMEOUT)
+        handle = next(
+            candidate
+            for candidate in coordinator.snapshot()
+            if candidate.status == "running"
+        )
+        holder["handle_id"] = handle.handle_id
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": handle.handle_id, "message": "preserve this cause"},
+        )
+
+    def release_then_wait():
+        release_final.set()
+        return fence(WAIT_AGENTS_TOOL_NAME, {})
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "resume now"},
+        )
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "causal retained task"}),
+            send_while_child_is_finishing,
+            release_then_wait,
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"causal retained task": [gated_final, "resumed done"]},
+    )
+    run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    _await_retained(coordinator, holder["handle_id"])
+    send_step = next(
+        step
+        for step in db.get_run(run1)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    send_event_id = f"agent-step:{run1}:{send_step['index']}"
+    retained = coordinator.get_retained(holder["handle_id"])
+    assert retained.steering_with_causes == (
+        (STEERING_SOURCE_SUPERVISOR, "preserve this cause", send_event_id),
+    )
+
+    run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+    resume_send = next(
+        step
+        for step in db.get_run(run2)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    resume_event_id = f"agent-step:{run2}:{resume_send['index']}"
+    resumed = next(
+        row
+        for row in _subagent_rows(db)
+        if row["resumed_from_run_id"] is not None
+    )
+    assert resumed["spawn_event_id"] == resume_event_id
+    reserved = next(
+        step for step in resumed["steps"] if step["kind"] == "agent_run_reserved"
+    )
+    assert reserved["parent_event_id"] == resume_event_id
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="retained-cause-reload")
+    reloaded = reopened.get_run(resumed["id"])
+    steering = next(
+        step
+        for step in reloaded["steps"]
+        if step["kind"] == "steering"
+        and step["source_event_id"] == send_event_id
+    )
+    assert steering["parent_event_id"] == send_event_id
+    all_rows = reopened.list_runs("c", include_superseded=True)
+    event_ids = {
+        f"agent-run:{row['id']}" for row in all_rows
+    } | {
+        f"agent-step:{row['id']}:{step['index']}"
+        for row in all_rows
+        for step in row["steps"]
+    }
+    assert steering["source_event_id"] in event_ids
+    assert steering["parent_event_id"] in event_ids
+    reopened.close()
 
 
 def test_a_resume_consumes_a_spawn_slot_and_refuses_at_the_budget(db):
@@ -1219,7 +1444,10 @@ def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db)
     assert outcome.status == RUN_DONE
     sends = _tool_results(db.get_run(run1), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" in sends[0]
-    assert holder["handle_id"] in sends[0]
+    cancelled = coordinator.get(holder["handle_id"])
+    assert cancelled.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{cancelled.run_id}" in sends[0]
     assert "no retained transcript" in sends[0]
     assert "fresh sub-agent" in sends[0]
     # NEVER the unknown-id copy for a child that was real.
@@ -1231,8 +1459,6 @@ def test_after_a_restart_the_error_says_the_transcript_is_gone(db):
     """The spec's honest limit: retention is in-memory. A fresh
     coordinator (a restart) cannot resume -- the error says the transcript
     is gone and suggests a fresh spawn, NOT the unknown-id refusal."""
-    holder: dict = {}
-
     service, _chat, coordinator = make_fleet_service(
         db,
         [

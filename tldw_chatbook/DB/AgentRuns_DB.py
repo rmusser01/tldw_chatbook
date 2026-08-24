@@ -21,6 +21,7 @@ from typing import Any, Iterator, Mapping, Sequence, Union
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
     AgentDefinition,
     TERMINAL_RUN_STATUSES,
     validate_agent_definition,
@@ -37,6 +38,28 @@ def _now_iso() -> str:
 # is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
 # chunked read is correct on every build rather than on the newest one.
 _IN_CLAUSE_CHUNK = 900
+
+
+class AgentStepConflictError(ValueError):
+    """A durable step index already owns a different canonical payload."""
+
+
+def _canonical_step_payload(index: int, payload: dict) -> str:
+    """Validate and serialize one explicit-index step before locking SQLite."""
+    if type(index) is not int:
+        raise TypeError("step index must be an int")
+    if index < 0:
+        raise ValueError("step index must be non-negative")
+    if not isinstance(payload, dict):
+        raise TypeError("step payload must be a dict")
+    if "index" not in payload:
+        raise ValueError("step payload must include index")
+    payload_index = payload["index"]
+    if type(payload_index) is not int:
+        raise TypeError("step payload index must be an int")
+    if payload_index != index:
+        raise ValueError("step payload index must match sequence index")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class AgentRunsDB(BaseDB):
@@ -60,7 +83,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 13
+    _CURRENT_SCHEMA_VERSION = 14
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -232,7 +255,11 @@ class AgentRunsDB(BaseDB):
                     -- run it resumed from. NULL for every ordinary run.
                     -- Lineage only: parent_run_id still points at the
                     -- RESUMING turn's primary, never at the old run.
-                    resumed_from_run_id TEXT
+                    resumed_from_run_id TEXT,
+                    -- v14 (ADR-080): the stable parent Trace event that
+                    -- caused this run to exist. NULL for primary and
+                    -- legacy runs whose precise cause was not captured.
+                    spawn_event_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -452,6 +479,12 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN resumed_from_run_id TEXT"
                 )
+            # v13->v14 (ADR-080): precise spawn causality. NULL is the
+            # honest migration value for every historical run.
+            if "spawn_event_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN spawn_event_id TEXT"
+                )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -570,6 +603,10 @@ class AgentRunsDB(BaseDB):
             # the CREATE TABLE comment above for the full rationale.
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (13)"
+            )
+            # v14 (ADR-080): agent_runs.spawn_event_id.
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (14)"
             )
 
     def record_change_snapshot(
@@ -1100,7 +1137,7 @@ class AgentRunsDB(BaseDB):
         "id, conversation_id, parent_run_id, agent_kind, task, status, "
         "result, budget, created_at, updated_at, assistant_message_id, "
         "agent_definition, definition_fingerprint, wake_delivered_at, "
-        "resumed_from_run_id"
+        "resumed_from_run_id, spawn_event_id"
     )
 
     def _batch_hydrate_steps(
@@ -1235,6 +1272,8 @@ class AgentRunsDB(BaseDB):
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         resumed_from_run_id: str | None = None,
+        spawn_event_id: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1259,11 +1298,14 @@ class AgentRunsDB(BaseDB):
             resumed_from_run_id: For a CONTINUATION of a finished
                 sub-agent (fleet PR3b Task 4): the run id this run was
                 seeded from. ``None`` for every ordinary run.
+            spawn_event_id: Stable parent Trace event that caused this run.
+                ``None`` for primary and legacy runs.
+            run_id: Preallocated stable identity; generated when omitted.
 
         Returns:
             The newly created run's id (a hex UUID4).
         """
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
             conn.execute(
@@ -1271,8 +1313,8 @@ class AgentRunsDB(BaseDB):
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, spawn_event_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1286,6 +1328,7 @@ class AgentRunsDB(BaseDB):
                     agent_definition,
                     definition_fingerprint,
                     resumed_from_run_id,
+                    spawn_event_id,
                 ),
             )
         return run_id
@@ -1473,6 +1516,74 @@ class AgentRunsDB(BaseDB):
                 (stamp, run_id),
             )
 
+    def insert_steps_at_indices(
+        self, run_id: str, steps: Sequence[tuple[int, dict]]
+    ) -> None:
+        """Insert caller-indexed steps without rewriting existing rows.
+
+        Live capture calls this with one step; terminal recovery calls it
+        with the complete outcome. Validation and canonical JSON encoding
+        finish before the write lock. Under the lock, an identical retry is
+        a no-op, missing rows are inserted, and divergent durable indices are
+        collected. The transaction commits before ``AgentStepConflictError``
+        reports those conflicts, so recovery never loses unrelated rows.
+        Step inserts do not change ``agent_runs.updated_at`` because that
+        timestamp records lifecycle transitions used by wake classification.
+
+        Raises:
+            KeyError: If ``run_id`` does not exist.
+            TypeError: If an index or payload has the wrong type, or JSON
+                serialization fails.
+            ValueError: If an index is negative or disagrees with its payload.
+            AgentStepConflictError: If one index has divergent payloads.
+        """
+        prepared: dict[int, str] = {}
+        for index, payload in steps:
+            canonical = _canonical_step_payload(index, payload)
+            if index in prepared and prepared[index] != canonical:
+                raise AgentStepConflictError(
+                    f"conflicting step payloads for run index {index}"
+                )
+            prepared[index] = canonical
+
+        stamp = _now_iso()
+        conflicts: list[int] = []
+        with self.transaction() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if exists is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            for index, canonical in prepared.items():
+                existing = conn.execute(
+                    "SELECT payload FROM agent_run_steps "
+                    "WHERE run_id = ? AND seq = ?",
+                    (run_id, index),
+                ).fetchone()
+                if existing is not None:
+                    try:
+                        stored = json.dumps(
+                            json.loads(existing["payload"]),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    except (TypeError, ValueError):
+                        conflicts.append(index)
+                        continue
+                    if stored != canonical:
+                        conflicts.append(index)
+                    continue
+                conn.execute(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, stamp),
+                )
+        if conflicts:
+            indices = ", ".join(str(index) for index in conflicts)
+            raise AgentStepConflictError(
+                f"step payload conflicts with durable indices: {indices}"
+            )
+
     def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
         """Update a run's terminal (or in-progress) status.
 
@@ -1502,6 +1613,58 @@ class AgentRunsDB(BaseDB):
                 (status, result, _now_iso(), run_id, *sorted(TERMINAL_RUN_STATUSES)),
             )
         return cursor.rowcount > 0
+
+    def set_terminal_with_step(
+        self,
+        run_id: str,
+        status: str,
+        result: str | None,
+        terminal_step: dict,
+    ) -> bool:
+        """Atomically persist a first-writer terminal state and observation."""
+        if status not in TERMINAL_RUN_STATUSES:
+            raise ValueError("status must be terminal")
+        index = terminal_step.get("index")
+        canonical = _canonical_step_payload(index, terminal_step)
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
+        stamp = _now_iso()
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT status FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            existing = conn.execute(
+                "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
+                (run_id, index),
+            ).fetchone()
+            if existing is not None:
+                stored = json.dumps(
+                    json.loads(existing["payload"]),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                if stored != canonical:
+                    raise AgentStepConflictError(
+                        f"step payload conflicts with durable index: {index}"
+                    )
+            if row["status"] in TERMINAL_RUN_STATUSES:
+                return False
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, stamp),
+                )
+            cursor = conn.execute(
+                "UPDATE agent_runs SET status = ?, "
+                "result = COALESCE(?, result), updated_at = ? "
+                f"WHERE id = ? AND status NOT IN ({placeholders})",
+                (status, result, stamp, run_id, *sorted(TERMINAL_RUN_STATUSES)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("terminal status changed during transaction")
+        return True
 
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
@@ -1556,15 +1719,117 @@ class AgentRunsDB(BaseDB):
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
         with self.transaction() as conn:
-            cur = conn.execute(
-                "UPDATE agent_runs "
-                "SET status = 'error', "
-                "    result = COALESCE(result, 'Interrupted by app restart'), "
-                "    updated_at = ? "
-                "WHERE status = 'running'",
-                (_now_iso(),),
-            )
-            rowcount = cur.rowcount
+            def run_observations(run_id: str) -> tuple[list[dict], int, str]:
+                parsed: list[dict] = []
+                for step_row in conn.execute(
+                    "SELECT payload FROM agent_run_steps WHERE run_id = ?",
+                    (run_id,),
+                ).fetchall():
+                    try:
+                        parsed.append(json.loads(step_row["payload"]))
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                ordered = [
+                    step
+                    for step in parsed
+                    if isinstance(step.get("owner_seq"), int)
+                    and isinstance(step.get("index"), int)
+                ]
+                latest = max(
+                    ordered,
+                    key=lambda step: (step["owner_seq"], step["index"]),
+                    default=None,
+                )
+                owner_seq = latest["owner_seq"] if latest is not None else -1
+                parent = (
+                    f"agent-step:{run_id}:{latest['index']}"
+                    if latest is not None
+                    else f"agent-run:{run_id}"
+                )
+                return parsed, owner_seq, parent
+
+            def insert_recovery_diagnostic(
+                run_id: str,
+                index: int,
+                summary: str,
+                field_states: dict[str, str],
+            ) -> None:
+                _steps, owner_seq, parent = run_observations(run_id)
+                diagnostic = {
+                    "index": index,
+                    "kind": "capture_failed",
+                    "summary": summary,
+                    "created_at": observed_at,
+                    "status": "incomplete",
+                    "owner_seq": owner_seq + 1,
+                    "parent_event_id": parent,
+                    "source_event_id": None,
+                    "field_states": {
+                        "payload": "capture_failed",
+                        **field_states,
+                    },
+                    "sensitivity": "diagnostic",
+                }
+                canonical = _canonical_step_payload(index, diagnostic)
+                conn.execute(
+                    "INSERT OR IGNORE INTO agent_run_steps "
+                    "(run_id, seq, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, observed_at),
+                )
+
+            orphan_ids = [
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM agent_runs WHERE status = 'running'"
+                ).fetchall()
+            ]
+            observed_at = _now_iso()
+            diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
+            for run_id in orphan_ids:
+                insert_recovery_diagnostic(
+                    run_id,
+                    diagnostic_index,
+                    "Terminal state repaired after app restart",
+                    {"reconciliation": "observed"},
+                )
+                conn.execute(
+                    "UPDATE agent_runs SET status = 'error', "
+                    "result = COALESCE(result, 'Interrupted by app restart'), "
+                    "updated_at = ? WHERE id = ? AND status = 'running'",
+                    (observed_at, run_id),
+                )
+            terminal_kind = {
+                "done": "agent_run_completed",
+                "cancelled": "agent_run_cancelled",
+                "superseded": "agent_run_superseded",
+                "error": "agent_run_failed",
+                "stuck": "agent_run_failed",
+            }
+            terminal_rows = conn.execute(
+                "SELECT id, status FROM agent_runs WHERE status != 'running'"
+            ).fetchall()
+            split_rows = 0
+            repaired_orphans = set(orphan_ids)
+            for row in terminal_rows:
+                if row["id"] in repaired_orphans:
+                    continue
+                expected_kind = terminal_kind.get(row["status"])
+                if expected_kind is None:
+                    continue
+                steps, _owner_seq, _parent = run_observations(row["id"])
+                if any(step.get("kind") == expected_kind for step in steps):
+                    continue
+                insert_recovery_diagnostic(
+                    row["id"],
+                    AGENT_LIFECYCLE_INDEX_BASE + 501,
+                    "Preexisting terminal state lacked lifecycle capture",
+                    {
+                        "reconciliation": "observed",
+                        expected_kind: "not_observed",
+                    },
+                )
+                split_rows += 1
+            rowcount = len(orphan_ids) + split_rows
         self._swept_paths.add(self.db_path_str)
         return rowcount
 

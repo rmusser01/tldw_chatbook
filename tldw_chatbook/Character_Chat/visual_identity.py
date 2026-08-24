@@ -323,11 +323,11 @@ class VisualIdentityCandidate:
 
     actor_kind: str
     actor_id: str
-    old_pack_id: int
-    old_version_id: int
-    old_binding_id: int
-    old_binding_version: int
-    old_pack_version: int
+    old_pack_id: int | None
+    old_version_id: int | None
+    old_binding_id: int | None
+    old_binding_version: int | None
+    old_pack_version: int | None
     source_kind: str
     title: str
     description: str
@@ -335,6 +335,8 @@ class VisualIdentityCandidate:
     original_default_expression_key: str
     source_context: dict[str, Any]
     assets: tuple[dict[str, Any], ...] = field(repr=False)
+    actor_authority: tuple[str, ...] = ()
+    _actor_guard: Callable[[], bool] | None = field(default=None, repr=False)
     _replacements: dict[str, tuple[bytes, str]] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -463,8 +465,8 @@ class VisualIdentityPublicationResult:
 
     actor_kind: str
     actor_id: str
-    old_pack_id: int
-    old_version_id: int
+    old_pack_id: int | None
+    old_version_id: int | None
     new_pack_id: int
     new_version_id: int
     version_directory: Path
@@ -510,6 +512,11 @@ def resolve_visual_identity(
         requested_state.strip().lower() if isinstance(requested_state, str) else ""
     )
     requested_key = _OPERATIONAL_EXPRESSION_KEYS.get(requested_state_key)
+    if requested_key is None and (
+        requested_state_key in CANONICAL_EXPRESSION_SLOTS
+        or requested_state_key.startswith(CUSTOM_EXPRESSION_PREFIX)
+    ):
+        requested_key = normalize_expression_key(requested_state_key)
     manual_key = (
         normalize_expression_key(manual_expression_key)
         if manual_expression_key is not None
@@ -856,10 +863,149 @@ def _pack_resolution_category(
         return "pack_manual", "none"
     if requested_key is not None and expression_key == requested_key:
         reason = "manual_unavailable" if manual_key is not None else "none"
-        return "pack_operational", reason
+        source = (
+            "pack_operational"
+            if requested_key in _OPERATIONAL_EXPRESSION_KEYS.values()
+            else "pack_explicit"
+        )
+        return source, reason
     if expression_key == default_key:
         return "pack_default", "requested_unavailable"
     return "pack_neutral", "default_unavailable"
+
+
+def resolve_historical_visual_identity(
+    db: Any,
+    *,
+    actor_id: int,
+    pack_id: int | None,
+    pack_version_id: int | None,
+    expression_key: str | None,
+    expression_id: int | None,
+    asset_id: int | None,
+    user_data_dir: str | Path | None = None,
+) -> VisualIdentityResolution:
+    """Resolve only the exact immutable character asset recorded on a message.
+
+    Historical resolution deliberately ignores the actor's current binding. Missing,
+    inconsistent, or corrupt references return a deterministic content-free
+    placeholder instead of walking current-pack, legacy-image, or portrait fallbacks.
+    """
+
+    actor_id_text = str(actor_id)
+    normalized_key = normalize_expression_key(expression_key or "")
+
+    def unavailable() -> VisualIdentityResolution:
+        return _placeholder_resolution(
+            "character",
+            actor_id_text,
+            normalized_key,
+            None,
+            "history_unavailable",
+        )
+
+    identifiers = (actor_id, pack_id, pack_version_id, asset_id)
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in identifiers
+        )
+        or (
+            expression_id is not None
+            and (
+                isinstance(expression_id, bool)
+                or not isinstance(expression_id, int)
+                or expression_id <= 0
+            )
+        )
+        or normalized_key is None
+        or expression_key != normalized_key
+    ):
+        return unavailable()
+    try:
+        with db.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT p.source_kind AS pack_source_kind,
+                       a.id AS asset_id,
+                       a.expression_key AS asset_expression_key,
+                       a.original_expression_key AS asset_original_expression_key,
+                       a.display_label AS asset_display_label,
+                       a.storage_relpath AS asset_storage_relpath,
+                       a.content_type AS asset_content_type,
+                       a.bytes AS asset_bytes,
+                       a.sha256 AS asset_sha256,
+                       a.width AS asset_width,
+                       a.height AS asset_height,
+                       a.is_animated AS asset_is_animated,
+                       a.frame_count AS asset_frame_count,
+                       a.duration_ms AS asset_duration_ms
+                  FROM character_cards c
+                  JOIN visual_identity_packs p
+                    ON p.id = ? AND p.owner_user_id = 0
+                  JOIN visual_identity_pack_versions v
+                    ON v.id = ? AND v.pack_id = p.id AND v.owner_user_id = 0
+                  JOIN visual_identity_assets a
+                    ON a.id = ?
+                   AND a.pack_id = p.id
+                   AND a.pack_version_id = v.id
+                   AND a.owner_user_id = 0
+                   AND a.deleted = 0
+                   AND a.expression_key = ?
+                 WHERE c.id = ? AND c.deleted = 0
+                """,
+                (pack_id, pack_version_id, asset_id, normalized_key, actor_id),
+            ).fetchone()
+        if row is None:
+            return unavailable()
+        candidate = dict(row)
+        asset = _resolution_manifest_asset(candidate)
+        loaded = load_visual_identity_asset(
+            asset,
+            source_kind=str(candidate["pack_source_kind"]),
+            user_data_dir=user_data_dir,
+        )
+        _validate_image_bytes(loaded, decoded_pixels_before=0)
+    except (AttributeError, TypeError, ValueError, OverflowError, sqlite3.Error):
+        logger.warning(
+            "visual_identity_history_resolution_failed actor_id={} pack_id={} "
+            "version_id={} asset_id={} category=history_unavailable",
+            actor_id_text,
+            pack_id,
+            pack_version_id,
+            asset_id,
+        )
+        return unavailable()
+    digest = str(candidate["asset_sha256"])
+    return VisualIdentityResolution(
+        actor_kind="character",
+        actor_id=actor_id_text,
+        requested_expression_key=normalized_key,
+        manual_expression_key=None,
+        resolved_expression_key=normalized_key,
+        pack_id=pack_id,
+        pack_version_id=pack_version_id,
+        asset_id=asset_id,
+        expression_id=expression_id,
+        storage_source=str(candidate["pack_source_kind"]),
+        storage_relpath=str(candidate["asset_storage_relpath"]),
+        content_type=str(candidate["asset_content_type"]),
+        is_animated=bool(candidate["asset_is_animated"]),
+        resolution_source="history_immutable",
+        fallback_reason="none",
+        cache_identity=_resolution_cache_identity(
+            "character",
+            actor_id_text,
+            normalized_key,
+            None,
+            "history_immutable",
+            f"pack_id={pack_id}",
+            f"pack_version_id={pack_version_id}",
+            f"asset_id={asset_id}",
+            f"sha256={digest}",
+        ),
+        image_bytes=loaded.data,
+    )
 
 
 def _placeholder_resolution(
@@ -1775,15 +1921,53 @@ def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
 
 
 def create_visual_identity_candidate(
-    db: Any, *, actor_kind: str, actor_id: int | str
+    db: Any,
+    *,
+    actor_kind: str,
+    actor_id: int | str,
+    actor_authority: tuple[str, ...] = (),
+    actor_guard: Callable[[], bool] | None = None,
 ) -> VisualIdentityCandidate:
     """Snapshot one active immutable graph for in-memory copy-on-write edits."""
 
     from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 
-    if actor_kind != "character":
+    if actor_kind not in {"character", "persona"}:
         raise ValueError("visual_identity_actor_kind_invalid")
+    if actor_kind == "persona":
+        if (
+            type(actor_authority) is not tuple
+            or not actor_authority
+            or any(type(item) is not str or not item for item in actor_authority)
+            or not callable(actor_guard)
+        ):
+            raise ValueError("visual_identity_actor_changed")
+        try:
+            actor_current = actor_guard()
+        except Exception:
+            actor_current = False
+        if actor_current is not True:
+            raise ValueError("visual_identity_actor_changed")
     graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
+    if graph is None and actor_kind == "persona":
+        return VisualIdentityCandidate(
+            actor_kind="persona",
+            actor_id=str(actor_id),
+            old_pack_id=None,
+            old_version_id=None,
+            old_binding_id=None,
+            old_binding_version=None,
+            old_pack_version=None,
+            source_kind="manual",
+            title="Persona reactions",
+            description="",
+            default_expression_key="neutral",
+            original_default_expression_key="neutral",
+            source_context={"source_id": "persona.local"},
+            assets=_empty_persona_candidate_assets(),
+            actor_authority=actor_authority,
+            _actor_guard=actor_guard,
+        )
     if graph is None or not graph["assets"]:
         raise ValueError("visual_identity_active_pack_not_found")
     pack = graph["pack"]
@@ -1812,6 +1996,33 @@ def create_visual_identity_candidate(
         original_default_expression_key=str(graph["version"]["default_expression_key"]),
         source_context=dict(source_context),
         assets=tuple(dict(asset) for asset in graph["assets"]),
+        actor_authority=actor_authority,
+        _actor_guard=actor_guard,
+    )
+
+
+def _empty_persona_candidate_assets() -> tuple[dict[str, Any], ...]:
+    """Return canonical metadata slots for an unpublished Persona pack."""
+
+    return tuple(
+        {
+            "id": None,
+            "expression_key": key,
+            "original_expression_key": key,
+            "display_label": display_label_for_expression_key(key),
+            "source_filename": "",
+            "storage_relpath": "",
+            "content_type": "",
+            "bytes": 0,
+            "sha256": "",
+            "width": 0,
+            "height": 0,
+            "source_context_json": "{}",
+            "is_animated": False,
+            "frame_count": 1,
+            "duration_ms": None,
+        }
+        for key in CANONICAL_EXPRESSION_SLOTS
     )
 
 
@@ -1844,15 +2055,25 @@ def publish_visual_identity_candidate(
             raise VisualIdentityPublicationError("visual_identity_candidate_clean")
         if not callable(atomic_replace):
             raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
+        if candidate._actor_guard is not None:
+            try:
+                actor_current = candidate._actor_guard()
+            except Exception:
+                actor_current = False
+            if actor_current is not True:
+                raise VisualIdentityPublicationError("visual_identity_actor_changed")
         candidate._publishing = True
 
     repository = VisualIdentityRepository(db)
+    unbound = candidate.old_pack_id is None
     try:
         live = repository.get_active_actor_pack(
             candidate.actor_kind, candidate.actor_id
         )
-        active_binding_count = repository.count_active_pack_bindings(
-            candidate.old_pack_id
+        active_binding_count = (
+            0
+            if unbound
+            else repository.count_active_pack_bindings(candidate.old_pack_id)
         )
     except (
         CharactersRAGDBError,
@@ -1866,25 +2087,30 @@ def publish_visual_identity_candidate(
         raise VisualIdentityPublicationError(
             "visual_identity_database_failed"
         ) from None
-    if live is None or (
-        int(live["binding"]["id"]),
-        int(live["pack"]["id"]),
-        int(live["version"]["id"]),
-        int(live["binding"]["version"]),
-        int(live["pack"]["version"]),
-    ) != (
-        candidate.old_binding_id,
-        candidate.old_pack_id,
-        candidate.old_version_id,
-        candidate.old_binding_version,
-        candidate.old_pack_version,
-    ):
+    binding_changed = live is not None if unbound else live is None
+    if not unbound and live is not None:
+        binding_changed = (
+            int(live["binding"]["id"]),
+            int(live["pack"]["id"]),
+            int(live["version"]["id"]),
+            int(live["binding"]["version"]),
+            int(live["pack"]["version"]),
+        ) != (
+            candidate.old_binding_id,
+            candidate.old_pack_id,
+            candidate.old_version_id,
+            candidate.old_binding_version,
+            candidate.old_pack_version,
+        )
+    if binding_changed:
         _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError("visual_identity_binding_changed")
 
     try:
         profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
-        fork_pack = candidate.source_kind == "builtin" or active_binding_count > 1
+        fork_pack = (
+            unbound or candidate.source_kind == "builtin" or active_binding_count > 1
+        )
         profile_pack_token = _publication_pack_token(candidate, force_new=fork_pack)
     except VisualIdentityPublicationError:
         _reset_candidate_publication(candidate)
@@ -1956,19 +2182,20 @@ def publish_visual_identity_candidate(
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=versions_fd,
             )
-            write_file = lambda name, data: _write_private_publication_file(
-                staging_fd, name, data
-            )
-            read_file = lambda name, limit: _read_private_publication_file(
-                staging_fd, name, max_bytes=limit
-            )
+
+            def write_file(name, data):
+                return _write_private_publication_file(staging_fd, name, data)
+
+            def read_file(name, limit):
+                return _read_private_publication_file(staging_fd, name, max_bytes=limit)
+
         else:
-            write_file = lambda name, data: _write_private_publication_path(
-                staging_dir, name, data
-            )
-            read_file = lambda name, limit: _read_private_publication_path(
-                staging_dir, name, limit
-            )
+
+            def write_file(name, data):
+                return _write_private_publication_path(staging_dir, name, data)
+
+            def read_file(name, limit):
+                return _read_private_publication_path(staging_dir, name, limit)
 
         assets, manifest = _materialize_visual_identity_candidate(
             candidate,
@@ -2029,42 +2256,74 @@ def publish_visual_identity_candidate(
             _verify_materialized_candidate(published_read, assets)
             _sync_publication_directory(versions_fd if posix_guards else versions_root)
 
+            actor_denied = False
+
             def publication_guard() -> bool:
+                nonlocal actor_denied
                 if posix_guards:
-                    return _publication_chain_matches(
+                    filesystem_current = _publication_chain_matches(
                         chain, secured_identities
                     ) and _entry_matches_fd(versions_fd, final_name, staging_fd)
-                return (
-                    _path_chain_matches(secured_identities, profile_root=profile_root)
-                    and staging_identity is not None
-                    and _path_matches_identity(final_dir, staging_identity)
-                )
+                else:
+                    filesystem_current = (
+                        _path_chain_matches(
+                            secured_identities, profile_root=profile_root
+                        )
+                        and staging_identity is not None
+                        and _path_matches_identity(final_dir, staging_identity)
+                    )
+                if not filesystem_current:
+                    return False
+                if candidate._actor_guard is None:
+                    return True
+                try:
+                    actor_current = candidate._actor_guard()
+                except Exception:
+                    actor_current = False
+                if actor_current is not True:
+                    actor_denied = True
+                    return False
+                return True
 
             try:
                 if fork_pack:
+                    source_context = (
+                        {
+                            "profile_pack_id": profile_pack_token,
+                            "source_id": "persona.local",
+                        }
+                        if unbound
+                        else {
+                            "profile_pack_id": profile_pack_token,
+                            "forked_from_pack_id": candidate.old_pack_id,
+                            "forked_from_version_id": candidate.old_version_id,
+                        }
+                    )
                     graph = repository.activate_pack(
                         pack={
-                            "title": f"{candidate.title} (Profile Copy)",
+                            "title": (
+                                candidate.title
+                                if unbound
+                                else f"{candidate.title} (Profile Copy)"
+                            ),
                             "description": candidate.description,
                             "default_expression_key": candidate.default_expression_key,
                             "source_kind": "manual",
-                            "source_context": {
-                                "profile_pack_id": profile_pack_token,
-                                "forked_from_pack_id": candidate.old_pack_id,
-                                "forked_from_version_id": candidate.old_version_id,
-                            },
+                            "source_context": source_context,
                         },
                         manifest=manifest,
                         assets=assets,
                         actor_kind=candidate.actor_kind,
                         actor_id=candidate.actor_id,
                         expected_active_identity=(
-                            candidate.old_pack_id,
-                            candidate.old_version_id,
+                            None
+                            if unbound
+                            else (candidate.old_pack_id, candidate.old_version_id)
                         ),
                         expected_binding_id=candidate.old_binding_id,
                         expected_binding_version=candidate.old_binding_version,
                         expected_source_pack_version=candidate.old_pack_version,
+                        require_unbound_actor=unbound,
                         publication_guard=publication_guard,
                     )
                 else:
@@ -2086,7 +2345,11 @@ def publish_visual_identity_candidate(
                 if str(error) == "visual_identity_binding_changed":
                     category = "visual_identity_binding_changed"
                 elif str(error) == "visual_identity_publication_changed":
-                    category = "visual_identity_publication_denied"
+                    category = (
+                        "visual_identity_actor_changed"
+                        if actor_denied
+                        else "visual_identity_publication_denied"
+                    )
                 else:
                     category = "visual_identity_database_failed"
                 raise VisualIdentityPublicationError(category) from None
@@ -2345,6 +2608,8 @@ def _materialize_visual_identity_candidate(
         if expression_key in candidate._cleared:
             continue
         replacement = candidate._replacements.get(expression_key)
+        if replacement is None and stored.get("id") is None:
+            continue
         if replacement is None:
             source_asset = _manifest_asset_from_row(stored)
             loaded = load_visual_identity_asset(

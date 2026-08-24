@@ -160,8 +160,7 @@ def _validate_folder_overlap(
             )
         if existing_path in resolved.parents:
             raise WorkspaceRegistryServiceError(
-                f"{resolved} is inside the already-bound folder "
-                f"{existing_path}."
+                f"{resolved} is inside the already-bound folder {existing_path}."
             )
         if resolved in existing_path.parents:
             raise WorkspaceRegistryServiceError(
@@ -212,7 +211,36 @@ class LocalWorkspaceRegistryService:
         self.db = db
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or utc_now_iso
+        self._mutation_generation = 0
         self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
+
+    @property
+    def mutation_generation(self) -> int:
+        """Monotonic count of workspace-record mutations (TASK-21118).
+
+        Bumped by every mutator that can change what a workspace-record
+        read (``get_active_workspace``, ``get_workspace``,
+        ``list_workspaces``) returns: create, rename, archive, unarchive,
+        set-active, clear-active, and the built-in Default restore.
+        ``ensure_default_workspace`` bumps through those same legs when
+        (and only when) it actually changed something.
+
+        This is the invalidation subscription point for read caches: the
+        Console keystroke path memoizes its active-workspace resolution
+        against this value instead of re-reading SQLite ~1.25x per key.
+        Every UI seam that changes the active workspace (Console switcher,
+        browser-row open, session switch, Settings "Set active", Library's
+        create modal, archive flows) funnels through these mutators on the
+        one app-level service instance, so comparing generations is
+        equivalent to subscribing to all of them. In-memory only: a
+        different process writing the same registry file is out of scope,
+        as for every other in-process cache over this database.
+        """
+        return self._mutation_generation
+
+    def _bump_mutation_generation(self) -> None:
+        """Record one committed workspace-record mutation."""
+        self._mutation_generation += 1
 
     def attach_change_review_consent_service(
         self,
@@ -280,6 +308,7 @@ class LocalWorkspaceRegistryService:
             raise DuplicateWorkspace(record.workspace_id) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
         created = self.get_workspace(record.workspace_id)
         if created is None:
             raise WorkspaceRegistryServiceError("Workspace creation failed.")
@@ -377,6 +406,7 @@ class LocalWorkspaceRegistryService:
             ) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
         renamed = self.get_workspace(safe_workspace_id)
         if renamed is None:
             raise WorkspaceRegistryServiceError("Workspace rename failed.")
@@ -423,6 +453,7 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
         if was_active:
             self.ensure_default_workspace()
             self.set_active_workspace(DEFAULT_WORKSPACE_ID)
@@ -461,6 +492,7 @@ class LocalWorkspaceRegistryService:
             ) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
         restored = self.get_workspace(safe_workspace_id)
         if restored is None:
             raise WorkspaceRegistryServiceError("Workspace unarchive failed.")
@@ -483,7 +515,13 @@ class LocalWorkspaceRegistryService:
                 )
 
     def set_active_workspace(self, workspace_id: str) -> WorkspaceRecord:
-        """Set exactly one active workspace."""
+        """Set exactly one active workspace.
+
+        Activating the built-in Default workspace also strips any stale
+        runtime bindings from it (TASK-21118): this switch seam took over
+        that repair from the per-keystroke context read, which used to run
+        it via ``ensure_default_workspace`` up to ~1.25x per key.
+        """
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         target_workspace = self.get_workspace(safe_workspace_id)
@@ -504,6 +542,9 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
+        if safe_workspace_id == DEFAULT_WORKSPACE_ID:
+            self._delete_default_runtime_bindings()
         active = self.get_active_workspace()
         if active is None:
             raise WorkspaceRegistryServiceError("Active workspace update failed.")
@@ -529,6 +570,7 @@ class LocalWorkspaceRegistryService:
                 conn.execute("UPDATE workspace_records SET active = 0")
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
 
     def get_active_workspace(self) -> WorkspaceRecord | None:
         """Return the active workspace if one is selected."""
@@ -583,7 +625,9 @@ class LocalWorkspaceRegistryService:
         elif default_workspace.archived:
             self._restore_default_workspace()
 
-        self._delete_default_runtime_bindings()
+        # `set_active_workspace(DEFAULT_WORKSPACE_ID)` performs the stale-
+        # runtime-binding repair itself (TASK-21118), so no separate
+        # `_delete_default_runtime_bindings()` call is needed here.
         return self.set_active_workspace(DEFAULT_WORKSPACE_ID)
 
     def link_membership(
@@ -965,9 +1009,7 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
 
-    def read_change_review_consent(
-        self, workspace_id: str
-    ) -> ChangeReviewConsent:
+    def read_change_review_consent(self, workspace_id: str) -> ChangeReviewConsent:
         """Read explicit per-workspace Change Review consent and revision.
 
         Args:
@@ -1277,6 +1319,7 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
 
 
 def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:

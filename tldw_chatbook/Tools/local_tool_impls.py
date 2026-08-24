@@ -154,7 +154,17 @@ def resolve_workspace_path(
             is a protected credential/gate-state/app-state path.
     """
     try:
-        resolved = validate_path(path, workspace_root, allow_hidden=True)
+        # `redact_paths=True` (TASK-19558): `path` here is MODEL-supplied and
+        # `validate_path` otherwise echoes it, and its resolved form, into a
+        # WARNING/ERROR log line -- so a prompt-injected traversal probe
+        # writes attacker-chosen text (and the user's real directory layout)
+        # into the diagnostics bundle. Only 9 of this function's ~30 sibling
+        # call sites passed it. This does not weaken what the MODEL sees:
+        # the refusal below is built from `path` locally and is unchanged;
+        # redaction bounds only the log line and the discarded ValueError.
+        resolved = validate_path(
+            path, workspace_root, redact_paths=True, allow_hidden=True
+        )
     except ValueError as exc:
         raise LocalToolError(
             f"Path '{path}' is outside the workspace root ({workspace_root})"

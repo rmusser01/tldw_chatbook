@@ -43,6 +43,7 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "spawn_subagent",
         "find_tools",
         "load_tools",
+        "fewer-permission-prompts",
         "prompt",
         # PR #729's /prefill command (sync test flagged the gap).
         "prefill",

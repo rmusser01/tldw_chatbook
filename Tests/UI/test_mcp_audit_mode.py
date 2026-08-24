@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -14,7 +14,11 @@ from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import HubAction
-from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode, remediation_actions
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import (
+    MCPAuditMode,
+    _decision_kind,
+    remediation_actions,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -505,6 +509,7 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
         assert decision_values == {
             "allowed",
             "approved",
+            "approved-session",
             "denied",
             "denied-timeout",
             # TASK-294: an unresolved verdict is audited as its own decision
@@ -515,6 +520,11 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
         assert initiator_values == {"test", "agent", "system"}
         assert decision_select.value is Select.NULL
         assert initiator_select.value is Select.NULL
+
+
+def test_approved_session_decision_renders_as_successful_execution():
+    """Catches cached session approvals appearing as muted audit outcomes."""
+    assert _decision_kind("approved-session") == "ready"
 
 
 @pytest.mark.asyncio

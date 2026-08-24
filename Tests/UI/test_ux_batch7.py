@@ -97,10 +97,19 @@ def test_saved_filter_roundtrip() -> None:
         def compose(self) -> ComposeResult:
             yield LogsWindow(SimpleNamespace(_log_records=deque()))
 
+    def _batched_save(section_values):
+        # task-21124: save_filter_state persists via ONE batched
+        # save_settings_to_cli_config mutation instead of two sequential
+        # save_setting_to_cli_config rewrites.
+        for section, values in section_values.items():
+            for key, value in values.items():
+                saved[(section, key)] = value
+        return True
+
     with (
         patch(
-            "tldw_chatbook.config.save_setting_to_cli_config",
-            lambda section, key, value: saved.__setitem__((section, key), value),
+            "tldw_chatbook.config.save_settings_to_cli_config",
+            _batched_save,
         ),
         patch(
             "tldw_chatbook.config.get_cli_setting",

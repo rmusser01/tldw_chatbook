@@ -114,6 +114,36 @@ placeholders, file globs, `[Imported]`-style markers.
 
 ---
 
+## `Static.update()` lays out the view by default — a one-row repaint is not free
+
+**TASK-21117, 2026-08-23.** The Console Inspector's outer scroll hint is a
+pinned one-row `Static` whose copy blanks at the bottom of the rail. Splitting
+the pure-scroll path off the geometry reconcile removed every whole-rail
+`refresh(layout=True)` from a wheel gesture (8 → 0 over 8 frames), but a probe
+counting `Screen._refresh_layout` calls showed the gesture still cost 11 screen
+layout passes where it should have cost 9. The residue was the copy repaint
+itself: `Static.update(content)` takes `layout: bool = True` and calls
+`self.refresh(layout=layout)`, so painting two characters into a slot whose
+height is pinned by inline styles still scheduled a view layout — twice per
+gesture, once entering and once leaving the bottom.
+
+```python
+def update(self, content: VisualType = "", *, layout: bool = True) -> None:
+    ...
+    self.refresh(layout=layout)          # layout=True unless you say otherwise
+```
+
+Pass `layout=False` when the slot's size cannot change (height pinned at
+compose time, width container-driven), and keep a test that holds the pinned
+geometry to account (`assert hint.region == hint_region` across the gesture) so
+the assumption cannot rot into stale geometry. The same applies to the
+`Static.content` setter, which is `refresh(layout=True)` with no opt-out — and
+note that `content` is also the cheapest way to read back what was last painted,
+which is how that repaint skips a no-op write without a shadow copy that every
+other writer would have to remember to invalidate.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

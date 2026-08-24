@@ -27,16 +27,64 @@ stays reachable).
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+from weakref import WeakSet
 
 from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from textual.screen import Screen
+
+#: Every constructed, not-yet-collected selection menu (TASK-21119).
+#:
+#: Registration happens in ``__init__`` -- synchronously, and strictly BEFORE
+#: the widget can be attached to the DOM -- so the registry can never MISS a
+#: mounted menu. That direction is the load-bearing one: an under-reporting
+#: registry would silently stop dismissal. It CAN over-report (a menu built
+#: but never mounted, or removed before its ``Unmount`` ran), which is why
+#: liveness is never read from the registry itself: ``selection_menus_on_
+#: screen`` re-derives it from the DOM (``menu.screen``), and over-reporting
+#: only costs the walk the fix was avoiding. Weak references keep abandoned
+#: menus from pinning widget trees in memory.
+_LIVE_SELECTION_MENUS: "WeakSet[ConsoleSelectionMenu]" = WeakSet()
+
+
+def selection_menus_on_screen(screen: "Screen[object]") -> list["ConsoleSelectionMenu"]:
+    """Selection menus currently attached under ``screen``.
+
+    The O(1)-ish replacement for ``screen.query(ConsoleSelectionMenu)`` (a
+    full-screen DOM walk) on the per-press dismissal path. At most one menu
+    is ever mounted, so the candidate set is tiny; each candidate's
+    attachment is confirmed against the live DOM (``menu.screen``), never
+    against bookkeeping, so a stale registry entry cannot produce a phantom
+    menu -- and a detached menu (``NoScreen``) drops out on its own.
+
+    Args:
+        screen: The screen whose subtree is being inspected.
+
+    Returns:
+        The attached menus, in unspecified order (callers dismiss all of
+        them).
+    """
+    menus: list[ConsoleSelectionMenu] = []
+    for menu in _LIVE_SELECTION_MENUS:
+        if menu.parent is None:
+            continue  # never mounted, or already detached (cheap arm)
+        try:
+            if menu.screen is screen:
+                menus.append(menu)
+        except NoScreen:
+            continue  # attached to an orphaned subtree mid-teardown
+    return menus
+
 
 #: Shrink-guard class: added by the measured clamp when the owner box is
 #: shorter than even the compact menu; drops the container border and the
@@ -123,7 +171,7 @@ class ConsoleSelectionMenu(Vertical):
 
     can_focus = True
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSelectionMenu {
         position: absolute;
         /* Live spike 2026-08-16: textual 8.2.8's vertical layout excludes
@@ -267,6 +315,11 @@ class ConsoleSelectionMenu(Vertical):
         #: nothing was focused (or the capture raced teardown), so unmount
         #: falls back to the composer.
         self._previous_focus: Widget | None = None
+        # TASK-21119: register BEFORE any mount can happen. Textual delivers
+        # ``Mount`` asynchronously (the widget's own message pump), so an
+        # ``on_mount`` registration would leave a window in which the menu is
+        # already in the DOM but invisible to the screen's dismissal gate.
+        _LIVE_SELECTION_MENUS.add(self)
 
     def compose(self):
         if self._has_add_to_chat:
@@ -491,6 +544,11 @@ class ConsoleSelectionMenu(Vertical):
         self.remove()
 
     def _on_unmount(self) -> None:
+        # Best-effort registry prune (TASK-21119): dropping the entry keeps
+        # the candidate set small, but correctness never depends on it --
+        # ``selection_menus_on_screen`` re-checks attachment, and the weak
+        # reference expires on its own if this hook is skipped in teardown.
+        _LIVE_SELECTION_MENUS.discard(self)
         self._restore_previous_focus()
 
     def _restore_previous_focus(self) -> None:

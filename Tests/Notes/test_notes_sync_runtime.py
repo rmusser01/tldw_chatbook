@@ -7,6 +7,7 @@ import hashlib
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -29,7 +30,10 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncSerializationProfile,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
-from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutor
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncExecutionResult,
+    NotesSyncExecutor,
+)
 from tldw_chatbook.Notes.notes_sync_filesystem import PosixNotesSyncFilesystem
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
@@ -131,6 +135,34 @@ def _store(tmp_path: Path, *, marker: bool = True) -> NotesDeviceStateStore:
         )
     (tmp_path / "root").mkdir()
     return store
+
+
+@pytest.mark.asyncio
+async def test_abandon_setup_ignores_persisted_root_review_authority(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    owner, coordinator, _watcher = _owner(
+        store=store,
+        admitted=True,
+        adapter=_Adapter([_input()]),
+    )
+    await owner.start()
+    try:
+        await owner.check_root("root-1")
+        path_before = owner._root_paths["root-1"]
+        status_before = owner.snapshot().roots
+        events_before = tuple(coordinator.events)
+        assert "root-1" not in owner._setup_reviews
+
+        await owner.abandon_setup("root-1")
+
+        assert owner._root_paths["root-1"] == path_before
+        assert owner.snapshot().roots == status_before
+        assert tuple(coordinator.events) == events_before
+        assert store.get_root("root-1").canonical_path == path_before
+    finally:
+        await owner.shutdown()
 
 
 @dataclass
@@ -283,11 +315,15 @@ class _Executor:
 
     async def execute(self, request: object):
         self.executed.append(request)
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
 
     async def reconstruct_request(self, operation_id: str) -> object:
         self.reconstructed.append(operation_id)
@@ -523,11 +559,15 @@ class _BlockingExecutor(_Executor):
         self.executed.append(request)
         self.started.set()
         await self.release.wait()
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
 
 
 class _InvalidatingExecutor(_Executor):
@@ -538,11 +578,15 @@ class _InvalidatingExecutor(_Executor):
     async def execute(self, request: object):
         self.executed.append(request)
         self.invalidate()
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
 
 
 class _InvalidatingReconstructExecutor(_Executor):
@@ -2221,7 +2265,7 @@ async def test_manual_apply_rechecks_that_the_root_is_still_active(
 
 
 @pytest.mark.asyncio
-async def test_manual_apply_cannot_clear_an_attention_plan_with_an_empty_apply(
+async def test_manual_empty_apply_keeps_content_conflict_attention(
     tmp_path: Path,
 ) -> None:
     adapter = _Adapter([_input(file_digest=_B, note_digest=_C)])
@@ -2229,11 +2273,71 @@ async def test_manual_apply_cannot_clear_an_attention_plan_with_an_empty_apply(
     await owner.start()
     reviewed = await owner.check_root("root-1")
 
-    with pytest.raises(ValueError, match="not_executable"):
-        await owner.apply_reviewed("root-1", reviewed.observation_token, ())
+    result = await owner.apply_reviewed("root-1", reviewed.observation_token, ())
 
     root = owner.snapshot().roots[0]
+    assert result.unresolved_conflicts == 1
+    assert result.attention_remains is True
+    assert result.fresh_plan == reviewed
     assert (root.status, root.next_action) == ("needs_attention", "review_changes")
+    assert adapter.executor.executed == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manual_apply_accepts_reviewed_no_change_rows_without_executing_them(
+    tmp_path: Path,
+) -> None:
+    unchanged = _input(file_digest=_A, note_digest=_A)
+    changed = replace(
+        unchanged.bindings[0],
+        binding_id="binding-2",
+        note_id="note-2",
+        relative_path="second.md",
+        baseline_relative_path="second.md",
+        file_digest=_B,
+    )
+    mixed = replace(unchanged, bindings=(*unchanged.bindings, changed))
+    adapter = _Adapter([mixed, mixed, mixed, mixed])
+    owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
+    await owner.start()
+    adapter.executor.executed.clear()
+    reviewed = await owner.check_root("root-1")
+    assert [action.kind for action in reviewed.safe_actions] == [
+        NotesSyncActionKind.NO_CHANGE,
+        NotesSyncActionKind.UPDATE_NOTE,
+    ]
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        reviewed.observation_token,
+        tuple(action.action_id for action in reviewed.safe_actions),
+    )
+
+    assert result.safe_completed == 1
+    assert result.attention_remains is False
+    assert [action.kind for action in adapter.executor.executed] == [
+        NotesSyncActionKind.UPDATE_NOTE
+    ]
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manual_apply_rejects_unknown_safe_action_ids(tmp_path: Path) -> None:
+    observed = _input()
+    adapter = _Adapter([observed] * 3)
+    owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
+    await owner.start()
+    adapter.executor.executed.clear()
+    reviewed = await owner.check_root("root-1")
+
+    with pytest.raises(ValueError, match="reviewed_action_mismatch"):
+        await owner.apply_reviewed(
+            "root-1",
+            reviewed.observation_token,
+            ("unknown-action",),
+        )
+
     assert adapter.executor.executed == []
     await owner.shutdown()
 
@@ -2332,6 +2436,91 @@ async def test_pause_closes_root_admission_and_releases_its_lease(
         "lease-released",
     ]
     await owner.shutdown()
+
+
+class _GatedTransactionStore(NotesDeviceStateStore):
+    """Hold one armed transaction open with its connection checked out.
+
+    task-21101 review round: models a pool thread parked inside
+    ``transaction()`` while shutdown runs, so the store's held connection is
+    exactly mid-transaction when ``close()`` could fire.
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.mid_transaction = threading.Event()
+        self.release = threading.Event()
+        self._armed = False
+
+    def arm(self) -> None:
+        self._armed = True
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False):
+        with super().transaction(immediate=immediate) as connection:
+            if self._armed:
+                self._armed = False
+                self.mid_transaction.set()
+                assert self.release.wait(timeout=5)
+            yield connection
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["pause_root", "resume_root"])
+async def test_shutdown_settles_in_flight_pause_and_resume_before_store_close(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    """Reviewer probe for task-21101: pause/resume mid-transaction at shutdown.
+
+    pause_root/resume_root touch the held-connection store but were invisible
+    to settle(), so _shutdown_once could close the store while their pool
+    thread held a checked-out connection (ProgrammingError on a closed
+    database). Shutdown must now wait for them.
+    """
+
+    store = _GatedTransactionStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-1",
+            note_scope_id="local_note",
+            logical_folder_id="folder-1",
+            canonical_path=str(tmp_path / "root"),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    (tmp_path / "root").mkdir()
+    adapter = _Adapter(
+        [
+            _input(file_digest=_A, note_digest=_A),
+            _input(file_digest=_A, note_digest=_A),
+        ]
+    )
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    if operation == "resume_root":
+        await owner.pause_root("root-1")
+        expected_state = NotesSyncRootState.ACTIVE
+    else:
+        expected_state = NotesSyncRootState.PAUSED
+
+    store.arm()
+    in_flight = asyncio.create_task(getattr(owner, operation)("root-1"))
+    assert await asyncio.to_thread(store.mid_transaction.wait, 5)
+
+    shutdown = asyncio.create_task(owner.shutdown())
+    await asyncio.sleep(0.05)
+    assert not shutdown.done()
+
+    store.release.set()
+    result = await in_flight
+    await shutdown
+
+    assert result.accepted is True
+    assert store.get_root("root-1").state is expected_state
 
 
 @pytest.mark.asyncio
@@ -2786,3 +2975,47 @@ async def test_repeated_shutdown_cancellation_waits_for_admitted_stage_and_lease
 
     assert cancellation.value.args == ("first cancellation",)
     assert coordinator.events[-1] == "lease-released"
+
+
+def test_builder_forwards_watcher_intervals_to_the_default_polling_watcher(
+    tmp_path: Path,
+) -> None:
+    """TASK-21112: [notes] watcher intervals must reach the built watcher."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=object(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        adapter=_Adapter([_input()]),
+        watcher_interval_seconds=2.5,
+        watcher_max_interval_seconds=30.0,
+    )
+
+    watcher = owner._watcher_factory(lambda _root_id: None)
+
+    assert type(watcher) is PollingNotesSyncWatcher
+    assert watcher._interval == 2.5
+    assert watcher._max_interval == 30.0
+
+
+def test_builder_defaults_keep_the_watcher_base_and_cap(tmp_path: Path) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=object(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        adapter=_Adapter([_input()]),
+    )
+
+    watcher = owner._watcher_factory(lambda _root_id: None)
+
+    assert watcher._interval == 1.0
+    assert watcher._max_interval == 10.0

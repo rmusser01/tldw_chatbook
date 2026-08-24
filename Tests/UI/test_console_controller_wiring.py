@@ -32,18 +32,29 @@ break silently:
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
+from textual.css.query import QueryError
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
+from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
+from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
+from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+    ConsolePromptQueueUIController,
+)
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
+from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -55,6 +66,25 @@ _EXPECTED_SLOTS: list[tuple[str, type]] = [
     ("_hands_free", ConsoleHandsFreeController),
     ("_message", ConsoleMessageController),
     ("_prompts", ConsolePromptsController),
+]
+
+#: Complete controller graph for the Task-3070.8 construction-order contract.
+#: Kept separate because `_EXPECTED_SLOTS` is a historical common-interface subset.
+_ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
+    ("_image", ConsoleImageController),
+    ("_video", ConsoleVideoController),
+    ("_retrieval", ConsoleRetrievalController),
+    ("_skill", ConsoleSkillController),
+    ("_workspace", ConsoleWorkspaceController),
+    ("_character", ConsoleCharacterController),
+    ("_fleet", ConsoleFleetLifecycleController),
+    ("_session", ConsoleSessionController),
+    ("_dictation", ConsoleDictationController),
+    ("_hands_free", ConsoleHandsFreeController),
+    ("_message", ConsoleMessageController),
+    ("_prompts", ConsolePromptsController),
+    ("_agent", ConsoleAgentController),
+    ("_prompt_queue", ConsolePromptQueueUIController),
 ]
 
 #: Every controller takes `chat_store_accessor=lambda: self._ensure_console_
@@ -83,6 +113,144 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         assert isinstance(controller, cls), (
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
+
+
+def test_all_fourteen_controllers_are_constructed_with_the_right_classes() -> None:
+    screen = _unmounted_console()
+    names = [attr for attr, _ in _ALL_CONTROLLER_SLOTS]
+    observed = [key for key in vars(screen) if key in set(names)]
+
+    for attr, cls in _ALL_CONTROLLER_SLOTS:
+        controller = getattr(screen, attr, None)
+        assert controller is not None, f"{attr} was never wired"
+        assert isinstance(controller, cls), (
+            f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
+        )
+    assert observed == names, f"controller build order changed: {observed}"
+
+
+def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
+    screen = _unmounted_console()
+    controller = getattr(screen, "_fleet", None)
+    assert isinstance(controller, ConsoleFleetLifecycleController), (
+        "_fleet was never wired"
+    )
+
+    composer = SimpleNamespace(draft_text=lambda: " replacement draft ")
+    screen._console_composer_or_none = lambda: composer
+    displayed_draft = controller._displayed_composer_draft_accessor()
+    assert displayed_draft == " replacement draft "
+    assert displayed_draft is not composer
+    assert controller._console_wake_user_priority("session-a") is True
+
+    pending_handoffs = object()
+    sessions = (SimpleNamespace(id="late-session"),)
+    store = SimpleNamespace(
+        active_session_id="late-session",
+        sessions=lambda: sessions,
+    )
+    screen.app_instance.pending_handoffs = pending_handoffs
+    screen._ensure_console_chat_store = lambda: store
+    screen._console_chat_store = store
+
+    assert controller._pending_handoffs_accessor() is pending_handoffs
+    assert controller._ensure_chat_store() is store
+    assert controller._active_session_id_accessor() == "late-session"
+    assert controller._chat_sessions_accessor() is sessions
+
+    chat_controller = object()
+    screen._ensure_console_chat_controller = lambda: chat_controller
+    assert controller._ensure_chat_controller() is chat_controller
+
+    def raise_controller_error() -> None:
+        raise RuntimeError("replacement controller unavailable")
+
+    screen._ensure_console_chat_controller = raise_controller_error
+    with pytest.raises(RuntimeError, match="replacement controller unavailable"):
+        controller._ensure_chat_controller()
+
+    wake_calls: list[object] = []
+    wake = SimpleNamespace(
+        wire=lambda **kwargs: wake_calls.append(("wire", kwargs.get("app"))) or True,
+        seed_from_marks=lambda: wake_calls.append("seed") or True,
+        retry_soon=lambda: wake_calls.append("retry"),
+        has_pending=lambda conversation_id: conversation_id == "conversation-a",
+        delivering_conversation_id=lambda: "conversation-a",
+    )
+    screen._console_chat_controller = SimpleNamespace(
+        fleet_wake=wake,
+        fleet_has_unsettled_children=lambda: True,
+    )
+
+    assert controller._chat_controller_available() is True
+    assert controller._wire_wake_coordinator() is True
+    assert controller._seed_wake_from_marks() is True
+    controller._retry_wake_soon()
+    assert controller._wake_has_pending("conversation-a") is True
+    assert controller._wake_delivering_conversation_id() == "conversation-a"
+    assert controller._fleet_has_unsettled_children() is True
+    assert wake_calls == [("wire", screen.app_instance), "seed", "retry"]
+
+
+@pytest.mark.asyncio
+async def test_session_first_chat_edges_are_late_bound_and_presentation_only(
+    monkeypatch,
+) -> None:
+    screen = _unmounted_console()
+    controller = screen._session
+    screen._console_control_provider = "late-provider"
+    screen._console_control_model = "late-model"
+    focus_token = MagicMock()
+    focus_token.is_mounted = True
+
+    assert controller._screen_mounted_accessor() is False
+    assert controller._first_chat_presentation_snapshot_fn() == (
+        "late-provider",
+        "late-model",
+        None,
+    )
+    controller._apply_first_chat_control_selection_fn("next-provider", "next-model")
+    assert (screen._console_control_provider, screen._console_control_model) == (
+        "next-provider",
+        "next-model",
+    )
+    controller._restore_first_chat_focus_fn(focus_token)
+    focus_token.focus.assert_not_called()
+
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+        assert screen.is_attached is True
+        assert controller._screen_mounted_accessor() is True
+
+        mounted_focus_token = screen.query_one("#console-native-composer")
+        focus_spy = MagicMock(wraps=mounted_focus_token.focus)
+        monkeypatch.setattr(mounted_focus_token, "focus", focus_spy)
+        controller._restore_first_chat_focus_fn(mounted_focus_token)
+        focus_spy.assert_called_once_with()
+
+        await host.pop_screen()
+        await pilot.pause()
+        assert screen.is_attached is False
+
+
+@pytest.mark.asyncio
+async def test_session_first_chat_focus_ignores_opaque_token() -> None:
+    screen = _unmounted_console()
+    controller = screen._session
+    opaque_token = SimpleNamespace(focus=MagicMock())
+
+    controller._restore_first_chat_focus_fn(opaque_token)
+    opaque_token.focus.assert_not_called()
+
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+
+        controller._restore_first_chat_focus_fn(opaque_token)
+        opaque_token.focus.assert_not_called()
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
@@ -289,6 +457,80 @@ def test_hands_free_reads_dictation_state_through_the_screen_at_call_time():
     screen._dictation = SimpleNamespace(_console_dictation_state=sentinel)
 
     assert screen._hands_free._dictation_state_accessor() is sentinel
+
+
+@pytest.mark.asyncio
+async def test_hands_free_auto_speak_edges_are_late_bound_and_mount_safe(monkeypatch):
+    """Wave 6 keeps policy on HandsFree without freezing its sibling edge.
+
+    Args:
+        monkeypatch: Pytest fixture used to simulate teardown and capture logging.
+    """
+    screen = _unmounted_console()
+    controller = screen._hands_free
+    requests: list[tuple[str, object | None]] = []
+    screen._console_auto_speak = SimpleNamespace(
+        request_enabled=lambda enabled: requests.append(("enabled", enabled)),
+        request_resume=lambda: requests.append(("resume", None)),
+        request_retry=lambda: requests.append(("retry", None)),
+    )
+
+    controller.on_console_auto_speak_changed(SimpleNamespace(enabled=True))
+    controller.on_console_auto_speak_resume_requested(SimpleNamespace())
+    controller.on_console_auto_speak_retry_requested(SimpleNamespace())
+
+    destination = object()
+
+    async def resolve_destination(assistant_kind, character_ref):
+        assert assistant_kind == "character"
+        assert character_ref is None
+        return destination
+
+    async def ensure_handler():
+        return SimpleNamespace(
+            resolve_console_speech_destination=resolve_destination,
+        )
+
+    screen.app_instance._ensure_tts_handler = ensure_handler
+    assert (
+        await controller._resolve_console_auto_speak_destination("character", None)
+        is destination
+    )
+
+    async def fail_destination(assistant_kind, character_ref):
+        raise RuntimeError("destination failed")
+
+    async def ensure_failing_handler():
+        return SimpleNamespace(
+            resolve_console_speech_destination=fail_destination,
+        )
+
+    screen.app_instance._ensure_tts_handler = ensure_failing_handler
+    logger = MagicMock()
+    monkeypatch.setattr(hands_free_module, "logger", logger)
+    assert (
+        await controller._resolve_console_auto_speak_destination("character", None)
+        is None
+    )
+    logger.opt.assert_called_once_with(exception=True)
+    logger.opt.return_value.warning.assert_called_once_with(
+        "Failed to resolve the Console auto-speak destination."
+    )
+
+    # Both presentation paths must remain harmless before the screen mounts.
+    controller._sync_console_auto_speak_controls(True, False, False)
+    controller._sync_hands_free_switch(True)
+
+    # Teardown can leave a stale query root that raises a broader QueryError.
+    monkeypatch.setattr(screen, "query_one", MagicMock(side_effect=QueryError()))
+    controller._sync_console_auto_speak_controls(False, True, True)
+    controller._sync_hands_free_switch(False)
+
+    assert requests == [
+        ("enabled", True),
+        ("resume", None),
+        ("retry", None),
+    ]
 
 
 def test_prompts_resolves_the_session_sibling_at_call_time():

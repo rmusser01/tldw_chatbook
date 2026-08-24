@@ -9,6 +9,90 @@ and this project adheres to Some kind of Versioning
 
 ### Added
 - Initial features pending documentation
+- Media chunk agent tools (chunking-agent-tools): Console agents and local MCP
+  clients get five new `library_*` tools over ingested media's stored chunks —
+  the program's student story ("per-chapter notes from an ingested book")
+  delivered without blind character-window walking. `library_get_media_structure`
+  returns a media item's heading/section tree annotated per node with the
+  stored-chunk index span overlapping it, plus an item chunk summary
+  (count, families, engine versions, template, stale flag) and the media
+  version as a revision token; pagination is by nodes (default 200, max 500)
+  through a `node_cursor`, never byte-sliced. `library_get_media_chunk`
+  fetches one unit by `chunk_index` **from the stored
+  `UnvectorizedMediaChunks` rows verbatim** — the reuse-stored-chunks read
+  path; nothing re-chunks implicitly (mutation-tested). Multi-family
+  (hierarchical) items name their `chunk_type` families and refuse ambiguous
+  addresses with the round-trippable list; neighbors arrive under `context`
+  (0–10) inside the 32 KiB result budget with a dropped-neighbor note; a
+  stale revision token is the named `content_changed` error. Items ingested
+  with chunking off keep the heading tree with an availability hint naming
+  `library_rechunk_media`. `library_list_chunk_specs` /
+  `library_save_chunk_spec` expose the v7 chunking-template store to agents
+  (specs ARE templates): a bounded listing with validity/reserved flags, and
+  create-or-update of custom templates through the validated CRUD with the
+  validator's full errors array on refusal (built-ins refused with a
+  duplicate hint; the reserved `auto` name refused case-insensitively).
+  `library_rechunk_media` (opt-in write) re-chunks ONE item synchronously
+  through the same per-item machinery as the Library "Re-chunk older-engine
+  items" action — flat spec override (`{"template": name}` XOR plain
+  `method`/`max_size`/`overlap`; an omitted overlap is 0, not the engine's
+  100 default; omitting `spec` re-runs the item's stored config while
+  `spec: {}` is an explicit plain override; an unresolvable template is a
+  named refusal, never a silent fallback), atomic chunk-row replacement, and
+  a separate `reindex: true` opt-in for the forced vector re-index
+  (default off; outcome vocabulary `reindexed`/`skipped`/`failed`, never a
+  bare "done"; a skipped re-chunk carries no `reindexed` key). The two
+  writing tools are policy-gated under new runtime-policy resources —
+  `library.templates.save` and `library.media.rechunk` — with denials
+  firing before any backend call. Console and MCP advertise identical
+  schemas from the one descriptor table (23 Library tools total); the
+  student story is pinned end to end by
+  `Tests/Library/test_agent_chunk_student_story.py`.
+- Note-save agent tool (student-workflow): `library_save_note` closes the
+  student story's write loop — the 24th `library_*` tool lets Console agents
+  and local MCP clients land their per-chapter study notes where the user
+  already reads them (the notes screen). Create by default; update by
+  `note_id` + `expected_version` together (exactly one without the other is
+  refused; a stale version is the named `content_changed` error). Bounds are
+  schema-level (title ≤ 512, content ≤ 100_000, folder ≤ 256). The optional
+  one-level folder is created when missing in the notes UI's own local
+  scope, concurrent savers converge on one folder, and a folder failure
+  never lands an orphaned note. Notes derived from Library media carry the
+  documented provenance-header convention (`source`/`revision`/`chapter`/
+  `chunks` — revision is load-bearing for staleness). The re-run convention
+  is search-based (`library_search_notes` by title, then update by id) since
+  the list tool has no folder filter; flashcards are Q/A markdown inside
+  notes (the real flashcards rows have no screen route yet). Runs under the
+  new `library.notes.save` runtime-policy resource, denied before any
+  backend call on both Console and MCP surfaces. The fan-out pattern
+  (structure → spawn-per-chapter → fetch → save → re-run, riding the
+  existing `spawn_subagent`) is documented in the Console guide, and the
+  story test now proves the whole loop — read from stored chunks,
+  provenance-headered save, re-read, search-based re-run update without
+  duplicates, Q/A flashcard note — end to end against real databases
+  (`Tests/Library/test_agent_chunk_student_story.py`).
+- Propositions chunking method live; program descope recorded
+  (propositions-vendoring, sub-project 6 of 6 — closes the chunking-parity
+  program): the `propositions` method works for the first time. The routing
+  has existed since the engine-parity rework, but the strategy module was
+  never vendored, so every call raised
+  `InvalidChunkingMethodError: No module named …strategies.propositions`;
+  `strategies/propositions.py` is now vendored from the pinned server tree
+  (the 39th engine file, byte-faithful modulo the import rewrite, zero new
+  shims). Default is the heuristic engine — no new dependencies; the spacy
+  engine stays optional (auto-degrades to heuristics when spacy is absent);
+  the llm engine runs when a caller passes
+  `llm_call_function_for_chunker`, with the shim translating chatbook's
+  payload-dict callback to the engine's positional contract (the
+  rolling_summarize precedent — callers keep their signature), and an LLM
+  failure falling back to heuristics (upstream design, pinned as parity).
+  Heuristic output joins the byte-pinned golden corpus (70 → 77 fixtures).
+  The program's remaining candidates are descoped with recorded rulings
+  instead of built: `auto_boundary_assistant.py` and `async_chunker.py` are
+  permanently NOT vendored (server-stack seams with no chatbook consumer —
+  the capability is covered by auto-selection and the agent chunk tools),
+  and the engine telemetry no-op ruling is reaffirmed; all three live in the
+  vendor manifest's excluded list with their reasons.
 - UX efficiency cycle (critique follow-up, ADR-016): the Console composer is now a real
   editable text field with a movable caret (arrows, Home/End, Ctrl+W, mid-draft
   insertion, Shift+Enter newline); destination hotkeys ctrl+1..9,0 jump to the first ten
@@ -26,8 +110,72 @@ and this project adheres to Some kind of Versioning
   text-labeled status badge) on the Console (now visible), Search, Media, Study, Writing,
   Research, Models, Speech, Logs, Stats, Evals, and Personas screens. Stats also gained the
   standard nav/footer/status chrome and a live Loading/Error/Ready/Empty header badge.
+- Chunking-template picker on Library ▸ Import media (chunking-template-parity): a
+  "Chunking template" select listing the DB's templates (default "None (manual
+  settings)"), hidden in server mode, disabled with a why-label until "Chunk content"
+  is on, populated from the media DB via the RAG admin scope service off the mount
+  path. The chosen template governs that item's parse and is persisted on the Media
+  row (`chunking_config`) and its chunk rows. A new `[chunking]` config section
+  (`default_template`) names the fallback template for ingests that did not pick
+  one; template resolution order is the picker's stored choice → config default →
+  plain options, and an unresolvable template name fails with a named error
+  instead of silently chunking with defaults.
+- Chunking Auto-selection (chunking-auto-selection): the "Chunking template" picker
+  gains an "Auto" option (None stays the default; the name `auto` is reserved —
+  template create/rename refuse it). Auto decides per item in three always-terminating
+  tiers: a template whose `classifier` block matches the item's media type /
+  filename / title / URL and clears its `min_score` wins and runs in full
+  (indistinguishable from a manual pick); otherwise the vendored server auto
+  planner (`Chunking/engine/auto_planner.py`, moved excluded → vendored) derives
+  media-type-aware chunk options (goal hardcoded "balanced", LLM features off);
+  otherwise today's plain defaults — Auto never fails an import. Templates
+  without a classifier block are never auto-selected (the six built-ins included),
+  so nothing changes until a template opts in. The decision is persisted per item
+  (`mode: "auto"` + tier/rationale in `Media.chunking_config`; the `template` key
+  only on a template-tier win, keeping both existing readers — the usage LIKE and
+  the statistics `json_extract` — truthful) and re-resolved, not replayed, on
+  re-chunk: changing the template store changes the re-chunk outcome, and the
+  stored record is re-stamped to match what the re-chunk actually used. The
+  `[chunking] default_template` config key never triggers Auto (picker-only,
+  stripped from server-mode ingest). Planner decisions are frozen by byte-pinned
+  parity fixtures and a media-type vocabulary test; classifier scoring,
+  tie-breaks, and the built-ins-never-auto-selected pin are standing tests.
+- Library ▸ Search / RAG legacy-chunk report + re-chunk action
+  (chunking-template-parity): the panel shows "Chunked by an older engine: N items"
+  when pre-parity chunks exist and offers "Re-chunk older-engine items", which
+  re-chunks exactly those items through the template-aware path (honoring each
+  item's stored template choice), replaces their chunk rows in one transaction,
+  force-reindexes them into the semantic index (deleting the stale vector document
+  by deterministic id first), clears the owning service's query cache, and surfaces
+  a per-run summary ("N re-chunked, M skipped, K failed" plus notes — never a bare
+  "done"). A re-chunk and a RAG index backfill refuse to overlap via a shared
+  in-flight guard (a notice, never worker cancellation), and an interrupted
+  re-index leaves the item re-indexable on the next backfill rather than
+  permanently absent from search.
 
 ### Removed
+- **BREAKING — file template store deleted (chunking-template-parity, spec §8.1).**
+  `tldw_chatbook/Chunking/templates/` (the 13 built-in template JSONs plus
+  `README.md` and `example_usage.py`) and `Chunking/chunking_templates.py`
+  (`ChunkingTemplateManager`, `ChunkingPipeline`, `ChunkingTemplate`,
+  `ChunkingStage`, `ChunkingOperation`) are gone, and those names are no longer
+  exported from the `tldw_chatbook.Chunking` package root — a breaking change
+  to the package's public import surface. The vendored engine's own
+  `ChunkingTemplate` (same public name, different class) is deliberately NOT
+  re-exported either: nothing outside the service layer resolves templates.
+  Chunking templates are DB rows now. `Chunker`/`improved_chunking_process`
+  keep their `template=`/`template_manager=` parameters, but `template=`
+  accepts only a pre-resolved template dict (resolve names first via
+  `tldw_chatbook.Chunking.template_runtime.resolve_template`); a bare name
+  string raises `TemplateError`, and `template_manager=` is accepted and
+  ignored. All five packaging sites (pyproject package-data and package
+  exclude, MANIFEST.in, `Packaging/check_manifest.py`, and the installed-
+  distribution import pin and data contract) moved in the same commit: no
+  `Chunking/templates/` path ships in the wheel or sdist. The legacy `Chunker`
+  adapter no longer sets its `.template` / `.pipeline` instance attributes
+  (they held the deleted `ChunkingTemplate` / `ChunkingPipeline` objects);
+  `.template_manager` remains stored for attribute compatibility, never
+  consulted.
 - Rejected, unreachable dictation-history implementations removed:
   `Audio/transcription_history.py`, `Widgets/transcription_history_viewer.py`,
   and `UI/Dictation_Window.py`.
@@ -76,6 +224,33 @@ and this project adheres to Some kind of Versioning
     Admin diagnostics gained a read-only legacy-chunk report counting chunks
     persisted before the version stamp ("Chunked by an older engine: N
     items").
+- **Behaviour change — rolling-summarize fails closed
+  (chunking-template-parity).** When the `rolling_summarize` method's per-part
+  LLM callback raises, returns the legacy `"Error: …"` failure string, or
+  returns a non-string, chunking now raises `ChunkingError` (original cause
+  chained) instead of embedding `[Summarization failed for this part: …]`
+  marker text into the chunk stream. The markers were silently persisted as
+  if they were content — corruption that search, citations, and exports would
+  then faithfully reproduce — and nothing depends on them; a failed
+  summarization now stops at the failure instead of shipping marker rows.
+- **ChunkingTemplates storage rebuilt on media-DB schema v7 — a one-way door
+  (chunking-template-parity).** The chunking-template table is now the
+  server's shape: rows carry uuid/version and a soft-delete flag, the six
+  server built-ins are seeded as the only built-ins, the old chatbook seeds
+  are converted to the flat dict contract (three retired seeds survive as
+  editable non-builtin rows), unconvertible rows are quarantined under
+  "<name> (needs review)" with their original body preserved, and every
+  create/update validates the template body (stored-invalid rows stay listed
+  with a flag and editable, but are refused at apply with a named error).
+  **Once a media DB has been migrated to v7, downgrade is impossible** — v7
+  voids ADR-073's revert net for the chunking store. Back up the media DB
+  before updating if you may need to return to an older build.
+- **Chunking templates govern local ingestion (chunking-template-parity).**
+  A resolved template's chunk-stage options now take precedence over the
+  ingest form's unchanged defaults on every local ingest seam; only
+  explicitly changed form values beat the template (unchanged fields equal
+  to the schema default defer to it). Re-chunking honors each item's stored
+  template choice with the same resolution order.
 - **Behaviour change — reranking now really calls the provider, and really spends
   (TASK-17065).** Reranking has silently no-opped since the feature existed: the
   reranker resolved credentials from a `settings["API"]` table `load_settings()`

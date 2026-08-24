@@ -33,6 +33,8 @@ from textual.widgets import (
 from textual.widgets._collapsible import CollapsibleTitle
 from textual.worker import WorkerState
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCostRow,
@@ -117,7 +119,7 @@ def _default_kwargs(**overrides: object) -> dict[str, object]:
     return kwargs
 
 
-class InspectorHarness(App):
+class InspectorHarness(ConsolidatedCSSApp):
     def __init__(self, **modal_kwargs: object) -> None:
         super().__init__()
         self._modal_kwargs = modal_kwargs

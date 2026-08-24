@@ -147,7 +147,13 @@ MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
 # (``_persist_chunks``) persists to ``UnvectorizedMediaChunks``. The
 # top-level dict stays clean of the key by design (task-11): DB stamping
 # happens at persist, not at chunk time.
-ENGINE_VERSION = "parity-1@385afa95"
+#
+# (task-21102) The value itself lives in the stdlib-only
+# ``tldw_chatbook.chunking_engine_version`` module -- outside this package --
+# so the persist seam (on the app's boot-import path) can read the pin
+# without executing the shim + vendored engine. Re-exported here so the
+# package surface is unchanged and there is exactly one source of truth.
+from ..chunking_engine_version import ENGINE_VERSION  # noqa: E402
 
 
 #######################################################################################################################
@@ -674,20 +680,100 @@ def _synthesize_flat_offsets(
 #######################################################################################################################
 # Chunker adapter
 #
+def _wrap_payload_dict_llm_for_positional_engine(
+    llm_call_function: Callable[[Dict[str, Any]], Any],
+    llm_api_config: Optional[Dict[str, Any]] = None,
+) -> Callable[..., Any]:
+    """Wrap a payload-dict LLM callback into the engine's positional contract.
+
+    The engine's LLM-calling strategies (propositions, rolling_summarize)
+    invoke their ``llm_call_func`` positionally, analyze-style:
+    ``llm_call_func(api_name, prompt, None, api_key, system_message, temp,
+    False, False, False, model_override=..., **snapshot_kwargs)``. Chatbook
+    callers instead supply the legacy payload-dict callback (one dict
+    argument) established by the rolling_summarize port -- the same key set
+    this wrapper emits (see ``Chunker._rolling_summarize``'s
+    ``payload_for_llm_call``): api_name, input_data, custom_prompt_arg,
+    api_key, system_message, temp, streaming, model, max_tokens.
+
+    Mapping notes (mirroring the rolling_summarize payload precedent):
+    - positional ``prompt`` -> ``input_data``; positional arg 3
+      (``custom_prompt_arg``, always None from the engine) -> "".
+    - the ``model_override`` keyword -> the payload's ``model`` slot.
+    - ``max_tokens`` is not part of the positional contract; it rides in
+      from ``llm_api_config`` exactly as rolling_summarize fills it.
+    - the server-only snapshot kwargs (``app_config``,
+      ``credentials_resolved``, ``provider_credentials``) are accepted and
+      dropped: they only arrive if a caller put them in the LLM config, and
+      the payload-dict contract has no slots for them (their absence is
+      benign upstream -- guarded reads).
+    - trailing positional flags beyond the nine the propositions engine
+      passes (e.g. rolling_summarize's ``chunk_options`` None) are accepted
+      for signature tolerance and dropped.
+
+    Args:
+        llm_call_function: Blocking callable receiving one payload dict and
+            returning the provider's string (or tuple whose first element
+            is the string).
+        llm_api_config: Caller LLM config (only ``max_tokens`` is read
+            here; every other key flows to the engine's own
+            ``llm_config.get(...)`` reads upstream of this wrapper).
+
+    Returns:
+        A positional-callable that forwards to ``llm_call_function``.
+    """
+
+    def _positional_llm_call(
+        api_name: str,
+        input_data: str,
+        custom_prompt_arg: Optional[str],
+        api_key: Optional[str],
+        system_message: Optional[str],
+        temp: float,
+        streaming: bool = False,
+        recursive_summarization: bool = False,  # tolerated, dropped
+        chunked_summarization: bool = False,  # tolerated, dropped
+        *_extra_positional: Any,
+        model_override: Optional[str] = None,
+        **_snapshot_kwargs: Any,  # server-only config; dropped (see docstring)
+    ) -> Any:
+        payload: Dict[str, Any] = {
+            "api_name": api_name,
+            "input_data": input_data,
+            "custom_prompt_arg": custom_prompt_arg or "",
+            "api_key": api_key,
+            "system_message": system_message,
+            "temp": temp,
+            "streaming": bool(streaming),
+            "model": model_override,
+            "max_tokens": (llm_api_config or {}).get("max_tokens"),
+        }
+        return llm_call_function(payload)
+
+    return _positional_llm_call
+
+
 class Chunker:
     """Legacy-signature adapter over the engine ``Chunker``.
 
     Preserves the legacy constructor (``options`` dict, tokenizer name,
-    template + template manager) and the legacy ``chunk_text`` return
-    contract: ``List[Union[str, dict]]`` -- plain strings for text methods,
-    dicts for json/xml/ebook (the legacy methods that returned dicts).
+    ``template``/``template_manager`` parameters) and the legacy
+    ``chunk_text`` return contract: ``List[Union[str, dict]]`` -- plain
+    strings for text methods, dicts for json/xml/ebook (the legacy methods
+    that returned dicts).
+
+    Template semantics since the file-store deletion (spec §8.2):
+    ``template`` accepts a pre-resolved template dict (chunk-stage options
+    merged under explicit options); ``template_manager`` is
+    accepted-and-ignored. Name resolution lives in
+    ``template_runtime.resolve_template``.
     """
 
     def __init__(
         self,
         options: Optional[Dict[str, Any]] = None,
         tokenizer_name_or_path: str = "gpt2",
-        template: Optional[str] = None,
+        template: Optional[Any] = None,
         template_manager: Optional[Any] = None,
     ):
         """Initializes the Chunker adapter.
@@ -697,47 +783,50 @@ class Chunker:
                 override defaults.
             tokenizer_name_or_path (str): Name or path of the tokenizer to
                 use. Defaults to "gpt2".
-            template (Optional[str]): Name of chunking template to use.
-            template_manager (Optional[Any]): Template manager instance.
+            template (Optional[Dict[str, Any]]): Pre-resolved template dict
+                (the flat spec §4.1 shape, e.g. what
+                ``template_runtime.resolve_template`` returns). Only the
+                ``chunking`` stage's method/config are applied here (defaults
+                <- template <- explicit ``options``); executing the full
+                pre/chunk/post pipeline is ``template_runtime.apply_template``'s
+                contract. A bare name string raises ``TemplateError``: name
+                resolution requires a Media DB handle and lives in
+                ``template_runtime.resolve_template`` (spec §8.2), not in this
+                import-light shim.
+            template_manager (Optional[Any]): Accepted and ignored (spec
+                §8.2). Retained solely for signature compatibility with
+                legacy callers; the file-store manager it named is deleted.
+
+        Raises:
+            TemplateError: If ``template`` is a bare name string (use
+                ``template_runtime.resolve_template`` first), or not a valid
+                flat template dict.
         """
-        # Template support is delegated to the retained chunking_templates
-        # module (unchanged in this task); only load the template object so
-        # chunk_text can route to the template pipeline when asked.
+        # template_manager= is accepted-and-ignored: stored for attribute
+        # compatibility, never consulted.
         self.template_manager = template_manager
-        self.template = None
-        self.pipeline = None
-        if template:
-            try:
-                from .chunking_templates import (
-                    ChunkingPipeline,
-                    ChunkingTemplateManager,
+        if template is not None:
+            if isinstance(template, str):
+                raise TemplateError(
+                    f"Chunker no longer resolves template names (the file "
+                    f"template store is deleted, spec §8.2): resolve "
+                    f"{template!r} first via "
+                    f"tldw_chatbook.Chunking.template_runtime.resolve_template "
+                    f"and pass the returned dict as template="
                 )
-            except ImportError:  # pragma: no cover - templates always present
-                ChunkingPipeline = None
-                ChunkingTemplateManager = None
-            if self.template_manager is None and ChunkingTemplateManager:
-                self.template_manager = ChunkingTemplateManager()
-            if self.template_manager is not None:
-                self.template = self.template_manager.load_template(template)
-                if self.template and ChunkingPipeline:
-                    self.pipeline = ChunkingPipeline(self.template_manager)
-                if self.template:
-                    logger.info(f"Loaded chunking template: {template}")
-                    template_options = {}
-                    for stage in getattr(self.template, "pipeline", []):
-                        if stage.stage == "chunk":
-                            template_options.update(stage.options)
-                            if stage.method:
-                                template_options["method"] = stage.method
-                            break
-                    # Template options have lower priority than explicit options.
-                    if options:
-                        template_options.update(options)
-                    options = template_options
-                else:
-                    logger.warning(
-                        f"Template '{template}' not found, using default options"
-                    )
+            # Local import: template_runtime imports this module at its own
+            # module level, so the dependency may only be taken at call time.
+            from .template_runtime import template_from_record
+
+            mapped = template_from_record(template)
+            # Legacy precedence preserved: defaults <- template <- explicit.
+            template_options: Dict[str, Any] = {
+                "method": mapped.base_method,
+                **mapped.default_options,
+            }
+            if options:
+                template_options.update(options)
+            options = template_options
 
         # Resolve effective options exactly like legacy: defaults <- template <- explicit.
         self.options: Dict[str, Any] = dict(DEFAULT_CHUNK_OPTIONS)
@@ -842,8 +931,12 @@ class Chunker:
                 options.
             llm_call_function: Optional LLM call function (rolling_summarize).
             llm_api_config: Optional LLM API config (rolling_summarize).
-            use_template (Optional[bool]): Force use/bypass of template if
-                loaded.
+            use_template (Optional[bool]): Accepted and ignored (spec §8.2).
+                The template pipeline this routed to is deleted; a template
+                dict supplied at construction has already had its
+                chunk-stage options merged into ``self.options``. Full
+                template execution lives in
+                ``template_runtime.apply_template``.
 
         Returns:
             List[Union[str, Dict[str, Any]]]: A list of chunks. Strings for
@@ -867,29 +960,6 @@ class Chunker:
                 f"Document size {text_size_mb:.2f} MB exceeds maximum allowed "
                 f"size of {MAX_DOCUMENT_SIZE_MB} MB"
             )
-
-        # Template-based chunking (legacy behavior: pipeline executes and
-        # results are flattened to text strings).
-        if use_template is None:
-            use_template = self.template is not None
-        if use_template and self.template and self.pipeline is not None:
-            logger.info(
-                f"Using template-based chunking with template: {self.template.name}"
-            )
-            template_results = self.pipeline.execute(
-                text=text,
-                template=self.template,
-                chunker_instance=self,
-                llm_call_function=llm_call_function,
-                llm_api_config=llm_api_config,
-            )
-            chunks: List[Union[str, Dict[str, Any]]] = []
-            for result in template_results:
-                if isinstance(result, dict) and "text" in result:
-                    chunks.append(result["text"])
-                else:
-                    chunks.append(result)
-            return chunks
 
         resolved_method = _normalize_legacy_method(
             method if method else self._get_option("method", "words")
@@ -965,6 +1035,48 @@ class Chunker:
                 for item in results
             ]
 
+        if resolved_method == "propositions" and llm_call_function is not None:
+            # LLM-contract adapter (propositions spec §5.1): the engine's
+            # strategy calls its llm_call_func positionally (analyze-style)
+            # while chatbook callers supply the payload-dict callback. The
+            # engine's chunk_text has no llm_call_func parameter -- it reads
+            # the per-instance llm_call_func/llm_config hooks -- so install
+            # the wrapped callable there for the duration of this call and
+            # restore afterwards (the hooks are instance state; a later
+            # call with a different callback must not see this one). No
+            # callback -> nothing installed: the engine's default heuristic
+            # engine stands (and its engine="llm" leg degrades to
+            # heuristics on its own -- upstream parity, not fail-close).
+            previous_func = self._engine.llm_call_func
+            previous_cfg = self._engine.llm_config
+            self._engine.llm_call_func = _wrap_payload_dict_llm_for_positional_engine(
+                llm_call_function, llm_api_config
+            )
+            self._engine.llm_config = llm_api_config or {}
+            try:
+                raw = self._engine.chunk_text(
+                    text,
+                    method=resolved_method,
+                    max_size=engine_options.get("max_size"),
+                    overlap=engine_options.get("overlap"),
+                    language=engine_options.get("language"),
+                    **{
+                        k: v
+                        for k, v in engine_options.items()
+                        if k
+                        not in {
+                            "method",
+                            "max_size",
+                            "overlap",
+                            "language",
+                        }
+                    },
+                )
+            finally:
+                self._engine.llm_call_func = previous_func
+                self._engine.llm_config = previous_cfg
+            return [chunk for chunk in raw if isinstance(chunk, str)]
+
         raw = self._engine.chunk_text(
             text,
             method=resolved_method,
@@ -1023,6 +1135,12 @@ class Chunker:
 
         Returns:
             str: The final summary (parts joined by "\\n\\n---\\n\\n").
+
+        Raises:
+            ChunkingError: Fail-closed (spec §8.3) -- if any per-part LLM
+                call raises, returns an ``"Error: ..."`` string, or returns
+                a non-string, the whole summarization aborts with a message
+                naming the failed part (no marker text is persisted).
         """
         logger.info(f"Rolling summarization called. Detail: {detail}")
         text_token_length = self.token_chunker.count_tokens(text_to_summarize)
@@ -1096,11 +1214,14 @@ class Chunker:
                 if isinstance(summary_content, str) and summary_content.startswith(
                     "Error:"
                 ):
+                    # Fail closed (spec §8.3): persisting an error marker as
+                    # document text is silent data corruption.
                     logger.error(
                         f"LLM call for summarization part {i + 1} failed: {summary_content}"
                     )
-                    accumulated_summaries.append(
-                        f"[Summarization failed for this part: {chunk_for_llm[:100]}...]"
+                    raise ChunkingError(
+                        f"Rolling-summarize LLM call failed for part {i + 1}: "
+                        f"{summary_content}"
                     )
                 elif isinstance(summary_content, str):
                     accumulated_summaries.append(summary_content)
@@ -1108,17 +1229,23 @@ class Chunker:
                     logger.error(
                         f"LLM call for summarization part {i + 1} returned non-string: {type(summary_content)}"
                     )
-                    accumulated_summaries.append(
-                        f"[Summarization error for this part (unexpected type): {chunk_for_llm[:100]}...]"
+                    raise ChunkingError(
+                        f"Rolling-summarize LLM call failed for part {i + 1}: "
+                        f"provider returned unexpected type "
+                        f"{type(summary_content).__name__}"
                     )
 
+            except ChunkingError:
+                # The fail-closed raises above (spec §8.3) pass through
+                # unwrapped -- the broad handler below must not re-wrap them.
+                raise
             except Exception as e_llm:
                 logger.opt(exception=True).error(
                     f"Exception calling llm_summarize_step_func for part {i + 1}: {e_llm}"
                 )
-                accumulated_summaries.append(
-                    f"[Summarization failed for this part: {chunk_for_llm[:100]}...]"
-                )
+                raise ChunkingError(
+                    f"Rolling-summarize LLM call failed for part {i + 1}: {e_llm}"
+                ) from e_llm
 
         final_summary = "\n\n---\n\n".join(
             accumulated_summaries
@@ -1420,7 +1547,7 @@ def improved_chunking_process(
     text: str,
     chunk_options_dict: Optional[Dict[str, Any]] = None,
     tokenizer_name_or_path: str = "gpt2",
-    template: Optional[str] = None,
+    template: Optional[Any] = None,
     template_manager: Optional[Any] = None,
     llm_call_function_for_chunker: Optional[Callable] = None,
     llm_api_config_for_chunker: Optional[Dict[str, Any]] = None,
@@ -1430,8 +1557,7 @@ def improved_chunking_process(
     Mirrors the legacy flow exactly: builds a ``Chunker`` adapter (which
     resolves the effective options -- defaults <- template <- explicit --
     and, critically, routes ``rolling_summarize`` through the ported legacy
-    payload-dict implementation and ``template``/``template_manager``
-    through the template pipeline), calls its ``chunk_text``, then enriches
+    payload-dict implementation), calls its ``chunk_text``, then enriches
     every chunk with the legacy metadata (chunk_index 1-based, total_chunks,
     chunk_method, max_size_setting, overlap_setting, language,
     relative_position, adaptive_chunking_used, chunk_content_hash) and the
@@ -1439,19 +1565,23 @@ def improved_chunking_process(
     reads), synthesizing offsets against the source text when the chunker
     did not provide them.
 
-    On the delegated ``rolling_summarize`` path, LLM-call failures append
-    legacy ``"[Summarization failed for this part: ...]"`` markers to the
-    summary rather than raising -- the legacy caller-compat behavior
-    (deliberate §9 deviation; the engine's own fail-closed path is a
-    different, engine-level contract exercised by
-    Tests/Chunking/test_rolling_summarize_fail_closed.py in Task 4).
+    On the delegated ``rolling_summarize`` path, LLM-call failures raise
+    ``ChunkingError`` (fail-closed, spec §8.3): a provider exception, an
+    ``"Error: ..."`` result string, or a non-string result each abort the
+    chunking with a message naming the failed part -- matching the engine
+    strategy's own fail-closed contract
+    (Tests/Chunking/test_rolling_summarize_fail_closed.py). Legacy marker
+    text is never persisted as document content.
 
     Args:
         text (str): The text to chunk.
         chunk_options_dict (Optional[Dict[str, Any]]): Legacy chunk options.
         tokenizer_name_or_path (str): Tokenizer name or path.
-        template (Optional[str]): Template name for template-based chunking.
-        template_manager (Optional[Any]): Template manager instance.
+        template (Optional[Dict[str, Any]]): Pre-resolved template dict
+            (spec §8.2); a bare name string raises ``TemplateError``
+            pointing at ``template_runtime.resolve_template``.
+        template_manager (Optional[Any]): Accepted and ignored (spec §8.2;
+            legacy signature compatibility).
         llm_call_function_for_chunker (Optional[Callable]): LLM call function
             (rolling_summarize).
         llm_api_config_for_chunker (Optional[Dict[str, Any]]): LLM API config.
@@ -1464,6 +1594,8 @@ def improved_chunking_process(
         ChunkingError: On chunking failures, a missing real tokenizer for
             the tokens method, or tokens overlap >= max_size.
         InvalidChunkingMethodError: If the requested method is unsupported.
+        TemplateError: If ``template`` is a bare name string or an invalid
+            flat template dict.
     """
     logger.info("Improved chunking process started...")
     logger.debug(f"Received chunk_options_dict: {chunk_options_dict}")
@@ -1471,7 +1603,10 @@ def improved_chunking_process(
         f"Text length: {len(text)} characters, tokenizer: {tokenizer_name_or_path}"
     )
     if template:
-        logger.debug(f"Using template: {template}")
+        template_label = (
+            template.get("name") if isinstance(template, dict) else template
+        )
+        logger.debug(f"Using pre-resolved template: {template_label}")
 
     chunker_instance = Chunker(
         options=chunk_options_dict,

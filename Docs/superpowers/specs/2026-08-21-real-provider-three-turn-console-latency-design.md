@@ -318,6 +318,6 @@ scanned, and reviewed before TASK-20009 can close.
 ADR required: no.
 
 This design adds opt-in benchmark tooling and retained evidence. It changes no storage
-schema, runtime boundary, provider contract, ownership model, or long-lived UX. ADR-079
+schema, runtime boundary, provider contract, ownership model, or long-lived UX. ADR-084
 remains the governing decision for Change Review consent and asynchronous
 finalization.

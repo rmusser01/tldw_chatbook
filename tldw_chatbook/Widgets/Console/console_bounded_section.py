@@ -8,6 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import DescendantBlur, DescendantFocus
+from textual.scroll_view import ScrollView
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -50,10 +51,10 @@ class ConsoleBoundedSection(Vertical):
     Args:
         *content: Already-built widgets to mount inside the content viewport.
         section_id: Stable suffix used to derive the root, viewport, and hint IDs.
-        allocation: Optional owner allocation below the 20-line ceiling. ``None``
+        allocation: Optional owner allocation below the instance ceiling. ``None``
             uses the full ceiling.
-        max_content_lines: Rail ceiling. The shared Console contract fixes this at
-            20; the argument makes that contract explicit at construction.
+        max_content_lines: Positive rendered-content row ceiling. Defaults to the
+            Inspector contract of 20.
         on_focus_recovery: Called when the last focused content descendant is
             removed before reconciliation.
         classes: Additional classes for the root widget.
@@ -66,12 +67,17 @@ class ConsoleBoundedSection(Vertical):
         allocation: int | None = None,
         max_content_lines: int = MAX_SECTION_CONTENT_LINES,
         on_focus_recovery: Callable[[], None] | None = None,
+        native_scroll_owner: ScrollView | None = None,
         classes: str | None = None,
     ) -> None:
-        if max_content_lines != MAX_SECTION_CONTENT_LINES:
-            raise ValueError(
-                "Console bounded sections use a fixed 20-line content ceiling"
-            )
+        if isinstance(max_content_lines, bool) or not isinstance(
+            max_content_lines, int
+        ):
+            raise TypeError("max_content_lines must be an integer")
+        if max_content_lines <= 0:
+            raise ValueError("max_content_lines must be positive")
+        if native_scroll_owner is not None and native_scroll_owner in content:
+            raise ValueError("native_scroll_owner must not also appear in content")
         self.section_id = section_id
         self.root_id = f"console-bounded-section-{section_id}"
         self.viewport_id = f"{self.root_id}-viewport"
@@ -90,12 +96,23 @@ class ConsoleBoundedSection(Vertical):
         self._reconcile_scheduled = False
         self._focused_descendant: Widget | None = None
         self._focus_recovery_notified = False
+        self._native_scroll_owner = native_scroll_owner
+        self._native_content = tuple(content)
+        if native_scroll_owner is not None:
+            # Prevent ScrollView's class-level ``1fr`` from inflating an
+            # auto-height section before the first native geometry pass.
+            native_scroll_owner.styles.height = 0
+            native_scroll_owner.styles.min_height = 0
 
-        self._viewport = BoundedSectionViewport(
-            *content,
-            on_scroll_changed=self._update_hint,
-            id=self.viewport_id,
-        )
+        self._viewport: ScrollView
+        if native_scroll_owner is None:
+            self._viewport = BoundedSectionViewport(
+                *content,
+                on_scroll_changed=self._update_hint,
+                id=self.viewport_id,
+            )
+        else:
+            self._viewport = native_scroll_owner
         self._hint = Static(
             "",
             id=self.hint_id,
@@ -105,15 +122,14 @@ class ConsoleBoundedSection(Vertical):
         self._hint.can_focus = False
         self._hint.display = False
 
-    @staticmethod
-    def _normalize_allocation(allocation: int | None) -> int | None:
+    def _normalize_allocation(self, allocation: int | None) -> int | None:
         if allocation is None:
             return None
         if isinstance(allocation, bool) or not isinstance(allocation, int):
             raise TypeError("allocation must be an integer or None")
         if allocation < 0:
             raise ValueError("allocation must be non-negative")
-        return min(allocation, MAX_SECTION_CONTENT_LINES)
+        return min(allocation, self.max_content_lines)
 
     @property
     def allocation(self) -> int | None:
@@ -134,7 +150,7 @@ class ConsoleBoundedSection(Vertical):
 
         Args:
             allocation: Content rows granted by the owner, or ``None`` to use the
-                shared 20-line ceiling.
+                instance ceiling.
         """
 
         self.allocation = allocation
@@ -146,10 +162,16 @@ class ConsoleBoundedSection(Vertical):
         return self._desired_content_lines
 
     @property
-    def viewport(self) -> VerticalScroll:
+    def viewport(self) -> ScrollView:
         """The local native Textual scroll viewport."""
 
         return self._viewport
+
+    @property
+    def native_scroll_owner(self) -> ScrollView | None:
+        """The direct native scroll owner, or ``None`` in legacy wrapper mode."""
+
+        return self._native_scroll_owner
 
     @property
     def hint(self) -> Static:
@@ -158,7 +180,11 @@ class ConsoleBoundedSection(Vertical):
         return self._hint
 
     def compose(self) -> ComposeResult:
-        yield self._viewport
+        if self._native_scroll_owner is None:
+            yield self._viewport
+        else:
+            yield from self._native_content
+            yield self._viewport
         yield self._hint
 
     async def recompose(self) -> None:
@@ -178,6 +204,8 @@ class ConsoleBoundedSection(Vertical):
 
     def on_mount(self) -> None:
         self._focus_recovery_notified = False
+        if self._native_scroll_owner is not None:
+            self.watch(self._viewport, "scroll_y", self._update_hint)
         self.request_reconcile()
 
     def on_show(self) -> None:
@@ -190,16 +218,17 @@ class ConsoleBoundedSection(Vertical):
         """Remember content focus and fully reveal it in the local viewport."""
 
         target = event.widget
-        if target is self._viewport:
+        if target is self._viewport and self._native_scroll_owner is None:
             return
-        if self._viewport in target.ancestors:
+        if target is self._viewport or self._viewport in target.ancestors:
             self._focus_recovery_notified = False
             self._focused_descendant = target
-            self._viewport.scroll_to_widget(
-                target,
-                animate=False,
-                immediate=True,
-            )
+            if target is not self._viewport:
+                self._viewport.scroll_to_widget(
+                    target,
+                    animate=False,
+                    immediate=True,
+                )
             self._update_hint()
 
     def on_descendant_blur(self, event: DescendantBlur) -> None:
@@ -229,6 +258,10 @@ class ConsoleBoundedSection(Vertical):
         ):
             # A hidden same-instance section has no honest geometry to measure.
             # Preserve its transient offset; ``Show`` schedules the real snapshot.
+            return
+
+        if self._native_scroll_owner is not None:
+            self._reconcile_native()
             return
 
         try:
@@ -280,6 +313,53 @@ class ConsoleBoundedSection(Vertical):
         )
         self._has_overflow = has_overflow
         self._set_hint_layout(hint, visible=has_overflow)
+        self._recover_removed_focus_target()
+        self._update_hint()
+
+    def _reconcile_native(self) -> None:
+        """Size fixed chrome plus one direct native ScrollView without wrapping it."""
+
+        viewport = self._native_scroll_owner
+        if viewport is None or not viewport.is_mounted or not self._hint.is_mounted:
+            self._fail_closed()
+            return
+
+        fixed_lines = sum(
+            child.virtual_region_with_margin.height
+            for child in self._native_content
+            if child.is_mounted and child.display
+        )
+        virtual_lines = max(0, viewport.virtual_size.height)
+        desired = fixed_lines + virtual_lines
+        limit = self.max_content_lines
+        if self._allocation is not None:
+            limit = min(limit, self._allocation)
+        tree_available = max(0, limit - fixed_lines)
+        target_height = min(virtual_lines, tree_available)
+
+        self._desired_content_lines = desired
+        if viewport.content_region.height != target_height:
+            viewport.styles.height = target_height
+            self.styles.height = fixed_lines + target_height
+            viewport.scroll_y = min(
+                viewport.scroll_y,
+                max(0, virtual_lines - target_height),
+            )
+            self._has_overflow = False
+            self._set_hint_layout(self._hint, visible=False)
+            self.request_reconcile()
+            return
+
+        max_scroll_y = max(0, viewport.max_scroll_y)
+        if viewport.scroll_y > max_scroll_y:
+            viewport.scroll_y = max_scroll_y
+        has_overflow = virtual_lines > target_height > 0 and max_scroll_y > 0
+        self._has_overflow = has_overflow
+        self._set_hint_layout(self._hint, visible=has_overflow)
+        native_height = fixed_lines + target_height + int(has_overflow)
+        if self.region.height != native_height:
+            self.styles.height = native_height
+            self.request_reconcile()
         self._recover_removed_focus_target()
         self._update_hint()
 
@@ -363,9 +443,21 @@ class ConsoleBoundedSection(Vertical):
         self._focus_recovery_notified = True
         callback()
 
+    def _acknowledge_focus_recovery(self, target: Widget | None) -> None:
+        """Acknowledge owner recovery so this observer cannot signal it again."""
+
+        self._focused_descendant = (
+            target
+            if target is not None
+            and (target is self._viewport or self._viewport in target.ancestors)
+            else None
+        )
+        self._focus_recovery_notified = True
+
     def _fail_closed(self) -> None:
         self._has_overflow = False
-        self._viewport.can_focus = False
+        if self._native_scroll_owner is None:
+            self._viewport.can_focus = False
         self._set_hint_layout(self._hint, visible=False)
 
     def _set_hint_layout(self, hint: Static, *, visible: bool) -> None:
@@ -392,6 +484,7 @@ class ConsoleBoundedSection(Vertical):
 
 
 __all__ = [
+    "BoundedSectionViewport",
     "ConsoleBoundedSection",
     "LOCAL_SCROLL_HINT",
     "MAX_SECTION_CONTENT_LINES",

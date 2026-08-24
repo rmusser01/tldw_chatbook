@@ -9,6 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -456,6 +457,98 @@ def test_fs_grep_spec_read_only_with_mode_enum(tmp_path):
     assert p.hub_tool_for("fs_grep").tags == ()  # read-only: no risk tags
 
 
+# -- TASK-19558: why the read-only local tools carry no "reads" tag -----------
+#
+# The holistic review asked whether `fs_read`/`fs_list`/`fs_glob`/`fs_grep`/
+# `web_*`/`watchlists_*` should carry ("reads",) like their in-process
+# builtin equivalents (`Tools/file_operation_tools.py`), on the premise that
+# "untagged tools are not floored to ask". These three tests demonstrate --
+# rather than assert -- why the answer is no, so the question is settled
+# with a mechanism instead of being re-asked every review.
+
+
+def test_the_reads_tag_would_floor_nothing_on_the_local_resolver(tmp_path):
+    """`("reads",)` is inert for a local tool: the resolver never reads it.
+
+    Local tools are resolved by `resolve_effective_state` (the MCP
+    resolver, wired in `console_chat_controller` via
+    `UnifiedControlPlaneService.gate_tool_test`), whose floor set is
+    `HIGH_RISK_TAGS = {"mutates", "process"}`. `"reads"` lives in
+    `BUILTIN_HIGH_RISK_TAGS`, which only `resolve_builtin_state` consults,
+    and that function serves the `agent:builtin` server key -- never
+    `local:__local__`. So adding the tag would produce a marking that reads
+    as protection in review and provides none: the exact shape TASK-19558
+    removed from `ChaChaNotes_DB`'s `safe_search_term` dead stores.
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.MCP.permission_store import (
+        BUILTIN_HIGH_RISK_TAGS,
+        HIGH_RISK_TAGS,
+        resolve_effective_state,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import LOCAL_SERVER_KEY
+
+    assert "reads" not in HIGH_RISK_TAGS
+    assert "reads" in BUILTIN_HIGH_RISK_TAGS
+
+    payload = {
+        "profiles": {
+            "default": {
+                "global_default": "ask",
+                "servers": {LOCAL_SERVER_KEY: {"default": "allow"}},
+            }
+        }
+    }
+    p = make_provider(root=tmp_path)
+    untagged = p.hub_tool_for("fs_read")
+    tagged = replace(untagged, tags=("reads",))
+
+    assert resolve_effective_state(payload, untagged).state == "allow"
+    # Same verdict with the tag applied -- i.e. the tag changes nothing.
+    assert resolve_effective_state(payload, tagged).state == "allow"
+    # ...while a tag the resolver DOES consult floors the same inherited allow.
+    assert (
+        resolve_effective_state(payload, replace(untagged, tags=("mutates",))).state
+        == "ask"
+    )
+
+
+def test_mutating_local_tools_are_floored_because_that_tag_is_consulted(tmp_path):
+    """The contrast: `("mutates",)` is applied where it is load-bearing."""
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+    from tldw_chatbook.Agents.local_tool_provider import LOCAL_SERVER_KEY
+
+    payload = {
+        "profiles": {
+            "default": {
+                "global_default": "ask",
+                "servers": {LOCAL_SERVER_KEY: {"default": "allow"}},
+            }
+        }
+    }
+    p = make_provider(root=tmp_path)
+    for name in ("fs_write", "fs_edit", "fs_patch"):
+        hub = p.hub_tool_for(name)
+        assert hub.tags == ("mutates",), name
+        resolved = resolve_effective_state(payload, hub)
+        assert resolved.state == "ask" and resolved.risk_floored, name
+
+
+def test_local_tools_default_to_ask_without_an_explicit_server_allow(tmp_path):
+    """The floor debate only matters after a user has opted out of asking.
+
+    A fresh permission store has no `local:__local__` entry, so every local
+    tool -- tagged or not -- inherits `global_default` = "ask" and already
+    raises an approval card per call.
+    """
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+
+    p = make_provider(root=tmp_path)
+    for name in ("fs_read", "fs_list", "fs_glob", "fs_grep"):
+        assert resolve_effective_state({}, p.hub_tool_for(name)).state == "ask", name
+
+
 # -- git_* read-only tool specs (phase 3b-ii, ADR-033) -------------------------
 #
 # ADR-033 binding: the git_* set is read-only over a fixed, allowlisted argv
@@ -675,6 +768,68 @@ def test_stamp_scope_isolates_nested_run(tmp_path):
 def test_execution_error_becomes_result_string(tmp_path):
     r = make_provider(root=tmp_path).invoke("local:fs_list", {"path": "../escape"})
     assert not r.ok and "outside the workspace root" in r.error
+
+
+def test_authority_scope_failure_uses_authority_refusal_not_root_drift(tmp_path):
+    class UnavailableAuthority:
+        def __enter__(self):
+            raise RuntimeError("scratch lease revoked")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    provider = make_provider(
+        root=tmp_path,
+        authority_scope=UnavailableAuthority,
+    )
+
+    result = provider.invoke("local:fs_list", {"path": "."})
+
+    assert not result.ok
+    assert result.error == LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
+
+
+def test_private_root_locator_is_redacted_from_local_tool_errors(tmp_path):
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    provider = make_provider(
+        root=scratch,
+        result_redaction_root=scratch,
+    )
+
+    result = provider.invoke("local:fs_list", {"path": "../escape"})
+
+    assert not result.ok
+    assert str(scratch) not in result.error
+    assert "workspace root (.)" in result.error
+
+
+def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolSpec
+
+    private_root = tmp_path / ("PRIVATE_LOCATOR_" + ("x" * 350))
+
+    def fail(_args):
+        raise RuntimeError(f"{private_root}/marker.txt")
+
+    provider = make_provider(
+        root=tmp_path,
+        specs=[
+            LocalToolSpec(
+                name="fail",
+                description="fails with a long private locator",
+                parameters={},
+                handler=fail,
+            )
+        ],
+        result_redaction_root=private_root,
+    )
+
+    result = provider.invoke("local:fail", {})
+
+    assert not result.ok
+    assert "PRIVATE_LOCATOR" not in result.error
+    assert result.error == "marker.txt"
 
 
 # -- session approvals + persistence seams (Task 5) ---------------------------

@@ -17,6 +17,8 @@ from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
@@ -612,8 +614,8 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
-        "handle_library_notes_sync_browse",
-        SelectDirectory,
+        "handle_library_notes_lasting_folder_requested",
+        FileOpen,
     ),
     _edge(
         _LIBRARY_SCREEN_FILE,
@@ -926,7 +928,7 @@ FILE_NOTES_MODAL_CONTRACTS = (
 )
 
 
-class _FileNotesModalHarness(App[None]):
+class _FileNotesModalHarness(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.results: list[object] = []

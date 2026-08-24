@@ -9,7 +9,7 @@ commit = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 vendored = [
     "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
     "option_utils.py", "regex_safety.py", "security_logger.py",
-    "multilingual.py", "llm_context.py",
+    "multilingual.py", "llm_context.py", "templates.py", "auto_planner.py",
     "process_text/__init__.py", "process_text/models.py", "process_text/options.py",
     "process_text/preparation.py", "process_text/dispatch.py",
     "process_text/pipeline.py", "process_text/metadata.py",
@@ -19,14 +19,40 @@ vendored = [
     "strategies/ebook_chapters.py", "strategies/ebook_chapters_patch.py",
     "strategies/structure_aware.py", "strategies/code.py", "strategies/code_ast.py",
     "strategies/fixed_size.py", "strategies/semantic.py",
-    "strategies/rolling_summarize.py",
+    "strategies/rolling_summarize.py", "strategies/propositions.py",
     "utils/metrics.py",
 ]
 extra = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]  # scope map + GPLv3 §4 licence text, shipped verbatim
-excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
-            "template_initialization.py", "template_library/", "auto_planner.py",
-            "async_chunker.py", "auto_boundary_assistant.py",
-            "strategies/propositions.py", "utils/proposition_eval.py"]
+
+# The descope ledger (2026-08-23 propositions-vendoring spec §4): every
+# excluded entry carries its reason; the NOT-VENDORED rulings are permanent
+# and mirror into the sync script's TESTS_MODULE_SKIPPED reasons.
+# Tests/Chunking/test_descope_ledger.py pins both surfaces.
+excluded = [
+    "__init__.py",          # upstream's package init: chatbook-authored instead (spec §5.1)
+    "README.md", "SECURITY.md",  # upstream docs, not engine code
+    "template_initialization.py",  # template init half stays server-side (#2's ruling, spec §13 decision 5)
+    "template_library/",    # server-side template storage; chatbook ships template_validation parity
+    # NOT VENDORED — descope ruling (spec §4.1): auto_boundary_assistant
+    # imports the server's provider stack (AuthNZ llm_provider_overrides +
+    # providerCredentialRuntime, Chat bounded_daemon + chat_helpers,
+    # LLM_Calls adapter_registry, api.v1.schemas at function level) —
+    # server-stack shims with no chatbook consumer; the capability is
+    # covered by #3's auto-selection and #4's agent surface. Revisit only
+    # if a consumer appears — as a fresh decision against this cost record.
+    # The #1 §0 drift obligation for this file closes as moot.
+    "auto_boundary_assistant.py",
+    # NOT VENDORED — descope ruling (spec §4.2): async_chunker requires
+    # http_client (RetryPolicy/afetch) + core.exceptions.ValidationError;
+    # chatbook chunks in-process and calls no async entry point — no
+    # chatbook consumer. Revisit only if a consumer appears. The #1 §0
+    # drift obligation for this file closes as moot.
+    "async_chunker.py",
+    # upstream's proposition-quality eval harness: rides the §4 descope —
+    # a server-side test util with no chatbook consumer (its runtime-
+    # snapshot suite is likewise unported; see sync_chunking_engine.py)
+    "utils/proposition_eval.py",
+]
 
 [patches]
 # Chatbook-side scripted patches applied by sync_chunking_engine.py after the

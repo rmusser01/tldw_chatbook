@@ -1251,6 +1251,12 @@ async def test_controller_preview_does_not_advance_live_session_state(
     consent.assert_not_called()
     state_setter.assert_not_called()
     exact_builder.assert_called_once()
+    preview_kwargs = exact_builder.call_args.kwargs
+    scratch_snapshot = controller._scratch_spaces.snapshot(session.id)
+    assert preview_kwargs["scratch_root"] == scratch_snapshot.root
+    with preview_kwargs["scratch_lease"]() as leased_root:
+        assert leased_root == scratch_snapshot.root
+    assert controller._scratch_spaces.dispose()
 
 
 @pytest.mark.asyncio

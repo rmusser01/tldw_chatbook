@@ -1118,3 +1118,94 @@ def test_missing_file_is_report_only_without_fabricated_binding(
     assert plan.bindings == ()
     assert "file_missing" in {item.reason_code for item in plan.report}
     connection.close()
+
+
+def test_legacy_snapshot_rejects_note_evidence_beyond_the_bounded_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-21112: the first-boot evidence SELECTs must not be unbounded."""
+
+    import tldw_chatbook.Notes.notes_sync_legacy as legacy_module
+
+    monkeypatch.setattr(legacy_module, "LEGACY_SNAPSHOT_EVIDENCE_LIMIT", 3)
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    for index in range(4):
+        name = f"item-{index}.md"
+        (root / name).write_bytes(b"row")
+        _add_note(
+            connection,
+            note_id=f"note-{index}",
+            root=root,
+            relative_path=name,
+            file_path=root / name,
+        )
+
+    with pytest.raises(
+        legacy_module.LegacyNotesSyncSnapshotError, match="legacy_snapshot_overflow"
+    ):
+        snapshot_legacy_notes_sync(connection, {"notes": {}}, note_scope_id="local")
+    connection.close()
+
+
+def test_legacy_snapshot_rejects_session_evidence_beyond_the_bounded_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_legacy as legacy_module
+
+    monkeypatch.setattr(legacy_module, "LEGACY_SNAPSHOT_EVIDENCE_LIMIT", 3)
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    for index in range(4):
+        _add_session(connection, session_id=f"session-{index}", root=root)
+
+    with pytest.raises(
+        legacy_module.LegacyNotesSyncSnapshotError, match="legacy_snapshot_overflow"
+    ):
+        snapshot_legacy_notes_sync(connection, {"notes": {}}, note_scope_id="local")
+    connection.close()
+
+
+def test_legacy_snapshot_exactly_at_the_bounded_limit_still_migrates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_legacy as legacy_module
+
+    monkeypatch.setattr(legacy_module, "LEGACY_SNAPSHOT_EVIDENCE_LIMIT", 3)
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    for index in range(3):
+        name = f"item-{index}.md"
+        (root / name).write_bytes(b"row")
+        _add_note(
+            connection,
+            note_id=f"note-{index}",
+            root=root,
+            relative_path=name,
+            file_path=root / name,
+        )
+        _add_session(connection, session_id=f"session-{index}", root=root)
+
+    snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert len(snapshot.notes) == 3
+    assert len(plan.bindings) == 3
+    connection.close()
+
+
+def test_legacy_sync_directory_configured_matches_snapshot_presence_semantics() -> None:
+    """TASK-21112: the start gate keys off presence, exactly like the snapshot."""
+
+    from tldw_chatbook.Notes.notes_sync_legacy import legacy_sync_directory_configured
+
+    assert legacy_sync_directory_configured({"notes": {"sync_directory": "/x"}})
+    # Presence, not validity: the snapshot treats a present-but-None key as
+    # config evidence, so the gate must admit it too.
+    assert legacy_sync_directory_configured({"notes": {"sync_directory": None}})
+    assert not legacy_sync_directory_configured({"notes": {}})
+    assert not legacy_sync_directory_configured({})
+    assert not legacy_sync_directory_configured({"notes": "invalid"})
+    assert not legacy_sync_directory_configured(None)

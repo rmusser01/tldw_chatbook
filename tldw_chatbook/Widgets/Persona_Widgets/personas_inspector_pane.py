@@ -12,7 +12,7 @@ from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
 
-from .personas_messages import PersonaBuddyActionRequested
+from .personas_messages import ActorPackExportRequested, PersonaBuddyActionRequested
 from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
@@ -158,6 +158,12 @@ class PersonasInspectorPane(VerticalScroll):
         self._buddy_owner_persona_id: str | None = None
         self._buddy_enabled = False
         self._buddy_open = True
+        self._actor_pack_source: str | None = None
+        self._actor_pack_kind: str | None = None
+        self._actor_pack_local_id: str | None = None
+        self._actor_pack_revision: int | None = None
+        self._actor_pack_eligible = False
+        self._actor_pack_reason: str | None = None
         # F-040: marked library rows drive bulk Delete/Export JSON affordances.
         self._marked_count = 0
 
@@ -294,6 +300,13 @@ class PersonasInspectorPane(VerticalScroll):
                 tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
             )
             yield Button(
+                "Export Actor Pack",
+                id="personas-export-actor-pack",
+                disabled=True,
+                classes="console-action-subdued actor-pack-export-action",
+                tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
+            )
+            yield Button(
                 "Delete",
                 id="personas-delete",
                 disabled=True,
@@ -328,6 +341,12 @@ class PersonasInspectorPane(VerticalScroll):
         self._buddy_active = active is True
         self._buddy_profile_current = profile_current is True
         self._tts_export_available = False
+        self._actor_pack_source = None
+        self._actor_pack_kind = None
+        self._actor_pack_local_id = None
+        self._actor_pack_revision = None
+        self._actor_pack_eligible = False
+        self._actor_pack_reason = None
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
         self.query_one("#personas-selected-kind", Static).update(f"Type: {kind}")
@@ -343,6 +362,12 @@ class PersonasInspectorPane(VerticalScroll):
         self._buddy_active = False
         self._buddy_profile_current = False
         self._tts_export_available = False
+        self._actor_pack_source = None
+        self._actor_pack_kind = None
+        self._actor_pack_local_id = None
+        self._actor_pack_revision = None
+        self._actor_pack_eligible = False
+        self._actor_pack_reason = None
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
@@ -377,6 +402,26 @@ class PersonasInspectorPane(VerticalScroll):
         self._tts_export_available = bool(available)
         if not self._tts_export_available:
             self.query_one("#personas-export-include-tts", Checkbox).value = False
+        self._apply_action_state()
+
+    def set_actor_pack_export_state(
+        self,
+        *,
+        source: str,
+        actor_kind: str,
+        local_actor_id: str,
+        actor_revision: int,
+        eligible: bool,
+        reason: str | None = None,
+    ) -> None:
+        """Apply the screen-owned Actor Pack export eligibility snapshot."""
+
+        self._actor_pack_source = source
+        self._actor_pack_kind = actor_kind
+        self._actor_pack_local_id = local_actor_id
+        self._actor_pack_revision = actor_revision
+        self._actor_pack_eligible = eligible is True
+        self._actor_pack_reason = reason
         self._apply_action_state()
 
     @property
@@ -645,6 +690,34 @@ class PersonasInspectorPane(VerticalScroll):
         png_button.display = export_png_applies
         png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
         png_button.tooltip = "Bulk export is JSON only." if marked else export_tooltip
+        actor_pack_button = self.query_one("#personas-export-actor-pack", Button)
+        actor_pack_applies = selected and kind in {"character", "persona"}
+        actor_pack_enabled = bool(
+            actor_pack_applies
+            and not unsaved
+            and marked == 0
+            and self._actor_pack_eligible
+            and self._actor_pack_source == "local"
+            and self._actor_pack_kind == kind
+            and self._actor_pack_local_id
+            and type(self._actor_pack_revision) is int
+            and self._actor_pack_revision >= 1
+        )
+        actor_pack_button.display = actor_pack_applies
+        actor_pack_button.disabled = not actor_pack_enabled
+        actor_pack_button.tooltip = (
+            None
+            if actor_pack_enabled
+            else (
+                _UNSAVED_TOOLTIP
+                if unsaved
+                else (
+                    "Select one item to export."
+                    if marked
+                    else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
+                )
+            )
+        )
         delete_button = self.query_one("#personas-delete", Button)
         delete_button.disabled = (not selected) and marked == 0
         delete_button.tooltip = (
@@ -744,6 +817,26 @@ class PersonasInspectorPane(VerticalScroll):
                 source=self._buddy_source,
                 persona_id=self._buddy_persona_id,
                 revision=self._buddy_revision,
+            )
+        )
+
+    @on(Button.Pressed, "#personas-export-actor-pack")
+    def _actor_pack_export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if (
+            event.button.disabled
+            or self._actor_pack_kind not in {"character", "persona"}
+            or self._actor_pack_source not in {"local", "server"}
+            or not self._actor_pack_local_id
+            or type(self._actor_pack_revision) is not int
+        ):
+            return
+        self.post_message(
+            ActorPackExportRequested(
+                actor_kind=self._actor_pack_kind,
+                source=self._actor_pack_source,
+                local_actor_id=self._actor_pack_local_id,
+                actor_revision=self._actor_pack_revision,
             )
         )
 

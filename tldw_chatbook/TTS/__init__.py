@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from tldw_chatbook.TTS.adapter_types import (
     CapabilitySnapshotState,
     ProgressSink,
@@ -94,13 +96,62 @@ from tldw_chatbook.TTS.voice_bundle_codec import (
     encode_clone_voice_bundle,
     inspect_clone_voice_bundle,
 )
-from tldw_chatbook.TTS.voice_bundle_service import (
-    TTSVoiceBundleHandle,
-    TTSVoiceBundleImportChoice,
-    TTSVoiceBundleImportResult,
-    TTSVoiceBundlePortabilityService,
-    TTSVoiceBundleReview,
+# TASK-21108: `voice_bundle_service` (1,857 lines) is the one member of this
+# package nothing needs before first paint -- `app.py` builds the portability
+# service on first use and `UI/stts_profile_library` is the only other
+# consumer -- yet this eager package init put it on the
+# `import tldw_chatbook.app` path, because `from tldw_chatbook.TTS import
+# TTSProfileService` executes the whole file. The five names below are served
+# by the PEP 562 `__getattr__` at the bottom instead, so the public package
+# API is unchanged and the module loads on first attribute access.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.voice_bundle_service import (
+        TTSVoiceBundleHandle,
+        TTSVoiceBundleImportChoice,
+        TTSVoiceBundleImportResult,
+        TTSVoiceBundlePortabilityService,
+        TTSVoiceBundleReview,
+    )
+
+_LAZY_VOICE_BUNDLE_SERVICE_NAMES = frozenset(
+    {
+        "TTSVoiceBundleHandle",
+        "TTSVoiceBundleImportChoice",
+        "TTSVoiceBundleImportResult",
+        "TTSVoiceBundlePortabilityService",
+        "TTSVoiceBundleReview",
+    }
 )
+
+
+def __getattr__(name: str) -> object:
+    """Resolve the deferred voice-bundle-service exports on first access.
+
+    Args:
+        name: The attribute requested from this package.
+
+    Returns:
+        object: The attribute, imported from ``voice_bundle_service`` and
+        cached in the module globals so later reads skip this hook.
+
+    Raises:
+        AttributeError: For any other name, so ``from tldw_chatbook.TTS
+            import <submodule>`` still falls through to the normal submodule
+            import machinery.
+    """
+    if name in _LAZY_VOICE_BUNDLE_SERVICE_NAMES:
+        from tldw_chatbook.TTS import voice_bundle_service
+
+        value = getattr(voice_bundle_service, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """List the eager and deferred names this package serves."""
+    return sorted(set(globals()) | _LAZY_VOICE_BUNDLE_SERVICE_NAMES)
+
 
 __all__ = [
     "AssignedTTSProfileSnapshot",

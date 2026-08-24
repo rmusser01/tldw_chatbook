@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -87,6 +88,35 @@ INGEST_PATH_LABEL_COPY = "File, folder or URL to import"
 #: ``ingest-preflight-copy-command-`` (the per-extra buttons' prefix, which
 #: the shared handler parses an index out of).
 INGEST_COPY_ALL_COMMANDS_ID = "ingest-preflight-copy-all-commands"
+
+#: (task 11, spec §9.3 / AC 39) The chunking-template picker's contract.
+#: The widget id follows the ``opt-<group>-<name>`` convention so the generic
+#: option-value bubble parses it with no extra handler; ``chunk_template`` is
+#: the exact key ``_ingest_job_options`` reads as the picker slot of the §9.1
+#: resolution order (Task 10).
+INGEST_CHUNK_TEMPLATE_FIELD = "chunk_template"
+INGEST_CHUNK_TEMPLATE_PICKER_ID = "opt-generic-chunk_template"
+#: The default choice's VALUE -- the empty string, so an untouched form
+#: submits a falsy picker choice and resolution falls through to the config
+#: default / plain options (today's behavior exactly).
+INGEST_CHUNK_TEMPLATE_NONE_VALUE = ""
+#: The default choice's LABEL (spec §9.3's exact wording).
+INGEST_CHUNK_TEMPLATE_NONE_LABEL = "None (manual settings)"
+#: (task 4, auto-selection spec §4.3, AC 7) The "Auto" option's value --
+#: the RESERVED sentinel name ``auto_selection.AUTO_SENTINEL`` (the string
+#: is duplicated here rather than imported so the canvas keeps its
+#: import-light, Chunking-free import graph; ``Tests/UI/
+#: test_library_ingest_template_picker.py`` pins the equality). No user
+#: template can hold the name -- create/rename refuse it case-insensitively
+#: on the whole word (Qodo #4), and the populate filter drops any legacy
+#: cased row -- so the sentinel can never shadow a real row. None stays
+#: the DEFAULT (ruling §8.3).
+INGEST_CHUNK_TEMPLATE_AUTO_VALUE = "auto"
+#: The Auto option's LABEL -- plain "Auto" (no markup, no suffix).
+INGEST_CHUNK_TEMPLATE_AUTO_LABEL = "Auto"
+#: What the picker's label line says (it is not a capability-schema field,
+#: so it carries no schema hint).
+INGEST_CHUNK_TEMPLATE_LABEL = "Chunking template"
 
 
 def install_command_button_label(command: str) -> str:
@@ -1076,6 +1106,12 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         # widget announcing the value we just gave it is recognised as mount
         # noise rather than a user edit -- see ``_handle_option_value_changed``.
         self._reported_option_values: dict[tuple[str, str], Any] = {}
+        # (task 11, spec §9.3) Live chunking-template names, fetched off the
+        # mount path via the scope service (see ``_fetch_chunk_templates``).
+        # Lives on the CANVAS, not a child, because ``sync_state`` recomposes
+        # the children -- a rebuilt ``Select`` re-reads this cache so the
+        # populated list survives every re-render without a re-query.
+        self._chunk_template_names: list[str] = []
 
     def sync_state(self, state: LibraryIngestCanvasState) -> None:
         """Rebuild only the mounted ingest canvas from a complete snapshot.
@@ -1308,6 +1344,71 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 )
                 error_line.display = bool(error_message)
                 children.append(error_line)
+
+        if (
+            group == "generic"
+            and str(self.state.ingest_backend).strip().lower() != "server"
+        ):
+            # (task 11, spec §9.3 / AC 39) The chunking-template picker.
+            # HIDDEN in server mode via the same compose-time filter that is
+            # this file's mode-visibility source of truth for schema fields
+            # (``capabilities_for_backend`` above): a server-mode snapshot
+            # never carries a template, and Task 10's ``build_server_ingest_
+            # kwargs`` strip is the defensive half for stale snapshots.
+            # (task 4, auto-selection §4.3) The static "Auto" option rides
+            # beside None with the reserved sentinel value; None stays the
+            # default. Options come from the canvas-level cache, so a
+            # recompose re-renders the populated list without re-querying
+            # the DB. escape_markup: template names are user-authored free
+            # text and ``Select`` parses its labels as markup (the
+            # bench_editor precedent) -- an unescaped ``[red]`` in a name
+            # would be eaten as a style tag.
+            available = [
+                INGEST_CHUNK_TEMPLATE_NONE_VALUE,
+                INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
+                *self._chunk_template_names,
+            ]
+            picker_value = values.get(
+                INGEST_CHUNK_TEMPLATE_FIELD, INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            )
+            if picker_value not in available:
+                picker_value = INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            self._reported_option_values[
+                ("generic", INGEST_CHUNK_TEMPLATE_FIELD)
+            ] = picker_value
+            chunk_on = bool(values.get("chunk", True))
+            picker_label = INGEST_CHUNK_TEMPLATE_LABEL
+            if not chunk_on:
+                picker_label = f"{picker_label} — needs Chunk content on"
+            children.append(
+                Static(
+                    picker_label,
+                    classes="type-group-field-label",
+                    markup=False,
+                )
+            )
+            children.append(
+                Select(
+                    [
+                        (
+                            INGEST_CHUNK_TEMPLATE_NONE_LABEL,
+                            INGEST_CHUNK_TEMPLATE_NONE_VALUE,
+                        ),
+                        (
+                            INGEST_CHUNK_TEMPLATE_AUTO_LABEL,
+                            INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
+                        ),
+                        *[
+                            (escape_markup(name), name)
+                            for name in self._chunk_template_names
+                        ],
+                    ],
+                    value=picker_value,
+                    id=INGEST_CHUNK_TEMPLATE_PICKER_ID,
+                    disabled=(not chunk_on) or self.external_busy,
+                    allow_blank=False,
+                )
+            )
 
         if group == "audio_video":
             provider = cap_fields_by_name["transcription_provider"]
@@ -1653,6 +1754,88 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     def on_mount(self) -> None:
         """Settle the fold indicator once first layout has real sizes."""
         self.call_after_refresh(self.sync_fold_hint)
+
+    def on_show(self) -> None:
+        """Populate DB-backed controls once the canvas is actually visible.
+
+        (task 11, spec §9.3 / AC 39) The chunking-template picker is
+        populated OFF the mount path: mount-time DB populate is the
+        documented cause of "(0)" count bugs in the Notes rebuild, so the
+        fetch is scheduled from the visibility event (never ``on_mount``)
+        into a worker. Re-entering the Ingest canvas remounts it, so this
+        also re-queries after the user creates/renames a template
+        elsewhere; within one mount the populated list survives recomposes
+        off the canvas-level cache.
+        """
+        self._request_chunk_template_refresh()
+
+    def _request_chunk_template_refresh(self) -> None:
+        """Schedule (once per visibility) the template-list fetch worker."""
+        if str(self.state.ingest_backend).strip().lower() == "server":
+            return
+        try:
+            self.run_worker(
+                self._fetch_chunk_templates(),
+                group="library-ingest-chunk-templates",
+                exclusive=True,
+            )
+        except Exception:
+            # A worker-scheduling failure must never break the canvas.
+            return
+
+    async def _fetch_chunk_templates(self) -> None:
+        """Query the live chunking-template names via the scope service.
+
+        Reaches for the app's ``rag_admin_scope_service`` (local mode) and
+        degrades quietly -- a missing service, a policy denial, or a store
+        error leaves the picker at its "None (manual settings)" default
+        rather than breaking the ingest form. Applies the fetched names to
+        the LIVE select in place (``set_options``); recomposes re-read the
+        cache at compose time, so no structural update is needed.
+        """
+        service = getattr(self.app, "rag_admin_scope_service", None)
+        list_templates = getattr(service, "list_templates", None)
+        if not callable(list_templates):
+            return
+        try:
+            records = await list_templates(mode="local")
+        except Exception:
+            return
+        names: list[str] = []
+        for record in records or []:
+            name = str((record or {}).get("name") or "").strip()
+            # (task 4, auto-selection §4.3/AC 14; Qodo #4) A legacy row
+            # holding the reserved sentinel name (created before the
+            # reservation) is flagged shadowed by the listing and must NOT
+            # appear as a second option with the Auto sentinel's value.
+            # The match is case-insensitive on the whole word AND honors
+            # the listing's ``name_reserved`` decoration: "Auto"/"AUTO"
+            # render indistinguishably from the built-in Auto option.
+            if (
+                name
+                and name.lower() != INGEST_CHUNK_TEMPLATE_AUTO_VALUE
+                and (record or {}).get("name_reserved") is not True
+                and name not in names
+            ):
+                names.append(name)
+        self._chunk_template_names = names
+        try:
+            picker = self.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}", Select)
+        except NoMatches:
+            return  # server mode (or mid-recompose): the cache has it
+        options = [
+            (INGEST_CHUNK_TEMPLATE_NONE_LABEL, INGEST_CHUNK_TEMPLATE_NONE_VALUE),
+            (INGEST_CHUNK_TEMPLATE_AUTO_LABEL, INGEST_CHUNK_TEMPLATE_AUTO_VALUE),
+            *[(escape_markup(name), name) for name in names],
+        ]
+        # Preserve the current choice; ``set_options`` resets the value only
+        # when it disappears (a deleted template falls back to None here,
+        # and §9.1's not-found ruling fires at submit for stale snapshots).
+        if picker.value not in {value for _label, value in options}:
+            self._reported_option_values[
+                ("generic", INGEST_CHUNK_TEMPLATE_FIELD)
+            ] = INGEST_CHUNK_TEMPLATE_NONE_VALUE
+        picker.set_options(options)
 
     def on_resize(self, _event: Any) -> None:
         """A viewport change can (un)cover the fold -- re-derive the hint."""

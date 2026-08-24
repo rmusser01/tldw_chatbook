@@ -89,9 +89,10 @@ from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from tldw_chatbook.css import build_css, widget_css
+from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -115,6 +116,7 @@ from .config import (
     get_notifications_db_path,
     get_notes_sync_state_db_path,
     get_notes_sync_recovery_capacity_bytes,
+    get_notes_sync_watcher_intervals,
     get_research_db_path,
     get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
@@ -296,6 +298,12 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_TITLE_BRAIN,
     supports_emoji,
 )
+from tldw_chatbook.Utils.app_shutdown import (
+    arm_exit_watchdog,
+    install_termination_handlers,
+    register_running_app,
+    unregister_running_app,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
@@ -317,10 +325,22 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.TTS.voice_bundle_service import (
-    TTSVoiceBundlePortabilityService,
-)
-from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+# TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
+# function-locally in `_ensure_tts_voice_bundle_service` -- the only place
+# that constructs it, on first use, long after first paint. The name below is
+# TYPE_CHECKING-only, so every annotation that mentions it must stay a string
+# (app.py has no `from __future__ import annotations`, and PEP 526
+# annotations on attribute targets ARE evaluated at runtime).
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.voice_bundle_service import (
+        TTSVoiceBundlePortabilityService,
+    )
+# TASK-21108: the payload class only -- importing it from
+# `speech_tts_settings_panel` put that 5,600-line Textual widget module (and
+# its fspicker/lab-status/voice-input subtrees) on the app import path for a
+# frozen dataclass. `speech_tts_panel_types` re-exports into the panel, so
+# this is the same class object the panel and its tests use.
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
     SpeechTTSPanelDraftSnapshot,
 )
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
@@ -365,10 +385,13 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService, ScopeType
-from .Notes.notes_sync_runtime import (
-    build_notes_sync_legacy_migrator,
-    build_notes_sync_runtime_owner,
-)
+# TASK-21108: `notes_sync_runtime` (and `notes_sync_legacy`, which the
+# TASK-21112 start gate reads) are imported inside
+# `_construct_notes_sync_runtime_owner`, the single place that needs them, so the
+# lasting-sync chain leaves the app import closure. The name below is
+# TYPE_CHECKING-only: annotations mentioning it must stay strings.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .Notes.notes_sync_runtime import NotesSyncRuntimeOwner
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from .Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
@@ -378,11 +401,17 @@ from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryS
 from .Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
-from .Persona_Buddy import (
-    PersonaBuddyController,
-    load_local_persona_portrait,
-    parse_persona_buddy_preferences,
-)
+from .Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
+from .Actor_Packs.creation import ActorPackCreationService
+from .Actor_Packs.activation import ActorPackActivationService
+from .Actor_Packs.controller import ActorPackExportController
+from .Actor_Packs.export import ActorPackExportService
+from .Actor_Packs.import_controller import ActorPackImportController
+from .Actor_Packs.importer import ActorPackImportService
+from .Actor_Packs.repository import ActorPackRepository
+# Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
+# its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
+# path. See the lazy persona_buddy_controller property.
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
@@ -421,7 +450,10 @@ from .Scheduling.services.briefing_projection import BriefingProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+
+# chat_message_enhanced is deliberately NOT imported at module scope
+# (TASK-21103): it pulls PIL and the textual_image package at import time.
+# The two TTS event handlers that query it import it function-locally.
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 from .Widgets.AppFooterStatus import AppFooterStatus
@@ -679,6 +711,13 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# task-19561: how long a cancelled worker gets to settle before shutdown
+# stops waiting on it and says so. Replaces a flat `asyncio.sleep(0.1)` that
+# waited on nothing in particular. Sized to be invisible on a quiet exit
+# (the wait ends the moment the last worker finishes) while still bounding a
+# thread worker that will not notice cancellation at all.
+WORKER_CANCELLATION_GRACE_SECONDS = 3.0
 
 # task-15472: after first paint, warm the lazy screen-module import cache from
 # a background thread so the FIRST click to each tab doesn't pay for a
@@ -1974,6 +2013,55 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+
+# (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
+# dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
+# stored-invalid body refused by the validator.
+#
+# (task-21102) Resolved at except-time by the sole consumer (the ingest job
+# dispatch loop) rather than imported at module scope: these two imports were
+# one of the six entry points that executed the full Chunking package
+# (~15k LOC shim + vendored engine) during ``import tldw_chatbook.app``.
+# The lazily imported classes are the SAME objects the raising code
+# (``_ingest_job_options`` -> ``Chunking.template_runtime`` /
+# ``chunking_interop_library``) raises, so the except clause catches exactly
+# what it always caught.
+#
+# (task-21102 review round) Because ``except _template_resolution_errors()``
+# evaluates this for EVERY exception reaching that clause -- not only
+# template errors -- the matcher must be inert for unrelated errors:
+# * If ``tldw_chatbook.Chunking`` is not resident, no template error can be
+#   in flight (an instance of its exception classes cannot exist without the
+#   defining modules having been imported), so return ``()`` -- which
+#   matches nothing -- WITHOUT importing ~39 Chunking modules as a side
+#   effect of handling an unrelated exception.
+# * If the imports themselves fail (broken install), also return ``()`` so
+#   the ORIGINAL in-flight exception propagates with its own class instead
+#   of being replaced by a ModuleNotFoundError raised from the except
+#   clause.
+# Guarded by ``Tests/App/test_template_error_lazy_matching.py``.
+def _template_resolution_errors() -> tuple[type[Exception], ...]:
+    """Return the named template-resolution error types, imported lazily.
+
+    Returns:
+        ``(TemplateResolutionError, InvalidTemplateError)`` when the
+        Chunking package is resident and importable; ``()`` otherwise, so
+        that using this as an ``except`` matcher never masks an unrelated
+        in-flight exception and never imports Chunking as a side effect.
+    """
+    if "tldw_chatbook.Chunking" not in sys.modules:
+        return ()
+    try:
+        from tldw_chatbook.Chunking.chunking_interop_library import (
+            InvalidTemplateError,
+        )
+        from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
+    except Exception:
+        return ()
+
+    return (TemplateResolutionError, InvalidTemplateError)
+
+
 _INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
     WorkerPhase.PREPARING: "Preparing import",
     WorkerPhase.LOADING: "Loading source",
@@ -2897,6 +2985,126 @@ class LibraryIngestQueueMixin:
         chunk_size = _as_int(
             flat_opts.get("chunk_size", job.chunk_size), job.chunk_size
         )
+        chunk_enabled = bool(flat_opts.get("chunk", job.chunk_enabled))
+
+        # (task 10, spec §9.1 AC 34) Template resolution -- ingest order:
+        # picker/batch choice -> config [chunking] default_template -> plain
+        # options. Resolution happens HERE (the app process owns the media
+        # DB) and the resolved DICT travels inside chunk_options: the parse
+        # worker must stay DB-free. An unresolvable or stored-invalid choice
+        # raises a NAMED error (TemplateResolutionError /
+        # InvalidTemplateError, AC 37 / AC-24b) -- the ingest dispatch
+        # catches both and fails THIS item; there is never a silent
+        # fallback to plain chunking.
+        # (task 4, auto-selection spec §4.3) A picker choice of the Auto
+        # sentinel ("auto") resolves to an AutoDecision instead: the job's
+        # ALREADY-KNOWN metadata (detected type / title / filename / URL)
+        # feeds resolve_auto -- nothing re-reads file contents at selection
+        # time. A template-tier win is consumed exactly like a manual pick;
+        # a plan-tier win materializes the planner's options as this
+        # parse's defaults; a plain-tier win changes nothing below.
+        ingest_template: dict[str, Any] | None = None
+        auto_decision: Any = None
+        plan_options: dict[str, Any] | None = None
+        if chunk_enabled:
+            from .Chunking.template_runtime import resolve_ingest_template
+
+            source_is_url = (
+                str(job.source_path or "").lower().startswith(("http://", "https://"))
+            )
+            resolved = resolve_ingest_template(
+                getattr(self, "media_db", None),
+                str(flat_opts.get("chunk_template") or "").strip() or None,
+                media_type=str(job.detected_type or "").strip() or None,
+                title=str(job.title or "").strip() or None,
+                filename=(None if source_is_url else PurePath(job.source_path).name),
+                url=str(job.source_path) if source_is_url else None,
+            )
+            from .Chunking.auto_selection import AutoDecision
+
+            if isinstance(resolved, AutoDecision):
+                auto_decision = resolved
+                if resolved.tier == "template" and isinstance(resolved.template, dict):
+                    ingest_template = resolved.template
+                elif resolved.tier == "plan" and isinstance(
+                    resolved.chunk_options, dict
+                ):
+                    plan_options = dict(resolved.chunk_options)
+                # plain tier: fall through to today's default options
+            else:
+                ingest_template = resolved
+
+        if ingest_template is not None or plan_options is not None:
+            # (task 10, spec §9.1 AC 35 -- the precedence ruling) A resolved
+            # template's chunk-stage options beat the ingest builder's
+            # DEFAULTS; only a value the user explicitly CHANGED in the
+            # ingest form beats the template. Left as-is, the builder's
+            # always-on size/overlap (+ per-group method injection) would
+            # arrive at the Chunker as explicit options that override the
+            # template on every path -- the picker would be inert.
+            # (task 4, auto-selection §4.3) The plan tier rides the SAME
+            # ruling: the planner's options are the defaults, a
+            # user-changed form value still wins.
+            #
+            # Mechanism: the form snapshot ALWAYS carries explicit values
+            # (``_build_ingest_options_snapshot`` seeds every schema
+            # default), so "differs from the schema default" is the only
+            # user-changed signal available at this seam. Values equal to
+            # the schema default are dropped here and re-derived from the
+            # template by the parse seam's materialization
+            # (``materialize_template_chunk_options``); values that differ
+            # ride along and win at the Chunker's explicit-beats-template
+            # merge. A snapshot WITHOUT the key (pre-field legacy jobs) has
+            # no user signal at all and defaults to the template winning.
+            size_schema_default = _as_int(
+                generic_option_default("chunk_size", DEFAULT_CHUNK_SIZE),
+                DEFAULT_CHUNK_SIZE,
+            )
+            overlap_schema_default = overlap_default
+            if ingest_template is not None:
+                chunk_options: dict[str, Any] = {"template": ingest_template}
+            else:
+                # Plan tier: the planner's options travel as this parse's
+                # chunk-stage defaults; ``size`` mirrors ``max_size`` for
+                # the audio/video key-by-key re-projection (the same alias
+                # ``materialize_template_chunk_options`` fills).
+                chunk_options = dict(plan_options)
+                if "max_size" in chunk_options:
+                    chunk_options.setdefault("size", chunk_options["max_size"])
+            if "chunk_size" in flat_opts and chunk_size != size_schema_default:
+                chunk_options["size"] = chunk_size
+                chunk_options["max_size"] = chunk_size
+            if (
+                "chunk_overlap" in flat_opts
+                and _as_int(flat_opts.get("chunk_overlap"), overlap_default)
+                != overlap_schema_default
+            ):
+                chunk_options["overlap"] = _as_int(
+                    flat_opts.get("chunk_overlap"), overlap_default
+                )
+        else:
+            chunk_options = (
+                {
+                    "size": chunk_size,
+                    "max_size": chunk_size,
+                    "overlap": _as_int(
+                        flat_opts.get("chunk_overlap", overlap_default),
+                        overlap_default,
+                    ),
+                }
+                if chunk_enabled
+                else None
+            )
+        if auto_decision is not None and chunk_options is not None:
+            # (task 4, auto-selection spec §4.4) The decision's travel
+            # ticket to the persist seam (mode/auto_tier/auto_rationale).
+            # The parse seam POPS this key before any branch dispatch, so
+            # no processor or the Chunker ever sees it.
+            chunk_options["auto"] = {
+                "tier": str(auto_decision.tier),
+                "rationale": [str(line) for line in (auto_decision.rationale or [])],
+            }
+
         options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
@@ -2919,19 +3127,19 @@ class LibraryIngestQueueMixin:
                 )
             ),
             "encoding": flat_opts.get("encoding"),
-            "chunk_options": (
-                {
-                    "size": chunk_size,
-                    "max_size": chunk_size,
-                    "overlap": _as_int(
-                        flat_opts.get("chunk_overlap", overlap_default),
-                        overlap_default,
-                    ),
-                }
-                if flat_opts.get("chunk", job.chunk_enabled)
-                else None
-            ),
+            "chunk_options": chunk_options,
         }
+        # ``template_active`` gates the per-group METHOD injection below:
+        # the pdf/audio-video/image "words" and the ebook group mapping are
+        # builder DEFAULTS (the user cannot type a method in those panels),
+        # so under a resolved template they must not be injected -- the
+        # template's method wins via materialization. A user-changed ebook
+        # chunk_method (differs from the select's schema default) still
+        # travels. (task 4, auto-selection §4.3) An auto PLAN-tier win
+        # governs identically: its method is a derived default, not a user
+        # choice, so the injection is skipped for it too; the auto PLAIN
+        # tier keeps today's injections (it changes nothing).
+        template_active = ingest_template is not None or plan_options is not None
 
         if perform_analysis:
             # Prompts remain in the persisted generic snapshot while analysis
@@ -2974,11 +3182,13 @@ class LibraryIngestQueueMixin:
                 options["analysis_skipped_reason"] = resolution.short_reason
 
         if group == "pdf":
-            if options["chunk_options"] is not None:
+            if options["chunk_options"] is not None and not template_active:
                 # (F12) ``process_pdf`` setdefaults method='sentences',
                 # under which the form's "words · 100-5000" size hint is a
                 # ~10-30x unit lie (500 SENTENCES ~= one chunk per
-                # document). Words is what the hint promises.
+                # document). Words is what the hint promises. (task 10)
+                # Under a resolved template this injection is a builder
+                # DEFAULT and is skipped -- the template's method wins.
                 options["chunk_options"]["method"] = "words"
             options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
                 "pdf_engine"
@@ -3005,9 +3215,11 @@ class LibraryIngestQueueMixin:
             )
             options["ocr_language"] = flat_opts.get("ocr_language") or "en"
         elif group == "audio_video":
-            if options["chunk_options"] is not None:
+            if options["chunk_options"] is not None and not template_active:
                 # (F12) The audio/video branch defaults chunk_method to
                 # sentences too -- same unit-lie fix as the pdf branch.
+                # (task 10) Skipped under a resolved template (a builder
+                # default, not a user choice).
                 options["chunk_options"]["method"] = "words"
             provider = flat_opts.get("transcription_provider")
             if provider is None:
@@ -3131,11 +3343,11 @@ class LibraryIngestQueueMixin:
             # ``process_image``'s own declared defaults. OCR defaults ON:
             # the extracted text IS the imported content, and a no-text
             # parse fails honestly at the persist seam.
-            if options["chunk_options"] is not None:
+            if options["chunk_options"] is not None and not template_active:
                 # (F12 parity) ``process_image`` chunks the OCR text via
                 # ``improved_chunking_process``; an explicit words method
                 # keeps the generic "words · 100-5000" size hint true here
-                # too.
+                # too. (task 10) Skipped under a resolved template.
                 options["chunk_options"]["method"] = "words"
             options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", True))
             options["ocr_language"] = flat_opts.get("ocr_language") or "en"
@@ -3156,7 +3368,18 @@ class LibraryIngestQueueMixin:
             # chunking is on.
             ebook_chunk_method = str(flat_opts.get("chunk_method") or "").strip()
             if options["chunk_options"] is not None:
-                if ebook_chunk_method:
+                if template_active and ebook_chunk_method in (
+                    "",
+                    "chapters",  # the ebook select's schema default
+                ):
+                    # (task 10, AC 35) The select's schema default
+                    # ("chapters") is a builder default: under a resolved
+                    # template the template's method wins and nothing is
+                    # injected. An ABSENT value under a template also lets
+                    # the template win (the template IS the scheme the
+                    # user picked; there is no legacy scheme to preserve).
+                    pass
+                elif ebook_chunk_method:
                     options["chunk_options"]["method"] = (
                         "ebook_chapters"
                         if ebook_chunk_method == "chapters"
@@ -3858,6 +4081,28 @@ class LibraryIngestQueueMixin:
                 failure_text = error_text or "Batch transcription routing failed."
                 logger.warning(
                     "Library ingest batch STT routing failed "
+                    f"(job_id={job.job_id}, "
+                    f"detected_type={job.detected_type}, "
+                    f"error={failure_text})."
+                )
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id,
+                    error=failure_text,
+                    permanent=False,
+                )
+                continue
+            except _template_resolution_errors() as exc:
+                # (task 10, AC 37/AC-24b) A template choice that no longer
+                # resolves (or a stored-invalid body) FAILS THIS ITEM with
+                # the named error -- never a silent fallback to plain
+                # chunking, which is how a library gets chunked two ways
+                # without the user knowing. Not permanent: re-creating or
+                # re-naming the template makes a retry succeed.
+                failure_text = _sanitize_library_ingest_error_text(str(exc)) or (
+                    "Chunking template resolution failed."
+                )
+                logger.warning(
+                    "Library ingest template resolution failed "
                     f"(job_id={job.job_id}, "
                     f"detected_type={job.detected_type}, "
                     f"error={failure_text})."
@@ -5457,6 +5702,16 @@ class TldwCli(
 
         super().__init__()
 
+        # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
+        # source at first mount, so a dynamic first mount can resolve against
+        # a stale parse in which a base class's defaults still carry
+        # tie-breaker 0 and shadow the consolidated sheet's rules (Textual's
+        # `add_source` lowers a stored tie-breaker without arming a reparse).
+        # This subclass reparses when that happens -- restoring exactly the
+        # cascade per-class DEFAULT_CSS produced. See
+        # `css/tie_aware_stylesheet.py` for the measured failure shape.
+        self.stylesheet = TieAwareStylesheet(variables=self.get_css_variables())
+
         # Phase 1: Basic initialization
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
@@ -5464,6 +5719,14 @@ class TldwCli(
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
+        # Persona Buddy controller is built lazily on first access
+        # (TASK-21103): constructing it imports Persona_Visual and PIL
+        # (1.28 s cold), and both consumers (screen reconcile, Console
+        # sink) already tolerate its absence. Slots must exist before
+        # `ConsoleRuntime(self)` below, whose constructor reads the
+        # persona_buddy_controller property. See that property.
+        self._persona_buddy_controller: Any | None = None
+        self._persona_buddy_controller_lock = threading.Lock()
         # task-15860 (headless wake): the Console runtime -- chat store,
         # provider gateway, agent bridge, chat controller -- is constructed
         # by the APP, not by `ChatScreen`, and it OUTLIVES every Console
@@ -5516,7 +5779,7 @@ class TldwCli(
         self._audio_cpp_artifact_lease_coordinator: (
             AudioCppArtifactLeaseCoordinator | None
         ) = None
-        self._tts_voice_bundle_service: TTSVoiceBundlePortabilityService | None = None
+        self._tts_voice_bundle_service: "TTSVoiceBundlePortabilityService | None" = None
         self._tts_voice_bundle_service_close_task: asyncio.Task[None] | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
@@ -5660,9 +5923,7 @@ class TldwCli(
 
         # --- Focus mode (task-18812) ---
         self.focus_mode = False
-        self._focus_mode_config = bool(
-            get_cli_setting("general", "focus_mode", False)
-        )
+        self._focus_mode_config = bool(get_cli_setting("general", "focus_mode", False))
         # Set by _resolve_initial_shell_route when onboarding outranks a
         # focus request at startup; restored when the wizard lands on Chat.
         self._deferred_focus_request: bool = False
@@ -5773,27 +6034,42 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
-        notes_sync_state_path = get_notes_sync_state_db_path()
-        notes_sync_migrator = build_notes_sync_legacy_migrator(
-            database_path=notes_sync_state_path,
-            legacy_connection=lambda: self.chachanotes_db.get_connection(),
-            settings=self.app_config,
-            note_scope_id=ScopeType.LOCAL_NOTE.value,
-            file_notes_binding=self.file_notes_session_owner.current_binding,
-            private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+        # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
+        # here. Its construction is what drags `Notes/notes_sync_runtime` and
+        # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
+        # together 15 modules and ~21 ms, measured 2026-08-23 -- into the
+        # `import tldw_chatbook.app` closure, for an object nothing reads until
+        # `on_mount` starts it. The property below still accepts assignment,
+        # so a test can substitute a runtime double exactly as before.
+        #
+        # BE HONEST ABOUT WHAT THIS BUYS. `on_mount` reads the property
+        # unconditionally to call `.start()`, and Textual dispatches Mount
+        # inside `batch_update()` with `_ready()`/first paint in the `finally`
+        # after it (textual/app.py:3428-3457). So on a real boot these 15
+        # modules are RELOCATED from import time to mount time, still before
+        # first paint -- measured: 0/15 resident after `import
+        # tldw_chatbook.app`, 15/15 after `run_test()` on a zero-profile
+        # boot. The TASK-21112 gate suppresses STARTING, not CONSTRUCTING.
+        # What this does buy is a clean import closure (so the guard can see
+        # future drift) and no cost at all for consumers that import the
+        # module without running the app. Gating construction on the same
+        # evidence would make it a real win, but the evidence lives in
+        # `notes_sync_legacy` -- reading it imports 12 of the 15 -- and it
+        # would split the "configured?" decision that TASK-21112 centralised
+        # in `_start_once`. Tracked as a follow-up, deliberately not done here.
+        #
+        # The two collaborators the eager build READ here are captured here
+        # too, so deferring WHEN the owner is built does not also change
+        # WHICH objects it binds. This is not hypothetical: the File Notes
+        # lifecycle tests replace `app.file_notes_session_owner` between
+        # construction and mount, and a build that re-read the attribute at
+        # mount would bind the replacement (and, there, crash on it).
+        self._notes_sync_file_notes_binding = (
+            self.file_notes_session_owner.current_binding
         )
-        self.notes_sync_runtime_owner = build_notes_sync_runtime_owner(
-            notes_scope_service=self.notes_scope_service,
-            cutover_admitted=True,
-            profile_process_is_sole=self._instance_lock_status.acquired,
-            database_path=notes_sync_state_path,
-            migrate_legacy=notes_sync_migrator,
-            file_notes_binding=self.file_notes_session_owner.current_binding,
-            local_user_id=self.notes_user_id,
-            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                self.app_config
-            ),
-        )
+        self._notes_sync_scope_service = self.notes_scope_service
+        self._notes_sync_runtime_owner: "NotesSyncRuntimeOwner | None" = None
+        self._notes_sync_runtime_owner_lock = threading.Lock()
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         # RAG admin trio (server/local/scope) is built lazily on first access
@@ -5809,20 +6085,9 @@ class TldwCli(
         self._wire_study_services()
         self._wire_research_services()
         self._wire_character_persona_services()
-        self.persona_buddy_controller = PersonaBuddyController(
-            preferences=parse_persona_buddy_preferences(
-                self.app_config.get("persona_buddy", {})
-            ),
-            local_persona_service=self.local_character_persona_service,
-            portrait_loader=partial(
-                load_local_persona_portrait,
-                self.local_character_persona_service,
-            ),
-            profile_db=self.chachanotes_db,
-            profile_root=get_user_data_dir(),
-            reduced_motion=bool(get_cli_setting("appearance", "reduce_motion", False)),
-            scheduler=self.call_after_refresh,
-        )
+        # Persona Buddy: the controller slot itself is initialized earlier
+        # (before ConsoleRuntime construction); see the lazy
+        # persona_buddy_controller property (TASK-21103).
         self._persona_buddy_unavailable_authority = None
         self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
 
@@ -5851,6 +6116,108 @@ class TldwCli(
 
         # Final memory check
         log_resource_usage()
+
+    def _construct_notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
+        """Build the application-owned lasting-sync runtime (TASK-21108).
+
+        Named ``_construct_`` rather than the house ``_build_`` prefix on
+        purpose: ``Tests/Notes/test_notes_sync_cutover.py`` fences the cutover
+        keywords by matching call names that END WITH
+        ``build_notes_sync_runtime_owner``, and a ``_build_...`` wrapper would
+        register as a second such call and defeat the fence.
+
+        Moved out of ``__init__`` so `Notes/notes_sync_runtime` and
+        `Notes/notes_sync_legacy` leave the app import closure; the body is
+        the one this app has always run, including the TASK-21112 start gate.
+        Construction performs no I/O: ``NotesDeviceStateStore`` only records
+        the path, and the gate's ``Path.exists()`` neither opens nor creates
+        the database.
+
+        Returns:
+            NotesSyncRuntimeOwner: The unstarted runtime owner.
+        """
+        from .Notes.notes_sync_legacy import (  # noqa: PLC0415
+            legacy_sync_directory_configured,
+        )
+        from .Notes.notes_sync_runtime import (  # noqa: PLC0415
+            build_notes_sync_legacy_migrator,
+            build_notes_sync_runtime_owner,
+        )
+
+        notes_sync_state_path = get_notes_sync_state_db_path()
+        notes_sync_migrator = build_notes_sync_legacy_migrator(
+            database_path=notes_sync_state_path,
+            legacy_connection=lambda: self.chachanotes_db.get_connection(),
+            settings=self.app_config,
+            note_scope_id=ScopeType.LOCAL_NOTE.value,
+            file_notes_binding=self._notes_sync_file_notes_binding,
+            private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+        )
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(self.app_config)
+        )
+        return build_notes_sync_runtime_owner(
+            notes_scope_service=self._notes_sync_scope_service,
+            cutover_admitted=True,
+            profile_process_is_sole=self._instance_lock_status.acquired,
+            database_path=notes_sync_state_path,
+            migrate_legacy=notes_sync_migrator,
+            file_notes_binding=self._notes_sync_file_notes_binding,
+            local_user_id=self.notes_user_id,
+            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
+                self.app_config
+            ),
+            # TASK-21112 boot gate: start only on actual configuration — the
+            # legacy [notes] sync-directory key (one-time migration path) or
+            # a state DB already on disk. Path.exists() never opens or
+            # creates the database; a zero-profile boot therefore creates no
+            # notes-sync state at all. First-time setup (review_setup)
+            # force-starts the runtime on demand. On Python 3.12
+            # Path.exists() RAISES PermissionError (pathlib no longer
+            # swallows EACCES); on a sandboxed profile that deliberately
+            # rides the gate's fail-open path — one full start attempt,
+            # which is the safe direction and is memoized.
+            start_evidence=(
+                lambda settings=self.app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or state_path.exists()
+                )
+            ),
+            watcher_interval_seconds=notes_sync_watcher_interval,
+            watcher_max_interval_seconds=notes_sync_watcher_max_interval,
+        )
+
+    @property
+    def notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
+        """The lasting-sync runtime owner, built lazily and cached.
+
+        Built under a lock so a racing first access cannot produce two
+        runtimes over the same state database. ``on_mount`` is the first
+        reader in production.
+
+        Returns:
+            NotesSyncRuntimeOwner: The cached runtime owner.
+        """
+        owner = self._notes_sync_runtime_owner
+        if owner is None:
+            with self._notes_sync_runtime_owner_lock:
+                owner = self._notes_sync_runtime_owner
+                if owner is None:
+                    owner = self._construct_notes_sync_runtime_owner()
+                    self._notes_sync_runtime_owner = owner
+        return owner
+
+    @notes_sync_runtime_owner.setter
+    def notes_sync_runtime_owner(self, owner: "NotesSyncRuntimeOwner") -> None:
+        """Substitute the runtime owner (tests install doubles this way).
+
+        Takes the same lock as the getter so the slot is coherent in both
+        directions: an assignment racing a first read cannot interleave with
+        the build. Non-reentrant is safe here because the build never assigns
+        through this property.
+        """
+        with self._notes_sync_runtime_owner_lock:
+            self._notes_sync_runtime_owner = owner
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -5923,6 +6290,124 @@ class TldwCli(
         if self._rag_admin_scope_service is None:
             self._build_rag_admin_services()
         return self._rag_admin_scope_service
+
+    def _persona_buddy_configured_enabled(self) -> bool:
+        """Report whether ``[persona_buddy] enabled`` is set in config.
+
+        Parses only the stdlib preference contract (``Persona_Buddy.
+        preferences`` behind the now-lazy package init) -- never the
+        controller chain, so a disabled profile stays PIL-free.
+
+        Returns:
+            bool: True when the persisted preferences enable the Buddy.
+        """
+        from .Persona_Buddy.preferences import (  # noqa: PLC0415 - stdlib-only seam; keeps PIL off the boot path (TASK-21103)
+            parse_persona_buddy_preferences,
+        )
+
+        config = getattr(self, "app_config", None)
+        section = config.get("persona_buddy", {}) if isinstance(config, dict) else {}
+        return parse_persona_buddy_preferences(section).enabled
+
+    def _build_persona_buddy_controller(self) -> Any | None:
+        """Construct and cache the app-owned Buddy controller (TASK-21103).
+
+        Constructor semantics are identical to the eager wiring this
+        replaced. Importing the controller module here is what pulls
+        Persona_Visual and PIL, so it must stay out of module scope. Built
+        under a lock so a racing first access from a worker thread cannot
+        construct two controllers; idempotent once built.
+
+        Returns:
+            The cached controller, or None when the persona services this
+            controller wires to are not present yet (early in ``__init__``,
+            or on skeletal test apps) -- callers retry on next access.
+        """
+        with self._persona_buddy_controller_lock:
+            if self._persona_buddy_controller is not None:
+                return self._persona_buddy_controller
+            # Only the persona service gates construction: the old eager
+            # wiring ran right after _wire_character_persona_services() and
+            # passed self.chachanotes_db through as-is (it is legitimately
+            # None on test-factory apps; the controller tolerates that).
+            local_persona_service = getattr(
+                self, "local_character_persona_service", None
+            )
+            if local_persona_service is None:
+                return None
+            profile_db = getattr(self, "chachanotes_db", None)
+            from .Persona_Buddy.controller import (  # noqa: PLC0415 - imports Persona_Visual + PIL; first feature use only (TASK-21103)
+                PersonaBuddyController,
+                load_local_persona_portrait,
+            )
+            from .Persona_Buddy.preferences import (  # noqa: PLC0415
+                parse_persona_buddy_preferences,
+            )
+
+            self._persona_buddy_controller = PersonaBuddyController(
+                preferences=parse_persona_buddy_preferences(
+                    self.app_config.get("persona_buddy", {})
+                ),
+                local_persona_service=local_persona_service,
+                portrait_loader=partial(
+                    load_local_persona_portrait,
+                    local_persona_service,
+                ),
+                profile_db=profile_db,
+                profile_root=get_user_data_dir(),
+                reduced_motion=bool(
+                    get_cli_setting("appearance", "reduce_motion", False)
+                ),
+                scheduler=self.call_after_refresh,
+            )
+            return self._persona_buddy_controller
+
+    def ensure_persona_buddy_controller(self) -> Any | None:
+        """Build (if needed) and return the Buddy controller for feature use.
+
+        Explicit Buddy actions (e.g. Personas Workbench "Use for Buddy" on a
+        profile whose preferences still say disabled) go through here: unlike
+        the passive property, this constructs regardless of the persisted
+        ``enabled`` flag so enabling from a disabled state works end to end.
+
+        Returns:
+            The controller, or None when its wiring prerequisites are absent.
+        """
+        return self._build_persona_buddy_controller()
+
+    @property
+    def persona_buddy_controller(self) -> Any | None:
+        """App-owned Persona Buddy controller, built lazily (TASK-21103).
+
+        Passive consumers (screen reconcile, Console sink, Workbench status)
+        read this via ``getattr(app, "persona_buddy_controller", None)`` and
+        already tolerate None. While unbuilt, a profile whose preferences
+        leave the Buddy disabled gets None back without constructing
+        anything, keeping the every-screen-mount reconcile early-out free of
+        the Persona_Visual/PIL import cost. First access on an enabled
+        profile -- or an explicit ``ensure_persona_buddy_controller()`` call
+        from a Buddy action -- performs the one-time construction.
+
+        Returns:
+            The cached controller; None when disabled-and-unbuilt or when
+            construction prerequisites are not wired yet.
+        """
+        controller = self._persona_buddy_controller
+        if controller is not None:
+            return controller
+        if not self._persona_buddy_configured_enabled():
+            return None
+        return self._build_persona_buddy_controller()
+
+    @persona_buddy_controller.setter
+    def persona_buddy_controller(self, controller: Any | None) -> None:
+        """Inject or clear the controller slot (tests and skeletal doubles).
+
+        Args:
+            controller: The controller instance to install, or None to make
+                the lazy property construct anew on next enabled access.
+        """
+        self._persona_buddy_controller = controller
 
     def _wire_server_context_provider(self) -> None:
         self.unified_mcp_target_store = ConfiguredServerTargetStore(
@@ -6393,6 +6878,9 @@ class TldwCli(
         return result
 
     def _wire_character_persona_services(self) -> None:
+        from .DB.VisualIdentity_DB import VisualIdentityRepository
+        from .Persona_Visual.repository import PersonaVisualRepository
+
         self.server_character_persona_service = (
             ServerCharacterPersonaService.from_server_context_provider(
                 self.server_context_provider,
@@ -6403,6 +6891,61 @@ class TldwCli(
             self.chachanotes_db,
             persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
+        self.actor_pack_repository = ActorPackRepository(self.chachanotes_db)
+        self.persona_actor_pack_coordinator = PersonaActorPackCoordinator(
+            self.actor_pack_repository,
+            self.local_character_persona_service,
+        )
+        # task-21106: crash recovery no longer runs here — synchronous SQLite
+        # during __init__ cost every boot and crashed the test app factory
+        # (which builds the app with chachanotes_db=None), silently disarming
+        # the CSS parse-cache cliff guard. `ensure_actor_pack_recovery` now
+        # runs it once per app session: kicked on a background thread from
+        # `_schedule_deferred_startup_work`, and hard-gated ahead of the
+        # Personas screen's first library read and (inside the coordinator)
+        # every `create_persona` mutation.
+        self.actor_pack_recovery_error: str | None = None
+        self.actor_pack_creation_service = ActorPackCreationService(
+            self.chachanotes_db,
+            self.actor_pack_repository,
+            self.persona_actor_pack_coordinator,
+        )
+        self.actor_pack_export_service = ActorPackExportService(
+            self.chachanotes_db,
+            self.local_character_persona_service,
+            self.actor_pack_repository,
+            persona_visual_repository=PersonaVisualRepository(self.chachanotes_db),
+            visual_identity_repository=VisualIdentityRepository(self.chachanotes_db),
+            profile_root=get_user_data_dir(),
+        )
+        self.actor_pack_export_controller = ActorPackExportController(
+            self.actor_pack_export_service
+        )
+        self._actor_pack_export_shutdown_task: asyncio.Task[None] | None = None
+        self.actor_pack_import_service = None
+        self.actor_pack_activation_service = None
+        self.actor_pack_import_controller = None
+        if self.chachanotes_db is not None:
+            actor_pack_profile_root = get_user_data_dir()
+            self.actor_pack_import_service = ActorPackImportService(
+                self.actor_pack_repository,
+                staging_root=actor_pack_profile_root / "actor_pack_imports",
+                profile_root=actor_pack_profile_root,
+                local_service=self.local_character_persona_service,
+            )
+            self.actor_pack_activation_service = ActorPackActivationService(
+                self.chachanotes_db,
+                self.local_character_persona_service,
+                self.actor_pack_repository,
+                self.persona_actor_pack_coordinator,
+                self.actor_pack_import_service,
+            )
+            self.actor_pack_import_controller = ActorPackImportController(
+                self.actor_pack_import_service,
+                self.actor_pack_activation_service,
+                refresh_callbacks=(self._refresh_after_actor_pack_import,),
+            )
+        self._actor_pack_import_shutdown_task: asyncio.Task[None] | None = None
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,
@@ -6424,6 +6967,41 @@ class TldwCli(
             server_service=self.server_chat_dictionary_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
+    def ensure_actor_pack_recovery(self) -> None:
+        """Run Actor Pack crash recovery once per app session (task-21106).
+
+        Safe to call from any thread and idempotent: the once-guard lives on
+        the coordinator (screens are never cached, so a per-mount flag would
+        re-run recovery on every Personas visit). Callers that may touch
+        recovery-affected state before the deferred startup kick has finished
+        call this first — from a worker thread, because a non-trivial recovery
+        does real SQLite work.
+
+        Preserves the exact `__init__`-era outcome mapping: a coordination
+        failure records ``actor_pack_recovery_failed``; retained quarantined
+        intents record ``actor_pack_recovery_blocked``. With no ChaChaNotes DB
+        (the test app factory builds the app without one) recovery is skipped
+        entirely, matching a boot where the profile store never opened.
+        """
+        coordinator = getattr(self, "persona_actor_pack_coordinator", None)
+        if coordinator is None or getattr(self, "chachanotes_db", None) is None:
+            return
+        first_run = not coordinator.recovery_attempted
+        recovery = coordinator.ensure_recovered()
+        if coordinator.recovery_error is not None:
+            self.actor_pack_recovery_error = "actor_pack_recovery_failed"
+            if first_run:
+                self.loguru_logger.error(
+                    "Actor Pack recovery failed: actor_pack_recovery_failed"
+                )
+        elif recovery is not None and recovery.blocked_intent_ids:
+            self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+            if first_run:
+                self.loguru_logger.warning(
+                    "Actor Pack recovery retained quarantined intents: "
+                    "actor_pack_recovery_blocked"
+                )
 
     def _wire_chat_conversation_services(self) -> None:
         trace_db = getattr(self, "chachanotes_db", None)
@@ -6803,6 +7381,27 @@ class TldwCli(
         # where a concurrent second `_initialize_schema` was measured
         # poisoning a live connection's schema view.
         self.subscriptions_db = subscriptions_db
+        # task-19561, Qodo review of PR #1972: the startup reconcile sweep runs
+        # as a deferred startup task, i.e. AFTER `on_mount` has already started
+        # the scheduler worker -- and the scheduler ticks immediately, so a due
+        # watchlist check can have launched a real `queued`/`running` row by the
+        # time the sweep looks. Unscoped, the sweep failed that live row as
+        # "interrupted".
+        #
+        # The boundary is captured HERE, in `__init__`'s wiring, rather than
+        # moved earlier in `on_mount`, precisely so that no future edit to
+        # `on_mount`'s ordering can reintroduce the race: at this point there is
+        # no event loop at all, so nothing in this process can yet have inserted
+        # into these tables. Everything this process later creates gets a
+        # strictly higher AUTOINCREMENT id and is therefore out of the sweep's
+        # reach by construction. See `Subscriptions/startup_reconcile.py`.
+        from tldw_chatbook.Subscriptions.startup_reconcile import (
+            capture_prior_process_boundary,
+        )
+
+        self._subscriptions_prior_process_boundary = capture_prior_process_boundary(
+            subscriptions_db
+        )
         self.local_watchlists_service = LocalWatchlistsService(
             db_factory=lambda: subscriptions_db
         )
@@ -6885,11 +7484,11 @@ class TldwCli(
             # `self.scheduler_loop.request_reload` directly here would freeze
             # `None`/AttributeError in before the loop exists (same getter
             # discipline as `BriefingJobHandler`'s chachanotes_db_getter).
-            on_queue_changed=lambda: getattr(
-                self, "scheduler_loop", None
-            ).request_reload()
-            if getattr(self, "scheduler_loop", None) is not None
-            else None,
+            on_queue_changed=lambda: (
+                getattr(self, "scheduler_loop", None).request_reload()
+                if getattr(self, "scheduler_loop", None) is not None
+                else None
+            ),
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -6930,6 +7529,13 @@ class TldwCli(
                 subscriptions_db=subscriptions_db,
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
             )
+
+        # task-19561: shutdown has to be able to reach the generations this
+        # handler spawns, and the scheduler loop is not a route to them --
+        # they are bare `asyncio.Task`s, not workers, deliberately detached
+        # from the tick. Keeping the handler itself on the app is the only
+        # handle `on_unmount` has.
+        self._briefing_job_handler = briefing_handler
 
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(
@@ -7560,6 +8166,52 @@ class TldwCli(
                         "Failed to close SubscriptionsDB {} after FTS backfill.",
                         db_path,
                     )
+
+    def _backfill_chachanotes_messages_fts(self) -> None:
+        """Worker body: reinsert messages the v45->v46 migration no longer
+        indexes inline (task-21100). Started from ``on_mount`` via
+        ``run_worker(thread=True)`` so an upgraded profile's index rebuild
+        never blocks boot or first paint; each chunk commits in its own
+        transaction, so a kill at any point leaves a consistent, resumable
+        index (state = ``messages_fts_docsize`` membership, in the DB
+        itself).
+
+        Uses the app's shared ``CharactersRAGDB`` singleton -- thread-local
+        connections are exactly what makes that safe from a worker thread
+        (see ``_backfill_subscription_items_fts`` for the incident that
+        taught this). Unlike that worker, no ``close()`` here: pooled threads
+        serve ChaChaNotes work constantly, and the thread-local connection
+        this run opens is the same one later hops on this thread reuse.
+
+        On an up-to-date database the loop's first chunk finds nothing and
+        the whole call is one indexed scan -- cheap, and it doubles as
+        self-healing for any run interrupted before completion.
+        """
+        from tldw_chatbook.DB.chachanotes_fts_backfill import (
+            ChaChaNotesFTSBackfillError,
+            backfill_chachanotes_messages_fts,
+        )
+
+        try:
+            db = get_chachanotes_db_lazy()
+            if db is None:
+                logger.debug(
+                    "ChaChaNotes messages FTS backfill skipped: no database instance."
+                )
+                return
+            backfill_chachanotes_messages_fts(db)
+        except ChaChaNotesFTSBackfillError as exc:
+            logger.opt(exception=True).error(
+                "ChaChaNotes messages FTS backfill failed after indexing {} "
+                "row(s) this run; older messages may be missing from search "
+                "until the next app start resumes it.",
+                exc.rows_indexed,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                "ChaChaNotes messages FTS backfill failed; older messages may "
+                "be missing from search until the next app start resumes it."
+            )
 
     def _wire_server_parity_state_repositories(self) -> None:
         try:
@@ -9342,6 +9994,10 @@ class TldwCli(
     @on(TTSCompleteEvent)
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
+            ChatMessageEnhanced,
+        )
+
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
         playback_lifecycle = getattr(event, "playback_lifecycle", None)
 
@@ -9511,6 +10167,10 @@ class TldwCli(
     @on(TTSProgressEvent)
     async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
         """Handle TTS generation progress updates."""
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
+            ChatMessageEnhanced,
+        )
+
         self.loguru_logger.debug(
             f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}"
         )
@@ -9913,7 +10573,7 @@ class TldwCli(
 
     async def _ensure_tts_voice_bundle_service(
         self,
-    ) -> TTSVoiceBundlePortabilityService | None:
+    ) -> "TTSVoiceBundlePortabilityService | None":
         """Construct the app-owned portability owner only on first use."""
 
         if getattr(self, "_tts_voice_bundle_service_close_task", None) is not None:
@@ -9923,6 +10583,12 @@ class TldwCli(
             return None
         service = getattr(self, "_tts_voice_bundle_service", None)
         if service is None:
+            # TASK-21108: deferred to this single construction site so the
+            # 1,857-line module stays off the app import path.
+            from tldw_chatbook.TTS.voice_bundle_service import (  # noqa: PLC0415
+                TTSVoiceBundlePortabilityService,
+            )
+
             service = TTSVoiceBundlePortabilityService(
                 get_user_data_dir() / "tts_voice_bundle_portability",
                 self._tts_profile_repository,
@@ -10059,6 +10725,12 @@ class TldwCli(
             self._observe_notes_sync_runtime_start
         )
         mount_start = time.perf_counter()
+
+        # task-19561: hand the process-level SIGTERM/SIGINT handler this app
+        # and its running loop, so a termination signal becomes an ordinary
+        # `App.exit()` instead of an `os._exit(0)` through the middle of
+        # whatever was writing at the time.
+        register_running_app(self)
 
         # TASK-1240. Anchors a session in the persistent log; its absence dates
         # a crash to before this point. Wrapped: `persist_event` raises on a
@@ -10236,7 +10908,15 @@ class TldwCli(
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
             # Schedule setup to run after initial rendering.
-            asyncio.create_task(self._run_no_splash_post_mount_setup())
+            # task-19561: this was a bare `create_task` whose result nobody
+            # held. The event loop keeps only a weak reference to a task, so
+            # the whole no-splash startup path could be garbage-collected
+            # mid-flight. `_create_deferred_startup_task` keeps the strong
+            # reference AND puts it in the set shutdown already cancels.
+            self._create_deferred_startup_task(
+                self._run_no_splash_post_mount_setup(),
+                name="no_splash_post_mount_setup",
+            )
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -10281,10 +10961,6 @@ class TldwCli(
             group="scheduling",
         )
 
-        # ADR-020: setup owns startup networking until it completes, so a
-        # stale configured cloud provider cannot be contacted behind it.
-        self._schedule_startup_model_catalog_refresh()
-
         # task-688: index subscription_items rows scraped before the FTS5
         # index existed, so search covers a user's whole back catalogue
         # without any action on their part. thread=True because this does
@@ -10295,6 +10971,17 @@ class TldwCli(
             thread=True,
             exclusive=True,
             group="subscriptions-fts-backfill",
+        )
+
+        # task-21100: reinsert the messages the v45->v46 FTS reset no longer
+        # indexes inline, so an upgraded profile's chat history becomes fully
+        # searchable again without ever blocking boot on the index rewrite.
+        # thread=True for the same reason as the subscriptions backfill above.
+        self.run_worker(
+            self._backfill_chachanotes_messages_fts,
+            thread=True,
+            exclusive=True,
+            group="chachanotes-fts-backfill",
         )
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
@@ -10428,6 +11115,7 @@ class TldwCli(
             not catalog_settings.refresh_consent_recorded
         ):
             self._startup_model_catalog_refresh_scheduled = True
+            self._startup_model_catalog_consent_required = True
             self.call_after_refresh(self._push_model_catalog_consent_modal)
             return True
 
@@ -10853,9 +11541,6 @@ class TldwCli(
         else:
             return
 
-        if completed is True:
-            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
-
         # Dismissing a rerun over Console already uncovers that same mounted
         # Console. Replacing it here would interrupt first-chat rollback and
         # focus resync. Other destinations still remount to refresh their state.
@@ -10872,11 +11557,37 @@ class TldwCli(
                 )
                 if callable(apply_chrome):
                     apply_chrome()
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
             return
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
-        self.post_message(NavigateToScreen(exit_route, screen_context))
+        if completed is not True:
+            self.post_message(NavigateToScreen(exit_route, screen_context))
+            return
+
+        async def navigate_then_schedule_catalog_consent() -> None:
+            try:
+                await self.handle_screen_navigation(
+                    NavigateToScreen(exit_route, screen_context)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._schedule_startup_model_catalog_refresh(
+                    after_setup_completion=True
+                )
+                raise
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
+
+        self.run_worker(
+            navigate_then_schedule_catalog_consent(),
+            group="first-run-exit-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
     def handle_first_run_wizard_result(self, result: dict | None) -> None:
         """Public alias for ``_handle_first_run_wizard_result``.
@@ -10974,7 +11685,13 @@ class TldwCli(
             self._maybe_warn_second_instance()
         except Exception as e:
             logger.error(f"Second-instance warning failed: {e}")
-        if not wizard_offered:
+
+        # Schedule after splash and the initial screen, before optional startup
+        # offers; ADR-020 consent owns this launch when it is still required.
+        self._schedule_startup_model_catalog_refresh()
+        if not wizard_offered and not getattr(
+            self, "_startup_model_catalog_consent_required", False
+        ):
             # Spec 2026-08-17 §5.4: wizard wins; .SKILLS offer defers to next launch.
             self._maybe_offer_project_skills_import()
         try:
@@ -11236,6 +11953,19 @@ class TldwCli(
     def _schedule_deferred_startup_work(self) -> None:
         """Start nonessential services after the first interactive UI frame."""
 
+        # task-21106: Actor Pack crash recovery moved here from __init__ —
+        # synchronous SQLite has no place on the construction path. A thread
+        # worker (not a coroutine) because recovery does blocking DB I/O; the
+        # coordinator's own once-guard makes every later surface-side call
+        # (Personas mount, create_persona) a cached no-op.
+        self.run_worker(
+            self.ensure_actor_pack_recovery,
+            name="deferred_actor_pack_recovery",
+            group="actor_pack_recovery",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
         self.set_timer(
             DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
             self._schedule_footer_status_updates,
@@ -11249,6 +11979,10 @@ class TldwCli(
             self._schedule_screen_preimport,
         )
         self.schedule_media_cleanup()
+        self._create_deferred_startup_task(
+            self._reconcile_interrupted_subscription_work(),
+            name="deferred_subscription_interrupt_reconcile",
+        )
         coordinator = getattr(
             self,
             "citation_artifact_ownership_coordinator",
@@ -11307,6 +12041,60 @@ class TldwCli(
             logger.opt(exception=True).warning(
                 "Launch wake scheduling failed; owed wakes stay staged for "
                 "the next Console visit."
+            )
+
+    async def _reconcile_interrupted_subscription_work(self) -> None:
+        """Un-wedge subscriptions rows a previous process never finished.
+
+        task-19561. ``local_watchlist_runs`` (``queued``/``running``),
+        ``briefings``/``briefing_scripts``/``briefing_audio``
+        (``generating``) all carry a status only the process doing the work
+        can move off, and several of them double as one-at-a-time guards --
+        so a row stranded by a termination does not merely look wrong, it
+        shuts the feature. Until now the only sweep was UI-gated: it ran
+        when the user happened to open the matching Watchlists pane, scoped
+        to that one watchlist.
+
+        Doing it on the way *in* is what makes it durable. A reconcile on
+        the way out can only cover terminations the process survives long
+        enough to run it -- never ``SIGKILL``, a crash, or a battery going
+        flat, which are exactly the cases that strand a row. Runs on a
+        thread (SQLite) and is best-effort: a failed sweep is logged and the
+        launch continues.
+
+        Scoped by the boundary ``_wire_watchlists_and_notifications_services``
+        captured when it opened the database, so this cannot fail a row the
+        scheduler -- started earlier, in ``on_mount`` -- launched moments ago
+        (Qodo review of PR #1972). No boundary means no sweep: leaving a row
+        wedged is recoverable on the next launch, failing a live one is not.
+        """
+        db = getattr(self, "subscriptions_db", None)
+        if db is None:
+            return
+        boundary = getattr(self, "_subscriptions_prior_process_boundary", None)
+        if boundary is None:
+            self.loguru_logger.warning(
+                "Startup reconcile skipped: no prior-process boundary was "
+                "captured, so an unscoped sweep could fail live rows."
+            )
+            return
+        from tldw_chatbook.Subscriptions.startup_reconcile import (
+            reconcile_interrupted_subscription_work,
+        )
+
+        try:
+            reconciled = await asyncio.to_thread(
+                reconcile_interrupted_subscription_work, db, boundary
+            )
+        except Exception as exc:  # noqa: BLE001 - a launch never dies on this
+            self.loguru_logger.warning(
+                f"Startup reconcile of interrupted subscriptions work failed "
+                f"type={type(exc).__name__}"
+            )
+            return
+        if any(reconciled.values()):
+            self.loguru_logger.info(
+                f"Startup reconcile failed interrupted subscriptions work: {reconciled}"
             )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
@@ -11666,18 +12454,7 @@ class TldwCli(
         self._shutting_down = True
 
         # Cancel all active workers first
-        try:
-            active_workers = [w for w in self.workers if not w.is_finished]
-            if active_workers:
-                self.loguru_logger.info(
-                    f"Cancelling {len(active_workers)} active workers"
-                )
-                for worker in active_workers:
-                    worker.cancel()
-                # Give workers a moment to cancel
-                await asyncio.sleep(0.1)
-        except Exception as e:
-            self.loguru_logger.error(f"Error cancelling workers: {e}")
+        await self._cancel_and_settle_workers("shutdown request")
 
         if self._rich_log_handler:
             await self._rich_log_handler.stop_processor()
@@ -11688,6 +12465,54 @@ class TldwCli(
         self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
+
+    async def _cancel_and_settle_workers(self, phase: str) -> None:
+        """Cancel every live worker and actually wait for them, bounded.
+
+        task-19561. Both shutdown hooks used to cancel their workers and
+        then ``await asyncio.sleep(0.1)`` -- a flat wait that is
+        simultaneously too long (nothing to wait for on a quiet exit) and
+        far too short (a worker mid-``await`` gets one tick, and a thread
+        worker gets nothing at all), and which never observed the outcome
+        either way. Waiting on the workers themselves is both faster in the
+        common case and honest in the uncommon one; the timeout keeps a
+        worker that ignores cancellation from turning quit into a hang, and
+        says which ones they were.
+        """
+        try:
+            active_workers = [w for w in self.workers if not w.is_finished]
+            if not active_workers:
+                return
+            self.loguru_logger.info(
+                f"Cancelling {len(active_workers)} active workers ({phase})"
+            )
+            for worker in active_workers:
+                worker.cancel()
+            # `asyncio.wait`, NOT `wait_for(...)`: on expiry `wait_for`
+            # cancels what it is waiting on and awaits that cancellation, so
+            # anything that does not honour a cancel hangs the very call
+            # meant to bound it. `wait` returns the stragglers instead.
+            waiters = [asyncio.ensure_future(w.wait()) for w in active_workers]
+            _, unsettled = await asyncio.wait(
+                waiters, timeout=WORKER_CANCELLATION_GRACE_SECONDS
+            )
+            for waiter in waiters:
+                if waiter.done() and not waiter.cancelled():
+                    # WorkerCancelled/WorkerFailed are the expected outcomes
+                    # of cancelling at shutdown; retrieve them so they do not
+                    # resurface as "exception was never retrieved".
+                    waiter.exception()
+                else:
+                    waiter.cancel()
+            if unsettled:
+                stragglers = [w.name for w in active_workers if not w.is_finished]
+                self.loguru_logger.warning(
+                    f"{len(stragglers)} worker(s) did not settle within "
+                    f"{WORKER_CANCELLATION_GRACE_SECONDS}s of cancellation "
+                    f"({phase}): {stragglers}"
+                )
+        except Exception as e:
+            self.loguru_logger.error(f"Error cancelling workers ({phase}): {e}")
 
     async def _close_server_context_provider_cached_client(self) -> None:
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -11712,6 +12537,30 @@ class TldwCli(
         if client is not None and getattr(client, "sessions", None):
             await client.disconnect_all()
 
+    async def _close_local_writing_service(self) -> None:
+        """Release the writing suite's held SQLite connections (TASK-21125).
+
+        Peeks the slot rather than reading through any accessor: a service that
+        was never wired must not be constructed purely to close it. A close
+        failure is logged (type name only) and never allowed to abort the rest
+        of unmount.
+
+        Runs on a thread, NOT inline. ``close()`` waits for an autosave still
+        running on a worker thread, and a synchronous call here froze the event
+        loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
+        ticker fired zero times) -- which also starved the very operation it was
+        waiting for.
+        """
+        service = getattr(self, "local_writing_service", None)
+        if service is None:
+            return
+        try:
+            await asyncio.to_thread(service.close)
+        except Exception as exc:
+            self.loguru_logger.error(
+                f"Error closing local writing service: {type(exc).__name__}"
+            )
+
     async def _shutdown_file_notes_session_owner(self) -> None:
         """Settle the process-owned File Notes Git lifecycle exactly once."""
         owner = getattr(self, "file_notes_session_owner", None)
@@ -11729,6 +12578,11 @@ class TldwCli(
     async def _shutdown_notes_sync_runtime(self) -> None:
         """Settle the application-owned lasting-sync runtime exactly once."""
 
+        # TASK-21108: a runtime that was never built was never started, so
+        # there is nothing to settle -- and reading the lazy property here
+        # would construct one purely to shut it down.
+        if getattr(self, "_notes_sync_runtime_owner", None) is None:
+            return
         task = getattr(self, "_notes_sync_runtime_shutdown_task", None)
         if task is None:
             task = asyncio.create_task(
@@ -11749,15 +12603,101 @@ class TldwCli(
             self._console_image_edit_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _flush_persona_buddy_geometry(self) -> None:
+        """Land any debounced Buddy geometry before admission closes.
+
+        TASK-21122: the mounted view coalesces geometry writes behind a
+        250 ms debounce. Because `_shutdown_persona_buddy` ends the
+        controller BEFORE Textual unmounts screens, a nudge inside that
+        window would reach `persist_preferences_revision` after admission
+        closed and be refused -- silently losing the user's last move.
+        Draining every mounted view here, while the controller is still
+        accepting writes, is what keeps it durable.
+        """
+        screens: list[Any] = []
+        stacks = getattr(self, "_screen_stacks", None)
+        if isinstance(stacks, dict):
+            for stack in stacks.values():
+                screens.extend(stack or ())
+        else:
+            try:
+                screens.extend(self.screen_stack)
+            except Exception:
+                return
+        seen: set[int] = set()
+        for screen in screens:
+            if id(screen) in seen:
+                continue
+            seen.add(id(screen))
+            flush = getattr(screen, "flush_persona_buddy_geometry", None)
+            if not callable(flush):
+                continue
+            try:
+                pending = flush()
+                if inspect.isawaitable(pending):
+                    await pending
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("persona_buddy_geometry_flush_failed")
+
     async def _shutdown_persona_buddy(self) -> None:
-        """Drain the app-owned Buddy before profile database teardown."""
+        """Drain the app-owned Buddy before profile database teardown.
+
+        Peeks the lazy controller slot (TASK-21103): a controller that was
+        never built has nothing to drain, and going through the property
+        here could CONSTRUCT one (importing Persona_Visual + PIL) purely to
+        shut it down.
+        """
         task = self._persona_buddy_shutdown_task
         if task is None:
+            controller = self._persona_buddy_controller
+            if controller is None:
+                return
+            # Debounced geometry must land while the controller still
+            # accepts writes (TASK-21122).
+            await self._flush_persona_buddy_geometry()
             task = asyncio.create_task(
-                self.persona_buddy_controller.shutdown(),
+                controller.shutdown(),
                 name="shutdown_persona_buddy",
             )
             self._persona_buddy_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_actor_pack_export(self) -> None:
+        """Cancel and drain Actor Pack export before profile teardown."""
+
+        controller = getattr(self, "actor_pack_export_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_export_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_export",
+            )
+            self._actor_pack_export_shutdown_task = task
+        await asyncio.shield(task)
+
+    def _refresh_after_actor_pack_import(self, result: object) -> None:
+        """Fence mounted Persona Buddy state after a committed Persona import."""
+
+        if getattr(result, "actor_kind", None) == "persona":
+            self.persona_buddy_controller.invalidate_profile()
+
+    async def _shutdown_actor_pack_import(self) -> None:
+        """Cancel and drain Actor Pack import before profile teardown."""
+
+        controller = getattr(self, "actor_pack_import_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_import_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_import",
+            )
+            self._actor_pack_import_shutdown_task = task
         await asyncio.shield(task)
 
     async def _shutdown_console_runtime(self) -> None:
@@ -11782,6 +12722,8 @@ class TldwCli(
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         await self._shutdown_notes_sync_runtime()
+        await self._shutdown_actor_pack_import()
+        await self._shutdown_actor_pack_export()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_console_runtime()
@@ -11893,6 +12835,13 @@ class TldwCli(
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        # task-19561: from here to process death, everything is teardown.
+        # Arm the bound now rather than at the entry point, so the deadline
+        # covers this method too -- and so a quit that wedges inside cleanup
+        # is bounded exactly like a SIGTERM that does. Idempotent and
+        # monotonic: a signal-armed watchdog already holds a tighter
+        # deadline and this call leaves it alone.
+        arm_exit_watchdog(reason="app unmount")
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:
         # this line sits ABOVE the entire shutdown sequence -- DB closes,
@@ -11999,6 +12948,27 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 
+            # task-19561: stopping the scheduler worker does NOT stop the
+            # generations it dispatched. `BriefingJobHandler.handle` spawns
+            # each one as a bare `asyncio.Task` (Locked Decision 3 -- a
+            # multi-minute LLM call must not stall the tick), so they are
+            # absent from `App.workers` and survived every cancellation
+            # above, only to be destroyed mid-flight when the loop closed.
+            # Cancel them here, while the loop is still alive to deliver it.
+            briefing_handler = getattr(self, "_briefing_job_handler", None)
+            if briefing_handler is not None:
+                try:
+                    cancelled = await briefing_handler.shutdown()
+                    if cancelled:
+                        self.loguru_logger.info(
+                            f"Cancelled {cancelled} in-flight scheduled briefing "
+                            "generation(s)"
+                        )
+                except Exception as e:
+                    self.loguru_logger.error(
+                        f"Error stopping scheduled briefing generations: {e}"
+                    )
+
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
             try:
@@ -12009,12 +12979,8 @@ class TldwCli(
                     f"Error disconnecting local MCP client sessions: {e}"
                 )
 
-            # Cancel any pending workers
-            for worker in self.workers:
-                if not worker.is_finished:
-                    worker.cancel()
-            # Wait briefly for workers to complete
-            await asyncio.sleep(0.1)
+            # Cancel any pending workers and wait for them, bounded.
+            await self._cancel_and_settle_workers("unmount")
 
             # Stop media cleanup timer
             if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
@@ -12126,18 +13092,35 @@ class TldwCli(
 
                     # Run in background to avoid blocking
                     self.run_worker(kill_afplay_processes, name="kill_afplay")
-            import asyncio
-
-            # Shutdown thread pool executors
-            try:
-                # Get the default executor if it exists
-                loop = asyncio.get_event_loop()
-                if hasattr(loop, "_default_executor") and loop._default_executor:
-                    self.loguru_logger.info("Shutting down default executor")
-                    loop._default_executor.shutdown(wait=False)
-                    loop._default_executor = None
-            except Exception as e:
-                self.loguru_logger.error(f"Error shutting down executor: {e}")
+            # task-19561: this used to reach into `loop._default_executor`,
+            # call `shutdown(wait=False)` and then set the private attribute
+            # to `None`. Nulling it is what made the situation worse, not
+            # better: `asyncio.run`'s `Runner.close()` ends with `await
+            # loop.shutdown_default_executor(THREAD_JOIN_TIMEOUT)`, which
+            # JOINS the worker threads while the loop is still alive. With
+            # `_default_executor` set to `None` that coroutine returns at its
+            # second line, and the very threads this block was trying to
+            # hurry along were instead left for `threading._shutdown()` to
+            # join with no bound at all. `run_worker(..., thread=True)` runs
+            # on that same default executor (Textual's `Worker._run_threaded`
+            # ends in `loop.run_in_executor(None, ...)`), so this is not a
+            # corner case.
+            #
+            # Precise about the other half, because it is easy to overclaim:
+            # `shutdown_default_executor` sets `_executor_shutdown_called`
+            # BEFORE its `if self._default_executor is None: return`, so the
+            # "a stray late `run_in_executor` raises" fence applied at the
+            # merge base too. What nulling actually cost was the join -- plus
+            # a window between this block and `Runner.close()` in which a late
+            # `run_in_executor` would build a brand-new pool (that one IS
+            # real, `BaseEventLoop.run_in_executor` creates one when
+            # `_default_executor` is None and the fence is not yet set).
+            #
+            # Doing nothing here is the fix: the public, bounded shutdown
+            # runs a few milliseconds later, on its own. Verified on CPython
+            # 3.12.11, where `constants.THREAD_JOIN_TIMEOUT` is 300s -- far
+            # looser than the exit watchdog armed at the top of this method,
+            # which is what actually bounds the wait.
 
             # Clean up any lingering subprocess
             for proc in (
@@ -12157,37 +13140,33 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
 
-            # Force-set daemon flag on ThreadPoolExecutor and AudioPlayer threads
+            # task-19561: a loop that force-set `thread.daemon = True` on
+            # every live `ThreadPoolExecutor*`/`AudioPlayer*` thread used to
+            # sit here. CPython raises `RuntimeError: cannot set daemon
+            # status of active thread` for every one of them, so it changed
+            # nothing and logged an ERROR per thread while doing it. The
+            # "Active non-daemon threads remaining" warning that followed
+            # reported the same threads a moment before the process was
+            # going to wait on them anyway, with no way to act on it.
+            # Both are gone. What replaces them is the exit watchdog armed
+            # at the top of this method: it names the threads still alive
+            # at the moment the wait actually becomes a hang, and ends the
+            # process rather than merely describing it.
+
+            # Threads that expose a cooperative stop() still get asked --
+            # that half was never dead code.
             for thread in threading.enumerate():
-                if thread.name.startswith(("ThreadPoolExecutor", "AudioPlayer")):
+                if thread is threading.main_thread() or not thread.is_alive():
+                    continue
+                stop = getattr(thread, "stop", None)
+                if callable(stop):
                     try:
-                        thread.daemon = True
-                        self.loguru_logger.info(f"Set daemon flag on {thread.name}")
+                        stop()
+                        self.loguru_logger.info(f"Stopped thread: {thread.name}")
                     except Exception as e:
                         self.loguru_logger.error(
-                            f"Could not set daemon flag on {thread.name}: {e}"
+                            f"Error stopping thread {thread.name}: {e}"
                         )
-
-            # Log any remaining non-daemon threads
-            active_threads = [
-                t
-                for t in threading.enumerate()
-                if t.is_alive() and not t.daemon and t != threading.main_thread()
-            ]
-            if active_threads:
-                self.loguru_logger.warning(
-                    f"Active non-daemon threads remaining: {[t.name for t in active_threads]}"
-                )
-                # Attempt to stop them if they have stop methods
-                for thread in active_threads:
-                    if hasattr(thread, "stop") and callable(thread.stop):
-                        try:
-                            thread.stop()
-                            self.loguru_logger.info(f"Stopped thread: {thread.name}")
-                        except Exception as e:
-                            self.loguru_logger.error(
-                                f"Error stopping thread {thread.name}: {e}"
-                            )
         except Exception as e:
             self.loguru_logger.error(f"Error checking active threads: {e}")
 
@@ -12196,6 +13175,13 @@ class TldwCli(
         store = getattr(self, "_library_ingest_jobs_store", None)
         if store is not None:
             store.close()
+
+        # Release the writing suite's held SQLite connections (TASK-21125).
+        await self._close_local_writing_service()
+
+        # Nothing this app owns is left to ask; a signal from here on has
+        # no orderly path to offer and should unwind the main thread.
+        unregister_running_app(self)
 
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
@@ -13172,6 +14158,21 @@ if __name__ == "__main__":
         )
         raise SystemExit(0)
 
+    # task-19561: `python -m tldw_chatbook.app` installed no signal handlers
+    # at all, so SIGTERM took the process out with the kernel default -- even
+    # more abrupt than the console script's `os._exit(0)`. Both entry points
+    # now share one bounded, graceful mechanism.
+    install_termination_handlers()
+
+    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
+    # constructor, before anything can paint -- the terminal is the only
+    # surface that exists at this phase, so say what the pause is there.
+    from tldw_chatbook.Utils.db_upgrade_notice import (
+        print_db_upgrade_notice_if_pending,
+    )
+
+    print_db_upgrade_notice_if_pending()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     app_instance._cli_focus_override = bool(_main_args.focus)
@@ -13181,26 +14182,18 @@ if __name__ == "__main__":
         app_instance.run()
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
-        # Force cleanup inline
-        import threading
-        import concurrent.futures
-
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
     except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
         # This might run even if app exits early internally in run()
         loguru_logger.info("--- FINALLY block after app.run() ---")
+        # Everything from here is interpreter teardown -- `asyncio.run`'s
+        # executor join, `threading._shutdown()`, `atexit`. None of it is
+        # interruptible from Python, so this is the last point a bound can
+        # be placed on it. Idempotent: a SIGTERM-armed watchdog already
+        # holds a tighter deadline and this call leaves it alone.
+        arm_exit_watchdog(reason="interpreter exit")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 
@@ -13285,64 +14278,17 @@ def main_cli_runner():
     # Set environment variable to suppress FFmpeg output
     os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
 
-    # Set up signal handlers for clean exit
-    import signal
-    import os
-    import atexit
-
-    def force_cleanup():
-        """Force cleanup on exit"""
-        import threading
-        import concurrent.futures
-
-        # Force kill any Higgs-related threads first
-        for thread in threading.enumerate():
-            thread_name = thread.name.lower()
-            if any(
-                name in thread_name
-                for name in ["higgs", "boson", "serve_engine", "audio"]
-            ):
-                loguru_logger.warning(f"Force killing thread: {thread.name}")
-                try:
-                    # Mark as daemon to not block exit
-                    thread.daemon = True
-                except Exception:
-                    pass
-
-        # Force daemon all threads
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-
-        # Clear thread pool queues
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
-
-        # Force clear any PyTorch CUDA resources
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-        except Exception:
-            pass
-
-    # Register cleanup
-    atexit.register(force_cleanup)
-
-    def signal_handler(signum, frame):
-        loguru_logger.info(f"Received signal {signum}, forcing clean exit")
-        force_cleanup()
-        os._exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    # task-19561: SIGTERM used to be answered here by `os._exit(0)` from
+    # inside the handler, after an `atexit`-registered `force_cleanup` that
+    # tried to daemonize already-started threads (a `RuntimeError` every
+    # time) and cleared `concurrent.futures.thread._threads_queues` (which
+    # only ever robs `_python_exit` of the sentinels that let idle executor
+    # threads finish). `os._exit` skipped Textual's `on_unmount` entirely --
+    # no database closed, no transaction rolled back, and any row already
+    # flipped to `running` stranded there permanently. The handlers below
+    # run the ordinary shutdown path and keep a hard exit only as the
+    # bounded, last-resort escape. See `Utils/app_shutdown.py`.
+    install_termination_handlers()
 
     # Initialize logging first
     initialize_early_logging()
@@ -13435,6 +14381,13 @@ def main_cli_runner():
 
     warm_up_image_protocol()
 
+    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
+    # constructor, before anything can paint -- the terminal is the only
+    # surface that exists at this phase, so say what the pause is there.
+    from .Utils.db_upgrade_notice import print_db_upgrade_notice_if_pending
+
+    print_db_upgrade_notice_if_pending()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     app_instance._cli_focus_override = bool(args.focus)
@@ -13444,26 +14397,15 @@ def main_cli_runner():
         app_instance.run()
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
-        # Force cleanup inline
-        import threading
-        import concurrent.futures
-
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
     except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
         # This might run even if app exits early internally in run()
         loguru_logger.info("--- FINALLY block after app.run() ---")
+        # Bound interpreter teardown (see the identical call in the
+        # `__main__` block for why this is the last placeable bound).
+        arm_exit_watchdog(reason="interpreter exit")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 

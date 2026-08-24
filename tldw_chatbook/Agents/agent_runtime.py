@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from loguru import logger
@@ -48,13 +49,30 @@ from .agent_models import (
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
+    STEP_MODEL_CANCELLED,
+    STEP_MODEL_ERROR,
+    STEP_MODEL_REQUEST_STARTED,
+    STEP_MODEL_RESPONSE_COMPLETED,
+    STEP_APPROVAL_APPROVED,
+    STEP_APPROVAL_DENIED,
+    STEP_APPROVAL_REQUESTED,
+    STEP_APPROVAL_REVOKED,
     STEP_SPAWN,
     STEP_STEERING,
     STEP_TOOL_CALL,
+    STEP_TOOL_CANCELLED,
+    STEP_TOOL_EXECUTION_STARTED,
+    STEP_TOOL_FAILED,
+    STEP_TOOL_PROPOSED,
     STEP_TOOL_RESULT,
+    STEP_TOOL_SUCCEEDED,
+    STEP_TOOL_TIMED_OUT,
     TOOL_OUTCOME_BLOCKED,
     TOOL_OUTCOME_FAILED,
     TOOL_OUTCOME_SUCCESS,
+    TOOL_OUTCOME_CANCELLED,
+    TOOL_OUTCOME_TIMEOUT,
+    TRACE_STEP_INDEX_BASE,
     WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentStep,
@@ -77,6 +95,25 @@ from .project_instruction_runtime import (
     InstructionDeliveryReceipt,
     build_project_instruction_deferral_rows,
 )
+
+
+def _utc_now() -> datetime:
+    """Return the UTC wall clock used to stamp durable agent steps."""
+    return datetime.now(timezone.utc)
+
+
+def safe_utc_timestamp(wall_clock: Callable[[], datetime]) -> str:
+    """Read an injected wall clock without making step capture load-bearing."""
+    try:
+        value = wall_clock()
+        if not isinstance(value, datetime):
+            raise TypeError("wall clock must return datetime")
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("wall clock must return an aware datetime")
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    except Exception:  # noqa: BLE001 — timestamp capture is best-effort
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
 
 FENCE_OPEN = "```tool_call"
 _FENCE_CLOSE = "```"
@@ -335,6 +372,8 @@ class LoopDeps:
         | None
     ) = None
     on_step: Callable[[AgentStep], None] = lambda step: None
+    on_trace_step: Callable[[AgentStep], None] = lambda step: None
+    reserve_context_trace: Callable[[AgentStep, AgentStep], bool] | None = None
     # Optional pre-dispatch batch-review hook (P5 Task 4): the generic seam
     # the MCP approval flow (Task 6) rides on. When set, called ONCE per
     # turn with the full batch of tool calls about to be dispatched
@@ -352,9 +391,7 @@ class LoopDeps:
     # it once with only calls whose effective review verdict is `proceed`.
     # It runs after project-instruction preparation and review, but before
     # any invocation branch. Exceptions are observational and fail open.
-    before_tool_dispatch: (
-        Callable[[list[ToolCall], frozenset[str]], None] | None
-    ) = None
+    before_tool_dispatch: Callable[[list[ToolCall], frozenset[str]], None] | None = None
     # Optional Task 10 whole-batch preparation. It runs once after the
     # assistant turn has entered run-local history and immediately before
     # the unchanged review hook. A retry result appends canonical deferral
@@ -473,12 +510,26 @@ class LoopDeps:
     # pre-run-log runs.
     on_record: Callable[[str, dict], int | None] | None = None
     continuation_context: ContinuationEventContext | None = None
-    persist_provider_continuation: Callable[
-        [ProviderContinuationEvent], None
-    ] = _noop_provider_continuation
+    persist_provider_continuation: Callable[[ProviderContinuationEvent], None] = (
+        _noop_provider_continuation
+    )
     expand_provider_continuation: (
         Callable[[ProviderContinuationCheckpoint], list[dict]] | None
     ) = None
+    # Appended after every pre-existing field to preserve LoopDeps' legacy
+    # positional constructor slots. Unlike ``clock`` (monotonic budgets),
+    # this clock supplies UTC audit timestamps.
+    wall_clock: Callable[[], datetime] = _utc_now
+    # Optional production-only causal dispatch seams. Appended after every
+    # legacy field so positional LoopDeps callers retain their exact slots.
+    invoke_tool_at_step: Callable[[ToolCall, int], ToolResult] | None = None
+    spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
+    send_to_agent_at_step: Callable[[str, str, int], ToolResult] | None = None
+    drain_mailbox_with_causes: (
+        Callable[[], list[tuple[str, str, str | None]]] | None
+    ) = None
+    owner_seq_start: int = 0
+    next_owner_seq: Callable[[], int] | None = None
 
 
 def _continuation_calls_match(
@@ -706,8 +757,7 @@ def _truncate_tool_result(
             "offset/limit arguments to read the rest."
         )
     full_trailer = (
-        f"\n\n[truncated: {tool_name} returned {len(content)} characters."
-        f"{recovery}]"
+        f"\n\n[truncated: {tool_name} returned {len(content)} characters.{recovery}]"
     )
     if not total_limit:
         return content[:max_chars] + full_trailer
@@ -781,9 +831,7 @@ def _detect_cycle(recent) -> tuple[int, int] | None:
     return None
 
 
-def _effective_review_verdict(
-    call: ToolCall, verdicts: Mapping[str, str]
-) -> str:
+def _effective_review_verdict(call: ToolCall, verdicts: Mapping[str, str]) -> str:
     """Resolve one call-id verdict before the provider-name fallback."""
     if call.call_id and call.call_id in verdicts:
         return verdicts[call.call_id]
@@ -849,20 +897,54 @@ def run_agent_loop(
     spawned = 0
     model_turns = 0
     total_tokens = 0
+    budget_steps = 0
+    trace_steps = 0
+    owner_sequence = deps.owner_seq_start
     continuation_checkpoint: ProviderContinuationCheckpoint | None = None
     restored_calls: list[ToolCall] | None = None
     restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
+    context_trace_reserved = False
 
-    def add(kind: str, **kw) -> AgentStep:
+    def claim_owner_seq() -> int:
+        nonlocal owner_sequence
+        if deps.next_owner_seq is not None:
+            return deps.next_owner_seq()
+        sequence = owner_sequence
+        owner_sequence += 1
+        return sequence
+
+    def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
+        nonlocal budget_steps
+        if not kw.get("created_at"):
+            kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
+        if kw.get("owner_seq") is None:
+            kw["owner_seq"] = claim_owner_seq()
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
-        # The hook drives live UI only (see LoopDeps.on_step docstring);
-        # durability comes from the service's end-of-run persist, so a
-        # raising callback must never abort or corrupt the run itself.
+        if counts_toward_budget:
+            budget_steps += 1
+        # The service composes incremental durability with live UI here.
+        # Either callback may fail, but observation is never load-bearing
+        # for the run itself.
         try:
             deps.on_step(step)
-        except Exception:  # noqa: BLE001 — best-effort UI notification only
+        except Exception:  # noqa: BLE001 — best-effort observation only
+            pass
+        return step
+
+    def trace(kind: str, **kw) -> AgentStep:
+        """Capture a safe lifecycle observation outside legacy control steps."""
+        nonlocal trace_steps
+        if not kw.get("created_at"):
+            kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
+        if kw.get("owner_seq") is None:
+            kw["owner_seq"] = claim_owner_seq()
+        step = AgentStep(index=TRACE_STEP_INDEX_BASE + trace_steps, kind=kind, **kw)
+        trace_steps += 1
+        try:
+            deps.on_trace_step(step)
+        except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         return step
 
@@ -981,11 +1063,8 @@ def run_agent_loop(
             validate_continuation_restore(checkpoint, restore_provider_target)
         except Exception:
             return continuation_error()
-        if (
-            checkpoint.state != "active"
-            or not _valid_continuation_context(
-                context, deps.persist_provider_continuation
-            )
+        if checkpoint.state != "active" or not _valid_continuation_context(
+            context, deps.persist_provider_continuation
         ):
             return continuation_error()
         if not resume_provider_continuation:
@@ -1027,8 +1106,15 @@ def run_agent_loop(
 
     while True:
         if deps.should_cancel():
+            trace(
+                STEP_MODEL_CANCELLED,
+                summary="Model request cancelled",
+                status="cancelled",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+            )
             return _outcome(RUN_CANCELLED)
-        if len(steps) >= budget.max_steps:
+        if budget_steps >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
             return _outcome(RUN_STUCK)
         if model_turns >= budget.max_model_turns:
@@ -1058,16 +1144,30 @@ def run_agent_loop(
             # budget/cancel checks at the loop top ran first (a dead run
             # never consumes a mailbox). Wrapped never-raise like
             # `on_step`: a broken drain costs the delivery, never the run.
-            if deps.drain_mailbox is not None:
+            if (
+                deps.drain_mailbox is not None
+                or deps.drain_mailbox_with_causes is not None
+            ):
                 try:
-                    for steer_source, steer_text in deps.drain_mailbox():
+                    entries = (
+                        deps.drain_mailbox_with_causes()
+                        if deps.drain_mailbox_with_causes is not None
+                        else [
+                            (source, text, None)
+                            for source, text in deps.drain_mailbox()
+                        ]
+                    )
+                    for steer_source, steer_text, source_event_id in entries:
                         steer_message = format_steering_message(
                             steer_source, steer_text
                         )
-                        messages.append(
-                            {"role": "user", "content": steer_message}
+                        messages.append({"role": "user", "content": steer_message})
+                        add(
+                            STEP_STEERING,
+                            summary=steer_message[:200],
+                            parent_event_id=source_event_id,
+                            source_event_id=source_event_id,
                         )
-                        add(STEP_STEERING, summary=steer_message[:200])
                         _emit_record(
                             deps,
                             "steering",
@@ -1078,8 +1178,7 @@ def run_agent_loop(
                         )
                 except Exception:  # noqa: BLE001 — containment, like on_step
                     logger.opt(exception=True).warning(
-                        "drain_mailbox raised; steering delivery skipped "
-                        "for this turn"
+                        "drain_mailbox raised; steering delivery skipped for this turn"
                     )
             # PR3b Task 4: THE boundary. Everything appended so far --
             # every previous batch's fully-paired results, and the
@@ -1092,14 +1191,70 @@ def run_agent_loop(
             # unsafe -- a terminal return there keeps the previous
             # boundary instead).
             coherent_len = len(messages)
-            turn = (
-                deps.call_model_with_continuation(
-                    messages,
-                    tuple(active),
-                    continuation_checkpoint,
+            context_injected_step: AgentStep | None = None
+            if not context_trace_reserved and deps.reserve_context_trace is not None:
+                context_trace_reserved = True
+                attached = AgentStep(
+                    index=TRACE_STEP_INDEX_BASE + trace_steps,
+                    kind="context_attached",
+                    created_at=safe_utc_timestamp(deps.wall_clock),
+                    owner_seq=claim_owner_seq(),
                 )
-                if deps.call_model_with_continuation is not None
-                else deps.call_model(messages, tuple(active))
+                trace_steps += 1
+                injected = AgentStep(
+                    index=TRACE_STEP_INDEX_BASE + trace_steps,
+                    kind="context_injected",
+                    created_at=attached.created_at,
+                    owner_seq=claim_owner_seq(),
+                    parent_step_index=attached.index,
+                    source_step_index=attached.index,
+                )
+                trace_steps += 1
+                try:
+                    if deps.reserve_context_trace(attached, injected):
+                        context_injected_step = injected
+                except Exception:  # noqa: BLE001 — capture is never load-bearing
+                    pass
+            model_request_step = trace(
+                STEP_MODEL_REQUEST_STARTED,
+                summary="Model request started",
+                status="started",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+                parent_step_index=(
+                    context_injected_step.index if context_injected_step else None
+                ),
+                source_step_index=(
+                    context_injected_step.index if context_injected_step else None
+                ),
+            )
+            try:
+                turn = (
+                    deps.call_model_with_continuation(
+                        messages,
+                        tuple(active),
+                        continuation_checkpoint,
+                    )
+                    if deps.call_model_with_continuation is not None
+                    else deps.call_model(messages, tuple(active))
+                )
+            except Exception:
+                trace(
+                    STEP_MODEL_ERROR,
+                    summary="Model request failed",
+                    status="failed",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                    parent_step_index=model_request_step.index,
+                )
+                raise
+            model_response_step = trace(
+                STEP_MODEL_RESPONSE_COMPLETED,
+                summary="Model response completed",
+                status="completed",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+                parent_step_index=model_request_step.index,
             )
             model_turns += 1
             total_tokens += turn.tokens
@@ -1112,13 +1267,10 @@ def run_agent_loop(
         candidate = turn.provider_continuation
         if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context
-            if (
-                not _valid_continuation_context(
-                    context, deps.persist_provider_continuation
-                )
-                or not _continuation_calls_match(
-                    candidate, calls, turn.text, turn.assistant_message
-                )
+            if not _valid_continuation_context(
+                context, deps.persist_provider_continuation
+            ) or not _continuation_calls_match(
+                candidate, calls, turn.text, turn.assistant_message
             ):
                 return continuation_error()
             expected_revision = (
@@ -1146,6 +1298,15 @@ def run_agent_loop(
             # A Stop can land while this (tool-call-free) turn was still
             # streaming. There is no further step/tool-call boundary ahead.
             if deps.should_cancel():
+                trace(
+                    STEP_MODEL_CANCELLED,
+                    summary="Model response cancelled after transport completion",
+                    status="cancelled",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                    parent_step_index=model_response_step.index,
+                    source_step_index=model_request_step.index,
+                )
                 return _outcome(RUN_CANCELLED, final_text=turn.text)
             if candidate is not None:
                 context = deps.continuation_context
@@ -1170,9 +1331,7 @@ def run_agent_loop(
                     if (
                         candidate.checkpoint_revision != 1
                         or candidate.provider != "moonshot"
-                        or not moonshot_model_returns_reasoning_content(
-                            candidate.model
-                        )
+                        or not moonshot_model_returns_reasoning_content(candidate.model)
                         or len(candidate.rounds) != 1
                         or final_round.calls
                         or final_round.assistant_content != turn.text
@@ -1202,6 +1361,7 @@ def run_agent_loop(
                     if ephemeral_continuation
                     else turn.text[:200]
                 ),
+                parent_step_index=model_response_step.index,
             )
             _emit_record(
                 deps,
@@ -1236,9 +1396,7 @@ def run_agent_loop(
                 )
                 if deps.on_ephemeral_runtime_warning is not None:
                     try:
-                        deps.on_ephemeral_runtime_warning(
-                            code, tool_names, len(calls)
-                        )
+                        deps.on_ephemeral_runtime_warning(code, tool_names, len(calls))
                     except Exception:  # noqa: BLE001 - warning is best effort
                         logger.warning("project_instruction_warning_callback_failed")
             if preparation.status == "retry_with_context":
@@ -1256,9 +1414,49 @@ def run_agent_loop(
         # makes every `.get(name, "proceed")` lookup below resolve to
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
+        call_trace: dict[int, dict[str, AgentStep | str]] = {}
+        correlation_counts: dict[str, int] = {}
+        for position, call in enumerate(calls):
+            base_correlation = call.call_id or f"turn-{model_turns}-call-{position}"
+            duplicate = correlation_counts.get(base_correlation, 0)
+            correlation_counts[base_correlation] = duplicate + 1
+            correlation = (
+                base_correlation
+                if duplicate == 0
+                else f"{base_correlation}#{duplicate}"
+            )
+            proposal_step = trace(
+                STEP_TOOL_PROPOSED,
+                summary=f"{call.name} proposed",
+                tool_name=call.name,
+                status="proposed",
+                field_states={"args": "omitted", "result": "not_available"},
+                sensitivity="tool_content",
+                call_id=correlation,
+            )
+            call_trace[id(call)] = {
+                "correlation": correlation,
+                "proposal": proposal_step,
+            }
+
         verdicts: dict[str, str] = {}
         review_hook_failed = False
         if deps.review_tool_calls is not None and calls:
+            for call in calls:
+                trace_state = call_trace[id(call)]
+                proposal_step = trace_state["proposal"]
+                assert isinstance(proposal_step, AgentStep)
+                request_step = trace(
+                    STEP_APPROVAL_REQUESTED,
+                    summary=f"Approval requested for {call.name}",
+                    tool_name=call.name,
+                    status="pending",
+                    field_states={"args": "omitted", "result": "not_available"},
+                    sensitivity="tool_content",
+                    call_id=str(trace_state["correlation"]),
+                    parent_step_index=proposal_step.index,
+                )
+                trace_state["request"] = request_step
             try:
                 verdicts = deps.review_tool_calls(list(calls)) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
@@ -1273,6 +1471,33 @@ def run_agent_loop(
                         f"calls as proceed"
                     )
                 verdicts = {}
+
+            if not (review_hook_failed and continuation_checkpoint is not None):
+                for call in calls:
+                    trace_state = call_trace[id(call)]
+                    proposal_step = trace_state["proposal"]
+                    request_step = trace_state["request"]
+                    assert isinstance(proposal_step, AgentStep)
+                    assert isinstance(request_step, AgentStep)
+                    verdict = _effective_review_verdict(call, verdicts)
+                    decision_step = trace(
+                        STEP_APPROVAL_APPROVED
+                        if verdict == "proceed"
+                        else STEP_APPROVAL_DENIED,
+                        summary=(
+                            f"Approval granted for {call.name}"
+                            if verdict == "proceed"
+                            else f"Approval denied for {call.name}"
+                        ),
+                        tool_name=call.name,
+                        status="approved" if verdict == "proceed" else "denied",
+                        field_states={"args": "omitted", "result": "omitted"},
+                        sensitivity="tool_content",
+                        call_id=str(trace_state["correlation"]),
+                        parent_step_index=request_step.index,
+                        source_step_index=proposal_step.index,
+                    )
+                    trace_state["decision"] = decision_step
 
         dispatchable_calls = [
             call
@@ -1304,6 +1529,7 @@ def run_agent_loop(
             return continuation_error()
 
         for call in calls:
+            verdict = _effective_review_verdict(call, verdicts)
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
             # the dispatch chain below, not after. `call.name`/`call.args`
             # are already known here, so nothing is gained by waiting -- and
@@ -1320,6 +1546,23 @@ def run_agent_loop(
             # here, before the side effect, and legacy refusals retain their
             # pre-existing record order.
             if deps.should_cancel():
+                if deps.review_tool_calls is not None and verdict == "proceed":
+                    trace_state = call_trace[id(call)]
+                    decision_step = trace_state.get("decision")
+                    trace(
+                        STEP_APPROVAL_REVOKED,
+                        summary=f"Approval revoked for {call.name}",
+                        tool_name=call.name,
+                        status="revoked",
+                        field_states={"args": "omitted", "result": "omitted"},
+                        sensitivity="tool_content",
+                        call_id=str(trace_state["correlation"]),
+                        parent_step_index=(
+                            decision_step.index
+                            if isinstance(decision_step, AgentStep)
+                            else None
+                        ),
+                    )
                 return _outcome(RUN_CANCELLED)
             recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
             cycle = _detect_cycle(recent_calls)
@@ -1332,9 +1575,7 @@ def run_agent_loop(
                 # "N-cycle" jargon. dict.fromkeys de-dupes while preserving
                 # order (a period-1 trip names the tool once, not 3x).
                 names = ", ".join(
-                    dict.fromkeys(
-                        n for n, _ in list(recent_calls)[-period * repeats :]
-                    )
+                    dict.fromkeys(n for n, _ in list(recent_calls)[-period * repeats :])
                 )
                 # Log-side detail (TASK-1231/F3 AC4): the period/repeats
                 # jargon that used to be the ONLY copy this trip produced is
@@ -1345,8 +1586,7 @@ def run_agent_loop(
                 # F3: "loop detected: read_file repeated in a 1-cycle (3x)"
                 # reads as unexplained jargon to a first-run user.
                 logger.debug(
-                    f"loop detected: period={period} repeats={repeats} "
-                    f"tools={names}"
+                    f"loop detected: period={period} repeats={repeats} tools={names}"
                 )
                 if period == 1:
                     summary = (
@@ -1382,7 +1622,6 @@ def run_agent_loop(
             # verdicts, and the fence path builds ToolCalls with NO call_id
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
-            verdict = _effective_review_verdict(call, verdicts)
             if continuation_checkpoint is not None and verdict != "proceed":
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)
@@ -1441,6 +1680,26 @@ def run_agent_loop(
                 content = verdict
                 tool_outcome = TOOL_OUTCOME_BLOCKED
             else:
+                trace_state = call_trace[id(call)]
+                proposal_step = trace_state["proposal"]
+                decision_step = trace_state.get("decision")
+                assert isinstance(proposal_step, AgentStep)
+                execution_step = trace(
+                    STEP_TOOL_EXECUTION_STARTED,
+                    summary=f"{call.name} execution started",
+                    tool_name=call.name,
+                    status="started",
+                    field_states={"args": "omitted", "result": "not_available"},
+                    sensitivity="tool_content",
+                    call_id=str(trace_state["correlation"]),
+                    parent_step_index=(
+                        decision_step.index
+                        if isinstance(decision_step, AgentStep)
+                        else proposal_step.index
+                    ),
+                    source_step_index=proposal_step.index,
+                )
+                trace_state["execution"] = execution_step
                 if call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
                         # Q6: refuse before dispatch — no budget consumption,
@@ -1469,7 +1728,7 @@ def run_agent_loop(
                                 ok=False, error="sub-agent budget exhausted"
                             )
                         else:
-                            add(
+                            spawn_step = add(
                                 STEP_SPAWN,
                                 summary=(
                                     f"[{agent_name}] {task}"[:200]
@@ -1479,7 +1738,11 @@ def run_agent_loop(
                                 tool_name=SPAWN_TOOL_NAME,
                                 args=dict(call.args),
                             )
-                            if agent_name:
+                            if deps.spawn_at_step is not None:
+                                result = deps.spawn_at_step(
+                                    task, spawn_step.index, agent_name or None
+                                )
+                            elif agent_name:
                                 result = deps.spawn(task, agent=agent_name)
                             else:
                                 result = deps.spawn(task)
@@ -1506,8 +1769,7 @@ def run_agent_loop(
                             if result.ok or not agent_name:
                                 spawned += 1
                 elif (
-                    call.name == WAIT_AGENTS_TOOL_NAME
-                    and deps.wait_agents is not None
+                    call.name == WAIT_AGENTS_TOOL_NAME and deps.wait_agents is not None
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     # Same defensive coercion as load_tools' `ids` right
@@ -1537,7 +1799,9 @@ def run_agent_loop(
                     call.name == SEND_TO_AGENT_TOOL_NAME
                     and deps.send_to_agent is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    steering_step = add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
+                    )
                     # Same defensive coercion as wait_agents' `ids` above:
                     # an unreliable local model may send numbers or JSON
                     # nulls. Anything non-string becomes its str() form (a
@@ -1547,10 +1811,14 @@ def run_agent_loop(
                     # unknown-id refusals speak, never a crash here.
                     raw_target = call.args.get("id")
                     raw_message = call.args.get("message")
-                    result = deps.send_to_agent(
-                        "" if raw_target is None else str(raw_target),
-                        "" if raw_message is None else str(raw_message),
-                    )
+                    target = "" if raw_target is None else str(raw_target)
+                    message = "" if raw_message is None else str(raw_message)
+                    if deps.send_to_agent_at_step is not None:
+                        result = deps.send_to_agent_at_step(
+                            target, message, steering_step.index
+                        )
+                    else:
+                        result = deps.send_to_agent(target, message)
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))
@@ -1673,8 +1941,13 @@ def run_agent_loop(
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.run_log_slice(dict(call.args))
                 else:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    result = deps.invoke_tool(call)
+                    tool_step = add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
+                    )
+                    if deps.invoke_tool_at_step is not None:
+                        result = deps.invoke_tool_at_step(call, tool_step.index)
+                    else:
+                        result = deps.invoke_tool(call)
 
                 tool_outcome = (
                     TOOL_OUTCOME_SUCCESS
@@ -1682,10 +1955,39 @@ def run_agent_loop(
                     else (
                         TOOL_OUTCOME_BLOCKED
                         if result.outcome == TOOL_OUTCOME_BLOCKED
-                        else TOOL_OUTCOME_FAILED
+                        else (
+                            result.outcome
+                            if result.outcome
+                            in {TOOL_OUTCOME_TIMEOUT, TOOL_OUTCOME_CANCELLED}
+                            else TOOL_OUTCOME_FAILED
+                        )
                     )
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
+
+            if verdict == "proceed":
+                trace_state = call_trace[id(call)]
+                proposal_step = trace_state["proposal"]
+                execution_step = trace_state["execution"]
+                assert isinstance(proposal_step, AgentStep)
+                assert isinstance(execution_step, AgentStep)
+                terminal_kind = {
+                    TOOL_OUTCOME_SUCCESS: STEP_TOOL_SUCCEEDED,
+                    TOOL_OUTCOME_TIMEOUT: STEP_TOOL_TIMED_OUT,
+                    TOOL_OUTCOME_CANCELLED: STEP_TOOL_CANCELLED,
+                }.get(tool_outcome, STEP_TOOL_FAILED)
+                trace(
+                    terminal_kind,
+                    summary=f"{call.name} {tool_outcome}",
+                    tool_name=call.name,
+                    tool_outcome=tool_outcome,
+                    status=tool_outcome,
+                    field_states={"args": "omitted", "result": "omitted"},
+                    sensitivity="tool_content",
+                    call_id=str(trace_state["correlation"]),
+                    parent_step_index=execution_step.index,
+                    source_step_index=proposal_step.index,
+                )
 
             # tool_result capture stays HERE, after dispatch: this is the
             # first point the full result/error text exists. (The tool_call
@@ -1723,9 +2025,7 @@ def run_agent_loop(
                     total_limit=True,
                 )
                 target_state = (
-                    "completed"
-                    if verdict == "proceed" and result.ok
-                    else "failed"
+                    "completed" if verdict == "proceed" and result.ok else "failed"
                 )
                 if not transition_call(
                     call,

@@ -121,6 +121,10 @@ class TestConnectionsAreHeldPerThread:
 
     def test_client_notifications_reuses_one_connection_across_inserts(self, tmp_path):
         db = ClientNotificationsDB(tmp_path / "notifications.db")
+        # TASK-21105: the store opens on first use, so warm the held
+        # connection with one read BEFORE installing the counter -- the
+        # subject here is reuse ACROSS inserts, not the first open.
+        db.get_settings()
         opened = _count_opens(db)
 
         for index in range(20):

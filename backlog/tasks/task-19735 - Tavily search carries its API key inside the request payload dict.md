@@ -2,8 +2,9 @@
 id: TASK-19735
 title: >-
   Tavily search carries its API key inside the request payload dict
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-21 23:40'
 labels:
   - security
@@ -64,17 +65,17 @@ to a name that a debug log would naturally reach for.
 
 ## Acceptance Criteria
 
-- [ ] The Tavily API key is not a member of any dict that also holds ordinary
+- [x] The Tavily API key is not a member of any dict that also holds ordinary
       request parameters, so a debug log of the request parameters cannot
       disclose it
-- [ ] Tavily search still authenticates and returns results (the credential
+- [x] Tavily search still authenticates and returns results (the credential
       reaches the service by whichever transport the fix chooses)
-- [ ] A test asserts that the object holding the request parameters contains no
+- [x] A test asserts that the object holding the request parameters contains no
       credential value, and is mutation-checked (restoring the old payload
       shape makes it red)
-- [ ] The already-clean properties are pinned, not just assumed: a test asserts
+- [x] The already-clean properties are pinned, not just assumed: a test asserts
       the error string returned on a request exception contains no credential
-- [ ] The other backends in `Web_Scraping/WebSearch_APIs.py` are checked for the
+- [x] The other backends in `Web_Scraping/WebSearch_APIs.py` are checked for the
       same shape and the result recorded (headers-based ones — Bing, Brave,
       Serper, Exa, Kagi, Yandex — are expected clean; Google's `params["key"]`
       at `:3428` is the one TASK-19552 addressed)
@@ -85,3 +86,66 @@ Low priority on purpose. This is hardening against a plausible future edit, not
 a live disclosure — filing it as a live leak would misrepresent the evidence.
 The value is that the next person to debug this function finds the task instead
 of adding the log line.
+
+## Implementation Plan
+
+1. Confirm the latency claim at this base: grep `search_web_tavily` for any
+   log statement, and confirm the key travels in the POST body rather than
+   the URL (so the exception path is already clean).
+2. Write the born-red test first: drive `search_web_tavily` with a sentinel
+   key through an in-process fake `requests`, and assert the decoded request
+   body holds no credential.
+3. Move the credential to `Authorization: Bearer <key>`, matching every
+   sibling backend in the module.
+4. Pin the already-clean properties rather than assume them: the returned
+   error string on a request exception.
+5. Turn the sibling-backend census into an executable AST check instead of
+   prose that can go stale, with `search_web_google`'s `params["key"]` as
+   the one recorded, referenced exception.
+
+## Implementation Notes
+
+The Tavily credential moved from the `payload` dict into `headers` as
+`Authorization: Bearer <key>`, which Tavily accepts and which bing, brave,
+kagi, serper, exa and yandex in the same module already use. It is read at
+the point of use and never bound to a local name, so there is no
+`tavily_api_key` variable for a debug log to reach for either.
+
+**This stayed sized as latent.** Nothing logged `payload` at the base and the
+key travelled in the body, not the URL, so the error path was clean too. The
+value of the change is that the one-line edit a future maintainer would make
+while debugging (`logger.debug(f"payload: {payload}")`) can no longer
+disclose the key. No claim of a live leak was added anywhere.
+
+**Born-red evidence** (all at base `f12bb21ad`, before any source change --
+which is also the mutation check the third AC asks for, since the base *is*
+the old payload shape):
+
+```
+test_tavily_request_parameters_hold_no_credential
+E  AssertionError: the Tavily key is inside the request-parameter object:
+   {'api_key': 'tvly-TASK19735-SENTINEL-NOT-A-REAL-KEY', 'query': 'cherry cake', 'max_results': 3}
+test_tavily_credential_travels_in_the_headers
+E  AssertionError: the key reaches no transport at all:
+   {'Content-Type': ..., 'User-Agent': ...}
+test_no_search_backend_hides_a_credential_in_its_parameter_dict
+E  Extra items in the left set: ('search_web_tavily', 'payload')
+```
+
+Three sibling tests were **green at base and stayed green**, which is the
+point of the fourth AC: the returned error string carries no credential, the
+optional domain filters still reach the request, and the census detector
+demonstrably detects (a synthetic offending module is found, so the empty
+census result is not vacuous).
+
+**Sibling-backend census, recorded and now executable.** Clean (credential in
+`headers`): bing `Ocp-Apim-Subscription-Key`, brave `X-Subscription-Token`,
+serper `X-API-KEY`, exa `x-api-key`, kagi `Authorization: Bot ...`, yandex
+`Authorization: Api-Key ...`. searx / duckduckgo / baidu carry no credential
+at all. The one parameter-dict credential left is `search_web_google`'s
+`params["key"]` -- the engine's own API contract, whose two disclosure points
+TASK-19552 fixed -- and it is the single allowlisted entry in
+`_KNOWN_PARAMETER_CREDENTIALS`, so a new offender fails the census.
+
+Modified: `tldw_chatbook/Web_Scraping/WebSearch_APIs.py`.
+Added: `Tests/Web_Scraping/test_tavily_credential_transport.py` (6 tests).

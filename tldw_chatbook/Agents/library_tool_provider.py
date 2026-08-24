@@ -14,7 +14,11 @@ per run after `BuiltinToolProvider` and before skills/MCP.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import threading
 from typing import Any, Mapping
+from uuid import uuid4
+import weakref
 
 from loguru import logger
 
@@ -22,6 +26,9 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
 )
 from tldw_chatbook.Library.library_tool_contract import (
     ERROR_INVALID_ARGUMENT,
@@ -37,7 +44,74 @@ def _error_result(error: LibraryToolError) -> ToolResult:
     return ToolResult(ok=False, error=json_dumps_compact(error.to_payload()))
 
 
-class LibraryToolProvider:
+@dataclass(frozen=True, slots=True, weakref_slot=True)
+class BuiltinLibraryAuthority:
+    """Live, credential-free authority issued by one built-in provider."""
+
+    provider_instance_id: str
+    reserved_names: frozenset[str]
+    assistant_access: ConsoleAssistantLibraryAccess
+
+
+class _BuiltinLibraryAuthorityIssuer:
+    """Private instance-identity capability shared by the two built-in providers."""
+
+    def _initialize_builtin_authority_issuer(self) -> None:
+        self._builtin_library_provider_instance_id = uuid4().hex
+        self._builtin_library_authorities: dict[
+            int, weakref.ReferenceType[BuiltinLibraryAuthority]
+        ] = {}
+        self._builtin_library_authority_lock = threading.RLock()
+
+    def issue_builtin_authority(
+        self,
+        *,
+        reserved_names: frozenset[str],
+        assistant_access: ConsoleAssistantLibraryAccess,
+    ) -> BuiltinLibraryAuthority:
+        """Issue one independently live authority for an owning run registry."""
+        authority = BuiltinLibraryAuthority(
+            provider_instance_id=self._builtin_library_provider_instance_id,
+            reserved_names=reserved_names,
+            assistant_access=assistant_access,
+        )
+        authority_key = id(authority)
+        issuer_ref = weakref.ref(self)
+
+        def _discard(
+            dead_ref: weakref.ReferenceType[BuiltinLibraryAuthority],
+            *,
+            key: int = authority_key,
+            owner_ref: weakref.ReferenceType[_BuiltinLibraryAuthorityIssuer] = issuer_ref,
+        ) -> None:
+            owner = owner_ref()
+            if owner is None:
+                return
+            with owner._builtin_library_authority_lock:
+                if owner._builtin_library_authorities.get(key) is dead_ref:
+                    owner._builtin_library_authorities.pop(key, None)
+
+        authority_ref = weakref.ref(authority, _discard)
+        with self._builtin_library_authority_lock:
+            self._builtin_library_authorities[authority_key] = authority_ref
+        return authority
+
+    def authenticates_builtin_authority(
+        self, authority: object
+    ) -> bool:
+        """Authenticate only the exact currently issued object for this instance."""
+        if (
+            not isinstance(authority, BuiltinLibraryAuthority)
+            or authority.provider_instance_id
+            != self._builtin_library_provider_instance_id
+        ):
+            return False
+        with self._builtin_library_authority_lock:
+            authority_ref = self._builtin_library_authorities.get(id(authority))
+            return authority_ref is not None and authority_ref() is authority
+
+
+class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
     """Exposes the 18 descriptor-backed ``library_*`` tools to Console agents.
 
     Catalog entries and schemas are derived from ``LIBRARY_TOOL_DESCRIPTORS``
@@ -50,6 +124,7 @@ class LibraryToolProvider:
 
     def __init__(self, service: Any) -> None:
         """Bind the shared synchronous Library service (duck-typed ``invoke``)."""
+        self._initialize_builtin_authority_issuer()
         self._service = service
 
     def _tool_id(self, name: str) -> str:
@@ -107,4 +182,4 @@ class LibraryToolProvider:
         return ToolResult(ok=True, content=text)
 
 
-__all__ = ["LibraryToolProvider"]
+__all__ = ["BuiltinLibraryAuthority", "LibraryToolProvider"]

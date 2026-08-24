@@ -1945,6 +1945,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     """
     from Tests.UI.console_controller_stubs import (
         NO_APP,
+        stub_fleet_controller,
         stub_image_controller,
         stub_message_controller,
     )
@@ -1952,6 +1953,10 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
     screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
+    # Precedes the `_console_chat_store` assignment: that setter reaches
+    # `_console_runtime().set_chat_store`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    stub_fleet_controller(screen, context="live work handoffs screen")
     screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
