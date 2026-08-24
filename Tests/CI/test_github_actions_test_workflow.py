@@ -310,6 +310,50 @@ def _shard_ids(job_block: str) -> list[int]:
     ]
 
 
+def test_pull_request_runs_are_not_cancelled_when_the_base_moves() -> None:
+    """A run that is always cancelled is worse than no run at all.
+
+    For a `pull_request` event `github.ref` is `refs/pull/N/merge`, and GitHub
+    recreates that ref every time the BASE branch moves. Cancelling on anything
+    that is not `main` therefore cancelled every open PR's run repeatedly,
+    without anyone touching the PR -- the mechanism TASK-21250 documented and
+    fixed for `derived-artifacts.yml`.
+
+    It cost nothing while the core job could not finish inside its budget
+    anyway. TASK-21411 sharded it, and the waste became measurable: one slice
+    completed in 32 minutes while five were cancelled after 55-86 minutes each,
+    none reaching a verdict, all inside the 120-minute cap.
+
+    Pinned because the two workflows must not drift back apart: the small gate
+    already carries this rule, and a copy-paste from an older revision of either
+    file would silently restore the behaviour.
+
+    Raises:
+        AssertionError: If cancellation is not restricted to push events, or if
+            `main` loses its exemption.
+    """
+    workflow = _workflow_text()
+    block = workflow[workflow.index("concurrency:") :].splitlines()
+    rule = next(l for l in block if "cancel-in-progress:" in l)
+
+    assert "github.event_name == 'push'" in rule, (
+        "pull_request runs must not be cancelled: their merge ref is recreated "
+        f"whenever the base moves. Got: {rule.strip()}"
+    )
+    assert "refs/heads/main" in rule, "main must keep its exemption"
+
+    # The sibling gate must carry the same rule, for the same reason.
+    sibling = (
+        PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
+    ).read_text()
+    sibling_rule = next(
+        l for l in sibling.splitlines() if "cancel-in-progress:" in l
+    )
+    assert "github.event_name == 'push'" in sibling_rule, (
+        "derived-artifacts.yml lost the TASK-21250 rule; the two must not drift"
+    )
+
+
 def test_core_tests_job_is_sharded_to_fit_its_time_budget() -> None:
     """TASK-21411: one job could not finish the core suite either.
 

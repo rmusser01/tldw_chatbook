@@ -17,9 +17,28 @@ on:
 # The event name is part of the group so different trigger types (push,
 # pull_request, schedule) never cancel each other, and `main` is never cancelled
 # so its history stays complete.
+#
+# TASK-21969: pull_request runs are NOT cancelled, matching the rule
+# derived-artifacts.yml adopted in TASK-21250 for the same reason. For a
+# pull_request event `github.ref` is `refs/pull/N/merge`, and GitHub recreates
+# that ref every time the BASE branch moves -- so on a repo taking 23-50
+# merges/day, every open PR's run was cancelled repeatedly without anyone
+# touching the PR.
+#
+# That cost nothing while the core job could not finish inside its budget
+# anyway. TASK-21411 sharded it, and the waste became measurable: on run
+# 32696030401 one slice completed in 32 minutes and FIVE were cancelled after
+# 55-86 minutes each, none reaching a verdict, all well inside the 120-minute
+# cap. Several runner-hours per run, spent and discarded.
+#
+# The cost of not cancelling is different here than it was for the 90-second
+# gate: with `cancel-in-progress: false` a rapidly-updated PR QUEUES its runs
+# rather than replacing them, so the pool sees them serially instead of not at
+# all. That is the trade being taken deliberately -- spending the compute and
+# getting nothing was the worse of the two.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
