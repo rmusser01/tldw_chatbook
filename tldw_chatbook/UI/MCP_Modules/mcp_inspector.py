@@ -32,6 +32,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
     library_rag_all_matches_weak,
 )
+from tldw_chatbook.Library.library_rag_score_kinds import library_rag_result_score_kind
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import (
@@ -500,20 +501,20 @@ def _is_tool_error_shape(result: object) -> bool:
 
 
 class _ScoredRow:
-    """Minimal `.score`-bearing shim, nothing more.
+    """Minimal score-provenance shim for the shared weak-match predicate.
 
     `library_rag_all_matches_weak()` is typed for `LibraryRagResultRow`
-    but at runtime only ever reads `.score` off each row -- duck typing,
-    not a hard dependency on the Library dataclass. This lets MCP tool
-    result rows (plain `Mapping`s) feed the same, one, canonical
-    all-weak check the Library evidence list uses, without copying its
-    logic (PR-T3 task 2 / Global Constraints: "reuse the vocabulary,
-    don't reinvent it").
+    but at runtime reads score provenance through duck typing rather than a
+    hard dependency on the Library dataclass. This lets MCP tool result rows
+    (plain `Mapping`s) feed the same, canonical all-weak check the Library
+    evidence list uses without copying its logic.
     """
 
-    __slots__ = ("score",)
+    __slots__ = ("score", "score_kind", "vector_score")
 
-    def __init__(self, score: object) -> None:
+    def __init__(
+        self, score: object, score_kind: str, vector_score: float | None
+    ) -> None:
         # Defensive coercion: anything that isn't a real number (or is a
         # bool -- `isinstance(True, int)` is True in Python) is treated
         # as unscored rather than risking a `<` comparison against a
@@ -523,6 +524,8 @@ class _ScoredRow:
             if isinstance(score, (int, float)) and not isinstance(score, bool)
             else None
         )
+        self.score_kind = score_kind
+        self.vector_score = vector_score
 
 
 def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
@@ -542,7 +545,7 @@ def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
     Returns:
         `None` when `rows` isn't uniformly scored-shaped (including the
         empty-list case, handled separately by the caller); otherwise
-        the `.score` shim list.
+        score-provenance shim list.
     """
     if not rows:
         return None
@@ -550,7 +553,10 @@ def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
     for row in rows:
         if not isinstance(row, Mapping) or "score" not in row:
             return None
-        scored_rows.append(_ScoredRow(row.get("score")))
+        score_kind, vector_score = library_rag_result_score_kind(
+            row.get("metadata"), row
+        )
+        scored_rows.append(_ScoredRow(row.get("score"), score_kind, vector_score))
     return scored_rows
 
 
