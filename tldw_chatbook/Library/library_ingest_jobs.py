@@ -1022,8 +1022,8 @@ class LibraryIngestJobRegistry:
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
-        self._notify_listeners()
         self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def mark_failed(
@@ -1093,8 +1093,8 @@ class LibraryIngestJobRegistry:
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
-        self._notify_listeners()
         self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def mark_remote_done(
@@ -1156,8 +1156,8 @@ class LibraryIngestJobRegistry:
             ),
         )
         self._jobs[index] = updated
-        self._notify_listeners()
         self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def update_progress(
@@ -1241,8 +1241,8 @@ class LibraryIngestJobRegistry:
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
-        self._notify_listeners()
         self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def mark_skipped(

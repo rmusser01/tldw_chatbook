@@ -215,6 +215,42 @@ class ResearchSourceOperationStore:
             ).fetchall()
         return tuple(_operation_from_row(row) for row in rows)
 
+    def list_association_actionable(
+        self, *, limit: int = 50
+    ) -> tuple[ResearchSourceOperation, ...]:
+        """Return a bounded stable page actionable by catalog/association recovery."""
+
+        if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
+            raise SourceOperationValidationError(
+                f"limit must be between 1 and {MAX_INCOMPLETE_PAGE}"
+            )
+        with self._db.connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM research_source_operations
+                WHERE (
+                        catalog_status IN (?, ?)
+                        AND ingest_job_id <> ''
+                    )
+                    OR (
+                        catalog_status = ?
+                        AND association_status IN (?, ?)
+                    )
+                ORDER BY created_at ASC, operation_id ASC
+                LIMIT ?
+                """,
+                (
+                    SourceOperationStatus.PENDING.value,
+                    SourceOperationStatus.IN_PROGRESS.value,
+                    SourceOperationStatus.SUCCEEDED.value,
+                    SourceOperationStatus.PENDING.value,
+                    SourceOperationStatus.IN_PROGRESS.value,
+                    limit,
+                ),
+            ).fetchall()
+        return tuple(_operation_from_row(row) for row in rows)
+
     def advance_stage(
         self,
         operation_id: str,

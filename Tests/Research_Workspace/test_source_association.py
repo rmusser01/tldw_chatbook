@@ -11,10 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJobRegistry,
+    _job_from_row,
 )
 from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
 from tldw_chatbook.Research_Workspace.source_association import (
@@ -208,7 +210,8 @@ async def test_association_failure_preserves_catalog_and_retry_does_not_reingest
         operation_store=store,
         ingest_jobs=jobs,
         local_registry=flaky_registry,
-        catalog_retrier=lambda job_id: catalog_retry_calls.append(job_id),
+        catalog_requeuer=lambda job_id: catalog_retry_calls.append(job_id),
+        catalog_dispatcher=lambda job_id: catalog_retry_calls.append(job_id),
     )
 
     failed = await coordinator.resume(operation.operation_id)
@@ -633,7 +636,8 @@ async def test_catalog_retry_requeues_linked_job_and_records_new_lineage(
         operation_store=store,
         ingest_jobs=jobs,
         local_registry=local_registry,
-        catalog_retrier=retry_catalog,
+        catalog_requeuer=retry_catalog,
+        catalog_dispatcher=lambda job_id: None,
     )
 
     retrying = await coordinator.retry(
@@ -651,6 +655,109 @@ async def test_catalog_retry_requeues_linked_job_and_records_new_lineage(
     assert receipt.catalog_status is SourceOperationStatus.SUCCEEDED
     assert receipt.canonical_item_id == "71"
     assert receipt.association_status is SourceOperationStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["local", "server"])
+async def test_catalog_retry_records_replacement_before_immediate_dispatch_failure(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    workspace_db = WorkspaceDB(
+        tmp_path / f"workspaces-{origin}.sqlite",
+        client_id=f"retry-{origin}",
+    )
+    store = ResearchSourceOperationStore(workspace_db)
+    ingest_db = LibraryIngestJobsDB(tmp_path / f"ingest-{origin}.sqlite")
+    jobs = LibraryIngestJobRegistry()
+    jobs.attach_store(ingest_db)
+    authority = (
+        WorkspaceDataSource.LOCAL if origin == "local" else WorkspaceDataSource.SERVER
+    )
+    operation = store.create(
+        _operation(
+            operation_id=f"research-op-immediate-{origin}",
+            data_source=authority,
+            workspace_id="ws-a",
+            server_profile_id="server-a" if origin == "server" else "",
+            principal_id="principal-a" if origin == "server" else "",
+        )
+    )
+    failed_job = jobs.submit(
+        source_path=(
+            "https://example.test/source.pdf" if origin == "server" else "source.txt"
+        ),
+        origin=origin,
+        research_source_operation_id=operation.operation_id,
+    )
+    jobs.mark_failed(failed_job.job_id, error="initial failure")
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.IN_PROGRESS,
+        expected_revision=operation.revision,
+        ingest_job_id=failed_job.job_id,
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.FAILED,
+        expected_revision=operation.revision,
+        error_code="catalog_ingest_failed",
+        error_message="Catalog ingest did not complete successfully.",
+    )
+    dispatch_observations: list[tuple[str, str]] = []
+
+    def dispatch(job_id: str) -> None:
+        durable = store.get(operation.operation_id)
+        assert durable is not None
+        persisted_job = next(
+            row for row in ingest_db.all_jobs() if row["job_id"] == job_id
+        )
+        assert persisted_job["state"] == "queued"
+        dispatch_observations.append((durable.ingest_job_id, job_id))
+        jobs.mark_failed(job_id, error="immediate dispatch failure")
+
+    coordinator = ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=jobs,
+        catalog_requeuer=jobs.requeue,
+        catalog_dispatcher=dispatch,
+    )
+    scheduler = ResearchSourceAssociationScheduler(
+        coordinator=coordinator,
+        operation_store=store,
+    )
+
+    receipt = await scheduler.retry(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+    )
+
+    assert receipt.catalog_status is SourceOperationStatus.FAILED
+    assert receipt.error_code == "catalog_ingest_failed"
+    assert receipt.ingest_job_id != failed_job.job_id
+    assert dispatch_observations == [(receipt.ingest_job_id, receipt.ingest_job_id)]
+    assert store.get(operation.operation_id) == receipt
+
+    rows = ingest_db.all_jobs()
+    restored_jobs = LibraryIngestJobRegistry()
+    restored_jobs.restore(
+        [_job_from_row(row) for row in rows],
+        next_id=max(row["seq"] for row in rows) + 1,
+    )
+    restored_jobs.attach_store(ingest_db)
+    replay = await ResearchSourceAssociationScheduler(
+        coordinator=ResearchSourceAssociationCoordinator(
+            operation_store=store,
+            ingest_jobs=restored_jobs,
+        ),
+        operation_store=store,
+    ).resume(operation.operation_id)
+
+    assert replay == receipt
+    ingest_db.close()
+    workspace_db.close()
 
 
 @pytest.mark.asyncio
@@ -756,7 +863,9 @@ async def test_scheduler_serializes_same_operation_but_allows_unrelated_work() -
 
     scheduler = ResearchSourceAssociationScheduler(
         coordinator=Coordinator(),
-        operation_store=SimpleNamespace(list_incomplete=lambda **kwargs: ()),
+        operation_store=SimpleNamespace(
+            list_association_actionable=lambda **kwargs: ()
+        ),
     )
     first_a = asyncio.create_task(scheduler.resume("op-a"))
     await entered_a.wait()
@@ -769,6 +878,50 @@ async def test_scheduler_serializes_same_operation_but_allows_unrelated_work() -
     await asyncio.gather(first_a, second_a, unrelated)
     assert calls == ["op-a", "op-b", "op-a"]
     assert max_active_a == 1
+    assert scheduler.active_fence_count == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_serializes_retry_and_resume_per_operation() -> None:
+    retry_entered = asyncio.Event()
+    unrelated_entered = asyncio.Event()
+    release_retry = asyncio.Event()
+    calls: list[tuple[str, str]] = []
+
+    class Coordinator:
+        async def retry(self, operation_id: str, *, stage: SourceOperationStage):
+            calls.append(("retry", operation_id))
+            if operation_id == "op-a":
+                retry_entered.set()
+                await release_retry.wait()
+
+        async def resume(self, operation_id: str):
+            calls.append(("resume", operation_id))
+            if operation_id == "op-b":
+                unrelated_entered.set()
+
+    scheduler = ResearchSourceAssociationScheduler(
+        coordinator=Coordinator(),
+        operation_store=SimpleNamespace(
+            list_association_actionable=lambda **kwargs: ()
+        ),
+    )
+    retry_a = asyncio.create_task(
+        scheduler.retry("op-a", stage=SourceOperationStage.CATALOG)
+    )
+    await retry_entered.wait()
+    resume_a = asyncio.create_task(scheduler.resume("op-a"))
+    resume_b = asyncio.create_task(scheduler.resume("op-b"))
+    await asyncio.wait_for(unrelated_entered.wait(), timeout=0.2)
+
+    assert calls == [("retry", "op-a"), ("resume", "op-b")]
+    release_retry.set()
+    await asyncio.gather(retry_a, resume_a, resume_b)
+    assert calls == [
+        ("retry", "op-a"),
+        ("resume", "op-b"),
+        ("resume", "op-a"),
+    ]
     assert scheduler.active_fence_count == 0
 
 
@@ -794,7 +947,7 @@ async def test_startup_resume_is_bounded_and_skips_failed_receipts() -> None:
     resumed: list[str] = []
 
     class Store:
-        def list_incomplete(self, **kwargs):
+        def list_association_actionable(self, **kwargs):
             list_calls.append(kwargs)
             return (pending, failed)
 
@@ -836,7 +989,7 @@ async def test_startup_resume_isolates_one_operation_failure() -> None:
     scheduler = ResearchSourceAssociationScheduler(
         coordinator=Coordinator(),
         operation_store=SimpleNamespace(
-            list_incomplete=lambda **kwargs: (first, second)
+            list_association_actionable=lambda **kwargs: (first, second)
         ),
     )
 

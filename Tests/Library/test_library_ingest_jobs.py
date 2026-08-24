@@ -1259,6 +1259,26 @@ def test_store_hook_none_is_pure_and_errors_swallowed():
     assert j.state.value == "queued"
 
 
+def test_terminal_listener_still_fires_when_best_effort_store_fails():
+    class _Boom:
+        def upsert_job(self, job):
+            raise RuntimeError("disk full")
+
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(_Boom())
+    job = registry.submit(source_path="/source.txt")
+    observed = []
+    registry.add_listener(
+        lambda: observed.append(registry.get_job(job.job_id).state)
+    )
+
+    settled = registry.mark_failed(job.job_id, error="safe failure")
+
+    assert settled is not None
+    assert settled.state is IngestJobState.FAILED
+    assert observed == [IngestJobState.FAILED]
+
+
 def test_plan_restore_normalizes_interrupted_and_prunes():
     from tldw_chatbook.Library.library_ingest_jobs import plan_restore, IngestJobState
 

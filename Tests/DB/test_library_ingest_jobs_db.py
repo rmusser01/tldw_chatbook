@@ -8,6 +8,7 @@ from tldw_chatbook.DB.Library_Ingest_Jobs_DB import (
     LibraryIngestJobsDB,
 )
 from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
     LibraryIngestJobRegistry,
     _job_from_row,
 )
@@ -599,6 +600,64 @@ def test_operation_link_survives_local_and_server_completion_and_reload(tmp_path
     restored = {row["job_id"]: _job_from_row(row) for row in db.all_jobs()}
     assert restored[local.job_id].research_source_operation_id == "operation-local"
     assert restored[server.job_id].research_source_operation_id == "operation-server"
+    db.close()
+
+
+@pytest.mark.parametrize(
+    (
+        "origin",
+        "transition",
+        "expected_state",
+        "expected_media_id",
+        "expected_remote_id",
+    ),
+    [
+        ("local", "done", IngestJobState.DONE, 41, None),
+        ("server", "remote_done", IngestJobState.DONE, None, "900"),
+        ("local", "failed", IngestJobState.FAILED, None, None),
+        ("local", "cancelled", IngestJobState.CANCELLED, None, None),
+    ],
+)
+def test_terminal_listener_observes_durable_terminal_row(
+    tmp_path,
+    origin,
+    transition,
+    expected_state,
+    expected_media_id,
+    expected_remote_id,
+):
+    """A lifecycle listener may schedule recovery only after durable settlement."""
+
+    db = _db(tmp_path)
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(db)
+    job = registry.submit(
+        source_path="https://example.test/source"
+        if origin == "server"
+        else "/source.txt",
+        origin=origin,
+        research_source_operation_id=f"operation-{transition}",
+    )
+    observations = []
+
+    def observe_terminal_row() -> None:
+        row = next(item for item in db.all_jobs() if item["job_id"] == job.job_id)
+        if row["state"] in {"done", "failed", "cancelled"}:
+            observations.append((row["state"], row["media_id"], row["remote_media_id"]))
+
+    registry.add_listener(observe_terminal_row)
+    if transition == "done":
+        registry.mark_done(job.job_id, media_id=41)
+    elif transition == "remote_done":
+        registry.mark_remote_done(job.job_id, remote_media_id="900")
+    elif transition == "failed":
+        registry.mark_failed(job.job_id, error="safe failure")
+    else:
+        registry.mark_cancelled(job.job_id, reason="cancelled")
+
+    assert observations == [
+        (expected_state.value, expected_media_id, expected_remote_id)
+    ]
     db.close()
 
 

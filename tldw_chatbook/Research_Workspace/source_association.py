@@ -36,14 +36,16 @@ class ResearchSourceAssociationCoordinator:
         local_registry: LocalWorkspaceRegistryService | None = None,
         server_service: Any | None = None,
         server_context_provider: Any | None = None,
-        catalog_retrier: Any | None = None,
+        catalog_requeuer: Any | None = None,
+        catalog_dispatcher: Any | None = None,
     ) -> None:
         self._operation_store = operation_store
         self._ingest_jobs = ingest_jobs
         self._local_registry = local_registry
         self._server_service = server_service
         self._server_context_provider = server_context_provider
-        self._catalog_retrier = catalog_retrier
+        self._catalog_requeuer = catalog_requeuer
+        self._catalog_dispatcher = catalog_dispatcher
 
     async def resume(self, operation_id: str) -> ResearchSourceOperation:
         """Resume catalog and association stages for one durable operation."""
@@ -84,14 +86,14 @@ class ResearchSourceAssociationCoordinator:
         )
         if stage is SourceOperationStage.ASSOCIATION:
             return await self.resume(operation.operation_id)
-        if self._catalog_retrier is None:
+        if self._catalog_requeuer is None or self._catalog_dispatcher is None:
             return await self._catalog_failed(
                 operation,
                 error_code="catalog_retry_unavailable",
                 error_message="Catalog retry is unavailable.",
             )
         try:
-            retry_job = self._catalog_retrier(operation.ingest_job_id)
+            retry_job = self._catalog_requeuer(operation.ingest_job_id)
         except Exception:
             retry_job = None
         expected_origin = (
@@ -107,13 +109,22 @@ class ResearchSourceAssociationCoordinator:
                 error_code="catalog_retry_failed",
                 error_message="Catalog retry could not be started.",
             )
-        return await self._advance_stage(
+        operation = await self._advance_stage(
             operation.operation_id,
             stage=SourceOperationStage.CATALOG,
             status=SourceOperationStatus.IN_PROGRESS,
             expected_revision=operation.revision,
             ingest_job_id=retry_job.job_id,
         )
+        try:
+            self._catalog_dispatcher(retry_job.job_id)
+        except Exception:
+            return await self._catalog_failed(
+                operation,
+                error_code="catalog_retry_failed",
+                error_message="Catalog retry could not be started.",
+            )
+        return await self.resume(operation.operation_id)
 
     async def _require_operation(self, operation_id: str) -> ResearchSourceOperation:
         operation = await asyncio.to_thread(self._operation_store.get, operation_id)
@@ -374,6 +385,33 @@ class ResearchSourceAssociationScheduler:
     async def resume(self, operation_id: str) -> ResearchSourceOperation | None:
         """Resume one operation behind its operation-specific lock."""
 
+        return await self._run_fenced(
+            operation_id,
+            self._coordinator.resume,
+        )
+
+    async def retry(
+        self,
+        operation_id: str,
+        *,
+        stage: SourceOperationStage,
+    ) -> ResearchSourceOperation | None:
+        """Retry one operation behind the same operation-specific lock."""
+
+        return await self._run_fenced(
+            operation_id,
+            self._coordinator.retry,
+            stage=stage,
+        )
+
+    async def _run_fenced(
+        self,
+        operation_id: str,
+        action: Any,
+        **kwargs: Any,
+    ) -> ResearchSourceOperation | None:
+        """Run one coordinator action with ABA-safe keyed-lock cleanup."""
+
         fence = self._operation_fences.get(operation_id)
         if fence is None:
             fence = _OperationFence()
@@ -381,29 +419,25 @@ class ResearchSourceAssociationScheduler:
         fence.users += 1
         try:
             async with fence.lock:
-                return await self._coordinator.resume(operation_id)
+                return await action(operation_id, **kwargs)
         finally:
             fence.users -= 1
             if fence.users == 0 and self._operation_fences.get(operation_id) is fence:
                 del self._operation_fences[operation_id]
 
     async def resume_incomplete(self, *, limit: int = 50) -> None:
-        """Resume a bounded startup page, excluding explicit failures."""
+        """Resume a bounded startup page of catalog/association work."""
 
         operations = await asyncio.to_thread(
-            self._operation_store.list_incomplete,
+            self._operation_store.list_association_actionable,
             limit=limit,
         )
-        actionable = [
+        actionable = (
             operation
             for operation in operations
             if SourceOperationStatus.FAILED
-            not in {
-                operation.catalog_status,
-                operation.association_status,
-                operation.readiness_status,
-            }
-        ]
+            not in {operation.catalog_status, operation.association_status}
+        )
         await asyncio.gather(
             *(self.resume(operation.operation_id) for operation in actionable),
             return_exceptions=True,

@@ -46,6 +46,8 @@ import tldw_chatbook.STT.parakeet_dispatch as _parakeet_dispatch_module
 import tldw_chatbook.STT.parakeet_external as _parakeet_external_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
@@ -58,6 +60,20 @@ from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
 from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
     INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
     ParseProgressEvent,
+)
+from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
+from tldw_chatbook.Research_Workspace.source_association import (
+    ResearchSourceAssociationCoordinator,
+    ResearchSourceAssociationScheduler,
+)
+from tldw_chatbook.Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+)
+from tldw_chatbook.Research_Workspace.source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+    SourceOperationStage,
+    SourceOperationStatus,
 )
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
@@ -535,7 +551,7 @@ async def test_research_operation_refuses_multi_file_folder_before_creating_jobs
     assert app.library_ingest_jobs.jobs() == ()
 
 
-def test_server_research_catalog_retry_stays_on_server_adapter(
+def test_server_research_catalog_retry_requeues_before_server_dispatch(
     tmp_path: Path,
 ) -> None:
     app = _IngestRunnerHarness(_make_db(tmp_path))
@@ -549,13 +565,115 @@ def test_server_research_catalog_retry_stays_on_server_adapter(
     app.library_ingest_jobs.mark_failed(failed.job_id, error="Temporary failure")
 
     with patch.object(app, "_send_server_ingest_job") as send:
-        retried = app._retry_research_source_catalog_job(failed.job_id)
+        retried = app._requeue_research_source_catalog_job(failed.job_id)
+        send.assert_not_called()
+        assert retried is not None
+        app._dispatch_research_source_catalog_job(retried.job_id)
 
-    assert retried is not None
     assert retried.origin == "server"
     assert retried.research_source_operation_id == "research-op-server-retry"
     assert app._pool_create_count == 0
     send.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["local", "server"])
+async def test_production_catalog_dispatch_failure_uses_current_replacement_lineage(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    app = _IngestRunnerHarness(None if origin == "local" else _make_db(tmp_path))
+    ingest_db = LibraryIngestJobsDB(tmp_path / f"retry-ingest-{origin}.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_db)
+    workspace_db = WorkspaceDB(
+        tmp_path / f"retry-workspaces-{origin}.sqlite",
+        client_id=f"retry-{origin}",
+    )
+    store = ResearchSourceOperationStore(workspace_db)
+    timestamp = "2026-08-24T12:00:00Z"
+    operation = store.create(
+        ResearchSourceOperation(
+            operation_id=f"research-op-production-{origin}",
+            idempotency_key=f"idempotency:production:{origin}",
+            data_source=(
+                WorkspaceDataSource.LOCAL
+                if origin == "local"
+                else WorkspaceDataSource.SERVER
+            ),
+            workspace_id="workspace-a",
+            canonical_item_type=(
+                CanonicalItemType.LOCAL_LIBRARY
+                if origin == "local"
+                else CanonicalItemType.SERVER_MEDIA
+            ),
+            desired_selected=True,
+            created_at=timestamp,
+            updated_at=timestamp,
+            server_profile_id="server-a" if origin == "server" else "",
+            principal_id="principal-a" if origin == "server" else "",
+        )
+    )
+    failed_job = app.library_ingest_jobs.submit(
+        source_path=(
+            str(tmp_path / "source.txt")
+            if origin == "local"
+            else str(tmp_path / "source.pdf")
+        ),
+        origin=origin,
+        detected_type="document" if origin == "local" else "pdf",
+        research_source_operation_id=operation.operation_id,
+    )
+    app.library_ingest_jobs.mark_failed(failed_job.job_id, error="initial failure")
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.IN_PROGRESS,
+        expected_revision=operation.revision,
+        ingest_job_id=failed_job.job_id,
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.FAILED,
+        expected_revision=operation.revision,
+        error_code="catalog_ingest_failed",
+        error_message="Catalog ingest did not complete successfully.",
+    )
+    coordinator = ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=app.library_ingest_jobs,
+        catalog_requeuer=app._requeue_research_source_catalog_job,
+        catalog_dispatcher=app._dispatch_research_source_catalog_job,
+    )
+    scheduler = ResearchSourceAssociationScheduler(
+        coordinator=coordinator,
+        operation_store=store,
+    )
+
+    def fail_server_dispatch(job_id: str, kwargs: dict[str, Any]) -> None:
+        app.library_ingest_jobs.mark_failed(job_id, error="immediate server failure")
+
+    context = (
+        patch.object(app, "_send_server_ingest_job", fail_server_dispatch)
+        if origin == "server"
+        else patch.object(
+            app, "_top_up_ingest_parse_pool", wraps=app._top_up_ingest_parse_pool
+        )
+    )
+    with context:
+        receipt = await scheduler.retry(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+        )
+
+    assert receipt is not None
+    assert receipt.catalog_status is SourceOperationStatus.FAILED
+    assert receipt.ingest_job_id != failed_job.job_id
+    assert store.get(operation.operation_id) == receipt
+    persisted = {row["job_id"]: row for row in ingest_db.all_jobs()}
+    assert persisted[receipt.ingest_job_id]["state"] == "failed"
+    ingest_db.close()
+    workspace_db.close()
 
 
 @pytest.mark.asyncio
@@ -681,6 +799,9 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     assert coordinator._local_registry is app.workspace_registry_service
     assert coordinator._server_service is app.server_notes_workspace_service
     assert coordinator._server_context_provider is app.server_context_provider
+    assert coordinator._catalog_requeuer == app._requeue_research_source_catalog_job
+    assert coordinator._catalog_dispatcher == app._dispatch_research_source_catalog_job
+    assert callable(scheduler.retry)
 
     order: list[str] = []
 

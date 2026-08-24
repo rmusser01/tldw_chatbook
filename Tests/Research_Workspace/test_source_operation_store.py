@@ -216,6 +216,102 @@ def test_list_incomplete_does_not_starve_pending_behind_failed_rows(
     db.close()
 
 
+def test_list_association_actionable_applies_bound_after_stage_filtering(
+    tmp_path: Path,
+) -> None:
+    db, store = _store(tmp_path)
+    for index in range(55):
+        readiness_only = store.create(
+            _operation(
+                operation_id=f"operation-readiness-{index:03d}",
+                idempotency_key=f"local:workspace-1:readiness-{index:03d}",
+                created_at=f"2026-08-24T10:{index // 60:02d}:{index % 60:02d}Z",
+                updated_at=f"2026-08-24T10:{index // 60:02d}:{index % 60:02d}Z",
+            )
+        )
+        readiness_only = store.advance_stage(
+            readiness_only.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.SUCCEEDED,
+            expected_revision=readiness_only.revision,
+            canonical_item_id=str(1000 + index),
+        )
+        store.advance_stage(
+            readiness_only.operation_id,
+            stage=SourceOperationStage.ASSOCIATION,
+            status=SourceOperationStatus.SUCCEEDED,
+            expected_revision=readiness_only.revision,
+            workspace_source_id=f"membership-{index}",
+        )
+    store.create(
+        _operation(
+            operation_id="operation-pristine-not-actionable",
+            idempotency_key="local:workspace-1:pristine-not-actionable",
+            created_at="2026-08-24T09:00:00Z",
+            updated_at="2026-08-24T09:00:00Z",
+        )
+    )
+
+    failed = store.create(
+        _operation(
+            operation_id="operation-explicit-failed",
+            idempotency_key="local:workspace-1:explicit-failed",
+            created_at="2026-08-24T11:58:00Z",
+            updated_at="2026-08-24T11:58:00Z",
+        )
+    )
+    store.advance_stage(
+        failed.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.FAILED,
+        expected_revision=failed.revision,
+        error_code="catalog_failed",
+        error_message="Safe retryable failure.",
+    )
+    later_b = store.create(
+        _operation(
+            operation_id="operation-actionable-b",
+            idempotency_key="local:workspace-1:actionable-b",
+            created_at="2026-08-24T12:00:00Z",
+            updated_at="2026-08-24T12:00:00Z",
+        )
+    )
+    later_a = store.create(
+        _operation(
+            operation_id="operation-actionable-a",
+            idempotency_key="local:workspace-1:actionable-a",
+            created_at="2026-08-24T12:00:00Z",
+            updated_at="2026-08-24T12:00:00Z",
+        )
+    )
+    later_b = store.advance_stage(
+        later_b.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.IN_PROGRESS,
+        expected_revision=later_b.revision,
+        ingest_job_id="ingest-job-actionable-b",
+    )
+    later_a = store.advance_stage(
+        later_a.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=later_a.revision,
+        canonical_item_id="9001",
+    )
+
+    page = store.list_association_actionable(limit=2)
+
+    assert [operation.operation_id for operation in page] == [
+        later_a.operation_id,
+        later_b.operation_id,
+    ]
+    with pytest.raises(SourceOperationValidationError, match="limit"):
+        store.list_association_actionable(limit=0)
+    with pytest.raises(SourceOperationValidationError, match="limit"):
+        store.list_association_actionable(limit=101)
+    db.close()
+
+
 def test_advance_stage_enforces_order_revision_and_explicit_named_retry(
     tmp_path: Path,
 ) -> None:

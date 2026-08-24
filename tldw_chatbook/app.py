@@ -2903,22 +2903,34 @@ class LibraryIngestQueueMixin:
         self._top_up_ingest_parse_pool()
         return requeued
 
-    def _retry_research_source_catalog_job(
+    def _requeue_research_source_catalog_job(
         self, job_id: str
     ) -> Optional[LibraryIngestJob]:
-        """Requeue a linked Research ingest without crossing its adapter."""
+        """Persist a replacement Research ingest without dispatching it."""
 
         source = self.library_ingest_jobs.get_job(job_id)
-        if source is None:
+        if source is None or source.origin not in {"local", "server"}:
             return None
-        if source.origin == "local":
-            return self.retry_library_ingest_job(job_id)
-        if source.origin != "server":
-            return None
+        return self.library_ingest_jobs.requeue(job_id)
 
-        requeued = self.library_ingest_jobs.requeue(job_id)
+    def _dispatch_research_source_catalog_job(self, job_id: str) -> None:
+        """Dispatch an already-persisted replacement through its bound adapter."""
+
+        requeued = self.library_ingest_jobs.get_job(job_id)
         if requeued is None:
-            return None
+            raise ValueError("Replacement ingest job does not exist.")
+        if requeued.origin == "local":
+            if self.media_db is None:
+                self.library_ingest_jobs.mark_failed(
+                    requeued.job_id,
+                    error="Media database is unavailable.",
+                )
+                return
+            self._top_up_ingest_parse_pool()
+            return
+        if requeued.origin != "server":
+            raise ValueError("Replacement ingest authority is unsupported.")
+
         try:
             if is_web_clip_source(requeued.source_path):
                 kwargs = build_web_clip_kwargs(
@@ -2940,13 +2952,12 @@ class LibraryIngestQueueMixin:
                 )
                 self._send_server_ingest_job(requeued.job_id, kwargs)
         except (NotAWebClipSource, ServerIngestUnsupported) as exc:
-            failed = self.library_ingest_jobs.mark_failed(
+            self.library_ingest_jobs.mark_failed(
                 requeued.job_id,
                 error=str(exc),
                 permanent=True,
             )
-            return failed if failed is not None else requeued
-        return requeued
+            return None
 
     def retry_library_ingest_job_with_provider(
         self,
@@ -7659,7 +7670,8 @@ class TldwCli(
                 local_registry=self.workspace_registry_service,
                 server_service=self.server_notes_workspace_service,
                 server_context_provider=self.server_context_provider,
-                catalog_retrier=self._retry_research_source_catalog_job,
+                catalog_requeuer=self._requeue_research_source_catalog_job,
+                catalog_dispatcher=self._dispatch_research_source_catalog_job,
             )
             scheduler = ResearchSourceAssociationScheduler(
                 coordinator=coordinator,
