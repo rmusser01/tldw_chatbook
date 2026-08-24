@@ -73,13 +73,20 @@ filter existing rows whose types are not creatable by this form.
 ### Pane state and backend changes
 
 `WatchlistsCollectionsScreen` seeds the active backend and its form-supported
-types into each rebuilt `SourcesPane`.
+types into each rebuilt `SourcesPane`. A backend change also pushes the new
+backend and contract into an already-mounted pane immediately; it must not wait
+for an unrelated region rebuild. The pane recomposes its open form from that
+new contract, so the visible options and fields always match the backend shown
+in the screen header.
 
 If the saved draft type is not in the active contract, only that field falls
-back to `rss`. Name, URL, tags, watchlist destination, and the Local cadence and
-noise drafts survive the backend change. Switching back to Local restores those
-Local-only draft values; it does not silently clear them while their controls
-are hidden.
+back to `rss`. Name, URL, Active state, tags, watchlist destination, and the
+Local cadence and noise drafts survive the backend change. Active state and
+cadence therefore join the existing screen-mirrored draft contract rather than
+being read only from controls that a recompose can destroy. Switching back to
+Local restores the Local-only cadence and noise values; it does not silently
+clear them while their controls are hidden. The create form remains open across
+the backend change.
 
 The mounted Select is the submission source of truth, preserving the existing
 form contract. Normal interaction therefore cannot submit an unsupported type.
@@ -95,33 +102,44 @@ submissions contain only the fields accepted by `ServerWatchlistsService`:
 name, URL, source type, active state, and tags. Existing watchlist-destination
 gating remains unchanged.
 
+The submission captures the pane's backend together with its payload. The
+screen passes that captured backend through the controller and scope service
+and uses it when filing the created source into its chosen watchlist and
+building the confirmation. An immediately following backend-selector change
+therefore cannot reroute an already submitted source or make a Local source
+lose its Local destination. Post-completion list refreshes still target the
+backend currently visible to the user.
+
 ### Validation and recovery
 
-Before calling the controller or scope service, the screen compares the
-submitted type with the active backend's form contract. A mismatch stops
-dispatch and shows the recovery message below. This form-boundary guard is
-required even for values such as Local `sitemap` that the persistence service
-accepts for programmatic or import callers but this form cannot configure.
+Immediately before posting `CreateSourceRequested`, `SourcesPane` compares the
+mounted Select's submitted type with the contract currently rendered by that
+pane. A mismatch stops event dispatch, keeps the populated form open, and shows
+the recovery message below so the user can choose a supported type in place.
+This form-boundary guard is required even for values such as Local `sitemap`
+that the persistence service accepts for programmatic or import callers but
+this form cannot configure.
 
 Backend validators remain defense in depth at the persistence/network boundary.
 They continue validating against each service's complete accepted payload
 vocabulary, rejecting values outside that broader contract before database or
 API I/O and retaining precise machine-level errors.
 
-When the submitted type is outside the active form contract, the screen stops
+When the submitted type is outside the active form contract, the pane stops
 creation and shows an error toast with `markup=False`:
 
 - `Local sources don't support 'Playlist'. Choose RSS, Atom, or Web page.`
 - `Server sources don't support '<type>'. Choose RSS, Site, or Forum.`
 
-The screen derives this message from the active form contract and UI labels;
+The pane derives this message from its rendered form contract and UI labels;
 backend services do not depend on presentation labels. For the rejected value,
 it first uses the broader existing source-type label registry, so `playlist`
-renders as `Playlist`. If no label is registered, it displays the submitted
-machine value unchanged. Toast markup remains disabled, so arbitrary stale
-values are rendered as text. Other validation or unexpected failures retain
-the existing generic creation-failure copy rather than being misclassified as
-source-type errors.
+renders as `Playlist`. If no label is registered, it displays a stripped,
+sanitized, bounded version of the submitted machine value, falling back to
+`Unknown` when nothing displayable remains. Toast markup remains disabled, so
+arbitrary stale values are rendered as text. Other validation or unexpected
+failures retain the existing generic creation-failure copy rather than being
+misclassified as source-type errors.
 
 ## Testing
 
@@ -129,19 +147,24 @@ Focused tests will prove:
 
 1. Local and Server create-form options match their backend-owned form
    contracts and the filter options remain unchanged.
-2. Local-to-Server-to-Local switching normalizes only an incompatible type and
-   preserves every other draft value.
+2. A mounted, open form updates immediately on Local-to-Server-to-Local
+   switching, normalizes only an incompatible type, stays open, and preserves
+   name, URL, Active state, tags, destination, cadence, and noise drafts.
 3. Local submissions retain cadence and noise fields.
 4. Server RSS, Site, and Forum submissions omit Local-only fields and route
    successfully through the real scope/service signature.
 5. The form-boundary guard rejects form-unsupported values, including values
-   that the broader Local persistence contract accepts, before controller,
-   Local DB, or Server client dispatch.
+   that the broader Local persistence contract accepts, before event,
+   controller, Local DB, or Server client dispatch; the populated form remains
+   open for correction.
 6. Backend validators still reject values outside their complete service
    contracts before Local DB or Server client dispatch.
 7. Exact backend-specific recovery copy is emitted with markup disabled for a
-   known legacy label and for an arbitrary unregistered machine value.
-8. Existing form focus order and supported-width geometry remain valid for both
+   known legacy label and for a sanitized arbitrary machine value.
+8. A submitted request, destination filing, and confirmation remain bound to
+   the backend shown when Create was pressed even if the selector changes
+   before the worker executes; the visible backend is the one refreshed.
+9. Existing form focus order and supported-width geometry remain valid for both
    backend variants.
 
 Verification remains scoped to the changed Watchlists service, pane, screen,
