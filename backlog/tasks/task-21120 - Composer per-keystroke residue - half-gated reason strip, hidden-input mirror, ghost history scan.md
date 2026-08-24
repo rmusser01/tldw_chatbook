@@ -56,6 +56,6 @@ worst case (novel prefix, no match) is the common case: ~1000 `startswith`, orde
 Blink interval is 0.53 s, not 0.5, and the timer is paused unless the composer is focused.
 
 **Split out**: the biggest cost found in this file is not in this task at all — the blink tick
-arms a full layout pass ~2x/second while merely focused and idle. Filed separately as TASK-21501.
+arms a full layout pass ~2x/second while merely focused and idle. Filed separately as TASK-21692.
 
-**Action**: rewrite this task down to the ghost-scan cap, or close it and keep only 21501.
+**Action**: rewrite this task down to the ghost-scan cap, or close it and keep only 21692.
