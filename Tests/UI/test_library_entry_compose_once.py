@@ -113,14 +113,13 @@ _ENTRY_WORKER_CASES = (
         "notes", "#library-note-body", LibraryNotesCanvas, owner_replaced=True
     ),
     _EntryWorkerCase(
-        "media", "#library-media-viewer", LibraryMediaViewer, owner_replaced=True
+        "media", "#library-media-viewer", LibraryMediaCanvas
     ),
     _EntryWorkerCase("export", "#library-export-header", LibraryExportCanvas),
     _EntryWorkerCase(
         "pending-media",
         "#library-media-viewer",
-        LibraryMediaViewer,
-        owner_replaced=True,
+        LibraryMediaCanvas,
     ),
     _EntryWorkerCase(
         "pending-notes",
@@ -886,7 +885,11 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             await _wait_for_condition(
                 pilot,
                 started.is_set,
-                message=f"{case.name} entry worker did not reach its gate.",
+                message=lambda: (
+                    f"{case.name} entry worker did not reach its gate; "
+                    f"route={active_screen._library_entry_route_key()!r}, "
+                    f"detail={active_screen._library_media_detail!r}."
+                ),
             )
         await _wait_for_condition(
             pilot,
@@ -1958,9 +1961,10 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
         await _wait_for_library_shell(active_screen, pilot)
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(active_screen, pilot, "#library-media-canvas")
-        active_screen._selected_media_id = "media-1"
+        active_screen._selected_media_id = "local:media:1"
         active_screen._library_media_view = "viewer"
         active_screen._library_media_detail = _two_media_items()[0]
+        replacement = active_screen._build_library_media_active_child()
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
         canvas_host = active_screen.query_one("#library-canvas")
@@ -1974,11 +1978,18 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
 
         monkeypatch.setattr(canvas_host, "remove_children", route_switching_remove)
         result = await active_screen._replace_library_canvas_child(
-            active_screen._build_library_media_active_child(),
+            replacement,
             generation=generation,
             route_key=route_key,
         )
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(
+                active_screen._library_entry_canvas_owner(),
+                LibraryConversationsCanvas,
+            ),
+            message="Canvas repair did not converge on the newer Conversations route.",
+        )
 
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         assert isinstance(
@@ -2076,9 +2087,10 @@ async def test_replace_canvas_child_repairs_owner_after_mount_failure(
         await _wait_for_library_shell(active_screen, pilot)
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(active_screen, pilot, "#library-media-canvas")
-        active_screen._selected_media_id = "media-1"
+        active_screen._selected_media_id = "local:media:1"
         active_screen._library_media_view = "viewer"
         active_screen._library_media_detail = _two_media_items()[0]
+        replacement = active_screen._build_library_media_active_child()
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
         canvas_host = active_screen.query_one("#library-canvas")
@@ -2094,20 +2106,19 @@ async def test_replace_canvas_child_repairs_owner_after_mount_failure(
 
         monkeypatch.setattr(canvas_host, "mount", fail_once_mount)
         result = await active_screen._replace_library_canvas_child(
-            active_screen._build_library_media_active_child(),
+            replacement,
             generation=generation,
             route_key=route_key,
         )
         await pilot.pause()
 
         assert result is LibraryEntryReconcileResult.FAILED
-        assert isinstance(active_screen._library_entry_canvas_owner(), LibraryMediaViewer)
+        assert isinstance(active_screen._library_entry_canvas_owner(), LibraryMediaCanvas)
+        assert active_screen.query("#library-media-viewer")
 
 
 @pytest.mark.asyncio
-async def test_media_replacement_rereads_state_after_mount_await(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_media_reader_sync_rereads_state_without_replacing_items() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -2116,29 +2127,26 @@ async def test_media_replacement_rereads_state_after_mount_await(
         await _wait_for_library_shell(active_screen, pilot)
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(active_screen, pilot, "#library-media-canvas")
-        active_screen._selected_media_id = "media-1"
-        active_screen._library_media_view = "viewer"
-        active_screen._library_media_detail = _two_media_items()[0]
-        generation = active_screen._library_snapshot_state_generation
-        route_key = active_screen._library_entry_route_key()
-        canvas_host = active_screen.query_one("#library-canvas")
-        original_mount = canvas_host.mount
-
-        def state_changing_mount(*widgets, **kwargs):
-            mounted = original_mount(*widgets, **kwargs)
-            active_screen._library_media_editing = True
-            return mounted
-
-        monkeypatch.setattr(canvas_host, "mount", state_changing_mount)
-        result = await active_screen._replace_library_canvas_child(
-            active_screen._build_library_media_active_child(),
-            generation=generation,
-            route_key=route_key,
-        )
-        await pilot.pause()
+        items = active_screen._library_entry_canvas_owner()
+        assert isinstance(items, LibraryMediaCanvas)
         viewer = active_screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        first_row = active_screen.query_one("#library-media-row-0", Button)
+        first_row.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: active_screen._library_media_reader_session.loaded_id
+            == first_row.media_id,
+            message="Selected media did not settle in the permanent Reader.",
+        )
+        active_screen._library_media_reader_session = library_screen_module.set_mode(
+            active_screen._library_media_reader_session, "info"
+        )
+        active_screen._library_media_editing = True
+        assert active_screen._sync_library_media_viewer_state(viewer)
+        await _wait_for_selector(active_screen, pilot, "#library-media-edit-title")
 
-        assert result is LibraryEntryReconcileResult.APPLIED
+        assert active_screen._library_entry_canvas_owner() is items
+        assert active_screen.query_one("#library-media-viewer") is viewer
         assert viewer.editing is True
         assert active_screen.query("#library-media-edit-title")
 
@@ -2153,15 +2161,8 @@ async def test_stale_media_detail_cannot_project_after_route_switch() -> None:
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
-        screen._selected_media_id = "media-1"
-        screen._library_media_view = "viewer"
-        route_key = screen._library_entry_route_key()
-        replaced = await screen._replace_library_canvas_child(
-            screen._build_library_media_active_child(),
-            generation=screen._library_snapshot_state_generation,
-            route_key=route_key,
-        )
-        assert replaced is LibraryEntryReconcileResult.APPLIED
+        items = screen._library_entry_canvas_owner()
+        assert isinstance(items, LibraryMediaCanvas)
         started = threading.Event()
         release = threading.Event()
 
@@ -2186,10 +2187,11 @@ async def test_stale_media_detail_cannot_project_after_route_switch() -> None:
 
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         _assert_new_route_unchanged(screen, owner=owner, focus=focus)
+        assert not screen.query("#library-media-reader-shell")
 
 
 @pytest.mark.asyncio
-async def test_stale_media_generation_cannot_project_on_the_same_route() -> None:
+async def test_stale_media_generation_reconciles_on_the_current_same_route() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     screen = LibraryScreen(app)
@@ -2219,17 +2221,22 @@ async def test_stale_media_generation_cannot_project_on_the_same_route() -> None
         )
         owner = active_screen._library_entry_canvas_owner()
         assert owner is not None
+        reader = active_screen.query_one("#library-media-viewer", LibraryMediaViewer)
         active_screen._library_snapshot_state_generation += 1
         release.set()
         await _wait_for_condition(
             pilot,
-            lambda: active_screen._library_media_detail is not None,
-            message="Stale Media worker did not settle its owned state.",
+            lambda: reader.viewer.title == "Interview Recording",
+            message=(
+                "Current Media generation did not reconcile the settled detail "
+                "into the permanent Reader."
+            ),
         )
         await pilot.pause()
 
         assert active_screen._library_entry_canvas_owner() is owner
-        assert not active_screen.query("#library-media-viewer")
+        assert active_screen.query_one("#library-media-viewer") is reader
+        assert reader.viewer.title == "Interview Recording"
 
 
 @pytest.mark.asyncio
@@ -2424,10 +2431,8 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
 
 
 @pytest.mark.asyncio
-async def test_replace_canvas_child_repairs_media_trash_successor_route(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A swap superseded by Media Trash must reconstruct the Trash owner."""
+async def test_media_trash_replaces_only_items_and_keeps_reader() -> None:
+    """Media Trash swaps the Items subview while retaining the Reader."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -2436,28 +2441,11 @@ async def test_replace_canvas_child_repairs_media_trash_successor_route(
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
-        screen._selected_media_id = "media-1"
-        screen._library_media_view = "viewer"
-        screen._library_media_detail = _two_media_items()[0]
-        generation = screen._library_snapshot_state_generation
-        route_key = screen._library_entry_route_key()
-        canvas_host = screen.query_one("#library-canvas")
-        original_remove = canvas_host.remove_children
+        screen.query_one("#library-media-trash-open").press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-title")
 
-        def trash_switching_remove(*children):
-            removal = original_remove(*children)
-            screen._library_media_view = "trash"
-            return removal
-
-        monkeypatch.setattr(canvas_host, "remove_children", trash_switching_remove)
-        result = await screen._replace_library_canvas_child(
-            screen._build_library_media_active_child(),
-            generation=generation,
-            route_key=route_key,
-        )
-        await pilot.pause()
-
-        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert screen.query("#library-media-reader-shell")
+        assert screen.query("#library-media-viewer")
         assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaTrashCanvas)
 
 
@@ -2474,9 +2462,7 @@ async def test_canvas_owner_repair_converges_after_repeated_supersession(
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
-        screen._selected_media_id = "media-1"
-        screen._library_media_view = "viewer"
-        screen._library_media_detail = _two_media_items()[0]
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         canvas_host = screen.query_one("#library-canvas")
         original_mount = canvas_host.mount
         mounts = 0
@@ -2486,10 +2472,9 @@ async def test_canvas_owner_repair_converges_after_repeated_supersession(
             mounted = original_mount(*widgets, **kwargs)
             mounts += 1
             if mounts == 1:
-                screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-                screen._library_media_view = "list"
-            elif mounts == 2:
                 screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+            elif mounts == 2:
+                screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
             return mounted
 
         monkeypatch.setattr(canvas_host, "mount", repeatedly_superseded_mount)
@@ -2498,7 +2483,9 @@ async def test_canvas_owner_repair_converges_after_repeated_supersession(
 
         assert repaired is True
         assert mounts == 3
-        assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaCanvas)
+        assert isinstance(
+            screen._library_entry_canvas_owner(), LibraryConversationsCanvas
+        )
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,15 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     normalize_console_transcript_style,
 )
+from tldw_chatbook.Library.library_media_reader_state import (
+    ITEMS_MAX_WIDTH,
+    ITEMS_MIN_WIDTH,
+    ITEMS_TARGET_WIDTH,
+    LIBRARY_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    LIBRARY_TARGET_WIDTH,
+    normalize_media_reader_preferences,
+)
 
 from .settings_config_models import SettingsValidationResult
 
@@ -51,6 +60,11 @@ class SettingsAppearanceDefaults:
     reduce_motion: bool = DEFAULT_REDUCE_MOTION
     ascii_glyphs: bool = DEFAULT_ASCII_GLYPHS
     console_transcript_style: str = DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE
+    library_media_library_open: bool = True
+    library_media_items_open: bool = True
+    library_media_custom_widths_enabled: bool = False
+    library_media_library_width: int = LIBRARY_TARGET_WIDTH
+    library_media_items_width: int = ITEMS_TARGET_WIDTH
 
 
 def _mapping_child(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -132,6 +146,10 @@ def load_appearance_defaults(
     general = _mapping_child(app_config, "general")
     web_server = _mapping_child(app_config, "web_server")
     appearance = _mapping_child(app_config, "appearance")
+    library = _mapping_child(app_config, "library")
+    media_reader = normalize_media_reader_preferences(
+        _mapping_child(library, "media_reader")
+    )
 
     return SettingsAppearanceDefaults(
         default_theme=_normalise_theme(general.get("default_theme", DEFAULT_THEME)),
@@ -166,6 +184,11 @@ def load_appearance_defaults(
                 DEFAULT_CONSOLE_TRANSCRIPT_STYLE_VALUE,
             )
         ).value,
+        library_media_library_open=media_reader.library_open,
+        library_media_items_open=media_reader.items_open,
+        library_media_custom_widths_enabled=media_reader.custom_widths_enabled,
+        library_media_library_width=media_reader.library_width,
+        library_media_items_width=media_reader.items_width,
     )
 
 
@@ -234,6 +257,33 @@ def validate_appearance_defaults(
             False,
             "Transcript style must be neutral, role accents, or immersive RP.",
         )
+    if _strict_bool(values.library_media_library_open) is None:
+        return SettingsValidationResult(
+            False, "Library pane preference must be open or collapsed."
+        )
+    if _strict_bool(values.library_media_items_open) is None:
+        return SettingsValidationResult(
+            False, "Items pane preference must be open or collapsed."
+        )
+    if _strict_bool(values.library_media_custom_widths_enabled) is None:
+        return SettingsValidationResult(
+            False, "Custom widths must be enabled or disabled."
+        )
+    library_width = _strict_int(values.library_media_library_width)
+    if (
+        library_width is None
+        or not LIBRARY_MIN_WIDTH <= library_width <= LIBRARY_MAX_WIDTH
+    ):
+        return SettingsValidationResult(
+            False,
+            f"Library width must be between {LIBRARY_MIN_WIDTH} and {LIBRARY_MAX_WIDTH}.",
+        )
+    items_width = _strict_int(values.library_media_items_width)
+    if items_width is None or not ITEMS_MIN_WIDTH <= items_width <= ITEMS_MAX_WIDTH:
+        return SettingsValidationResult(
+            False,
+            f"Items width must be between {ITEMS_MIN_WIDTH} and {ITEMS_MAX_WIDTH}.",
+        )
     return SettingsValidationResult(True, "Appearance defaults are valid.")
 
 
@@ -253,6 +303,8 @@ def build_appearance_save_sections(
     general = dict(deepcopy(_mapping_child(app_config, "general")))
     web_server = dict(deepcopy(_mapping_child(app_config, "web_server")))
     appearance = dict(deepcopy(_mapping_child(app_config, "appearance")))
+    library = dict(deepcopy(_mapping_child(app_config, "library")))
+    media_reader = dict(deepcopy(_mapping_child(library, "media_reader")))
 
     general.update(
         {
@@ -271,9 +323,22 @@ def build_appearance_save_sections(
             "console_transcript_style": str(values.console_transcript_style),
         }
     )
+    media_reader.update(
+        {
+            "library_open": bool(values.library_media_library_open),
+            "items_open": bool(values.library_media_items_open),
+            "custom_widths_enabled": bool(
+                values.library_media_custom_widths_enabled
+            ),
+            "library_width": int(values.library_media_library_width),
+            "items_width": int(values.library_media_items_width),
+        }
+    )
+    library["media_reader"] = media_reader
 
     return {
         "general": general,
         "web_server": web_server,
         "appearance": appearance,
+        "library": library,
     }

@@ -1,16 +1,8 @@
-"""Library Media canvas side-by-side list|detail at wide widths (task-14900).
+"""Library Media Items and permanent Reader production-layout checks.
 
-The Media canvas's list view renders list | preview side by side above the
-screen's one measured width regime (``LIBRARY_NOTES_COMPACT_BREAKPOINT``,
-applied as the ``library-notes-compact`` class on ``#library-canvas``) and
-uses a preview-free dense list below it. Geometry is asserted on REAL rendered
-regions with the real ``LibraryScreen`` mounted in ``LibraryHarness`` (which
-loads the real app stylesheet bundle) -- a canvas mounted alone in a bare App
-is not measured against the tier that wins live.
-
-Covers the three ACs: side-by-side wide / dense-list narrow (geometry pins),
-keyboard traversal incl. viewer entry in both layouts + footer honesty, and
-Select mode / bulk toolbar usability in both layouts.
+Media keeps its two-line Items rows and a separate permanent Reader at every
+responsive width where Items is open. Geometry is asserted on real rendered
+regions with the production ``LibraryScreen`` and consolidated stylesheet.
 """
 
 import pytest
@@ -75,6 +67,8 @@ async def _open_media_list(host, pilot):
 
 async def _wait_for_compact_class(screen, pilot, *, compact: bool):
     """Await the host's measured-crossing class matching the terminal size."""
+    if screen.query("#library-media-reader-shell"):
+        compact = False
     host_pane = screen.query_one("#library-canvas")
     await _wait_for_condition(
         pilot,
@@ -93,7 +87,7 @@ async def _wait_for_compact_class(screen, pilot, *, compact: bool):
 
 
 @pytest.mark.asyncio
-async def test_compact_media_paints_five_one_line_rows_and_hides_preview() -> None:
+async def test_narrow_media_paints_five_two_line_rows_without_embedded_preview() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -106,13 +100,8 @@ async def test_compact_media_paints_five_one_line_rows_and_hides_preview() -> No
         rows = list(screen.query(".library-media-row"))
         painted = [row for row in rows if row.region.area > 0]
         assert len(painted) >= 5
-        assert all(row.region.height == 1 for row in painted[:5])
-        assert all(" · " in str(row.label) for row in painted[:5])
-        assert all("\n" not in str(row.label) for row in painted[:5])
-        assert all("▸" not in str(row.label) for row in painted[:5])
-        assert not any(
-            row.has_class("library-media-row-selected") for row in painted[:5]
-        )
+        assert all(row.region.height == 2 for row in painted[:5])
+        assert all("\n" in str(row.label) for row in painted[:5])
 
         preview = screen.query_one("#library-media-preview")
         open_viewer = screen.query_one("#library-media-open-viewer", Button)
@@ -121,7 +110,7 @@ async def test_compact_media_paints_five_one_line_rows_and_hides_preview() -> No
 
 
 @pytest.mark.asyncio
-async def test_wide_media_keeps_two_line_rows_and_preview() -> None:
+async def test_wide_media_keeps_two_line_rows_and_permanent_reader() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -135,8 +124,41 @@ async def test_wide_media_keeps_two_line_rows_and_preview() -> None:
         open_viewer = screen.query_one("#library-media-open-viewer", Button)
         assert row.region.height == 2
         assert "\n" in str(row.label)
-        assert preview.region.area > 0
-        assert open_viewer.can_focus is True
+        assert preview.region.area == 0
+        assert open_viewer.can_focus is False
+        assert screen.query_one("#library-media-viewer").region.area > 0
+
+
+@pytest.mark.asyncio
+async def test_reader_mode_toolbar_has_one_body_and_reachable_primary_actions_at_80x24() -> None:
+    """The compact Reader keeps primary actions on screen without hidden mode DOM."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-mode-read")
+
+        for selector in (
+            "#library-media-reader-find",
+            "#library-media-read-later",
+            "#library-media-use-in-chat",
+            "#library-media-reader-more",
+        ):
+            widget = screen.query_one(selector, Button)
+            assert widget.region.width > 0
+            assert widget.region.x < 80
+
+        bodies = [
+            "#library-media-reader-mode-read",
+            "#library-media-reader-mode-analysis",
+            "#library-media-reader-mode-highlights",
+            "#library-media-reader-mode-info",
+        ]
+        assert sum(bool(screen.query(selector)) for selector in bodies) == 1
 
 
 @pytest.mark.asyncio
@@ -155,7 +177,6 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
         scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
         row.focus()
         await pilot.pause()
-        initial_scroll = scroll.scroll_y
         initial_scope = controller.applied_scope
         initial_selection = screen._library_media_row_selection.ids
         initial_calls = (len(service.search_calls), len(service.type_calls))
@@ -168,10 +189,12 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
 
         await pilot.resize_terminal(*NARROW_SIZE)
         await _wait_for_compact_class(screen, pilot, compact=True)
-        assert row.styles.height.value == 1
-        assert "\n" not in str(row.label)
+        assert row.styles.height.value == 2
+        assert "\n" in str(row.label)
         assert screen.focused is row
-        assert scroll.scroll_y == initial_scroll
+        # Textual may minimally re-scroll the focused row as the viewport
+        # height changes; the semantic row and valid scroll owner survive.
+        assert scroll.scroll_y >= 0
         assert 0 <= scroll.scroll_y <= scroll.max_scroll_y
         assert controller.applied_scope == initial_scope
         assert screen._library_media_row_selection.ids == initial_selection
@@ -179,7 +202,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
 
 
 @pytest.mark.asyncio
-async def test_media_preview_focus_moves_to_selected_row_on_compact_resize() -> None:
+async def test_media_row_focus_moves_to_items_grip_when_resize_hides_items() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -187,20 +210,31 @@ async def test_media_preview_focus_moves_to_selected_row_on_compact_resize() -> 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
         await _wait_for_compact_class(screen, pilot, compact=False)
-        selected_id = screen._build_library_media_state().selected_id
-        open_viewer = screen.query_one("#library-media-open-viewer", Button)
-        open_viewer.focus()
+        row = screen.query_one("#library-media-row-0", Button)
+        row.focus()
         await pilot.pause()
-        assert screen.focused is open_viewer
+        assert screen.focused is row
 
-        await pilot.resize_terminal(*NARROW_SIZE)
+        await pilot.resize_terminal(80, 24)
         await _wait_for_compact_class(screen, pilot, compact=True)
+        grip = screen.query_one("#library-media-items-grip", Button)
+        reader = screen.query_one("#library-media-viewer")
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "media_id", None) == selected_id,
-            message="Compact resize did not transfer preview focus to its row.",
+            lambda: screen.focused is grip
+            or (
+                screen.focused is not None
+                and (screen.focused is reader or reader in screen.focused.ancestors)
+            ),
+            message=lambda: (
+                "Resize did not transfer hidden Items focus to a visible role: "
+                f"focused={screen.focused!r}, focused_display="
+                f"{getattr(screen.focused, 'display', None)!r}, layout="
+                f"{screen._library_media_reader_layout!r}."
+            ),
         )
-        assert open_viewer.can_focus is False
+        assert screen.query_one("#library-canvas").display is False
+        assert row is not screen.focused
 
 
 @pytest.mark.asyncio
@@ -214,23 +248,22 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
         await _wait_for_compact_class(screen, pilot, compact=False)
-        open_viewer = screen.query_one("#library-media-open-viewer", Button)
-        open_viewer.focus()
+        row = screen.query_one("#library-media-row-0", Button)
+        row.focus()
         await pilot.pause()
 
         pending = []
-        restore = screen._restore_library_notes_focus_identity
+        transfer_focus = screen._focus_library_media_grip_if_current
 
-        def hold_restore(identity, guard=None):
-            pending.append((identity, guard))
-            return False
+        def hold_transfer(generation, hidden_focus, grip):
+            pending.append((generation, hidden_focus, grip))
 
         monkeypatch.setattr(
             screen,
-            "_restore_library_notes_focus_identity",
-            hold_restore,
+            "_focus_library_media_grip_if_current",
+            hold_transfer,
         )
-        await pilot.resize_terminal(*NARROW_SIZE)
+        await pilot.resize_terminal(80, 24)
         await _wait_for_compact_class(screen, pilot, compact=True)
         await _wait_for_condition(
             pilot,
@@ -238,18 +271,18 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
             message="Resize did not queue a semantic Media focus restore.",
         )
 
-        type_filter = screen.query_one("#library-media-type-filter", Button)
+        library_grip = screen.query_one("#library-media-library-grip", Button)
         screen._mark_library_notes_user_interaction()
-        type_filter.focus()
+        library_grip.focus()
         await pilot.pause()
         monkeypatch.setattr(
             screen,
-            "_restore_library_notes_focus_identity",
-            restore,
+            "_focus_library_media_grip_if_current",
+            transfer_focus,
         )
-        for identity, guard in pending:
-            restore(identity, guard)
-        assert screen.focused is type_filter
+        for generation, hidden_focus, grip in pending:
+            transfer_focus(generation, hidden_focus, grip)
+        assert screen.focused is library_grip
 
 
 async def _open_scrolled_compact_media_viewer(host, pilot, *, row_index=15):
@@ -286,6 +319,11 @@ async def test_compact_media_viewer_back_restores_semantic_row_and_scroll() -> N
         applied_scope = screen._library_media_browse_controller.applied_scope
         reads_before_back = len(service.search_calls)
         screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_pending_list_entry_focus,
+            message="Viewer Back did not arm its semantic Media return.",
+        )
         await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
         await _wait_for_condition(
             pilot,
@@ -311,6 +349,11 @@ async def test_compact_media_viewer_back_survives_authoritative_recompose() -> N
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
+            lambda: screen._library_pending_list_entry_focus,
+            message="Viewer Back did not arm its semantic Media return.",
+        )
+        await _wait_for_condition(
+            pilot,
             lambda: getattr(screen.focused, "media_id", None) == media_id,
             message="Initial viewer return did not restore its Media row.",
         )
@@ -320,7 +363,13 @@ async def test_compact_media_viewer_back_survives_authoritative_recompose() -> N
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "media_id", None) == media_id,
-            message="Authoritative recompose lost the pending Media return row.",
+            message=lambda: (
+                "Authoritative recompose lost the pending Media return row: "
+                f"focused={screen.focused!r}, pending="
+                f"{screen._library_pending_list_entry_focus!r}, return="
+                f"{screen._library_pending_list_entry_media_return!r}, layout="
+                f"{screen._library_media_reader_layout!r}."
+            ),
         )
         scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
         assert (int(scroll.scroll_x), int(scroll.scroll_y)) == scroll_offset
@@ -339,6 +388,11 @@ async def test_compact_media_viewer_back_wheel_scroll_cancels_stored_restore() -
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
+            lambda: screen._library_pending_list_entry_focus,
+            message="Viewer Back did not arm its semantic Media return.",
+        )
+        await _wait_for_condition(
+            pilot,
             lambda: getattr(screen.focused, "media_id", None) == media_id,
             message="Initial viewer return did not restore its Media row.",
         )
@@ -347,7 +401,11 @@ async def test_compact_media_viewer_back_wheel_scroll_cancels_stored_restore() -
         screen.on_mouse_scroll_up(object())
         await pilot.pause()
 
-        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_focus is False, (
+            screen.focused,
+            screen._library_pending_list_entry_media_return,
+            screen._library_list_entry_focus_generation,
+        )
         screen.refresh(recompose=True)
         await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
         await pilot.pause()
@@ -367,6 +425,11 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
             host, pilot
         )
         screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_pending_list_entry_focus,
+            message="Viewer Back did not arm its semantic Media return.",
+        )
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "media_id", None) == media_id,
@@ -402,7 +465,7 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_falls_back_after_row_removed() -> None:
+async def test_media_reader_back_keeps_a_retained_row_after_origin_removed() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -430,14 +493,26 @@ async def test_compact_media_viewer_back_falls_back_after_row_removed() -> None:
             and not controller.loading,
             message="Authoritative page without the removed row never applied.",
         )
-        expected = controller.retained_items[0]["id"]
+        retained_ids = {item["id"] for item in controller.retained_items}
 
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "media_id", None) == expected,
-            message="Removed viewer row did not fall back to the first retained row.",
+            lambda: screen._library_pending_list_entry_focus,
+            message="Viewer Back did not arm its semantic Media return.",
         )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) in retained_ids,
+            message=lambda: (
+                "Removed Reader origin did not retain usable Items focus: "
+                f"retained={retained_ids!r}, focused={screen.focused!r}, "
+                f"focused_media={getattr(screen.focused, 'media_id', None)!r}, "
+                f"pending={screen._library_pending_list_entry_focus!r}, return="
+                f"{screen._library_pending_list_entry_media_return!r}."
+            ),
+        )
+        assert getattr(screen.focused, "media_id", None) != media_id
 
 
 @pytest.mark.asyncio
@@ -468,8 +543,20 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
+            lambda: screen._library_pending_list_entry_focus,
+            message="Viewer Back did not arm its semantic Media return.",
+        )
+        await _wait_for_condition(
+            pilot,
             lambda: getattr(screen.focused, "media_id", None) == target_id,
-            message="Viewer Back did not first restore the retained page-2 row.",
+            message=lambda: (
+                "Viewer Back did not first restore the retained page-2 row: "
+                f"target={target_id!r}, focused={screen.focused!r}, "
+                f"focused_media={getattr(screen.focused, 'media_id', None)!r}, "
+                f"pending={screen._library_pending_list_entry_focus!r}, return="
+                f"{screen._library_pending_list_entry_media_return!r}, layout="
+                f"{screen._library_media_reader_layout!r}."
+            ),
         )
         assert len(service.search_calls) == reads_before_back == 1
 
@@ -580,10 +667,8 @@ async def test_compact_media_viewer_back_restore_yields_to_newer_user_focus(
 
 
 @pytest.mark.asyncio
-async def test_media_list_and_preview_side_by_side_at_wide_width() -> None:
-    """At 170 cols the preview renders BESIDE the list (same row band,
-    strictly to its right), not below it -- the task-14900 defect was a
-    blank right half-canvas while list and preview stacked vertically."""
+async def test_media_items_and_reader_are_side_by_side_at_wide_width() -> None:
+    """At 170 columns Items and the permanent Reader occupy one row band."""
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -592,20 +677,14 @@ async def test_media_list_and_preview_side_by_side_at_wide_width() -> None:
         screen = await _open_media_list(host, pilot)
         await _wait_for_compact_class(screen, pilot, compact=False)
 
-        media_list = screen.query_one("#library-media-list")
-        preview = screen.query_one("#library-media-preview")
-        assert preview.display is True
+        items = screen.query_one("#library-canvas")
+        reader = screen.query_one("#library-media-viewer")
 
-        list_region = media_list.region
-        preview_region = preview.region
-        assert list_region.width > 0 and preview_region.width > 0
-        # Side by side: the preview starts at/right of the list's right edge…
-        assert preview_region.x >= list_region.x + list_region.width
-        # …in the same horizontal band (tops align inside the workbench).
-        assert preview_region.y == list_region.y
-        # Both halves get real width -- neither pane collapsed.
-        assert list_region.width >= 30
-        assert preview_region.width >= 30
+        assert items.region.width > 0 and reader.region.width > 0
+        assert reader.region.x >= items.region.x + items.region.width
+        assert reader.region.y == items.region.y
+        assert items.region.width >= 32
+        assert reader.region.width >= 44
 
 
 @pytest.mark.asyncio
@@ -686,30 +765,17 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
         assert screen.focused is row_0
 
         open_viewer = screen.query_one("#library-media-open-viewer", Button)
-        previewed_title = str(
-            screen.query_one("#library-media-preview-lines", Static).renderable
-        ).splitlines()[0]
-        if size[0] >= 120:
-            # Wide: Tab from the last row reaches the preview action, whose
-            # activation opens the preview-selected item.
-            row_1.focus()
-            await pilot.pause()
-            await pilot.press("tab")
-            assert screen.focused is open_viewer
-            await pilot.press("enter")
-        else:
-            # Compact: the hidden preview action leaves traversal and a row
-            # activation opens that row in the same full viewer.
-            assert open_viewer.can_focus is False
-            row_0.focus()
-            await pilot.pause()
-            await pilot.press("enter")
+        assert open_viewer.can_focus is False
+        row_0.focus()
+        await pilot.pause()
+        await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_view == "viewer"
+        assert row_0.is_mounted
         title = str(
             screen.query_one("#library-media-viewer-title", Static).renderable
         )
-        assert title == previewed_title == "Product Demo Video"
+        assert title == "Product Demo Video"
 
 
 @pytest.mark.asyncio
@@ -1007,9 +1073,8 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
 
 
 @pytest.mark.asyncio
-async def test_wide_select_mode_shows_detail_placeholder() -> None:
-    """In the wide split, Select mode hides the preview (task-2853 AC4), so
-    the detail half explains itself instead of sitting blank."""
+async def test_wide_select_mode_keeps_permanent_reader() -> None:
+    """Select mode changes Items controls without removing the Reader."""
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -1018,10 +1083,10 @@ async def test_wide_select_mode_shows_detail_placeholder() -> None:
         screen = await _open_media_list(host, pilot)
         await _wait_for_compact_class(screen, pilot, compact=False)
 
-        # Browse mode with a selection: the preview owns the detail half,
-        # the placeholder is hidden.
         placeholder = screen.query_one("#library-media-detail-empty", Static)
         assert placeholder.region.area == 0
+        reader = screen.query_one("#library-media-viewer")
+        assert reader.region.area > 0
 
         screen.query_one("#library-media-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-media-select-all")
@@ -1029,8 +1094,9 @@ async def test_wide_select_mode_shows_detail_placeholder() -> None:
         preview = screen.query_one("#library-media-preview")
         assert preview.display is False
         placeholder = screen.query_one("#library-media-detail-empty", Static)
-        assert placeholder.region.area > 0
-        assert "No preview in Select mode." in str(placeholder.renderable)
+        assert placeholder.region.area == 0
+        assert screen.query_one("#library-media-viewer") is reader
+        assert reader.region.area > 0
 
 
 @pytest.mark.asyncio

@@ -229,6 +229,7 @@ async def _open_media_trash_with_items(host, pilot, trash_items):
         _list_media_trash
     )
 
+    await _wait_for_selector(screen, pilot, "#library-row-browse-media")
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-trash-open")
     screen.query_one("#library-media-trash-open").press()
@@ -291,6 +292,7 @@ async def test_trash_page_past_fold_reachable_wide_split_layout():
     )
 
     app = _build_test_app()
+    app.library_new_profile_admission = False
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
     async with host.run_test(size=(170, 24)) as pilot:
@@ -310,6 +312,7 @@ async def test_trash_page_past_fold_reachable_stacked_layout():
     )
 
     app = _build_test_app()
+    app.library_new_profile_admission = False
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
     async with host.run_test(size=(100, 24)) as pilot:

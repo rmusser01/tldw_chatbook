@@ -112,6 +112,10 @@ class LibraryMediaViewerState:
     read_later: bool
     media_type: str
     is_markdown: bool
+    backend: str
+    canonical_id: str
+    original_source: str
+    stored_representation: str
 
 
 def _text(value: Any) -> str:
@@ -218,6 +222,10 @@ def _empty_state() -> LibraryMediaViewerState:
         read_later=False,
         media_type="",
         is_markdown=False,
+        backend="local",
+        canonical_id="",
+        original_source="",
+        stored_representation="No stored content",
     )
 
 
@@ -254,6 +262,8 @@ def build_library_media_viewer_state(
     *,
     now: datetime | None = None,
     arrival_note: str = "",
+    backend: str = "local",
+    canonical_id: str = "",
 ) -> LibraryMediaViewerState:
     """Build the Library media viewer canvas display state.
 
@@ -266,6 +276,9 @@ def build_library_media_viewer_state(
         arrival_note: One-shot context line rendered FIRST in the metadata
             lines (task-2223: e.g. reaching this item via a dedup-matched
             ingest row); empty renders nothing extra.
+        backend: Provenance backend displayed by Reader Info.
+        canonical_id: Stable backend-qualified id. When omitted, it is
+            derived from ``backend`` and the detail's media id.
 
     Returns:
         Immutable viewer state: title, ordered metadata lines, content,
@@ -341,6 +354,13 @@ def build_library_media_viewer_state(
         read_later=read_later,
         media_type=media_type,
         is_markdown=is_markdown,
+        backend=backend,
+        canonical_id=canonical_id
+        or (
+            f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""
+        ),
+        original_source=url,
+        stored_representation=("Complete stored text" if content else "No stored content"),
     )
 
 

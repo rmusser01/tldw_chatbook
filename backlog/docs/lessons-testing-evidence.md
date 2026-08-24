@@ -7449,6 +7449,18 @@ subprocesses (submodule-first, package-first, heavy-dep-first), because
 TASK-21160 shipped a live regression when a lazy facade unmasked a cycle the
 eager init had been front-loading in a safe order.
 
+**Recurred, TASK-21666 (2026-08-24).** `config.py` reused Media Reader
+normalization with a module-level import from
+`tldw_chatbook.Library.library_media_reader_state`. Importing that apparently
+pure submodule first executed `Library/__init__.py`, whose eager exports reached
+back into `config.py` before configuration initialization finished. Focused
+Settings and shell tests then failed during collection instead of reaching any
+assertion. Moving the import into `_load_settings_uncached`, after config module
+initialization, preserved the shared normalizer without entering the package
+cycle. The incident reinforces the package rule above: a direct submodule import
+still executes its package initializer, so inspect that initializer's closure
+before adding a module-scope dependency in foundational code such as config.
+
 ---
 
 ## A resting compact screenshot does not prove focused control geometry (TASK-21000, 2026-08-22)

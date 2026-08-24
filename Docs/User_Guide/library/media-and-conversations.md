@@ -7,8 +7,8 @@ These two Library panels are where you browse what the app has collected:
 pages), and **Conversations** lists every chat you have had in Console. Both
 are read-mostly browsers — you come here to re-read content, search inside
 it, mark it up, and hand pieces of it to Console as context or package them
-into a bundle. Both panels share one interaction grammar, so learning one
-teaches you the other.
+into a bundle. Media uses a reading-first three-pane shell; Conversations
+keeps the existing list-and-preview browser.
 
 ## Getting there
 
@@ -20,72 +20,41 @@ fills the center of the screen.
 ## Layout tour
 
 ```text
-Wide (120 columns and above)
+Wide
 
-+---------------------------+  +---------------------------+
-| Media rows                |  | Selected-item preview     |
-| Title                     |  | Type / Updated            |
-|   type · age              |  |                           |
-| ...                       |  | Open in viewer            |
-+---------------------------+  +---------------------------+
-| Previous   1-20 of N   Next                              |
-+-----------------------------------------------------------+
++ Library +--->+ Items +--->+ Reader -------------------------------+
+| Browse        | Filter     | title · source · date                 |
+| Media         | item rows  | Find · Read later · Use in Console   |
+| ...           | ...        | Read · Analysis · Highlights · Info  |
++---------------+------------+ complete stored content               |
 
-Compact (below 120 columns)
+Narrow
 
-+-----------------------------------------------------------+
-| Title · type · age                                      |
-| Title · type · age                                      |
-| Title · type · age      (at least five rows at 100x30)  |
-| Title · type · age                                      |
-| Title · type · age                                      |
-+-----------------------------------------------------------+
-| Previous   1-20 of N   Next                              |
-+-----------------------------------------------------------+
-
-Enter on a compact row -> Media viewer -> Back -> same row
++--->+--->+ Reader -----------------------------------------------+
+| both pane grips remain reachable; Reader gets the available width |
 ```
 
-Both list canvases follow the same shape, top to bottom:
+Media has three stable roles:
 
-- **Toolbar** — the panel heading with a count ("Media (3)" /
-  "Conversations (3)" — task-2859: Conversations previously had no
-  heading at all, so its top row read as bare "Export…"/"Select" with
-  nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  "type: All types" chooser right after the heading (press it to open a
-  bounded list of every type — ✓ marks the active one — and pick directly) and a
-  "Trash" action (the browsable Trash view — see "Media Trash" below);
-  Conversations instead has a "Filter conversations… (Enter)" text box,
-  which now renders above the empty-state text (task-2859: it used to sit
-  below "No conversations yet.", reading as an afterthought).
-- **Row list** — at 120 columns and above, each item uses two lines: the
-  title with a **▸** marker, then a dimmer second line (Media: type and age;
-  Conversations: "3 messages - 4h"). Below 120 columns, Media becomes a
-  denser one-line browser: **title · type · age**. At 100x30 it keeps at
-  least five populated rows painted without hiding the pager. Hovering a row
-  shows its full title as a tooltip. Media rows scroll independently above a
-  pinned 20-item pager, so paging controls remain visible after moving through
-  a full page.
-- **Preview block** — a few summary lines plus one action ("Open in
-  viewer" for media, "Open in Console" for conversations). On a wide
-  terminal the **Media** list shows it **beside** the row list — list on
-  the left, preview on the right, each half scrolling on its own — the
-  same split shape as the Collections workbench. Below the Library's one
-  width breakpoint (the same crossing that compacts Notes), Media hides the
-  preview completely and row activation opens the existing viewer directly;
-  the hidden action cannot receive keyboard focus. The preview is also hidden
-  in Media Select mode (see below); in the wide split the right half then says
-  "No preview in Select mode." instead of sitting blank. Conversations keeps
-  the stacked shape at every width, and the Trash view and media viewer are
-  single surfaces that always use the full canvas width.
+- **Library** — the normal Library navigation rail.
+- **Items** — a local-only list with **Filter media**, type selection,
+  paging, bulk actions, and balanced two-line rows.
+- **Reader** — a permanent reading surface. Selecting another row updates
+  Reader in place; the Items list is not replaced.
 
-Opening a media item swaps the list for the **media viewer**: "‹ Back to
-list", the title, metadata lines, then the "Content",
-"Analysis", and "Highlights" sections, and an action row at the bottom.
-Back returns to the applied page and restores the activated row and list
-scroll position. If an authoritative refresh removed that row or clamped the
-page, focus moves to the first row that actually remains; an exact empty page
-uses its nearest recovery action instead.
+Library and Items each have a five-column, full-height grip. **`<---`**
+collapses the pane to its left and **`--->`** expands it. The grips are
+clickable and keyboard-operable. Reader has no grip and never collapses.
+Your manual pane choices are remembered. If the terminal is too narrow, the
+screen temporarily collapses Library first and then Items; widening the
+terminal restores the remembered layout instead of saving the temporary
+responsive state.
+
+While another row is loading, Items distinguishes **Selected · loading
+preview** from **Loaded in Reader**. Reader may keep the prior item visible,
+but names both items until the new detail settles. Late or failed loads cannot
+replace a newer selection. Conversations retains its existing paged
+list-and-preview layout.
 
 ## Features & controls
 
@@ -166,13 +135,14 @@ restoring it.
 
 | Control | What it does |
 |---|---|
+| "Filter media" / "Clear filter" | Searches the complete local Media source before paging; it is separate from Find in item. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. |
 | "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
-| Row press / Enter | Opens that item in the media viewer. In Select mode, it toggles the row's checkbox instead. |
-| "Open in viewer" | Wide layout only: opens the previewed item in the media viewer. Compact layout has no preview action; activate its row directly. |
+| Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
+| Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
 
 Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a filter that matches nothing, "No media
@@ -183,11 +153,14 @@ type clears current-page selection with a visible "Selection cleared."
 notice. A failed request keeps the last applied page visible instead of
 silently replacing it with a partial or broad Library snapshot.
 
-### Media viewer
+### Media Reader
 
-- **Metadata** — lines for "Type:", and when present "Author:", "URL:",
-  "Keywords:", "Updated:".
-- **"Content"** — the stored text ("No stored content." when empty). For
+Reader stays mounted beside Items and keeps one mode visible at a time:
+**Read**, **Analysis**, **Highlights**, or **Info**. The chosen mode persists
+while you move through items. Missing analysis or highlights produces an
+item-specific empty state; it does not silently switch modes.
+
+- **Read** — the complete stored text ("No stored content." when empty). For
   markdown-flavored media (a `.md`/Obsidian-style item whose content has a
   real heading, table, or fenced code block), a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
@@ -205,26 +178,36 @@ silently replacing it with a partial or broad Library snapshot.
   count, and "◀ Prev" / "Next ▶" pin to the top of the viewer pane so
   they stay visible while you step through matches — even in a small
   terminal, and no matter how far you scroll. Clearing the query
-  (submit an empty box) unpins them back into the Content section.
-- **"Analysis"** — a stored analysis text you can view and edit ("Edit
+  (submit an empty box) unpins them back into the Read section. Eligible local
+  PNG, JPEG, and WebP files can also show an inline image above the complete
+  text. **Hide preview** / **Show preview** affects only that item for this
+  session. An unavailable or failed preview reports the problem and leaves
+  every character of stored text readable; GIF, PDF, audio, video, remote URL,
+  and server-item previews are not fetched or rendered here.
+- **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
   This section only edits text — it never calls a model; analysis is
   produced at import time (the "Analyze after import" option) or written by
   hand here.
-- **"Highlights"** — saved quotes from this item ("No highlights yet." when
+- **Highlights** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
   (required), optionally "Note (optional)" and "Color (optional)", and
   press "Add highlight". Each saved highlight shows the quote with a
   color swatch, its color/note details, and a "✕ Delete" button.
-- **Action row**:
+- **Info** — metadata and provenance: backend-qualified ID, original source,
+  stored representation, preview status, and the representation **Use in
+  Console** will send. The Items catalogue is local-only. A finished server
+  import may open one read-only compatibility detail labelled **Server item ·
+  not in local Media list**; it does not become a local Items row.
+- **Primary toolbar**:
 
 | Button | What it does |
 |---|---|
-| "Edit" | Opens an inline form (Title, Author, URL, Keywords) with "Save" / "Cancel". |
+| "Find" | Opens Find in item for the loaded representation; this never filters Items. |
 | "Use in Console" | Stages this item as context for your next Console message. |
-| "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
-| "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? You can undo right away, or restore later from Trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". The list you land on shows the same receipt as a bulk delete — "✓ deleted · 1 item · in Trash" with "Undo" / "Dismiss" — "Undo" restores in place, and the Trash view holds the item for later either way. |
+| "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
+| "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
 
 ### Conversations
 
@@ -273,8 +256,8 @@ conversation rail instead; that one resumes sessions, this one quotes them.
    literally named "All" is distinct from the unfiltered choice.
 
 ### Open a media item and search inside it
-1. Click a row, then "Open in viewer".
-2. Type into "Search content…" and press Enter. The status shows
+1. Click a row; it loads into Reader without replacing Items.
+2. Press **Find**, type into "Search content…", and press Enter. The status shows
    "Match 1 of N matches", the matches are highlighted in the content, and
    the whole search bar pins to the top of the viewer for as long as the
    search is active.
@@ -283,7 +266,7 @@ conversation rail instead; that one resumes sessions, this one quotes them.
    navigate.
 
 ### Highlight a passage
-1. In the viewer, scroll to **Highlights** and expand "Add highlight".
+1. In Reader, choose **Highlights** and expand "Add highlight".
 2. Paste the passage into "Quote"; optionally add "Note (optional)" and a
    color name or hex value in "Color (optional)".
 3. Press "Add highlight" — it appears in the list with a ● swatch.
@@ -319,13 +302,20 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 
 The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
 **Escape** cancels without applying a choice and returns focus to its opener.
-The other panels are mouse/arrow-driven buttons and inputs. **Enter** submits
-the "Filter conversations… (Enter)" and "Search content…" boxes. Global
+The Media grips accept **Enter** and **Space**. Arrow-key traversal moves the
+Items selection with a short settle delay; **Enter** loads immediately.
+**Escape** closes transient Reader state before moving outward through Items
+and Library. **Enter** submits the "Filter conversations… (Enter)", **Filter
+media**, and "Search content…" boxes. Global
 navigation keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 
-- Neither panel owns any config.toml keys; media arrives via
+- Appearance settings remember the preferred Library/Items pane states and,
+  when explicitly enabled, custom widths (Library 24–48 columns; Items 32–72).
+  **Reset layout** restores both panes open and fixed 28/40-column targets.
+  Responsive collapse is session-only and never overwrites these preferences.
+- Media arrives via
   [import & export](import-and-export.md) (Import media, including the
   "Analyze after import" and chunking options that shape what the viewer
   shows). Note that imported text is lightly sanitized on the way in (null
