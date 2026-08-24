@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
+import functools
 import inspect
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from typing import Any
 
@@ -54,6 +59,98 @@ class ResearchBackend(str, Enum):
     SERVER = "server"
 
 
+def _is_async_callable(candidate: Any) -> bool:
+    """True when calling ``candidate`` returns an awaitable OR an async generator.
+
+    The async-generator arm is not decoration: ``LocalResearchService`` defines
+    ``stream_run_events`` as ``async def ... yield``, and
+    ``inspect.iscoroutinefunction`` is **False** for such a function. Routing it
+    through a thread would hand ``stream_run_events``/``observe_run_events`` a
+    coroutine wrapping the generator object, defeating their
+    ``inspect.isasyncgen`` branch (TASK-21127).
+    """
+
+    def _async(target: Any) -> bool:
+        return inspect.iscoroutinefunction(target) or inspect.isasyncgenfunction(target)
+
+    if _async(candidate):
+        return True
+    call = getattr(candidate, "__call__", None)
+    return call is not None and _async(call)
+
+
+_BACKEND_EXECUTOR: ThreadPoolExecutor | None = None
+_BACKEND_EXECUTOR_LOCK = threading.Lock()
+
+
+def _backend_executor() -> ThreadPoolExecutor:
+    """The single thread every synchronous research-backend call runs on.
+
+    ONE worker, deliberately (the TASK-21125 review's MAJOR-1 finding). Before
+    the offload every scope call ran inline on the event loop, which silently
+    serialised them against each other; a default-pool dispatch would hand that
+    guarantee back and turn each read-check-write in the local service into a
+    live lost update. Serialising on one thread restores the loop's ordering and
+    keeps the whole latency win -- the point was getting OFF the loop, not going
+    wide.
+    """
+    global _BACKEND_EXECUTOR
+    if _BACKEND_EXECUTOR is None:
+        with _BACKEND_EXECUTOR_LOCK:
+            if _BACKEND_EXECUTOR is None:
+                _BACKEND_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="research-backend",
+                )
+    return _BACKEND_EXECUTOR
+
+
+async def _run_on_backend_thread(call: Any) -> Any:
+    """Await ``call()`` on the shared single backend thread.
+
+    Mirrors ``asyncio.to_thread``'s contextvar propagation, which
+    ``run_in_executor`` does not do on its own.
+    """
+    loop = asyncio.get_running_loop()
+    context = contextvars.copy_context()
+    return await loop.run_in_executor(
+        _backend_executor(), functools.partial(context.run, call)
+    )
+
+
+class _ThreadOffloadedBackend:
+    """Runs a synchronous research backend's calls on the backend thread.
+
+    TASK-21127: ``LocalResearchService`` is plain blocking SQLite and every
+    scope method invoked it inline, so the window's 2 s auto-refresh poll and a
+    bundle load both read and decoded on the Textual event loop (measured: a
+    5.5 MB bundle costs ~15 ms of loop time even once the connection is held).
+    Wrapping the backend here rather than at each of the ~25 call sites keeps
+    every scope method's ``_maybe_await`` seam working unchanged: the wrapper
+    returns a coroutine.
+
+    Backends that are already asynchronous -- including async *generators* --
+    pass straight through, so the server backend never pays a thread hop and
+    ``stream_run_events`` keeps yielding.
+    """
+
+    __slots__ = ("_backend",)
+
+    def __init__(self, backend: Any) -> None:
+        self._backend = backend
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._backend, name)
+        if not callable(attribute) or _is_async_callable(attribute):
+            return attribute
+
+        @functools.wraps(attribute)
+        def _offloaded(*args: Any, **kwargs: Any) -> Any:
+            return _run_on_backend_thread(functools.partial(attribute, *args, **kwargs))
+
+        return _offloaded
+
+
 class ResearchScopeService:
     """Route research operations to local or server backends with policy enforcement."""
 
@@ -81,13 +178,19 @@ class ResearchScopeService:
             raise ValueError(f"Invalid research backend: {mode}") from exc
 
     def _service_for_mode(self, mode: ResearchBackend) -> Any:
+        """Return the backend for ``mode``, offloading synchronous calls.
+
+        ``self.local_service`` / ``self.server_service`` keep their identity --
+        callers (and the app-wiring tests) still see the objects that were
+        passed in; only the dispatch path is wrapped (TASK-21127).
+        """
         if mode == ResearchBackend.LOCAL:
             if self.local_service is None:
                 raise ValueError("Local research backend is unavailable.")
-            return self.local_service
+            return _ThreadOffloadedBackend(self.local_service)
         if self.server_service is None:
             raise ValueError("Server research backend is unavailable.")
-        return self.server_service
+        return _ThreadOffloadedBackend(self.server_service)
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -217,21 +320,47 @@ class ResearchScopeService:
             remote_records=remote_records or [],
         )
 
+    @staticmethod
+    @functools.lru_cache(maxsize=256)
+    def _accepted_parameters(
+        owner: type, method_name: str
+    ) -> tuple[frozenset[str], bool]:
+        """Parameter names of ``owner.method_name``, and whether it takes ``**kwargs``.
+
+        Keyed on the CLASS, not the bound method: a bound method is a fresh
+        object per attribute access, so caching on it would never hit and would
+        pin every instance alive. TASK-21127: this ran an uncached
+        ``inspect.signature`` on every scope call, including each 2 s
+        auto-refresh tick.
+        """
+        method = getattr(owner, method_name)
+        parameters = inspect.signature(method).parameters
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        return frozenset(parameters), accepts_kwargs
+
     async def _call_service(
         self, service: Any, method_name: str, *args: Any, **kwargs: Any
     ) -> Any:
         method = getattr(service, method_name)
-        signature = inspect.signature(method)
-        accepts_kwargs = any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in signature.parameters.values()
-        )
+        try:
+            accepted, accepts_kwargs = self._accepted_parameters(
+                type(getattr(service, "_backend", service)), method_name
+            )
+        except (AttributeError, TypeError, ValueError):
+            # Callables the class lookup cannot describe (test doubles built
+            # from instance attributes, C-implemented callables) fall back to
+            # the uncached bound-method signature, as before.
+            parameters = inspect.signature(method).parameters
+            accepted = frozenset(parameters)
+            accepts_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
         if not accepts_kwargs:
-            kwargs = {
-                key: value
-                for key, value in kwargs.items()
-                if key in signature.parameters
-            }
+            kwargs = {key: value for key, value in kwargs.items() if key in accepted}
         return await self._maybe_await(method(*args, **kwargs))
 
     @staticmethod

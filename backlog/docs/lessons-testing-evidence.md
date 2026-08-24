@@ -8161,3 +8161,83 @@ discovered by mutation, not by reading: breaking the reserved cell changed the p
 row count from 1 to 2 between phases while `outer_size` stayed `Size(93, 2)`. A test
 asserting only `outer_size` would have called that safe. Assert the **painted row
 count and per-row cell widths** too.
+## Fix the leak first: the per-op connect WAS the cost, so the offload the filing also prescribed banked nothing (TASK-21127, 2026-08-24)
+
+**What happened.** The finding named three legs — per-op leaked connections, an
+engine running as a loop coroutine, and a 30 s lease write plus a 2 s poll on
+the loop — and prescribed a fix for each: held connection, `to_thread` the
+engine's ~40 service calls, batch the keepalive. All three legs were real. Built
+before any code changed, the harness put numbers on them: **one
+`connect_private_sqlite` open with its pragmas costs 0.631 ms; the SELECT it was
+opened to run costs 0.002 ms.** The connect was not a share of the cost, it was
+99.7% of it. Holding the connection took an engine run's loop-side database time
+from 877–906 ms to 29–33 ms per 20 runs (worst contiguous loop stall 46–51 ms →
+2.0–2.5 ms) — and left the two remaining prescribed fixes with **1.6 ms per run**
+and **0.020 ms per 30 s** to work on. Offloading the engine would have meant a
+nested event loop (or ~40 cascading `await`s through 8 synchronous methods),
+cross-thread Textual dispatch and notification dispatch from a worker thread, at
+two separate call sites, to move 1.6 ms. Batching the keepalive would have
+entangled the lease that prevents double execution to save 0.02 ms per half
+minute. Both were declined with the measurement recorded in the ACs.
+
+**What to do.** When a filing names a per-operation *leak* and an *offload* of
+the same code path, treat them as sequenced, not parallel: fix the leak,
+re-measure, and only then size the offload. The offload's apparent value is
+usually the leak's cost wearing its clothes. Two corollaries. Keep the leg the
+numbers *do* justify even when its headline reason evaporates: here the 2 s poll
+was worth 0.023 ms a tick and would not have shipped on its own, but the same
+one-line proxy also covers a bundle load that costs ~15 ms of loop time at 5.5 MB
+and grows with artifact size — that, not the poll, is the case for the UI-side
+offload. And measure the loop with an independent ticker, not with the awaited
+call's wall time: once work is on a thread the coroutine's duration *includes*
+the thread's work and stops being a loop-blocking measure at all. The sharpest
+number in this task came from that ticker — at 1 ms it got **zero** wakeups
+across the whole base-arm window, i.e. the shipped UI research path never
+yielded to the event loop even once.
+
+## Two mutations stayed green because a SECOND line of defence covered the walk — the fix was more tests, not a weaker assertion (TASK-21127, 2026-08-24)
+
+**What happened.** Fifteen mutations were run against the new guards; thirteen
+went red immediately. Two did not: removing `_begin`'s stale-connection heal, and
+removing `_transaction`'s rollback-on-failure. Both were aimed at end-to-end walk
+tests ("quit mid-run still completes", "a DB error mid-run leaves the store
+usable"). Investigating instead of rewriting the assertion showed why: `close()`
+POPS every connection it closes, so a later operation opens a fresh one and never
+meets a closed handle — the heal is a genuine second line of defence and
+unreachable through the shipped `close()`. Likewise a transaction left open by a
+missing rollback is cleared by `_begin`'s *other* heal arm on the next operation,
+so the end state matched either way. The walks were correct; they were just not
+single-mechanism guards.
+
+**What to do.** A surviving mutant has a third hypothesis beyond "wrong scenario"
+and "something else fixed it for me": **the code is deliberately
+belt-and-braces, and no single-point mutation can red a whole-path assertion.**
+That is a property worth having, not a defect — but it means the redundant
+mechanism needs its own test at its own level. Here: a connection closed *while
+still mapped* (reaching the heal directly), and `conn.in_transaction` after a
+failed body (proving the rollback happens AT the failure, not on the next
+`_begin`). Both mutations then went red. Keep the walk as well; deleting it to
+satisfy a mutation score would trade the property for the proof of it.
+
+## `inspect.iscoroutinefunction` is False for an async GENERATOR — a thread-offload proxy must pass those through too (TASK-21127, 2026-08-24)
+
+**What happened.** `ResearchScopeService` got the same `_ThreadOffloadedBackend`
+proxy TASK-21125 built for the writing suite: `__getattr__` returns the attribute
+unchanged when it is already async, and wraps it in `asyncio.to_thread` otherwise.
+Copied verbatim, the predicate (`inspect.iscoroutinefunction`) reported **False**
+for `LocalResearchService.stream_run_events`, which is `async def ... yield`. The
+proxy therefore "offloaded" it, handing `stream_run_events`/`observe_run_events`
+a coroutine wrapping the generator object instead of the generator, and both
+consumers' `inspect.isasyncgen(result)` branch silently stopped matching. The
+writing service has no async generators, so its predicate had never been wrong.
+Mutation-confirmed: dropping `inspect.isasyncgenfunction` from the predicate
+fails the test with `TypeError: 'async_generator' object is not iterable`.
+
+**What to do.** Any "is this already async?" predicate guarding a thread offload
+must test `inspect.iscoroutinefunction(x) or inspect.isasyncgenfunction(x)`, on
+the callable *and* on its `__call__`. When cloning a proxy between services — and
+this burn-down does that repeatedly (21125 → 21127 → 21131) — inventory the target
+service's method KINDS first (`async def`, `async def ... yield`, plain `def`,
+plain generator), because the predicate is only as complete as the service it was
+written against. A plain sync generator has the mirror-image problem: routing it
+through a thread returns the generator without running any of it.
