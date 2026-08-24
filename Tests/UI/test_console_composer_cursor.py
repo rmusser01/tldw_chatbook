@@ -472,6 +472,10 @@ async def test_console_composer_shift_enter_inserts_newline_enter_still_sends():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
+        # This interaction test intentionally runs without a persistence
+        # backend, so its session must be explicitly temporary.
+        console._ensure_console_chat_store().ensure_session().ephemeral = True
+
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("line one")
         composer.focus()

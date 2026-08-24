@@ -51,6 +51,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
@@ -292,14 +296,25 @@ def test_console_workspace_conversation_search_selection_refresh_invalidates_tok
 
 class _ReadyResolutionGateway:
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            provider=selection.provider,
-            base_url=selection.base_url or "",
-            model=selection.explicit_model
+        endpoint = selection.base_url or "http://127.0.0.1:9099"
+        model = (
+            selection.explicit_model
             or selection.configured_model
-            or "test-model",
+            or "test-model"
+        )
+        return ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url=endpoint,
+            model=model,
             ready=True,
-            visible_copy="",
+            readiness_key=selection.provider,
+            execution_key=selection.provider,
+            resolved_destination=ConsoleResolvedDestination(
+                provider=selection.provider,
+                model=model,
+                endpoint_identity=endpoint,
+                egress_class=ConsoleEgressClass.ON_DEVICE,
+            ),
         )
 
 
