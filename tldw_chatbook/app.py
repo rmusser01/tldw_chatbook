@@ -12821,6 +12821,33 @@ class TldwCli(
                 f"Error closing local writing service: {type(exc).__name__}"
             )
 
+    async def _close_local_research_service(self) -> None:
+        """Release the research store's held SQLite connections (TASK-21127).
+
+        Peeks the slot rather than reading through any accessor: a service that
+        was never wired must not be constructed purely to close it. A close
+        failure is logged (type name only) and never allowed to abort the rest
+        of unmount.
+
+        Runs on a thread, NOT inline. ``close()`` waits for an operation still
+        running on the research backend thread (a run's progress write, say),
+        and a synchronous call here would freeze the event loop for the whole
+        settle timeout -- which also starves the very operation it is waiting
+        for (the TASK-21125 review's MAJOR-3 finding).
+        """
+        service = getattr(self, "local_research_service", None)
+        if service is None:
+            return
+        close = getattr(service, "close", None)
+        if not callable(close):
+            return
+        try:
+            await asyncio.to_thread(close)
+        except Exception as exc:
+            self.loguru_logger.error(
+                f"Error closing local research service: {type(exc).__name__}"
+            )
+
     async def _shutdown_file_notes_session_owner(self) -> None:
         """Settle the process-owned File Notes Git lifecycle exactly once."""
         owner = getattr(self, "file_notes_session_owner", None)
@@ -13435,6 +13462,9 @@ class TldwCli(
 
         # Release the writing suite's held SQLite connections (TASK-21125).
         await self._close_local_writing_service()
+
+        # Release the research store's held SQLite connections (TASK-21127).
+        await self._close_local_research_service()
 
         # Nothing this app owns is left to ask; a signal from here on has
         # no orderly path to offer and should unwind the main thread.
