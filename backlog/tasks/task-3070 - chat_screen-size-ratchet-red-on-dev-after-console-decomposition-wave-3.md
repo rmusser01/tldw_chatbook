@@ -11,6 +11,9 @@ labels:
   - architecture-gate
   - tech-debt
 dependencies: []
+references:
+  - Docs/superpowers/specs/2026-08-13-console-decomposition-wave6-design.md
+  - Docs/superpowers/specs/2026-08-23-console-decomposition-wave6-closeout-amendment.md
 priority: medium
 ---
 
@@ -18,36 +21,43 @@ priority: medium
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 The Console's one-way architecture ratchets are materially red on verified current
-`origin/dev` after TASK-3070.2: `tldw_chatbook/UI/Screens/chat_screen.py` is 22,172
-lines against a 17,727-line ceiling, and `ChatScreen` has 712 direct methods against a
-593-method ceiling. This task was originally filed at a 21-line overage after wave 3; later waves
-lowered the allowed ceiling while unrelated feature work kept accumulating in the
-screen. The result is now 4,445 lines and 119 methods over budget, not transitional
-noise. Resolve it through the amended Wave 6 controller extractions and lower the
-ratchets to the exact earned counts; never raise either budget to accept the growth.
+`origin/dev` after TASK-3070.2. The final Wave-6 delivery base was 19,863 lines and
+630 methods; the current amendment base is 19,884 lines and 632 methods. The completed
+extractions removed 4,958 lines and 130 methods, while concurrent Console work accounts
+for 2,670 lines and 50 methods. The remaining 2,157-line and 39-method deficits are not
+transitional noise. Resolve them through the approved
+closeout amendment and lower the ratchets to the exact earned counts; never raise
+either budget to accept growth.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 On the final rebased dev base, both the `chat_screen.py` line-count and `ChatScreen` method-count ratchets pass without increasing either budget.
-- [ ] #2 The source-inspected Wave 6 move/delegate/stay inventory is enforced by AST ownership tests, and every retained screen delegate is framework-required, has a real caller, and its complete definition span (decorators excluded) is bounded to five physical source lines.
-- [ ] #3 Image/H3, video, conversation-browser, retrieval/RAG, skill, character, fleet/wake, first-chat, and auto-speak ownership moves to the reviewed controllers without changing DOM ownership, persistence ordering, worker groups, cancellation identity, remount/shutdown behavior, privacy, or user-visible outcomes.
+- [ ] #2 The source-inspected Wave 6 move/delegate/stay inventory is enforced by AST ownership tests; exact screen/region-owned stays remain in place, and every retained delegate is framework-required, has a real caller, and its complete definition span (decorators excluded) is bounded to five physical source lines.
+- [ ] #3 Image/H3, video, conversation-browser, retrieval/RAG, skill, character, fleet/wake, first-chat, auto-speak, realtime, and review/selection ownership moves to the reviewed controllers without changing DOM or ADR-068 review-note ownership, persistence ordering, worker groups, session/tap/sink and cancellation identity, transcript/usage/fallback ordering, remount/shutdown behavior, privacy, or user-visible outcomes.
 - [ ] #4 Every extracted family has isolated controller coverage using plain fakes without mounting Textual, including the Workspace browser extension, and the mounted product suites continue to cover screen/region integration.
-- [ ] #5 The coordinated child tasks TASK-3070.1 through TASK-3070.11 are completed independently with their focused verification evidence before this parent is closed.
+- [ ] #5 The coordinated child tasks TASK-3070.1 through TASK-3070.14 are completed independently with their focused verification evidence before this parent is closed.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: N/A (governed by `Docs/superpowers/specs/2026-08-02-screen-decomposition-design.md` and `DESIGN.md` section 7)
-Reason: This is the next implementation wave of the existing, approved Console decomposition architecture; it does not introduce a new runtime, storage, security, or cross-module policy.
+ADR path: `backlog/decisions/068-console-text-selection-and-annotations.md` (also governed by `Docs/superpowers/specs/2026-08-02-screen-decomposition-design.md` and `DESIGN.md` section 7)
+Reason: This is the next implementation wave of the existing, approved Console decomposition architecture and preserves ADR-068's screen-owned review-note workflow; it does not introduce a new runtime, storage, security, or cross-module policy.
 
 1. Complete TASK-3070.1: record the rebased line/method baseline and lock the reviewed source-inspected ownership inventory, residue budget, and AST rules before production movement.
 2. Complete TASK-3070.2 through TASK-3070.10 one PR at a time after its predecessor merges: characterize the real product boundary, add isolated no-mount controller tests, extract one family with named late-bound dependencies, and prove its screen delegates and invariants.
 3. Extend the existing Workspace controller as the single conversation-browser state owner while preserving collapse/config and activation/resume behavior; keep Textual decorators, direct DOM, modal/picker presentation, and OS-player launch on the screen or existing region widgets.
 4. After each extraction, run its isolated controller tests, focused product/mounted suites, AST ownership/dependency checks, required mutations, static checks, and privacy/diff gates before beginning the next child.
-5. Complete TASK-3070.11: rebase onto final `origin/dev`, repeat the baseline comparison, lower both ratchets to the exact earned counts, update canonical decomposition progress and every task's notes, run the final repository DoD, and only then close this parent.
+5. Complete TASK-3070.11: lock the post-Wave-6 delivery evidence and the approved
+   closeout amendment without changing production behavior.
+6. Complete TASK-3070.12 and TASK-3070.13 serially: extract realtime orchestration,
+   then review/selection workflows, behind explicit no-sibling controller boundaries.
+7. Complete TASK-3070.14: rebase onto final `origin/dev`, repeat the baseline
+   comparison, lower both ratchets to the exact earned counts, update canonical
+   decomposition progress and every task's notes, run the approved focused and
+   required CI DoD gates, and only then close this parent.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

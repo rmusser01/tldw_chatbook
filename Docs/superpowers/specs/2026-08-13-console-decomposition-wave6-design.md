@@ -1,7 +1,8 @@
 # Console Decomposition Wave 6 Design
 
 **Status:** approved after written spec and quality review 2026-08-13; post-image
-baseline amendment approved 2026-08-14
+baseline amendment approved 2026-08-14; final closeout sequence superseded by
+`2026-08-23-console-decomposition-wave6-closeout-amendment.md`
 
 ## Problem
 
@@ -523,10 +524,12 @@ Workspace browser-state alias one at a time.
 
 ### Final gates
 
-After the final rebase, measure actual lines/methods. Lower the ratchet to the exact
-earned values; never raise it. Run focused and mounted product suites, all architecture
-tests, Ruff, formatter, isolated `py_compile`, privacy/diff checks, and the full repository
-suite required by the project DoD.
+**Superseded for closeout by the approved 2026-08-23 amendment.** TASK-3070.14,
+not TASK-3070.11, performs the final rebase and measures actual lines/methods. It
+lowers the ratchet to the exact earned values and never raises it. The owner explicitly
+prohibits a local full-suite run: run only related product tests plus the approved
+architecture/static/privacy/diagnostic gates, then use required GitHub Actions as the
+broad integration gate.
 
 ## Atomic Delivery
 
@@ -543,22 +546,27 @@ reviewable:
 8. TASK-3070.8 extracts fleet/wake lifecycle ownership.
 9. TASK-3070.9 extends Session with first-chat handoff ownership.
 10. TASK-3070.10 extends HandsFree with auto-speak ownership.
-11. TASK-3070.11 rebases, lowers the ratchet, updates canonical progress, and
+11. TASK-3070.11 freezes the invalidated closeout evidence and the approved amendment.
+12. TASK-3070.12 extracts realtime orchestration.
+13. TASK-3070.13 extracts review/selection workflow ownership.
+14. TASK-3070.14 rebases, lowers the ratchet, updates canonical progress, and
     closes the parent.
 
 Each child is delivered as one atomic PR and must return its focused gate to green
 before it is reviewed and merged. TASK-3070.2 through TASK-3070.10 branch from the latest
-`dev` only after their predecessor PR merges; TASK-3070.11 is the final rebase/ratchet/
-closeout PR after every extraction predecessor lands. Commits inside a child PR remain
-focused on that child. If a rebase changes the inventory enough to invalidate the
-projection, stop and amend this design before implementation.
+`dev` only after their predecessor PR merges. TASK-3070.11 through TASK-3070.14 follow
+the amended sequence in `2026-08-23-console-decomposition-wave6-closeout-amendment.md`.
+Commits inside a child PR remain focused on that child. If a rebase changes the
+inventory enough to invalidate the projection, stop and amend the binding design
+before implementation.
 
 ## Success Criteria
 
 - The size and method ratchets pass without increasing either budget.
 - Relative to the final rebased starting measurement, `ChatScreen` loses at least the
   exact overage in both dimensions, with the ratchet lowered to the earned result.
-- Image/H3, video, browser, retrieval, skill, character, fleet/wake, first-chat, and
-  auto-speak behaviour is unchanged.
+- Image/H3, video, browser, retrieval, skill, character, fleet/wake, first-chat,
+  auto-speak, realtime, and review/selection behaviour is unchanged, including
+  ADR-068's screen-owned review-note workflow.
 - Each family has an obvious non-DOM owner and isolated no-mount unit tests.
 - All automated, static, privacy, cancellation, persistence, and lifecycle gates pass.
