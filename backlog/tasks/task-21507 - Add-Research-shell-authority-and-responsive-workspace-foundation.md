@@ -93,3 +93,29 @@ reproduction, Ruff, format, compile, diff, detector, and affected rendered
 geometry checks passed. ADR-078 remains the governing decision, no new ADR was
 required, the known unrelated Library failures remain out of scope, and full
 pytest was not run.
+
+### Fix Round 2
+
+Replaced cancellation-based overlay persistence with one bounded, coalescing
+save drain per mounted Workspace screen. Threaded writes now finish in commit
+order; each queued write captures the current qualified owner, pane preferences,
+and optimistic revision only after entering serialization. Revision results are
+accepted only while both qualified ref and monotonic owner generation still
+match, so an authority switch cannot apply an old owner's completion to the new
+workspace.
+
+Deterministic mounted coverage pauses the first save after its atomic commit,
+then makes a second medium companion choice. The final UI preference persists
+at revision 2 without a conflict warning. A separate authority-switch case
+proves queued work recaptures Server ownership and does not rewrite the prior
+Local record. The production Workspace → Runs → Workspace regression now waits
+for catalog/overlay reconciliation and verifies Server identity, selector state,
+pane arrangement/status, saved presentation context, and independent Runs
+state.
+
+Fix Round 2 verification passed `320 passed` with only the accepted
+`RequestsDependencyWarning`; the amended slice passed `125 passed`, all six
+inverse guards passed, and CSS reproduction, Ruff, format, compile, diff,
+detector, and affected rendered geometry checks passed. ADR-078 remains the
+governing decision, no new ADR was required, known unrelated Library failures
+remain out of scope, and full pytest was not run.

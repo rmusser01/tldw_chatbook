@@ -64,6 +64,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_ref: QualifiedWorkspaceRef | None = None
         self._pane_preferences_ref: QualifiedWorkspaceRef | None = None
         self._overlay_generation = 0
+        self._overlay_owner_generation = 0
+        self._overlay_save_lock = asyncio.Lock()
+        self._overlay_save_requested = False
+        self._overlay_save_running = False
 
     def save_state(self) -> dict[str, object]:
         """Save Phase-1 authority, workspace intent, and responsive view state."""
@@ -205,8 +209,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
         self.controller.select_data_source(message.data_source)
         self._overlay_generation += 1
-        self._overlay_ref = None
-        self._overlay_revision = 0
+        self._set_overlay_ref(None)
         self._pane_preferences_ref = None
         self.pane_preferences = ResearchPanePreferences()
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
@@ -338,8 +341,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 f"Foundation ready · {state.data_source.value.title()} selected · "
                 "Recovery required · No operation active"
             )
-            self._overlay_ref = None
-            self._overlay_revision = 0
+            self._set_overlay_ref(None)
             return
         if not state.workspaces:
             selection.update(
@@ -349,8 +351,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 f"Foundation ready · {state.data_source.value.title()} catalog ready · "
                 "0 workspaces · Foundation only"
             )
-            self._overlay_ref = None
-            self._overlay_revision = 0
+            self._set_overlay_ref(None)
             return
 
         intended_ref = self.controller.selected_ref
@@ -377,8 +378,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_generation += 1
         overlay_generation = self._overlay_generation
         overlay_capture = self.controller.capture_request()
-        self._overlay_ref = workspace.ref
-        self._overlay_revision = 0
+        self._set_overlay_ref(workspace.ref)
         if self.overlay_store is None:
             return
         try:
@@ -407,21 +407,38 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         if self.overlay_store is None or self._overlay_ref is None:
             return
         self._overlay_generation += 1
+        self._overlay_save_requested = True
+        if self._overlay_save_running:
+            return
+        self._overlay_save_running = True
         self.run_worker(
-            self._save_overlay_preferences(),
+            self._drain_overlay_saves(),
             group="research-workspace-overlay",
-            exclusive=True,
+            exclusive=False,
         )
 
+    async def _drain_overlay_saves(self) -> None:
+        """Serialize and coalesce pane writes without cancelling committed work."""
+
+        try:
+            while self._overlay_save_requested:
+                self._overlay_save_requested = False
+                async with self._overlay_save_lock:
+                    await self._save_overlay_preferences()
+        finally:
+            self._overlay_save_running = False
+
     async def _save_overlay_preferences(self) -> None:
-        if self.overlay_store is None or self._overlay_ref is None:
-            return
+        store = self.overlay_store
         ref = self._overlay_ref
+        if store is None or ref is None:
+            return
+        owner_generation = self._overlay_owner_generation
         preferences = self.pane_preferences
         expected_revision = self._overlay_revision
         try:
             saved = await asyncio.to_thread(
-                self.overlay_store.save,
+                store.save,
                 ref,
                 preferences,
                 expected_revision=expected_revision,
@@ -432,5 +449,17 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 severity="warning",
             )
             return
-        if ref == self._overlay_ref and preferences == self.pane_preferences:
+        if (
+            ref == self._overlay_ref
+            and owner_generation == self._overlay_owner_generation
+        ):
             self._overlay_revision = saved.revision
+
+    def _set_overlay_ref(self, ref: QualifiedWorkspaceRef | None) -> None:
+        """Change overlay ownership and invalidate revisions from the prior ref."""
+
+        if ref == self._overlay_ref:
+            return
+        self._overlay_owner_generation += 1
+        self._overlay_ref = ref
+        self._overlay_revision = 0

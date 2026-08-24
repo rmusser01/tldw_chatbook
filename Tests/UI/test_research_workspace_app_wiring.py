@@ -14,6 +14,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Research_Workspace import (
     QualifiedWorkspaceRef,
     ResearchPanePreferences,
+    ResearchPresentationOverlayStore,
     ResearchWorkspaceCatalogState,
     ResearchWorkspaceController,
     ResearchWorkspaceSummary,
@@ -531,6 +532,160 @@ class _BlockingOverlayStore:
             revision=1,
             preferences=ResearchPanePreferences(sources_open=False, studio_open=False),
         )
+
+
+class _CommitThenPauseOverlayStore:
+    """Let the first real save commit, then delay its coroutine result."""
+
+    def __init__(self, path: Path) -> None:
+        self._store = ResearchPresentationOverlayStore(path)
+        self.first_committed = threading.Event()
+        self.release_first = threading.Event()
+
+    def load(self, ref: QualifiedWorkspaceRef):
+        return self._store.load(ref)
+
+    def save(
+        self,
+        ref: QualifiedWorkspaceRef,
+        preferences: ResearchPanePreferences,
+        *,
+        expected_revision: int,
+    ):
+        saved = self._store.save(
+            ref,
+            preferences,
+            expected_revision=expected_revision,
+        )
+        if saved.revision == 1:
+            self.first_committed.set()
+            assert self.release_first.wait(2)
+        return saved
+
+
+@pytest.mark.asyncio
+async def test_rapid_medium_companion_saves_follow_committed_revision_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A committed thread write must finish before the final choice is saved."""
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    store = _CommitThenPauseOverlayStore(tmp_path / "race-overlay.json")
+    screen.overlay_store = store
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        screen,
+        "notify",
+        lambda message, **kwargs: (
+            warnings.append(str(message))
+            if kwargs.get("severity") == "warning"
+            else None
+        ),
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if screen.controller.selected_ref is not None:
+                break
+        ref = screen.controller.selected_ref
+        assert ref is not None
+
+        screen.query_one("#research-pane-mode-studio", Button).press()
+        assert await asyncio.to_thread(store.first_committed.wait, 1)
+        screen.query_one("#research-pane-mode-sources", Button).press()
+        await pilot.pause()
+        store.release_first.set()
+
+        saved = None
+        for _ in range(100):
+            await pilot.pause(0.02)
+            saved = store.load(ref)
+            if (
+                saved is not None
+                and saved.revision == 2
+                and saved.preferences.preferred_companion == "sources"
+            ):
+                break
+
+        assert saved is not None
+        assert saved.revision == 2
+        assert saved.preferences == screen.pane_preferences
+        assert saved.preferences.preferred_companion == "sources"
+        assert screen._overlay_revision == 2
+        assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_queued_overlay_save_recaptures_owner_after_authority_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Queued work saves the current qualified owner, never the prior ref."""
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    store = _CommitThenPauseOverlayStore(tmp_path / "owner-switch-overlay.json")
+    screen.overlay_store = store
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if screen.controller.selected_ref is not None:
+                break
+        local_ref = screen.controller.selected_ref
+        assert local_ref is not None
+
+        screen.query_one("#research-pane-mode-studio", Button).press()
+        assert await asyncio.to_thread(store.first_committed.wait, 1)
+        screen.query_one("#research-pane-mode-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#research-data-source-server", Button).press()
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if (
+                screen._overlay_ref is not None
+                and screen._overlay_ref.data_source is WorkspaceDataSource.SERVER
+            ):
+                break
+        server_ref = screen._overlay_ref
+        assert server_ref is not None
+        assert server_ref.data_source is WorkspaceDataSource.SERVER
+        store.release_first.set()
+
+        server_saved = None
+        for _ in range(100):
+            await pilot.pause(0.02)
+            server_saved = store.load(server_ref)
+            if server_saved is not None:
+                break
+
+        local_saved = store.load(local_ref)
+        assert local_saved is not None
+        assert local_saved.revision == 1
+        assert local_saved.preferences.preferred_companion == "studio"
+        assert server_saved is not None
+        assert server_saved.revision == 1
+        assert server_saved.preferences == ResearchPanePreferences()
+        assert screen._overlay_revision == 1
 
 
 @pytest.mark.asyncio

@@ -3851,9 +3851,29 @@ async def test_research_workspace_runs_round_trip_restores_independent_context()
         await app.handle_screen_navigation(NavigateToScreen("research"))
         assert type(app.screen).__name__ == "ResearchScreen"
         runs_screen = app.screen
+        runs_state = {
+            "source": "local",
+            "academic": True,
+            "limits": "max_sources=4",
+            "policy": "academic_first",
+            "providers": "arxiv,crossref",
+            "rounds": 2,
+        }
+        runs_screen.restore_state(runs_state)
+        assert runs_screen.save_state() == runs_state
 
         await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
         restored = app.screen
+        for _ in range(100):
+            await pilot.pause(0.02)
+            state = restored.controller.catalog_state
+            if (
+                state is not None
+                and state.data_source is WorkspaceDataSource.SERVER
+                and "Server selected"
+                in str(restored.query_one("#research-workspace-status").render())
+            ):
+                break
         assert type(restored).__name__ == "ResearchWorkspaceScreen"
         assert restored is not first_workspace
         assert restored.controller.selected_data_source is WorkspaceDataSource.SERVER
@@ -3864,7 +3884,18 @@ async def test_research_workspace_runs_round_trip_restores_independent_context()
             studio_open=True,
             preferred_companion="studio",
         )
-        assert runs_screen.save_state() == app.screen_state_store.restore(
+        assert restored.query_one("#research-data-source-server").has_class(
+            "is-active"
+        )
+        assert not restored.query_one("#research-sources-pane").display
+        assert restored.query_one("#research-chat-pane").display
+        assert restored.query_one("#research-studio-pane").display
+        assert restored._pane_layout is not None
+        assert restored._pane_layout.visible_panes == ("chat", "studio")
+        assert "Server selected" in str(
+            restored.query_one("#research-workspace-status").render()
+        )
+        assert runs_state == app.screen_state_store.restore(
             "research", app._current_runtime_identity()
         )
 
