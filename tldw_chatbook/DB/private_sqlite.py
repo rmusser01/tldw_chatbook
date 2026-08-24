@@ -233,8 +233,14 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "notifications.event_state": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/event_state_repository",
-        _MEMORY,
-        "Event state currently uses only an in-memory database.",
+        _PRIVATE_OR_MEMORY,
+        "The durable server-event ledger. The app gives it a private file "
+        "under the user data directory (`build_server_parity_state_"
+        "repositories`) and falls back to an exact in-memory target when "
+        "that directory cannot be trusted. TASK-21131: the file branch used "
+        "to be opened by `BaseDB._get_connection` under `db.base`, so this "
+        "entry described only half of it; the enforced target kinds are "
+        "unchanged (`db.base` allows exactly the same two).",
     ),
     "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(
         "tldw_chatbook/RAG_Search/simplified/rag_service",

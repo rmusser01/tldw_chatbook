@@ -60,11 +60,22 @@ def _notes_mirror_owner(path: Path) -> tuple[object, Callable[[], None]]:
     return owner, owner.close
 
 
+def _event_state_owner(path: Path) -> tuple[object, Callable[[], None]]:
+    # TASK-21105: see _writing_owner -- the file opens on first use.
+    # TASK-21131: the file branch now names this module's own registered
+    # owner instead of borrowing `db.base`, so the file contracts below
+    # (private seam, 0600, unsafe/missing parent rejection) apply to it.
+    repository = event_state_repository.EventStateRepository(path)
+    repository.list_events(limit=1)
+    return repository, repository.close
+
+
 FILE_OWNER_CASES: tuple[tuple[ModuleType, str, FileOwnerFactory], ...] = (
     (local_kanban_db, "kanban.local", _kanban_owner),
     (local_writing_service, "writing.local", _writing_owner),
     (local_research_service, "research.local", _research_owner),
     (notes_mirror, "sync.notes_mirror", _notes_mirror_owner),
+    (event_state_repository, "notifications.event_state", _event_state_owner),
 )
 
 
