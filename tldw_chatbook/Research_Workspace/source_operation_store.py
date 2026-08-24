@@ -9,12 +9,11 @@ import sqlite3
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from .source_operations import (
-    MAX_OPERATION_ID_CHARS,
     ResearchSourceOperation,
     SourceOperationStage,
     SourceOperationStatus,
     SourceOperationValidationError,
-    _safe_text,
+    validate_source_operation_id,
 )
 
 
@@ -101,6 +100,21 @@ class ResearchSourceOperationStore:
 
         if not isinstance(operation, ResearchSourceOperation):
             raise TypeError("operation must be ResearchSourceOperation")
+        if (
+            operation.revision != 1
+            or operation.ingest_job_id
+            or operation.canonical_item_id
+            or operation.workspace_source_id
+            or operation.catalog_status is not SourceOperationStatus.PENDING
+            or operation.association_status is not SourceOperationStatus.PENDING
+            or operation.readiness_status is not SourceOperationStatus.PENDING
+            or operation.error_stage is not None
+            or operation.error_code
+            or operation.error_message
+        ):
+            raise SourceOperationValidationError(
+                "create requires a pristine revision-1 durable intent"
+            )
         values = (
             operation.operation_id,
             operation.idempotency_key,
@@ -143,12 +157,7 @@ class ResearchSourceOperationStore:
     def get(self, operation_id: str) -> ResearchSourceOperation | None:
         """Return one receipt by bounded opaque ID."""
 
-        normalized_id = _safe_text(
-            operation_id,
-            "operation_id",
-            maximum=MAX_OPERATION_ID_CHARS,
-            required=True,
-        )
+        normalized_id = validate_source_operation_id(operation_id)
         with self._db.connection() as connection:
             row = connection.execute(
                 f"""
@@ -183,13 +192,23 @@ class ResearchSourceOperationStore:
                     AND association_status = ?
                     AND readiness_status = ?
                 )
-                ORDER BY created_at ASC, operation_id ASC
+                ORDER BY
+                    CASE WHEN (
+                        catalog_status = ?
+                        OR association_status = ?
+                        OR readiness_status = ?
+                    ) THEN 1 ELSE 0 END ASC,
+                    created_at ASC,
+                    operation_id ASC
                 LIMIT ? OFFSET ?
                 """,
                 (
                     SourceOperationStatus.SUCCEEDED.value,
                     SourceOperationStatus.SUCCEEDED.value,
                     SourceOperationStatus.SUCCEEDED.value,
+                    SourceOperationStatus.FAILED.value,
+                    SourceOperationStatus.FAILED.value,
+                    SourceOperationStatus.FAILED.value,
                     limit,
                     offset,
                 ),
@@ -378,12 +397,7 @@ class ResearchSourceOperationStore:
     def _get_in_transaction(
         self, connection: sqlite3.Connection, operation_id: str
     ) -> ResearchSourceOperation:
-        normalized_id = _safe_text(
-            operation_id,
-            "operation_id",
-            maximum=MAX_OPERATION_ID_CHARS,
-            required=True,
-        )
+        normalized_id = validate_source_operation_id(operation_id)
         row = connection.execute(
             f"SELECT {_SELECT_COLUMNS} FROM research_source_operations WHERE operation_id = ?",
             (normalized_id,),

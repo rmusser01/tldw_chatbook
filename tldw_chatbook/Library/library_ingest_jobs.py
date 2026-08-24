@@ -74,6 +74,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
+from tldw_chatbook.Research_Workspace.source_operations import (
+    validate_source_operation_id,
+)
 from tldw_chatbook.STT.persistence import (
     FailedTranscriptionAttempt,
     dump_failed_transcription_attempt,
@@ -795,6 +798,11 @@ class LibraryIngestJobRegistry:
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
         """
+        operation_id = (
+            None
+            if research_source_operation_id is None
+            else validate_source_operation_id(research_source_operation_id)
+        )
         job = LibraryIngestJob(
             job_id=self._allocate_job_id(),
             source_path=source_path,
@@ -810,7 +818,7 @@ class LibraryIngestJobRegistry:
             ingest_options=ingest_options or {},
             origin=origin,
             batch_id=batch_id,
-            research_source_operation_id=research_source_operation_id,
+            research_source_operation_id=operation_id,
         )
         self._jobs.append(job)
         self._notify_listeners()
@@ -1614,6 +1622,9 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         no fixed epoch) -- they are left at their dataclass defaults
         (``0.0``/``None``/``None``).
     """
+    operation_id = row.get("research_source_operation_id")
+    if operation_id is not None:
+        operation_id = validate_source_operation_id(operation_id)
     return LibraryIngestJob(
         job_id=row["job_id"],
         source_path=row["source_path"],
@@ -1655,7 +1666,7 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
             if row.get("retry_source_failure_provenance_json")
             else None
         ),
-        research_source_operation_id=row.get("research_source_operation_id"),
+        research_source_operation_id=operation_id,
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,

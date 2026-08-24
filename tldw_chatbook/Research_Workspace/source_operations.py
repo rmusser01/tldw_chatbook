@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 import re
+import unicodedata
 
 from .contracts import WorkspaceDataSource
 
 
 MAX_OPERATION_ID_CHARS = 256
 MAX_IDEMPOTENCY_KEY_CHARS = 512
-MAX_IDENTITY_CHARS = 256
+MAX_AUTHORITY_ID_BYTES = 1024
 MAX_ERROR_CODE_CHARS = 64
 MAX_ERROR_MESSAGE_CHARS = 512
 MAX_TIMESTAMP_CHARS = 64
@@ -49,12 +50,20 @@ class SourceOperationStatus(StrEnum):
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+\S+"),
     re.compile(r"(?i)\bsk-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"(?i)\b(?:api[_-]?key|authorization|password|secret|token)\s*[:=]"),
+    re.compile(
+        r"(?i)(?<![A-Za-z0-9])(?:[a-z0-9]+[_-])*"
+        r"(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|"
+        r"authorization|password|passwd|secret|token)\s*[:=]"
+    ),
 )
-_CREDENTIAL_URL = re.compile(r"(?i)https?://[^\s/:@]+:[^\s/@]+@")
-_PRIVATE_PATH = re.compile(
-    r"(?:^|[\s\"'])(?:~[/\\]|[A-Za-z]:\\|/(?:Users|home|private|tmp|var|Volumes)/)"
+_CREDENTIAL_URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/@]+@")
+_LOCAL_PATH = re.compile(
+    r"(?:^|[\s\"'(])(?:"
+    r"~[/\\]|[A-Za-z]:[/\\]|[/\\]{2}[^\s\"']+|/(?!/)[^\s\"']+|"
+    r"(?:\.\.[/\\])+[^\s\"']+"
+    r")"
 )
+_OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]*$")
 _ERROR_CODE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 
 
@@ -68,7 +77,7 @@ def _enum_value(value: object, enum_type: type[StrEnum], field_name: str) -> Str
         ) from None
 
 
-def _safe_text(
+def _bounded_text(
     value: object,
     field_name: str,
     *,
@@ -86,6 +95,60 @@ def _safe_text(
         )
     if any(character in normalized for character in ("\n", "\r", "\x00")):
         raise SourceOperationValidationError(f"{field_name} must be single-line text")
+    return normalized
+
+
+def _safe_identifier(
+    value: object,
+    field_name: str,
+    *,
+    maximum: int,
+    required: bool,
+) -> str:
+    normalized = _bounded_text(value, field_name, maximum=maximum, required=required)
+    _reject_sensitive_material(normalized, field_name)
+    if normalized and not _OPAQUE_ID.fullmatch(normalized):
+        raise SourceOperationValidationError(
+            f"{field_name} must be a bounded opaque identifier"
+        )
+    return normalized
+
+
+def _safe_authority_identifier(
+    value: object,
+    field_name: str,
+    *,
+    maximum_bytes: int,
+    required: bool,
+) -> str:
+    normalized = _bounded_text(
+        value, field_name, maximum=maximum_bytes, required=required
+    )
+    _reject_sensitive_material(normalized, field_name)
+    try:
+        encoded = normalized.encode("utf-8")
+    except UnicodeEncodeError:
+        raise SourceOperationValidationError(
+            f"{field_name} must be valid UTF-8 identity text"
+        ) from None
+    if len(encoded) > maximum_bytes:
+        raise SourceOperationValidationError(
+            f"{field_name} exceeds maximum {maximum_bytes} UTF-8 bytes"
+        )
+    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in normalized):
+        raise SourceOperationValidationError(
+            f"{field_name} must not contain Unicode control or format characters"
+        )
+    return normalized
+
+
+def _safe_diagnostic(value: object, field_name: str, *, maximum: int) -> str:
+    normalized = _bounded_text(value, field_name, maximum=maximum, required=True)
+    _reject_sensitive_material(normalized, field_name)
+    return normalized
+
+
+def _reject_sensitive_material(normalized: str, field_name: str) -> None:
     if any(pattern.search(normalized) for pattern in _SECRET_PATTERNS):
         raise SourceOperationValidationError(
             f"{field_name} must not contain secret material"
@@ -94,15 +157,25 @@ def _safe_text(
         raise SourceOperationValidationError(
             f"{field_name} must not contain a credential-bearing URL"
         )
-    if _PRIVATE_PATH.search(normalized):
+    if _LOCAL_PATH.search(normalized):
         raise SourceOperationValidationError(
             f"{field_name} must not contain a local private path"
         )
-    return normalized
+
+
+def validate_source_operation_id(value: object) -> str:
+    """Return one validated opaque operation ID for cross-store lineage."""
+
+    return _safe_identifier(
+        value,
+        "research_source_operation_id",
+        maximum=MAX_OPERATION_ID_CHARS,
+        required=True,
+    )
 
 
 def _timestamp(value: object, field_name: str) -> str:
-    normalized = _safe_text(
+    normalized = _bounded_text(
         value,
         field_name,
         maximum=MAX_TIMESTAMP_CHARS,
@@ -167,66 +240,74 @@ class ResearchSourceOperation:
         )
 
         normalized = {
-            "operation_id": _safe_text(
+            "operation_id": _safe_identifier(
                 self.operation_id,
                 "operation_id",
                 maximum=MAX_OPERATION_ID_CHARS,
                 required=True,
             ),
-            "idempotency_key": _safe_text(
+            "idempotency_key": _safe_authority_identifier(
                 self.idempotency_key,
                 "idempotency_key",
-                maximum=MAX_IDEMPOTENCY_KEY_CHARS,
+                maximum_bytes=MAX_IDEMPOTENCY_KEY_CHARS,
                 required=True,
             ),
-            "server_profile_id": _safe_text(
+            "server_profile_id": _safe_authority_identifier(
                 self.server_profile_id,
                 "server_profile_id",
-                maximum=MAX_IDENTITY_CHARS,
+                maximum_bytes=MAX_AUTHORITY_ID_BYTES,
                 required=False,
             ),
-            "principal_id": _safe_text(
+            "principal_id": _safe_authority_identifier(
                 self.principal_id,
                 "principal_id",
-                maximum=MAX_IDENTITY_CHARS,
+                maximum_bytes=MAX_AUTHORITY_ID_BYTES,
                 required=False,
             ),
-            "workspace_id": _safe_text(
+            "workspace_id": _safe_authority_identifier(
                 self.workspace_id,
                 "workspace_id",
-                maximum=MAX_IDENTITY_CHARS,
+                maximum_bytes=MAX_AUTHORITY_ID_BYTES,
                 required=True,
             ),
-            "ingest_job_id": _safe_text(
+            "ingest_job_id": _safe_identifier(
                 self.ingest_job_id,
                 "ingest_job_id",
-                maximum=MAX_IDENTITY_CHARS,
+                maximum=MAX_OPERATION_ID_CHARS,
                 required=False,
             ),
-            "canonical_item_id": _safe_text(
+            "canonical_item_id": _safe_authority_identifier(
                 self.canonical_item_id,
                 "canonical_item_id",
-                maximum=MAX_IDENTITY_CHARS,
+                maximum_bytes=MAX_AUTHORITY_ID_BYTES,
                 required=False,
             ),
-            "workspace_source_id": _safe_text(
+            "workspace_source_id": _safe_authority_identifier(
                 self.workspace_source_id,
                 "workspace_source_id",
-                maximum=MAX_IDENTITY_CHARS,
+                maximum_bytes=MAX_AUTHORITY_ID_BYTES,
                 required=False,
             ),
         }
-        error_code = _safe_text(
+        error_code = _bounded_text(
             self.error_code,
             "error_code",
             maximum=MAX_ERROR_CODE_CHARS,
             required=error_stage is not None,
         )
-        error_message = _safe_text(
-            self.error_message,
-            "error_message",
-            maximum=MAX_ERROR_MESSAGE_CHARS,
-            required=error_stage is not None,
+        error_message = (
+            _safe_diagnostic(
+                self.error_message,
+                "error_message",
+                maximum=MAX_ERROR_MESSAGE_CHARS,
+            )
+            if error_stage is not None
+            else _bounded_text(
+                self.error_message,
+                "error_message",
+                maximum=MAX_ERROR_MESSAGE_CHARS,
+                required=False,
+            )
         )
         created_at = _timestamp(self.created_at, "created_at")
         updated_at = _timestamp(self.updated_at, "updated_at")

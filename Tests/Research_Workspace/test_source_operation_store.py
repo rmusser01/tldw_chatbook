@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,9 @@ from tldw_chatbook.Research_Workspace.source_operations import (
     SourceOperationStatus,
     SourceOperationValidationError,
 )
+from tldw_chatbook.runtime_policy.server_event_scope import (
+    event_principal_id_from_active_context,
+)
 
 
 NOW = "2026-08-24T12:00:00Z"
@@ -25,7 +29,7 @@ def _operation(**changes: object) -> ResearchSourceOperation:
         "idempotency_key": "local:workspace-1:source-1",
         "data_source": "local",
         "workspace_id": "workspace-1",
-        "ingest_job_id": "ingest-job-1",
+        "ingest_job_id": "",
         "canonical_item_type": CanonicalItemType.LOCAL_LIBRARY,
         "desired_selected": True,
         "created_at": NOW,
@@ -71,6 +75,44 @@ def test_create_rejects_duplicate_idempotency_key_with_typed_conflict(
                 workspace_id="workspace-2",
             )
         )
+    db.close()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"revision": 99},
+        {"ingest_job_id": "ingest-job-99"},
+        {"canonical_item_id": "canonical-99"},
+        {"workspace_source_id": "membership-99"},
+        {"catalog_status": SourceOperationStatus.IN_PROGRESS},
+        {
+            "catalog_status": SourceOperationStatus.FAILED,
+            "error_stage": SourceOperationStage.CATALOG,
+            "error_code": "catalog_failed",
+            "error_message": "Safe diagnostic.",
+        },
+        {
+            "revision": 99,
+            "ingest_job_id": "ingest-job-99",
+            "canonical_item_id": "canonical-99",
+            "workspace_source_id": "membership-99",
+            "catalog_status": SourceOperationStatus.SUCCEEDED,
+            "association_status": SourceOperationStatus.SUCCEEDED,
+            "readiness_status": SourceOperationStatus.SUCCEEDED,
+        },
+    ],
+)
+def test_create_accepts_only_pristine_durable_intent(
+    tmp_path: Path, changes: dict[str, object]
+) -> None:
+    db, store = _store(tmp_path)
+    operation = _operation(**changes)
+
+    with pytest.raises(SourceOperationValidationError, match="pristine"):
+        store.create(operation)
+
+    assert store.get(operation.operation_id) is None
     db.close()
 
 
@@ -139,6 +181,38 @@ def test_list_incomplete_is_bounded_and_excludes_fully_succeeded_rows(
         store.list_incomplete(limit=101)
     with pytest.raises(SourceOperationValidationError, match="offset"):
         store.list_incomplete(offset=-1)
+    db.close()
+
+
+def test_list_incomplete_does_not_starve_pending_behind_failed_rows(
+    tmp_path: Path,
+) -> None:
+    db, store = _store(tmp_path)
+    for index in range(100):
+        operation = store.create(
+            _operation(
+                operation_id=f"operation-failed-{index:03d}",
+                idempotency_key=f"local:workspace-1:failed-{index:03d}",
+            )
+        )
+        store.advance_stage(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.FAILED,
+            expected_revision=operation.revision,
+            error_code="catalog_failed",
+            error_message="Safe retryable failure.",
+        )
+    pending = store.create(
+        _operation(
+            operation_id="operation-z-pending",
+            idempotency_key="local:workspace-1:z-pending",
+        )
+    )
+
+    page = store.list_incomplete(limit=100)
+
+    assert pending.operation_id in {operation.operation_id for operation in page}
     db.close()
 
 
@@ -300,6 +374,29 @@ def test_operation_rejects_secret_path_or_credential_bearing_diagnostics(
         )
 
 
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "/root/private/source.txt",
+        "Failed reading /etc/passwd while cataloging",
+        "Failed reading ../../private/source.txt",
+        "Fetch failed for postgres://alice:password@example.test/catalog",
+        "OPENAI_API_KEY=top-secret",
+        "client_secret=top-secret",
+    ],
+)
+def test_operation_rejects_reviewed_receipt_privacy_counterexamples(
+    error_message: str,
+) -> None:
+    with pytest.raises(SourceOperationValidationError):
+        _operation(
+            catalog_status=SourceOperationStatus.FAILED,
+            error_stage=SourceOperationStage.CATALOG,
+            error_code="catalog_failed",
+            error_message=error_message,
+        )
+
+
 def test_local_and_server_owner_id_invariants_are_validated() -> None:
     with pytest.raises(SourceOperationValidationError, match="Local"):
         _operation(server_profile_id="server-profile")
@@ -319,6 +416,82 @@ def test_local_and_server_owner_id_invariants_are_validated() -> None:
         canonical_item_type=CanonicalItemType.SERVER_MEDIA,
     )
     assert server.data_source.value == "server"
+
+
+def test_server_identity_contract_preserves_adapter_identifier_shapes() -> None:
+    operation = _operation(
+        operation_id="018f47ab-74f2-7d45-a73b-97a8fcb1e580",
+        idempotency_key="server:profile-1:principal@example.test:workspace_42.7:source+9",
+        data_source="server",
+        server_profile_id="profile-1",
+        principal_id="credential-fingerprint:test:9d8cbe900ad878341fffc769",
+        workspace_id="workspace_42.7",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+    )
+
+    assert operation.principal_id.startswith("credential-fingerprint:test:")
+
+
+@pytest.mark.parametrize(
+    ("jwt_token", "expected_principal_id"),
+    [
+        (
+            "header."
+            "eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3VzZXJzL2FsaWNlJTJGd2VzdCJ9."
+            "signature",
+            "jwt-sub:https://issuer.example/users/alice%2Fwest",
+        ),
+        (
+            "header."
+            "eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL-eUqOaIty_DqWzDqHZlJTJGd2VzdCJ9."
+            "signature",
+            "jwt-sub:https://issuer.example/用户/élève%2Fwest",
+        ),
+    ],
+)
+def test_server_identity_contract_preserves_actual_uri_like_authority_ids(
+    jwt_token: str, expected_principal_id: str
+) -> None:
+    principal_id = event_principal_id_from_active_context(
+        SimpleNamespace(
+            auth_token=jwt_token,
+            credential_source="test",
+        )
+    )
+    assert principal_id == expected_principal_id
+
+    operation = _operation(
+        data_source="server",
+        server_profile_id="https://server.example/api/v1",
+        principal_id=principal_id,
+        workspace_id="urn:workspace:teams/acme%2Fresearch?region=west",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+    )
+
+    assert operation.server_profile_id == "https://server.example/api/v1"
+    assert operation.principal_id == principal_id
+    assert operation.workspace_id.endswith("region=west")
+
+
+@pytest.mark.parametrize(
+    ("principal_id", "message"),
+    [
+        ("jwt-sub:alice\x01west", "control or format"),
+        ("jwt-sub:alice\u202ewest", "control or format"),
+        ("é" * 513, "UTF-8 bytes"),
+    ],
+)
+def test_authority_identity_rejects_control_format_and_utf8_overflow(
+    principal_id: str, message: str
+) -> None:
+    with pytest.raises(SourceOperationValidationError, match=message):
+        _operation(
+            data_source="server",
+            server_profile_id="https://server.example/api/v1",
+            principal_id=principal_id,
+            workspace_id="workspace-1",
+            canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+        )
 
 
 @pytest.mark.parametrize(

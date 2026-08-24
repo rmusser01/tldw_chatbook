@@ -15,10 +15,17 @@ from typing import Iterator, Union
 
 from loguru import logger
 
+from tldw_chatbook.Research_Workspace.source_operations import (
+    validate_source_operation_id,
+)
 from tldw_chatbook.STT.persistence import dump_failed_transcription_attempt
 
 from .base_db import BaseDB
 from .private_sqlite import connect_private_sqlite
+
+
+class LibraryIngestJobLinkConflictError(RuntimeError):
+    """Raised when an upsert would mutate persisted Research lineage."""
 
 
 class LibraryIngestJobsDB(BaseDB):
@@ -271,6 +278,18 @@ class LibraryIngestJobsDB(BaseDB):
     def _upsert_job(self, conn: sqlite3.Connection, job) -> None:
         """Upsert one job through an existing transaction."""
 
+        operation_id = job.research_source_operation_id
+        if operation_id is not None:
+            operation_id = validate_source_operation_id(operation_id)
+        existing = conn.execute(
+            "SELECT research_source_operation_id FROM ingest_jobs WHERE job_id = ?",
+            (job.job_id,),
+        ).fetchone()
+        if existing is not None and existing[0] != operation_id:
+            raise LibraryIngestJobLinkConflictError(
+                "research_source_operation_id is immutable once a job is persisted"
+            )
+
         conn.execute(
             """
             INSERT INTO ingest_jobs
@@ -342,7 +361,7 @@ class LibraryIngestJobsDB(BaseDB):
                     if job.retry_source_failure_provenance is not None
                     else None
                 ),
-                job.research_source_operation_id,
+                operation_id,
             ),
         )
 

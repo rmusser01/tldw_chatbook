@@ -12,6 +12,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE schema_version (
     version INTEGER PRIMARY KEY NOT NULL
 );
+INSERT INTO schema_version (version) VALUES (1);
 INSERT INTO schema_version (version) VALUES (2);
 
 CREATE TABLE workspace_records (
@@ -201,6 +202,10 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
 
     assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     with db.transaction() as connection:
+        versions = connection.execute(
+            "SELECT version FROM schema_version ORDER BY version"
+        ).fetchall()
+        assert [row[0] for row in versions] == [1, 2, 3]
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),

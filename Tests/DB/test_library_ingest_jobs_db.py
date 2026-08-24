@@ -3,10 +3,16 @@ from dataclasses import replace
 
 import pytest
 
-from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import (
+    LibraryIngestJobLinkConflictError,
+    LibraryIngestJobsDB,
+)
 from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
     _job_from_row,
+)
+from tldw_chatbook.Research_Workspace.source_operations import (
+    SourceOperationValidationError,
 )
 
 
@@ -454,6 +460,8 @@ def test_genuine_v5_migration_preserves_row_and_adds_nullable_operation_link(
         ),
     )
     connection.commit()
+    connection.row_factory = sqlite3.Row
+    before = dict(connection.execute("SELECT * FROM ingest_jobs").fetchone())
     assert "research_source_operation_id" not in {
         row[1] for row in connection.execute("PRAGMA table_info(ingest_jobs)")
     }
@@ -466,12 +474,9 @@ def test_genuine_v5_migration_preserves_row_and_adds_nullable_operation_link(
         db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
         == db._CURRENT_SCHEMA_VERSION
     )
+    assert set(row) == {*before, "research_source_operation_id"}
+    assert {key: row[key] for key in before} == before
     assert row["research_source_operation_id"] is None
-    assert row["job_id"] == "ingest-job-7"
-    assert row["title"] == "Kept"
-    assert row["media_id"] == 42
-    assert row["retry_of_job_id"] == "ingest-job-6"
-    assert row["batch_id"] == "batch-kept"
     db.close()
 
     reopened = LibraryIngestJobsDB(path)
@@ -479,6 +484,81 @@ def test_genuine_v5_migration_preserves_row_and_adds_nullable_operation_link(
     assert reopened_row["research_source_operation_id"] is None
     assert reopened_row["job_id"] == "ingest-job-7"
     reopened.close()
+
+
+@pytest.mark.parametrize(
+    "operation_id",
+    [
+        "x" * 257,
+        "x" * 10_000,
+        "../../private/source.txt",
+        "OPENAI_API_KEY=top-secret",
+    ],
+)
+def test_operation_link_is_validated_at_submit_persist_and_reload_seams(
+    tmp_path, operation_id
+):
+    registry = LibraryIngestJobRegistry()
+    with pytest.raises(SourceOperationValidationError, match="operation_id"):
+        registry.submit(
+            source_path="/local.txt",
+            research_source_operation_id=operation_id,
+        )
+
+    job = registry.submit(source_path="/local.txt")
+    db = _db(tmp_path)
+    with pytest.raises(SourceOperationValidationError, match="operation_id"):
+        db.upsert_job(replace(job, research_source_operation_id=operation_id))
+    assert db.all_jobs() == []
+
+    db.upsert_job(job)
+    db._get_connection().execute(
+        "UPDATE ingest_jobs SET research_source_operation_id = ? WHERE job_id = ?",
+        (operation_id, job.job_id),
+    )
+    db._get_connection().commit()
+    with pytest.raises(SourceOperationValidationError, match="operation_id"):
+        _job_from_row(db.all_jobs()[0])
+    db.close()
+
+
+@pytest.mark.parametrize("replacement", [None, "operation-retargeted"])
+def test_non_null_operation_link_is_immutable_on_upsert(tmp_path, replacement):
+    registry = LibraryIngestJobRegistry()
+    linked = registry.submit(
+        source_path="/local.txt",
+        title="Original",
+        research_source_operation_id="operation-original",
+    )
+    db = _db(tmp_path)
+    db.upsert_job(linked)
+
+    with pytest.raises(LibraryIngestJobLinkConflictError, match="immutable"):
+        db.upsert_job(
+            replace(
+                linked,
+                title="Stale overwrite",
+                research_source_operation_id=replacement,
+            )
+        )
+
+    row = db.all_jobs()[0]
+    assert row["title"] == "Original"
+    assert row["research_source_operation_id"] == "operation-original"
+    db.close()
+
+
+def test_null_operation_link_cannot_be_retargeted_by_later_upsert(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    plain = registry.submit(source_path="/local.txt")
+    db = _db(tmp_path)
+    db.upsert_job(plain)
+
+    with pytest.raises(LibraryIngestJobLinkConflictError, match="immutable"):
+        db.upsert_job(replace(plain, research_source_operation_id="operation-late"))
+
+    assert db.all_jobs()[0]["research_source_operation_id"] is None
+    db.close()
 
 
 def test_operation_link_survives_local_and_server_completion_and_reload(tmp_path):
