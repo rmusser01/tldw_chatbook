@@ -63,7 +63,7 @@ class ConsolePromptImproveView(Widget):
     }
     .console-prompts-context-preview { width: 100%; height: 5; }
     #console-prompts-improve-options {
-        layout: vertical; width: 100%; height: auto; min-height: 9; margin-top: 1;
+        layout: vertical; width: 100%; height: auto; min-height: 9;
     }
     #console-prompts-improve-options Button { width: 100%; min-width: 18; }
     #console-prompts-provider-summary,
