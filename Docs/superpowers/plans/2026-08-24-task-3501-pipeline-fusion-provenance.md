@@ -14,7 +14,7 @@
 
 - Modify `Tests/RAG/test_fusion.py`: make the existing pipeline fixture expose distinct raw leg scores and assert complete provenance for every row shape.
 - Modify `tldw_chatbook/RAG_Search/pipeline_builder_simple.py`: snapshot the two optional leg scores before mutating the selected result and include them in `hybrid_fusion`.
-- Modify `backlog/tasks/task-3501 - pipeline_builder_simple.py-hybrid-merge-has-the-same-leg-score-aliasing-bug-Task-2-fixed-in-rag_service.md`: check acceptance criteria, add implementation notes, and close the task after verification and review.
+- Modify `backlog/tasks/task-3501 - Preserve-hybrid-leg-scores-in-pipeline-fusion-metadata.md`: check acceptance criteria, add implementation notes, and close the task after verification and review.
 - Do not create a shared materializer or change `tldw_chatbook/RAG_Search/fusion.py`; the pure fusion primitive already preserves both input items.
 
 ### Task 0: Synchronize the implementation base
@@ -208,7 +208,7 @@ git commit -m "fix(rag): preserve pipeline hybrid leg scores"
 
 **Files:**
 
-- Modify: `backlog/tasks/task-3501 - pipeline_builder_simple.py-hybrid-merge-has-the-same-leg-score-aliasing-bug-Task-2-fixed-in-rag_service.md`
+- Modify: `backlog/tasks/task-3501 - Preserve-hybrid-leg-scores-in-pipeline-fusion-metadata.md`
 - Review: the full `origin/dev...HEAD` diff
 
 - [ ] **Step 1: Request an independent correctness review**
@@ -280,7 +280,7 @@ Expected: TASK-3501 renders as Done with every AC checked; no nameless task file
 - [ ] **Step 8: Commit closeout documentation**
 
 ```bash
-git add "backlog/tasks/task-3501 - pipeline_builder_simple.py-hybrid-merge-has-the-same-leg-score-aliasing-bug-Task-2-fixed-in-rag_service.md"
+git add "backlog/tasks/task-3501 - Preserve-hybrid-leg-scores-in-pipeline-fusion-metadata.md"
 git commit -m "docs(rag): close TASK-3501"
 ```
 

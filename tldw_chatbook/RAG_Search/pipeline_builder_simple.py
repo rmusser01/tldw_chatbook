@@ -341,9 +341,10 @@ def _rrf_merge_parallel_results(
     default is now 5, measured on the Library hybrid path, and this path
     picks it up through that profile fallback -- so in practice **this merge
     now fuses at k=5 too**, without ever having been measured here. That is
-    deliberate (one value, not two silently divergent ones) but it is a
-    carried assumption: TASK-3501, which owns this legacy blend, should
-    unify or consciously diverge the two paths when it lands.
+    deliberate: TASK-3501 consciously retained separate materializers while
+    sharing the fusion primitive, resolved alpha/k, and provenance fields
+    because the pipeline and engine have caller-specific identity,
+    display-item, and citation policies.
 
     Args:
         func_names: Retrieval function name per results list, same order.
@@ -379,9 +380,9 @@ def _rrf_merge_parallel_results(
     # `db.search_notes`). None of them reads
     # `SearchConfig.fts_match_construction`, none runs
     # `_fts5_match_expressions` / `_fts_rows_with_fallback`, and none stamps
-    # `fts_match` -- there is no second form for these lists to carry and so
-    # nothing to partition. The unification of this legacy blend with the
-    # engine's is TASK-3501's; do not refactor it here speculatively.
+    # `fts_match` -- there is no second MATCH form to partition. TASK-3501
+    # intentionally retained this pipeline materializer; do not refactor it
+    # speculatively.
     fts_leg = interleave_rankings(fts_lists, key=result_key)
     vector_leg = interleave_rankings(vector_lists, key=result_key)
 
