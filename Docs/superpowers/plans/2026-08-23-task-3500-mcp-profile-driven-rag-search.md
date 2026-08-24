@@ -358,7 +358,9 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 Expected RED: `_enhanced_search` is missing. Add the helper and formatter below,
 then rerun the exact node and expect every parameter case PASS.
 
-Use this implementation shape:
+For this confinement slice, use the injected runtime seam only; leave
+production shared-runtime acquisition deliberately unimplemented so Step 4
+can prove its own lifecycle/fallback behaviors:
 
 ```python
 async def profile_search(self, query, limit=10, media_types=None):
@@ -368,19 +370,9 @@ async def profile_search(self, query, limit=10, media_types=None):
     return await self._enhanced_search(query, limit, media_types, search_type=mode)
 
 async def _enhanced_search(self, query, limit, media_types, *, search_type):
-    try:
-        service = (
-            self.rag_service
-            if self.rag_service is not None
-            else await asyncio.to_thread(get_shared_rag_service)
-        )
-    except Exception:
-        logger.opt(exception=True).warning(
-            "Shared RAG runtime unavailable; using MCP keyword search"
-        )
-        service = None
+    service = self.rag_service
     if service is None:
-        return await self.keyword_search(query, limit, media_types)
+        raise RuntimeError("shared runtime acquisition is not implemented")
     filter_metadata = (
         {"media_type": {"$in": media_types}} if media_types else None
     )
@@ -398,21 +390,60 @@ Keep `semantic_search()` as an explicit semantic wrapper around `_enhanced_searc
 
 - [ ] **Step 4: Pin lifecycle, fallback, error, and metadata behavior individually**
 
-After the enhanced route exists, add/run these exact nodes one at a time:
+After the injected enhanced route exists, add/run these exact nodes in order:
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py::test_each_enhanced_request_resolves_current_shared_service -q
+```
+
+Expected RED: the deliberate “shared runtime acquisition is not implemented”
+error is raised. Replace only the `service = self.rag_service` acquisition with
+an explicit injection-or-shared lookup (do not use truthiness):
+
+```python
+service = (
+    self.rag_service
+    if self.rag_service is not None
+    else await asyncio.to_thread(get_shared_rag_service)
+)
+```
+
+Rerun the lifecycle node and expect PASS with two getter calls/two different
+services. Then add the unavailable-`None` node:
+
+```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py::test_unavailable_shared_runtime_falls_back_to_unscored_keyword_search -q
+```
+
+Expected RED: `None.search` raises. Add only this fallback, rerun, and expect
+PASS:
+
+```python
+if service is None:
+    return await self.keyword_search(query, limit, media_types)
+```
+
+Then add the acquisition exception node:
+
+```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py::test_shared_runtime_acquisition_exception_falls_back_to_keyword_search -q
+```
+
+Expected RED: the resolver exception propagates. Wrap only the acquisition in
+`try/except`, log the unavailable runtime, set `service = None`, and reuse the
+just-green `None` fallback. Rerun and expect PASS.
+
+Finally add the search-exception and metadata nodes as GREEN compatibility pins
+against the implementation already reached in Step 3:
+
+```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py::test_enhanced_search_exception_propagates -q
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py::test_enhanced_formatter_preserves_complete_metadata -q
 ```
 
-Expected RED/GREEN distinction: the first fails if the service is cached; the
-next two fail until acquisition-only fallback is implemented; the search-error
-node fails if the catch is too broad; the metadata node fails if formatting
-drops nested fusion/reranking provenance. Make the smallest helper adjustment
-after each RED and rerun that node before proceeding.
+Expected: both PASS. They guard the two intentional negative constraints: do
+not broaden the acquisition catch around `service.search()`, and do not drop
+nested fusion/reranking provenance in formatting.
 
 - [ ] **Step 5: Preserve the public MCP switch in its own RED/GREEN slice**
 
@@ -542,17 +573,23 @@ This deliberately includes a single result, per ADR-084. Do not create a tag whe
 - [ ] **Step 4: Pin profile-switch cleanup as one RED/GREEN slice**
 
 Add `test_switch_profile_clears_stale_reranker_and_unavailability_reason`,
-covering a successful reranking profile followed by a profile with no
-reranking config.
+using this exact state sequence:
+
+1. Start from the construction-failure service produced in Step 1 and assert
+   `reranker is None` plus a non-empty safe failure reason.
+2. Switch to a valid reranking profile whose factory now succeeds; assert a
+   reranker installs and the prior failure reason becomes `None`.
+3. Switch to a profile with no reranking config; assert both the reranker and
+   reason are `None`.
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG_Search/test_reranker_construction.py::test_switch_profile_clears_stale_reranker_and_unavailability_reason -q
 ```
 
-Expected RED: the disabled profile retains the previous reranker/reason. Replace
-the duplicated switch block with `self._configure_reranker()`, rerun, and expect
-both fields cleared. Also assert a subsequent valid profile installs a reranker
-with no stale reason.
+Expected RED: the valid profile can retain the prior construction-failure
+reason, and the disabled profile can retain the previous reranker because the
+duplicated switch block does not reset state first. Replace that block with
+`self._configure_reranker()`, rerun, and expect every transition above to PASS.
 
 - [ ] **Step 5: Run all shared reranking degradation coverage**
 
