@@ -165,22 +165,33 @@ def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
     async def reconcile() -> None:
         return None
 
-    fake_app = SimpleNamespace(
-        set_timer=Mock(),
-        _schedule_footer_status_updates=Mock(),
-        _start_deferred_audio_service_initialization=Mock(),
-        _schedule_screen_preimport=Mock(),
-        schedule_media_cleanup=Mock(),
-        citation_artifact_ownership_coordinator=SimpleNamespace(writes_enabled=enabled),
-        _reconcile_citation_artifact_ownership=reconcile,
-        _create_deferred_startup_task=capture,
+    # A `Mock(spec=TldwCli)` rather than a hand-listed `SimpleNamespace`
+    # (TASK-21566). The namespace had to name every attribute the method
+    # touches, so each time deferred startup grew a step these tests died on
+    # the new one -- most recently `run_worker`, added by task-21106 to move
+    # Actor Pack recovery off the construction path. `spec=` tracks the class:
+    # a genuinely new dependency is satisfied, while a typo or an attribute
+    # that does not exist on TldwCli still raises. Only the seams under test
+    # are wired for real.
+    fake_app = Mock(spec=TldwCli)
+    fake_app.citation_artifact_ownership_coordinator = SimpleNamespace(
+        writes_enabled=enabled
     )
+    fake_app._reconcile_citation_artifact_ownership = reconcile
+    fake_app._create_deferred_startup_task = capture
 
     TldwCli._schedule_deferred_startup_work(fake_app)
 
-    assert len(scheduled) == expected_tasks
-    if scheduled:
-        assert scheduled[0][1] == "deferred_citation_artifact_reconciliation"
+    # Assert on this task by NAME, not by position or by the total. Deferred
+    # startup schedules unrelated work too (a subscription reconcile lands
+    # first, unconditionally), so a count or an index pins the shape of the
+    # whole method instead of the policy gate this test is about -- and breaks
+    # every time an unrelated step is added.
+    citation_tasks = [
+        name for _, name in scheduled
+        if name == "deferred_citation_artifact_reconciliation"
+    ]
+    assert len(citation_tasks) == expected_tasks
 
 
 @pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
@@ -201,26 +212,24 @@ def test_legacy_citation_migration_is_deferred_and_policy_gated(
     async def migrate() -> None:
         return None
 
-    fake_app = SimpleNamespace(
-        set_timer=Mock(),
-        _schedule_footer_status_updates=Mock(),
-        _start_deferred_audio_service_initialization=Mock(),
-        _schedule_screen_preimport=Mock(),
-        schedule_media_cleanup=Mock(),
-        citation_artifact_ownership_coordinator=None,
-        citation_legacy_migration_service=SimpleNamespace(
-            writes_enabled=enabled,
-            ready=enabled,
-        ),
-        _migrate_legacy_citations_idle_unit=migrate,
-        _create_deferred_startup_task=capture,
+    # See the sibling test above for why this is a spec'd Mock and why the
+    # assertion is by name rather than by count (TASK-21566).
+    fake_app = Mock(spec=TldwCli)
+    fake_app.citation_artifact_ownership_coordinator = None
+    fake_app.citation_legacy_migration_service = SimpleNamespace(
+        writes_enabled=enabled,
+        ready=enabled,
     )
+    fake_app._migrate_legacy_citations_idle_unit = migrate
+    fake_app._create_deferred_startup_task = capture
 
     TldwCli._schedule_deferred_startup_work(fake_app)
 
-    assert len(scheduled) == expected_tasks
-    if scheduled:
-        assert scheduled[0][1] == "deferred_legacy_citation_migration"
+    migration_tasks = [
+        name for _, name in scheduled
+        if name == "deferred_legacy_citation_migration"
+    ]
+    assert len(migration_tasks) == expected_tasks
 
 
 @pytest.mark.asyncio
