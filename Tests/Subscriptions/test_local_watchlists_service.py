@@ -22,11 +22,6 @@ def test_local_watchlists_service_publishes_create_form_source_types():
     assert LocalWatchlistsService.CREATE_FORM_SOURCE_TYPES == ("rss", "atom", "url")
 
 
-def test_local_watchlists_service_keeps_sitemap_outside_create_form_contract():
-    assert LocalWatchlistsService._local_type_for_source_type("sitemap") == "sitemap"
-    assert "sitemap" not in LocalWatchlistsService.CREATE_FORM_SOURCE_TYPES
-
-
 @pytest.mark.asyncio
 async def test_local_watchlists_service_rejects_invalid_type_before_opening_db():
     db_factory = Mock()
@@ -565,6 +560,8 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
             "processing_options": {"max_urls": 2},
         }
     )
+    assert source["source_type"] == "sitemap"
+    assert "sitemap" not in LocalWatchlistsService.CREATE_FORM_SOURCE_TYPES
     launched = await service.launch_run(source_id=source["source_id"])
 
     completed = await service.execute_run(launched["run_id"])

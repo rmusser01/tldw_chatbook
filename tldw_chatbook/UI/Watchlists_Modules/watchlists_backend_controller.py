@@ -47,6 +47,19 @@ class WatchlistsBackendController:
     def create_form_source_types(
         self, *, runtime_backend: str | None = None
     ) -> tuple[str, ...]:
+        """Return the selected backend's ordered create-form source types.
+
+        Args:
+            runtime_backend: Backend contract to inspect. ``None`` defaults
+                to the local backend during controller normalization.
+
+        Returns:
+            Ordered source-type identifiers supported by that backend's
+            create form.
+
+        Raises:
+            ValueError: If the backend is invalid or unavailable.
+        """
         backend = self._normalize_backend(runtime_backend)
         return self.scope_service.create_form_source_types(runtime_backend=backend)
 

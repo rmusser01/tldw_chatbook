@@ -129,6 +129,19 @@ class WatchlistScopeService:
         *,
         runtime_backend: WatchlistBackend | str | None = None,
     ) -> tuple[str, ...]:
+        """Return the active backend's ordered create-form source types.
+
+        Args:
+            runtime_backend: Backend contract to inspect. ``None`` selects
+                the local backend.
+
+        Returns:
+            Ordered source-type identifiers supported by that backend's
+            create form.
+
+        Raises:
+            ValueError: If the backend is invalid or unavailable.
+        """
         backend = self._normalize_backend(runtime_backend)
         service = self._service_for_backend(backend)
         return service.CREATE_FORM_SOURCE_TYPES
