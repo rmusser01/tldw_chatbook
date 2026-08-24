@@ -7,6 +7,10 @@ import re
 
 import pytest
 
+from tldw_chatbook.Library.library_tool_contract import (
+    LIBRARY_TOOL_DESCRIPTORS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCUMENTS = (
@@ -75,26 +79,18 @@ PROMPTS = (
     "search_and_synthesize",
     "character_writing",
 )
-PRIVATE_LIBRARY_TOOLS = (
-    "library_list_media",
-    "library_get_media",
-    "library_search_media",
-    "library_list_notes",
-    "library_get_note",
-    "library_search_notes",
-    "library_list_prompts",
-    "library_get_prompt",
-    "library_search_prompts",
-    "library_list_skills",
-    "library_get_skill",
-    "library_search_skills",
-    "library_list_conversations",
-    "library_get_conversation",
-    "library_search_conversations",
-    "library_list_collections",
-    "library_get_collection",
-    "library_search_collections",
-)
+#: Derived, never transcribed. ``LIBRARY_TOOL_DESCRIPTORS`` is the contract the
+#: local MCP manifest is itself built from -- ``MCP/server.py``'s
+#: ``_describe_local_library_tools`` iterates it unfiltered, and its docstring
+#: says outright that it is "never hand-maintained here". A second hand-kept
+#: copy in this test is what let the surface and the documents drift apart in
+#: four directions at once (TASK-21501): the code carried 24 tools while
+#: `Docs/Design/MCP.md` said 18, `Docs/User_Guide/mcp.md` said 23, and this
+#: tuple said 18. Deriving removes the drift class rather than resetting it.
+#:
+#: A tuple rather than a view: ``_mutate_inventory`` indexes element 0 to pick
+#: the token it perturbs.
+PRIVATE_LIBRARY_TOOLS = tuple(LIBRARY_TOOL_DESCRIPTORS)
 INVENTORY_CONTRACT = {
     "Built-in tools": BUILTIN_TOOLS,
     "Resource templates": RESOURCE_TEMPLATES,
@@ -356,12 +352,30 @@ def test_watchlists_tools_document_privacy_and_external_mcp_permission() -> None
 
 
 def test_expanded_local_tool_group_copy_names_watchlists_everywhere() -> None:
+    """The master-switch label names all three tool groups on every surface.
+
+    Whitespace-normalized, like every other prose assertion in this module, and
+    for two reasons rather than one. The obvious one is that these are wrapped
+    Markdown paragraphs: the label spans a line break in
+    `Docs/User_Guide/console/agent-runs-and-tools.md` ("Local workspace,\nweb,
+    and Watchlists tools"), so a raw substring check reported the copy missing
+    when it was present and correct.
+
+    The reason that actually matters is the *stale* half. Checking raw text for
+    the retired label means a retired label that happens to wrap escapes the
+    check -- the guard would pass on exactly the content it exists to catch.
+    Reflowing a paragraph must not be able to switch this guard off.
+
+    Raises:
+        AssertionError: If a surface still carries the retired two-group label,
+            or does not carry the three-group one.
+    """
     stale = "Local workspace + web tools"
     expected = "workspace, web, and Watchlists"
     for path in LOCAL_TOOL_COPY_SURFACES:
-        text = path.read_text(encoding="utf-8")
-        assert stale not in text, path
-        assert expected in text, path
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        assert stale not in normalized, path
+        assert expected in normalized, path
 
 
 def test_builtin_gate_rejects_two_category_master_switch_copy() -> None:
