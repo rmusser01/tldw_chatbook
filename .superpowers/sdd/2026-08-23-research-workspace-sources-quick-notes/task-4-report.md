@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete after review fix round 1. Research Workspace now has a compose-once, authority-explicit Sources
+Complete after review fix round 2. Research Workspace now has a compose-once, authority-explicit Sources
 workbench with durable intake receipts, paged sources, exact desired selection,
 readiness/status inspection, device-only folders/annotations, and honest owner
 capability gates. Quick Notes bodies and Task 5 ownership were not added.
@@ -166,3 +166,53 @@ ADR-078's existing authority, owner, conflict, and private-overlay contracts.
 
 Full pytest was not run, per repository policy. TASK-21508 remains
 controller-owned and excluded from the fix commit.
+
+## Review fix round 2
+
+The three latest findings were reproduced before production edits and closed at
+the existing owner boundaries; no new ADR or storage owner was introduced.
+
+- Batch preview/remove IDs now come only from mounted, displayed stable row
+  slots. Search, type, date/status, and device-folder filtering exclude hidden
+  selected associations while the separate owner desired count remains exact.
+- Quick URL, modal single/batch URL, and direct screen intake share one bounded
+  `http`/`https` validator. It rejects credentials, relative/file URLs,
+  control/format characters, malformed or oversized input before operation,
+  staging, registry, or Server mutation, while preserving supported Unicode and
+  percent-encoded URLs.
+- Research intake now prepares and durably queues through the existing Library
+  registry without dispatch, persists the operation's catalog/in-progress job
+  link, and only then dispatches through the existing runner. Link failure
+  durably cancels the undispatched job and deletes managed paste staging;
+  dispatch failure durably fails the linked job and retains retryable staging.
+  Immediate Local and Server terminal listeners observe the link exactly once.
+- Ordinary non-Research Local, Server, and web-clip submissions keep their
+  wrapper behavior. Strict persistence is opt-in for Research prepare/settle,
+  and restart tests read the prepared or terminal state from the real SQLite
+  job store.
+- The Task 4-owned overlay-conflict test now waits for the observable remote
+  state and remounted pane instead of transition timing; it passed five
+  consecutive isolated runs.
+
+### Fix-round-2 evidence
+
+- Initial RED: 15 expected failures across visible selection, URL safety/no
+  writes, and prepare-link-dispatch ordering (plus one valid-URL control pass).
+  Follow-up strict durability/settlement and Local/Server prepare guards were
+  also observed red before their production seams.
+- Restored-code split gates: Research Workspace plus Task 4 UI **305 passed**;
+  app ingest seam **140 passed**; Library runner **145 passed, 1 Windows-only
+  skipped**; inspector/receipt/app-wiring/screen/all geometry **44 passed**;
+  CSS integrity/bundle/staleness **28 passed**.
+- Inverse mutations were independently red and restored: legacy page-level
+  selection (**1 failed**), shared-validator bypass (**7 failed**), dispatch
+  before link (**1 failed**), and omitted prepared-job cancellation on link
+  failure (**1 failed**).
+- Scoped Ruff lint and format, changed-production `compileall`,
+  `git diff --check`, production privacy/Unicode-arrow scans, CSS gates, and
+  Impeccable detector (`[]`) pass. Warnings are the accepted environment
+  Requests dependency warning and pre-existing third-party SWIG deprecations;
+  the runner skip is its Windows-only spawn/resource-tracker boundary.
+
+Full pytest was not run, per repository policy. TASK-21508 remains
+controller-owned and excluded from this fix commit.

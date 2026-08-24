@@ -1,15 +1,44 @@
 # Task 4 review package — Research Sources workbench
 
-Fix-round review base:
+Fix-round-2 review base:
 
-`399f91b365`
+`2bcf9c46c70bbd137543bd8f29ec06e8cb4313df`
 
 Expected commit subject:
 
-`fix: harden Research Sources workbench`
+`fix: close Research source intake ownership gaps`
 
 The controller-owned dirty TASK-21508 file is excluded from this implementation
 and commit.
+
+## Fix-round-2 review order
+
+1. `source_urls.py`, add-source modal, and screen boundary: one exact URL gate
+   before any Local/Server write, including direct non-modal calls.
+2. `library_ingest_jobs.py` and `app.py`: strict durable Research prepare and
+   settlement, existing runner dispatch, ordinary caller compatibility, and
+   terminal listener idempotence.
+3. Screen intake and tests: prepare, persist catalog/job link, dispatch; cancel
+   and clean on link failure; fail and retain retry staging on dispatch failure.
+4. Sources region and mounted test: displayed stable slots own batch IDs while
+   owner desired count stays separate across search/type/status/date/folder
+   views.
+5. Split regression, inverse, geometry, CSS, privacy/static, and detector
+   evidence in the Task 4 report.
+
+### New high-risk invariants
+
+- A hidden selected association cannot enter the exact preview/remove list or
+  mutation merely because the owner still desires it.
+- URL admission cannot be bypassed through Quick URL, modal batch intake, or a
+  direct screen call, and credential-bearing/local paths never reach an
+  operation, staging file, registry row, or Server request.
+- No Research job dispatch can occur before its qualified operation link is
+  durable. A link-write failure leaves a durable cancelled job, no dispatch,
+  cleaned managed paste staging, and no canonical catalog mutation.
+- Immediate terminal completion observes the already-linked operation once;
+  dispatch exceptions cannot overwrite a terminal result or schedule a second
+  listener transition.
 
 ## Review order
 

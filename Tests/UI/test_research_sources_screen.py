@@ -9,6 +9,10 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
+from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
+    LibraryIngestJobRegistry,
+)
 from tldw_chatbook.Research_Workspace import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
@@ -143,7 +147,9 @@ async def test_owner_failure_preserves_qualified_receipts_loaded_first() -> None
 
 
 @pytest.mark.asyncio
-async def test_failing_selection_worker_recovers_without_workerfailed_or_app_exit() -> None:
+async def test_failing_selection_worker_recovers_without_workerfailed_or_app_exit() -> (
+    None
+):
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
     available = ResearchCapability(True, "available", "Available.", "local")
     denied = ResearchCapability(
@@ -207,7 +213,9 @@ async def test_failing_selection_worker_recovers_without_workerfailed_or_app_exi
 
 
 @pytest.mark.asyncio
-async def test_expected_intake_reorder_preview_remove_folder_and_retry_failures_stay_mounted() -> None:
+async def test_expected_intake_reorder_preview_remove_folder_and_retry_failures_stay_mounted() -> (
+    None
+):
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-actions")
     available = ResearchCapability(True, "available", "Available.", "local")
     denied = ResearchCapability(
@@ -330,7 +338,9 @@ async def test_expected_intake_reorder_preview_remove_folder_and_retry_failures_
 
 
 @pytest.mark.asyncio
-async def test_remove_association_requires_confirmation_and_escape_is_non_mutating() -> None:
+async def test_remove_association_requires_confirmation_and_escape_is_non_mutating() -> (
+    None
+):
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
     available = ResearchCapability(True, "available", "Available.", "local")
     removed: list[str] = []
@@ -419,7 +429,9 @@ async def test_remove_association_requires_confirmation_and_escape_is_non_mutati
 
 
 @pytest.mark.asyncio
-async def test_intake_capability_denial_happens_before_operation_or_catalog_write() -> None:
+async def test_intake_capability_denial_happens_before_operation_or_catalog_write() -> (
+    None
+):
     unavailable = ResearchCapability(
         False,
         "viewer_forbidden",
@@ -447,9 +459,63 @@ async def test_intake_capability_denial_happens_before_operation_or_catalog_writ
     with pytest.raises(CapabilityUnavailableError):
         await screen._submit_intake_request(
             ref,
-            ResearchSourceIntakeRequest(
-                "url", ("https://example.invalid/paper",)
+            ResearchSourceIntakeRequest("url", ("https://example.invalid/paper",)),
+        )
+
+    assert trace == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "https://user:PRIVATE@example.invalid/paper",
+        "file:///private/research.txt",
+        "relative/private.txt",
+        "https://example.invalid/control\x00value",
+        "https://example.invalid/format\u200bvalue",
+    ],
+)
+async def test_direct_url_intake_rejects_before_operation_job_or_server_write(
+    candidate: str,
+) -> None:
+    """The owner boundary protects Quick URL and direct callers, not only the modal."""
+
+    trace: list[tuple[object, ...]] = []
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", "server"
+                )
+            }
+
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-server",
+        server_profile_id="profile",
+        principal_id="principal",
+    )
+    controller = ResearchWorkspaceController({WorkspaceDataSource.SERVER: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        SimpleNamespace(
+            prepare_research_source_ingest_job=lambda **kwargs: trace.append(
+                ("prepare", kwargs)
             ),
+            _dispatch_research_source_catalog_job=lambda job_id: trace.append(
+                ("dispatch", job_id)
+            ),
+        ),
+        controller=controller,
+        operation_store=_RecordingOperationStore(trace),
+    )
+
+    with pytest.raises(ValueError, match="valid HTTP or HTTPS URL"):
+        await screen._submit_intake_request(
+            ref,
+            ResearchSourceIntakeRequest("url", (candidate,)),
         )
 
     assert trace == []
@@ -460,10 +526,10 @@ async def test_url_intake_persists_one_qualified_operation_before_each_submit() 
     trace: list[tuple[object, ...]] = []
     store = _RecordingOperationStore(trace)
 
-    def submit(**kwargs):
+    def prepare(**kwargs):
         trace.append(
             (
-                "submit",
+                "prepare",
                 kwargs["research_source_operation_id"],
                 kwargs["required_origin"],
                 kwargs["source_path"],
@@ -473,7 +539,21 @@ async def test_url_intake_persists_one_qualified_operation_before_each_submit() 
             job_id=f"job-{len(trace)}", state=SimpleNamespace(value="queued")
         )
 
-    app = SimpleNamespace(submit_library_ingest_job=submit)
+    def dispatch(job_id):
+        linked = tuple(
+            operation
+            for operation in store.operations.values()
+            if operation.ingest_job_id == job_id
+            and operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+        )
+        assert len(linked) == 1
+        trace.append(("dispatch", job_id, linked[0].operation_id))
+
+    app = SimpleNamespace(
+        prepare_research_source_ingest_job=prepare,
+        _dispatch_research_source_catalog_job=dispatch,
+    )
+
     class Port:
         async def capabilities(self, ref):
             return {
@@ -503,17 +583,19 @@ async def test_url_intake_persists_one_qualified_operation_before_each_submit() 
 
     assert [item[0] for item in trace] == [
         "create",
-        "submit",
+        "prepare",
         "advance",
+        "dispatch",
         "create",
-        "submit",
+        "prepare",
         "advance",
+        "dispatch",
     ]
-    assert [item[3] for item in trace if item[0] == "submit"] == [
+    assert [item[3] for item in trace if item[0] == "prepare"] == [
         "https://example.invalid/a",
         "https://example.invalid/b",
     ]
-    assert all(item[2] == "local" for item in trace if item[0] == "submit")
+    assert all(item[2] == "local" for item in trace if item[0] == "prepare")
     assert all(
         operation.catalog_status is SourceOperationStatus.IN_PROGRESS
         for operation in store.operations.values()
@@ -521,7 +603,240 @@ async def test_url_intake_persists_one_qualified_operation_before_each_submit() 
 
 
 @pytest.mark.asyncio
-async def test_paste_staging_is_bound_after_operation_create_and_cleaned_if_submit_fails() -> None:
+async def test_link_failure_cancels_undispatched_job_and_cleans_managed_paste() -> None:
+    trace: list[tuple[object, ...]] = []
+
+    class FailingLinkStore(_RecordingOperationStore):
+        def advance_stage(self, operation_id, *, status, ingest_job_id="", **kwargs):
+            if status is SourceOperationStatus.IN_PROGRESS:
+                trace.append(("link-failed", operation_id, ingest_job_id))
+                raise RuntimeError("operation store unavailable")
+            return super().advance_stage(
+                operation_id,
+                status=status,
+                ingest_job_id=ingest_job_id,
+                **kwargs,
+            )
+
+    class Staging:
+        def stage(self, operation_id, *, title, body):
+            trace.append(("stage", operation_id, title, body))
+            return f"/private/staging/{operation_id}.txt"
+
+        def delete(self, operation_id):
+            trace.append(("delete", operation_id))
+            return True
+
+    class IntakeApp:
+        def prepare_research_source_ingest_job(self, **kwargs):
+            trace.append(("prepare", kwargs["research_source_operation_id"]))
+            return SimpleNamespace(job_id="job-prepared")
+
+        def _cancel_research_source_prepared_job(self, job_id):
+            trace.append(("cancel", job_id))
+
+        def _dispatch_research_source_catalog_job(self, job_id):
+            trace.append(("dispatch", job_id))
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", "local"
+                )
+            }
+
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        IntakeApp(),
+        controller=controller,
+        operation_store=FailingLinkStore(trace),
+        paste_staging_store=Staging(),
+        operation_id_factory=lambda: "operation-paste-link-failure",
+        now_factory=lambda: "2026-08-24T10:00:00Z",
+    )
+
+    await screen._submit_intake_request(
+        ref,
+        ResearchSourceIntakeRequest("paste", ("PRIVATE BODY",), title="Paste"),
+    )
+
+    assert [item[0] for item in trace] == [
+        "create",
+        "stage",
+        "prepare",
+        "link-failed",
+        "cancel",
+        "delete",
+    ]
+    assert not any(item[0] == "dispatch" for item in trace)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_failure_settles_linked_job_without_deleting_retryable_paste() -> (
+    None
+):
+    trace: list[tuple[object, ...]] = []
+    store = _RecordingOperationStore(trace)
+
+    class Staging:
+        def stage(self, operation_id, *, title, body):
+            trace.append(("stage", operation_id, title, body))
+            return f"/private/staging/{operation_id}.txt"
+
+        def delete(self, operation_id):
+            trace.append(("delete", operation_id))
+            return True
+
+    class IntakeApp:
+        def prepare_research_source_ingest_job(self, **kwargs):
+            trace.append(("prepare", kwargs["research_source_operation_id"]))
+            return SimpleNamespace(job_id="job-prepared")
+
+        def _dispatch_research_source_catalog_job(self, job_id):
+            linked = store.operations["operation-paste-dispatch-failure"]
+            assert linked.ingest_job_id == job_id
+            trace.append(("dispatch", job_id))
+            raise RuntimeError("dispatcher unavailable")
+
+        def _fail_research_source_prepared_job(self, job_id):
+            trace.append(("fail", job_id))
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", "server"
+                )
+            }
+
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-1",
+        server_profile_id="profile",
+        principal_id="principal",
+    )
+    controller = ResearchWorkspaceController({WorkspaceDataSource.SERVER: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        IntakeApp(),
+        controller=controller,
+        operation_store=store,
+        paste_staging_store=Staging(),
+        operation_id_factory=lambda: "operation-paste-dispatch-failure",
+        now_factory=lambda: "2026-08-24T10:00:00Z",
+    )
+
+    await screen._submit_intake_request(
+        ref,
+        ResearchSourceIntakeRequest("paste", ("PRIVATE BODY",), title="Paste"),
+    )
+
+    assert [item[0] for item in trace] == [
+        "create",
+        "stage",
+        "prepare",
+        "advance",
+        "dispatch",
+        "fail",
+    ]
+    assert not any(item[0] == "delete" for item in trace)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("data_source", "origin"),
+    [
+        (WorkspaceDataSource.LOCAL, "local"),
+        (WorkspaceDataSource.SERVER, "server"),
+    ],
+)
+async def test_immediate_terminal_listener_observes_link_once_before_prepare_returns(
+    data_source: WorkspaceDataSource,
+    origin: str,
+) -> None:
+    """An owner that settles synchronously cannot outrun operation lineage."""
+
+    trace: list[tuple[object, ...]] = []
+    store = _RecordingOperationStore(trace)
+    registry = LibraryIngestJobRegistry()
+    terminal_observations: list[tuple[str, str, str]] = []
+
+    def observe_terminal() -> None:
+        terminal = tuple(
+            job
+            for job in registry.jobs()
+            if job.state
+            in {
+                IngestJobState.DONE,
+                IngestJobState.FAILED,
+                IngestJobState.CANCELLED,
+                IngestJobState.SKIPPED,
+            }
+        )
+        for job in terminal:
+            operation = store.operations[job.research_source_operation_id]
+            terminal_observations.append(
+                (operation.operation_id, operation.ingest_job_id, job.job_id)
+            )
+
+    registry.add_listener(observe_terminal)
+
+    class IntakeApp:
+        def prepare_research_source_ingest_job(self, **kwargs):
+            return registry.submit(
+                source_path=kwargs["source_path"],
+                origin=origin,
+                research_source_operation_id=kwargs["research_source_operation_id"],
+            )
+
+        def _dispatch_research_source_catalog_job(self, job_id):
+            registry.mark_failed(job_id, error="Immediate owner failure")
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", origin
+                )
+            }
+
+    ref = QualifiedWorkspaceRef(
+        data_source,
+        f"workspace-{origin}",
+        server_profile_id="profile" if origin == "server" else "",
+        principal_id="principal" if origin == "server" else "",
+    )
+    controller = ResearchWorkspaceController({data_source: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        IntakeApp(),
+        controller=controller,
+        operation_store=store,
+        operation_id_factory=lambda: f"operation-immediate-{origin}",
+        now_factory=lambda: "2026-08-24T10:00:00Z",
+    )
+
+    await screen._submit_intake_request(
+        ref,
+        ResearchSourceIntakeRequest("url", (f"https://example.invalid/{origin}",)),
+    )
+
+    assert terminal_observations == [
+        (
+            f"operation-immediate-{origin}",
+            "ingest-job-1",
+            "ingest-job-1",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_paste_staging_is_bound_after_operation_create_and_cleaned_if_submit_fails() -> (
+    None
+):
     trace: list[tuple[object, ...]] = []
     store = _RecordingOperationStore(trace)
 
@@ -542,15 +857,15 @@ async def test_paste_staging_is_bound_after_operation_create_and_cleaned_if_subm
                 )
             }
 
-    def submit(**kwargs):
-        trace.append(("submit", kwargs["research_source_operation_id"]))
+    def prepare(**kwargs):
+        trace.append(("prepare", kwargs["research_source_operation_id"]))
         raise RuntimeError("submit failed")
 
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
     controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()})
     controller.select_workspace(ref)
     screen = ResearchWorkspaceScreen(
-        SimpleNamespace(submit_library_ingest_job=submit),
+        SimpleNamespace(prepare_research_source_ingest_job=prepare),
         controller=controller,
         operation_store=store,
         paste_staging_store=Staging(),
@@ -566,7 +881,7 @@ async def test_paste_staging_is_bound_after_operation_create_and_cleaned_if_subm
     assert [item[0] for item in trace] == [
         "create",
         "stage",
-        "submit",
+        "prepare",
         "advance",
         "delete",
     ]
@@ -578,11 +893,14 @@ async def test_captured_server_ref_does_not_fall_back_after_navigation() -> None
     trace: list[tuple[object, ...]] = []
     store = _RecordingOperationStore(trace)
 
-    def submit(**kwargs):
-        trace.append(("submit", kwargs["required_origin"]))
+    def prepare(**kwargs):
+        trace.append(("prepare", kwargs["required_origin"]))
         return SimpleNamespace(
             job_id="job-server", state=SimpleNamespace(value="queued")
         )
+
+    def dispatch(job_id):
+        trace.append(("dispatch", job_id))
 
     class Port:
         async def capabilities(self, ref):
@@ -601,7 +919,10 @@ async def test_captured_server_ref_does_not_fall_back_after_navigation() -> None
     )
     controller.select_workspace(server_ref)
     screen = ResearchWorkspaceScreen(
-        SimpleNamespace(submit_library_ingest_job=submit),
+        SimpleNamespace(
+            prepare_research_source_ingest_job=prepare,
+            _dispatch_research_source_catalog_job=dispatch,
+        ),
         controller=controller,
         operation_store=store,
         operation_id_factory=lambda: "operation-server",
@@ -616,7 +937,8 @@ async def test_captured_server_ref_does_not_fall_back_after_navigation() -> None
         ResearchSourceIntakeRequest("url", ("https://example.invalid/paper",)),
     )
 
-    assert ("submit", "server") in trace
+    assert ("prepare", "server") in trace
+    assert ("dispatch", "job-server") in trace
     operation = store.operations["operation-server"]
     assert operation.workspace_id == "server-workspace"
     assert operation.server_profile_id == "server-profile"
@@ -672,7 +994,9 @@ async def test_screen_overlay_keeps_device_source_data_qualified_across_switch(
 
 
 @pytest.mark.asyncio
-async def test_annotation_edit_reopens_and_survives_overlay_store_restart(tmp_path) -> None:
+async def test_annotation_edit_reopens_and_survives_overlay_store_restart(
+    tmp_path,
+) -> None:
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-annotation")
     available = ResearchCapability(True, "available", "Available.", "local")
 
@@ -738,13 +1062,13 @@ async def test_annotation_edit_reopens_and_survives_overlay_store_restart(tmp_pa
         await pilot.pause()
         inspector = app.screen
         assert isinstance(inspector, ResearchSourceInspectorModal)
-        inspector.query_one("#research-source-annotation-list", Select).value = (
-            "annotation-stable"
-        )
+        inspector.query_one(
+            "#research-source-annotation-list", Select
+        ).value = "annotation-stable"
         await pilot.pause()
-        inspector.query_one("#research-source-annotation-note", TextArea).text = (
-            "Edited note"
-        )
+        inspector.query_one(
+            "#research-source-annotation-note", TextArea
+        ).text = "Edited note"
         inspector.query_one("#research-source-annotation-save", Button).press()
         await pilot.pause(0.2)
 
@@ -752,13 +1076,13 @@ async def test_annotation_edit_reopens_and_survives_overlay_store_restart(tmp_pa
         await pilot.pause()
         reopened = app.screen
         assert isinstance(reopened, ResearchSourceInspectorModal)
-        reopened.query_one("#research-source-annotation-list", Select).value = (
-            "annotation-stable"
-        )
+        reopened.query_one(
+            "#research-source-annotation-list", Select
+        ).value = "annotation-stable"
         await pilot.pause()
-        assert reopened.query_one("#research-source-annotation-note", TextArea).text == (
-            "Edited note"
-        )
+        assert reopened.query_one(
+            "#research-source-annotation-note", TextArea
+        ).text == ("Edited note")
 
     restarted = ResearchPresentationOverlayStore(path).load(ref)
     assert restarted is not None
@@ -773,9 +1097,7 @@ async def test_overlay_conflict_retains_draft_and_offers_private_recovery_action
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-conflict")
     path = tmp_path / "research" / "overlay.json"
     first_store = ResearchPresentationOverlayStore(path)
-    initial = first_store.save(
-        ref, ResearchPanePreferences(), expected_revision=0
-    )
+    initial = first_store.save(ref, ResearchPanePreferences(), expected_revision=0)
     screen = ResearchWorkspaceScreen(SimpleNamespace(), overlay_store=first_store)
     app = _MountedScreenApp(screen)
 
@@ -843,7 +1165,19 @@ async def test_overlay_conflict_retains_draft_and_offers_private_recovery_action
         await screen._save_overlay_preferences()
         await pilot.pause()
         app.screen.query_one("#research-overlay-conflict-reload", Button).press()
-        await pilot.pause(0.1)
+        for _ in range(20):
+            await pilot.pause()
+            if (
+                app.screen is screen
+                and screen.query("#research-chat-pane")
+                and [folder.folder_id for folder in screen._source_folders]
+                == ["folder-remote"]
+            ):
+                break
+        else:
+            pytest.fail(
+                "overlay reload did not remount the workspace with remote state"
+            )
         assert [folder.folder_id for folder in screen._source_folders] == [
             "folder-remote"
         ]

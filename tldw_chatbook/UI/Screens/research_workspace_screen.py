@@ -34,6 +34,7 @@ from ...Research_Workspace.overlay_store import (
     ResearchSourceFolder,
 )
 from ...Research_Workspace.source_operation_store import SourceOperationConflictError
+from ...Research_Workspace.source_urls import validate_research_source_url
 from ...Research_Workspace.source_operations import (
     CanonicalItemType,
     ResearchSourceOperation,
@@ -714,9 +715,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     @on(ResearchSourceList.ReorderRequested)
     def reorder_source(self, message: ResearchSourceList.ReorderRequested) -> None:
         async def apply() -> None:
-            await self.controller.move_selected_source(
-                message.source_id, message.delta
-            )
+            await self.controller.move_selected_source(message.source_id, message.delta)
             self._start_sources_refresh()
 
         self._run_source_action(
@@ -726,6 +725,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     @on(ResearchSourceList.ActionRequested)
     def source_action(self, message: ResearchSourceList.ActionRequested) -> None:
         if message.action == "remove":
+
             def confirmed(accepted: bool | None) -> None:
                 if accepted:
                     self._run_source_action(
@@ -1038,9 +1038,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
 
         async def retry() -> None:
-            operation = await scheduler.retry(
-                message.operation_id, stage=message.stage
-            )
+            operation = await scheduler.retry(message.operation_id, stage=message.stage)
             if (
                 operation is not None
                 and operation.catalog_status is SourceOperationStatus.SUCCEEDED
@@ -1158,9 +1156,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
         self.app.push_screen(ResearchOverlayConflictModal(), callback=chosen)
 
-    async def _reload_overlay_after_conflict(
-        self, ref: QualifiedWorkspaceRef
-    ) -> None:
+    async def _reload_overlay_after_conflict(self, ref: QualifiedWorkspaceRef) -> None:
         """Replace the local draft only after the user explicitly chooses Reload."""
 
         store = self.overlay_store
@@ -1177,9 +1173,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         self._start_sources_refresh()
 
-    def _device_overlay_recovery_export(
-        self, ref: QualifiedWorkspaceRef
-    ) -> str:
+    def _device_overlay_recovery_export(self, ref: QualifiedWorkspaceRef) -> str:
         """Return bounded metadata-only recovery JSON with opaque IDs hashed."""
 
         def opaque(value: str) -> str:
@@ -1237,6 +1231,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     ) -> None:
         """Persist each captured intent before submitting it to Library ingest."""
 
+        if request.kind == "url" and any(
+            not validate_research_source_url(value) for value in request.values
+        ):
+            raise ValueError("Enter a valid HTTP or HTTPS URL.")
         await self.controller.require_workspace_capability(ref, "attach_existing")
         if request.kind in {"existing", "catalog"}:
             for catalog_item_id in request.values:
@@ -1299,7 +1297,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 source_path = str(staged_path)
                 staged_paste = True
             try:
-                job = self.app_instance.submit_library_ingest_job(
+                job = self.app_instance.prepare_research_source_ingest_job(
                     source_path=source_path,
                     title=request.title,
                     research_source_operation_id=operation.operation_id,
@@ -1321,34 +1319,35 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                         operation.operation_id,
                     )
                 continue
-            operation = await asyncio.to_thread(
-                self.operation_store.advance_stage,
-                operation.operation_id,
-                stage=SourceOperationStage.CATALOG,
-                status=SourceOperationStatus.IN_PROGRESS,
-                expected_revision=operation.revision,
-                ingest_job_id=job.job_id,
-            )
-            job_state = str(getattr(getattr(job, "state", None), "value", ""))
-            if job_state in {"done", "failed", "cancelled", "skipped"}:
-                scheduler = self.association_scheduler
-                if scheduler is not None:
-                    operation = await scheduler.resume(operation_id)
-                if (
-                    staged_paste
-                    and (
-                        job_state in {"cancelled", "skipped"}
-                        or (
-                            operation is not None
-                            and operation.catalog_status
-                            is SourceOperationStatus.SUCCEEDED
+            try:
+                operation = await asyncio.to_thread(
+                    self.operation_store.advance_stage,
+                    operation.operation_id,
+                    stage=SourceOperationStage.CATALOG,
+                    status=SourceOperationStatus.IN_PROGRESS,
+                    expected_revision=operation.revision,
+                    ingest_job_id=job.job_id,
+                )
+            except Exception:
+                try:
+                    self.app_instance._cancel_research_source_prepared_job(job.job_id)
+                finally:
+                    if staged_paste:
+                        await asyncio.to_thread(
+                            self.paste_staging_store.delete,
+                            operation_id,
                         )
+                continue
+            try:
+                self.app_instance._dispatch_research_source_catalog_job(job.job_id)
+            except Exception:
+                try:
+                    self.app_instance._fail_research_source_prepared_job(job.job_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Prepared Research source dispatch failure could not be settled"
                     )
-                ):
-                    await asyncio.to_thread(
-                        self.paste_staging_store.delete,
-                        operation_id,
-                    )
+                continue
         if self.is_mounted:
             self._start_sources_refresh()
 

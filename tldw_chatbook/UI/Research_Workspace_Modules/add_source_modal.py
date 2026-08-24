@@ -27,6 +27,7 @@ from ...Research_Workspace import (
     ResearchCatalogItem,
     WorkspaceDataSource,
 )
+from ...Research_Workspace.source_urls import validate_research_source_url
 from ...Third_Party.textual_fspicker import FileOpen
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -273,9 +274,11 @@ class ResearchAddSourceModal(
             dict.fromkeys(value.strip() for value in raw_values if value.strip())
         )
         if not values or any(
-            not value.startswith(("http://", "https://")) for value in values
+            not validate_research_source_url(value) for value in values
         ):
-            self._show_error("Enter HTTP or HTTPS URLs, one per line for batch intake.")
+            self._show_error(
+                "Enter a valid HTTP or HTTPS URL, one per line for batch intake."
+            )
             return
         self.dismiss(ResearchSourceIntakeRequest("url", values))
 
@@ -430,6 +433,4 @@ class ResearchAddSourceModal(
             ):
                 control = self.query_one(f"#research-add-search-{suffix}")
                 control.disabled = True
-                control.tooltip = (
-                    "Web search unavailable; configure a web-search provider and use URL intake."
-                )
+                control.tooltip = "Web search unavailable; configure a web-search provider and use URL intake."

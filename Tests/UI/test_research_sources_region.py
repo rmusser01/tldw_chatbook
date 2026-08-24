@@ -21,6 +21,7 @@ from tldw_chatbook.Research_Workspace import (
     SourceReadinessState,
     WorkspaceDataSource,
 )
+from tldw_chatbook.Research_Workspace.overlay_store import ResearchSourceFolder
 from tldw_chatbook.UI.Research_Workspace_Modules.source_list import (
     ResearchSourceList,
 )
@@ -85,8 +86,14 @@ async def test_sources_region_mounts_complete_control_inventory_once() -> None:
             region.query_one("#research-source-search", Input).placeholder
             == "Filter current page"
         )
-        assert region.query_one("#research-source-preview-selected", Button).label.plain == "Preview visible selected"
-        assert region.query_one("#research-source-remove-selected", Button).label.plain == "Remove visible selected"
+        assert (
+            region.query_one("#research-source-preview-selected", Button).label.plain
+            == "Preview visible selected"
+        )
+        assert (
+            region.query_one("#research-source-remove-selected", Button).label.plain
+            == "Remove visible selected"
+        )
         assert region.query_one("#research-source-sort", Select).value == "manual"
         assert "Device-only" in str(
             region.query_one("#research-source-folders-label", Static).render()
@@ -601,3 +608,82 @@ async def test_filters_sort_and_folder_focus_update_stable_rows_without_recompos
         )
         assert source_list.query_one("#research-source-row-up-0", Button).disabled
         assert source_list.query_one("#research-source-row-down-0", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_visible_batch_selection_excludes_selected_rows_hidden_by_each_filter() -> (
+    None
+):
+    """A hidden selected row must never enter preview/remove batch mutation."""
+
+    app = _SourcesHarness()
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
+    alpha = ResearchSourceSummary(
+        ref=ref,
+        source_id="membership-alpha",
+        catalog_item_id="1",
+        title="Alpha evidence",
+        source_type="pdf",
+        updated_at="2026-08-24T00:00:00Z",
+    )
+    beta = ResearchSourceSummary(
+        ref=ref,
+        source_id="membership-beta",
+        catalog_item_id="2",
+        title="Beta notes",
+        source_type="text",
+        updated_at="2020-01-01T00:00:00Z",
+    )
+    page = ResearchSourcePage(
+        items=(alpha, beta),
+        limit=25,
+        total=2,
+        desired_source_ids=("1", "2"),
+    )
+    available = ResearchCapability(True, "available", "Available.", "local")
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        region = app.query_one(ResearchSourcesRegion)
+        region.sync_workspace(
+            page,
+            readiness=(),
+            capabilities={
+                "preview_source": available,
+                "remove_source": available,
+                "set_selected_scope": available,
+            },
+            folders=(
+                ResearchSourceFolder(
+                    "folder-alpha", "Alpha only", ("membership-alpha",)
+                ),
+            ),
+            operations=(),
+        )
+        assert region.selected_source_ids() == (
+            "membership-alpha",
+            "membership-beta",
+        )
+
+        region.query_one("#research-source-search", Input).value = "alpha"
+        await pilot.pause()
+        assert region.selected_source_ids() == ("membership-alpha",)
+
+        region.query_one("#research-source-search", Input).value = ""
+        region.query_one("#research-source-filter-type", Select).value = "text"
+        await pilot.pause()
+        assert region.selected_source_ids() == ("membership-beta",)
+
+        region.query_one("#research-source-filter-type", Select).value = ""
+        region.query_one("#research-source-filter-date", Select).value = "today"
+        await pilot.pause()
+        assert region.selected_source_ids() == ("membership-alpha",)
+
+        region.query_one("#research-source-filter-date", Select).value = ""
+        region._focused_folder_id = "folder-alpha"
+        region._render_page()
+        await pilot.pause()
+        assert region.selected_source_ids() == ("membership-alpha",)
+        assert "2 selected" in str(
+            region.query_one("#research-source-selected-count", Static).render()
+        )

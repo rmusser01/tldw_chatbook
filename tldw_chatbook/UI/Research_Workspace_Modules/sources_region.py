@@ -491,21 +491,13 @@ class ResearchSourcesRegion(VerticalScroll):
         )
 
     def selected_source_ids(self) -> tuple[str, ...]:
-        """Return selected associations present on the current owner page."""
+        """Return selected associations in the currently displayed row slots."""
 
-        page = self._page
-        if page is None:
-            return ()
-        desired = frozenset(page.desired_source_ids)
+        source_list = self.query_one("#research-source-list", ResearchSourceList)
         return tuple(
-            source.source_id
-            for source in page.items
-            if (
-                source.catalog_item_id
-                if source.ref.data_source.value == "local"
-                else source.source_id
-            )
-            in desired
+            slot.source.source_id
+            for slot in source_list.query("_ResearchSourceRowSlot")
+            if slot.display and slot.source is not None and slot.desired_selected
         )
 
     def _sync_capabilities(self) -> None:
@@ -527,9 +519,7 @@ class ResearchSourcesRegion(VerticalScroll):
             button = self.query_one(selector, Button)
             button.disabled = not attach_available
             button.tooltip = (
-                "Add sources to this workspace"
-                if attach_available
-                else attach_reason
+                "Add sources to this workspace" if attach_available else attach_reason
             )
         if not attach_available and page is not None:
             self.query_one("#research-source-recovery", Static).update(
@@ -619,10 +609,14 @@ class ResearchSourcesRegion(VerticalScroll):
         ):
             self.query_one(selector, Button).disabled = not enabled
         select_sources = self.query_one("#research-source-select-folder", Button)
-        page_ids = {
-            source.source_id for source in self._page.items
-        } if self._page is not None else set()
-        off_page = bool(folder and any(item not in page_ids for item in folder.source_ids))
+        page_ids = (
+            {source.source_id for source in self._page.items}
+            if self._page is not None
+            else set()
+        )
+        off_page = bool(
+            folder and any(item not in page_ids for item in folder.source_ids)
+        )
         select_sources.disabled = not enabled or off_page
         select_sources.tooltip = (
             "[Unavailable] Folder includes off-page sources; load their page first."
@@ -735,6 +729,7 @@ class ResearchSourcesRegion(VerticalScroll):
             capabilities=self._capabilities,
             temporary_sort=sort_value != "manual",
         )
+        self._sync_capabilities()
         self.query_one("#research-source-filter-summary", Static).update(
             f"Showing {len(rows)} of {len(page.items)} on page · "
             f"Temporary sort {'on; reorder disabled' if sort_value != 'manual' else 'off'}"

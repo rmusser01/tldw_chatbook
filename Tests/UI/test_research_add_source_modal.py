@@ -87,9 +87,7 @@ async def test_add_source_modal_keeps_exact_authority_tab_order(
             modal.query_one("#research-add-upload-scope", Static).render()
         )
         assert "one existing item" in str(
-            modal.query_one(
-                "#research-add-existing-selection-scope", Static
-            ).render()
+            modal.query_one("#research-add-existing-selection-scope", Static).render()
         )
 
 
@@ -116,6 +114,61 @@ async def test_url_batch_mode_is_real_and_returns_one_item_per_line() -> None:
         "https://example.invalid/a",
         "https://example.invalid/b",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "https://user:PRIVATE@example.invalid/paper",
+        "file:///private/research.txt",
+        "/private/research.txt",
+        "https://example.invalid/zero\x00width",
+        "https://example.invalid/zero\u200bwidth",
+        "https://example.invalid/" + "x" * 2000,
+    ],
+)
+async def test_url_intake_rejects_unsafe_or_unbounded_values_without_dismissal(
+    candidate: str,
+) -> None:
+    """Malformed URLs stay in the modal and never become intake requests."""
+
+    app = App()
+    results = []
+    async with app.run_test(size=(100, 32)) as pilot:
+        modal = ResearchAddSourceModal(WorkspaceDataSource.LOCAL)
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+
+        modal.query_one("#research-add-url-single", Input).value = candidate
+        modal.query_one("#research-add-url-submit", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        error = modal.query_one("#research-add-error", Static)
+        assert error.display
+        assert "valid HTTP or HTTPS URL" in str(error.render())
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_url_intake_accepts_supported_unicode_and_percent_encoding() -> None:
+    """The security gate must not reject syntax the ingest owner supports."""
+
+    app = App()
+    results = []
+    candidate = "https://例え.テスト/über?mark=%E2%9C%93"
+    async with app.run_test(size=(100, 32)) as pilot:
+        modal = ResearchAddSourceModal(WorkspaceDataSource.SERVER)
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+
+        modal.query_one("#research-add-url-single", Input).value = candidate
+        modal.query_one("#research-add-url-submit", Button).press()
+        await pilot.pause()
+
+    assert results[0].values == (candidate,)
 
 
 @pytest.mark.asyncio
@@ -190,8 +243,21 @@ async def test_server_web_search_stays_visible_but_never_reuses_media_catalog() 
         assert "one source file" in str(
             modal.query_one("#research-add-upload-path", Input).placeholder
         )
-        assert modal.query_one("#research-add-existing-submit", Button).label.plain == "Add selected"
-        for suffix in ("query", "type", "sort", "search", "results", "prev", "next", "select", "submit"):
+        assert (
+            modal.query_one("#research-add-existing-submit", Button).label.plain
+            == "Add selected"
+        )
+        for suffix in (
+            "query",
+            "type",
+            "sort",
+            "search",
+            "results",
+            "prev",
+            "next",
+            "select",
+            "submit",
+        ):
             assert modal.query_one(f"#research-add-search-{suffix}").disabled
         assert "Web search is unavailable" in str(
             modal.query_one("#research-add-search-unavailable", Static).render()
@@ -211,7 +277,9 @@ async def test_add_modal_escape_cancels_without_losing_draft_before_callback() -
         await app.push_screen(modal, callback=results.append)
         await pilot.pause()
         modal.query_one("#research-add-paste-title", Input).value = "Unsaved title"
-        assert modal.query_one("#research-add-paste-title", Input).value == "Unsaved title"
+        assert (
+            modal.query_one("#research-add-paste-title", Input).value == "Unsaved title"
+        )
 
         await pilot.press("escape")
         await pilot.pause()

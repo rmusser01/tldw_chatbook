@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from textual.app import App
 
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
     ActiveIngestConsentScope,
@@ -48,6 +49,185 @@ def _minimal_app(media_db: Any = None) -> TldwCli:
     app.media_db = media_db
     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
     return app
+
+
+def test_required_persisted_submit_is_durable_before_listener_visibility(
+    tmp_path: Path,
+) -> None:
+    """A prepared row is on disk before any lifecycle listener can observe it."""
+
+    registry = LibraryIngestJobRegistry()
+    store = LibraryIngestJobsDB(tmp_path / "prepared.sqlite")
+    registry.attach_store(store)
+    observations: list[tuple[str, str]] = []
+    registry.add_listener(
+        lambda: observations.extend(
+            (row["job_id"], row["state"]) for row in store.all_jobs()
+        )
+    )
+
+    job = registry.submit(
+        source_path="https://example.invalid/evidence",
+        origin="server",
+        research_source_operation_id="operation-durable-prepare",
+        require_persisted=True,
+    )
+
+    assert observations == [(job.job_id, "queued")]
+    assert store.all_jobs()[0]["research_source_operation_id"] == (
+        "operation-durable-prepare"
+    )
+    store.close()
+    restarted = LibraryIngestJobsDB(tmp_path / "prepared.sqlite")
+    try:
+        assert restarted.all_jobs()[0]["state"] == "queued"
+    finally:
+        restarted.close()
+
+
+def test_required_persisted_submit_without_store_mutates_no_registry() -> None:
+    """Research preparation cannot degrade to an in-memory-only queue row."""
+
+    registry = LibraryIngestJobRegistry()
+
+    with pytest.raises(RuntimeError, match="persistence store"):
+        registry.submit(
+            source_path="https://example.invalid/evidence",
+            origin="server",
+            research_source_operation_id="operation-no-store",
+            require_persisted=True,
+        )
+
+    assert registry.jobs() == ()
+
+
+@pytest.mark.parametrize("settlement", ["cancelled", "failed"])
+def test_required_prepared_settlement_is_durable_before_terminal_listener(
+    tmp_path: Path,
+    settlement: str,
+) -> None:
+    """Link/dispatch failures cannot leave a restartable queued row on disk."""
+
+    registry = LibraryIngestJobRegistry()
+    store = LibraryIngestJobsDB(tmp_path / f"prepared-{settlement}.sqlite")
+    registry.attach_store(store)
+    job = registry.submit(
+        source_path="https://example.invalid/evidence",
+        origin="server",
+        research_source_operation_id=f"operation-{settlement}",
+        require_persisted=True,
+    )
+    observations: list[str] = []
+    registry.add_listener(lambda: observations.append(store.all_jobs()[0]["state"]))
+
+    if settlement == "cancelled":
+        registry.mark_cancelled(
+            job.job_id,
+            reason="Research source operation could not be linked.",
+            require_persisted=True,
+        )
+    else:
+        registry.mark_failed(
+            job.job_id,
+            error="Research catalog dispatch could not be started.",
+            require_persisted=True,
+        )
+
+    assert observations == [settlement]
+    assert store.all_jobs()[0]["state"] == settlement
+    store.close()
+
+
+@pytest.mark.parametrize("origin", ["local", "server"])
+def test_research_prepare_persists_exact_authority_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    """Initial Research intake stops at a durable queued row until linked."""
+
+    app = _minimal_app(media_db="present")
+    ingest_store = LibraryIngestJobsDB(tmp_path / f"prepare-{origin}.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
+    operation = ResearchSourceOperation(
+        operation_id=f"operation-prepare-{origin}",
+        idempotency_key=f"prepare-{origin}",
+        data_source=(
+            WorkspaceDataSource.LOCAL
+            if origin == "local"
+            else WorkspaceDataSource.SERVER
+        ),
+        server_profile_id="profile" if origin == "server" else "",
+        principal_id="principal" if origin == "server" else "",
+        workspace_id=f"workspace-{origin}",
+        canonical_item_type=(
+            CanonicalItemType.LOCAL_LIBRARY
+            if origin == "local"
+            else CanonicalItemType.SERVER_MEDIA
+        ),
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: origin)
+    monkeypatch.setattr(
+        app,
+        "_validate_research_source_operation_authority",
+        lambda operation_id, *, expected_origin: operation,
+    )
+    top_up = MagicMock()
+    monkeypatch.setattr(app, "_top_up_ingest_parse_pool", top_up)
+    remote_send = MagicMock()
+    monkeypatch.setattr(app, "_send_web_clip_job", remote_send)
+    source = (
+        "https://example.invalid/evidence"
+        if origin == "server"
+        else str(tmp_path / "evidence.txt")
+    )
+    if origin == "local":
+        Path(source).write_text("Evidence", encoding="utf-8")
+
+    job = app.prepare_research_source_ingest_job(
+        source_path=source,
+        research_source_operation_id=operation.operation_id,
+        required_origin=origin,
+    )
+
+    assert job.state is IngestJobState.QUEUED
+    assert job.origin == origin
+    assert job.research_source_operation_id == operation.operation_id
+    assert ingest_store.all_jobs()[0]["state"] == "queued"
+    top_up.assert_not_called()
+    remote_send.assert_not_called()
+    ingest_store.close()
+
+
+def test_dispatch_failure_settlement_does_not_renotify_an_already_terminal_job(
+    tmp_path: Path,
+) -> None:
+    """A dispatcher that settled before raising must not schedule twice."""
+
+    app = _minimal_app(media_db="present")
+    store = LibraryIngestJobsDB(tmp_path / "terminal-dispatch.sqlite")
+    app.library_ingest_jobs.attach_store(store)
+    job = app.library_ingest_jobs.submit(
+        source_path="https://example.invalid/evidence",
+        origin="server",
+        research_source_operation_id="operation-terminal-dispatch",
+        require_persisted=True,
+    )
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Owner already settled")
+    notifications: list[IngestJobState] = []
+    app.library_ingest_jobs.add_listener(
+        lambda: notifications.append(app.library_ingest_jobs.get_job(job.job_id).state)
+    )
+
+    settled = app._fail_research_source_prepared_job(job.job_id)
+
+    assert settled.state is IngestJobState.FAILED
+    assert settled.error == "Owner already settled"
+    assert notifications == []
+    store.close()
 
 
 def _minimal_stt_app() -> TldwCli:
@@ -90,9 +270,7 @@ async def test_terminal_research_job_cleans_paste_only_after_success_or_cancel(
     app.research_paste_staging_store = staging
     app._research_source_terminal_jobs_scheduled = {"job-1"}
     app.library_ingest_jobs = SimpleNamespace(
-        get_job=lambda _job_id: SimpleNamespace(
-            state=SimpleNamespace(value=job_state)
-        )
+        get_job=lambda _job_id: SimpleNamespace(state=SimpleNamespace(value=job_state))
     )
 
     await app._resume_settled_research_source_operation("job-1", "operation-1")
@@ -1452,9 +1630,7 @@ class TestIngestJobOptions:
         assert options["start_time"] is None
         assert options["end_time"] is None
 
-    def test_cookies_file_maps_to_use_cookies_and_cookies(
-        self, tmp_path: Any
-    ) -> None:
+    def test_cookies_file_maps_to_use_cookies_and_cookies(self, tmp_path: Any) -> None:
         """(task-3306) A cookies FILE PATH travels; its presence IS the
         use_cookies flag -- there is no separate toggle to go stale.
 
@@ -1579,11 +1755,13 @@ class TestIngestJobOptions:
         monkeypatch.setattr(
             app_module,
             "get_cli_setting",
-            lambda key, *args: secret_path
-            if key == "transcription.transcribe_cpp.model_path"
-            else args[0]
-            if args
-            else None,
+            lambda key, *args: (
+                secret_path
+                if key == "transcription.transcribe_cpp.model_path"
+                else args[0]
+                if args
+                else None
+            ),
         )
         app = _minimal_app()
         job = _make_job(
@@ -1909,18 +2087,13 @@ class TestIngestJobOptionsWiring:
         app = _minimal_app()
         job = _make_job(source_path="/tmp/test.txt", ingest_options=snapshot)
         local_options = app._ingest_job_options(job)
-        server_kwargs = build_server_ingest_kwargs(
-            "/tmp/test.txt", options=snapshot
-        )
+        server_kwargs = build_server_ingest_kwargs("/tmp/test.txt", options=snapshot)
 
         assert local_options["chunk_options"] is not None
         assert (
-            local_options["chunk_options"]["overlap"]
-            == server_kwargs["chunk_overlap"]
+            local_options["chunk_options"]["overlap"] == server_kwargs["chunk_overlap"]
         )
-        assert (
-            local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
-        )
+        assert local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
 
     def test_fresh_snapshot_seeds_shared_generic_schema_defaults(self) -> None:
         screen = object.__new__(LibraryScreen)
@@ -1940,10 +2113,7 @@ class TestIngestJobOptionsWiring:
             }
         }
 
-        assert {
-            name: snapshot["generic"][name]
-            for name in defaults
-        } == defaults
+        assert {name: snapshot["generic"][name] for name in defaults} == defaults
 
     def test_server_request_strips_external_parakeet_path_and_scope(self) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
@@ -2182,8 +2352,8 @@ class TestIngestJobOptionsWiring:
         options = app._ingest_job_options(job)
 
         assert "api_name" not in options
-        assert "not supported for ingest analysis" in (
-            options["analysis_skipped_reason"]
+        assert (
+            "not supported for ingest analysis" in (options["analysis_skipped_reason"])
         )
 
 
@@ -2209,10 +2379,7 @@ class TestIngestDoneProgress:
             == "Imported notes.txt — analysis skipped: OpenAI is not ready "
             "(Missing API key)"
         )
-        assert (
-            progress["analysis_skipped"]
-            == "OpenAI is not ready (Missing API key)"
-        )
+        assert progress["analysis_skipped"] == "OpenAI is not ready (Missing API key)"
 
     def test_analysis_failed_reason_appended(self) -> None:
         """(task-3301 xhigh review round, F4) A failed analysis annotates
@@ -2243,9 +2410,7 @@ class TestIngestDoneProgress:
             == "Imported clip.mp4 — cookies ignored: Cookies file not found: "
             "/tmp/c.txt"
         )
-        assert progress["cookies_problem"] == (
-            "Cookies file not found: /tmp/c.txt"
-        )
+        assert progress["cookies_problem"] == ("Cookies file not found: /tmp/c.txt")
 
     def test_duplicate_message_keeps_matched_prefix(self) -> None:
         from tldw_chatbook.Library.library_ingest_jobs import (
@@ -2283,9 +2448,7 @@ def test_submit_refuses_active_local_duplicate_before_second_append(
 
     assert [job.job_id for job in app.library_ingest_jobs.jobs()] == before_ids
     allocate_job_id.assert_not_called()
-    assert caught.value.matches == (
-        ActiveIngestJobRef(first.job_id, first.state),
-    )
+    assert caught.value.matches == (ActiveIngestJobRef(first.job_id, first.state),)
 
 
 def test_research_ingest_required_origin_fails_before_queue_mutation(
@@ -2334,7 +2497,9 @@ def test_research_ingest_rejects_changed_server_identity_before_queue_mutation(
         updated_at="2026-08-24T10:00:00Z",
     )
     app.research_source_operation_store = SimpleNamespace(
-        get=lambda operation_id: operation if operation_id == operation.operation_id else None
+        get=lambda operation_id: (
+            operation if operation_id == operation.operation_id else None
+        )
     )
     app.server_context_provider = SimpleNamespace(
         get_active_context=lambda: changed_context
@@ -2355,8 +2520,9 @@ def test_research_ingest_rejects_changed_server_identity_before_queue_mutation(
 
 
 @pytest.mark.asyncio
-async def test_remote_research_dispatch_rechecks_qualified_identity_before_service_call(
-) -> None:
+async def test_remote_research_dispatch_rechecks_qualified_identity_before_service_call() -> (
+    None
+):
     app = _minimal_app(media_db="present")
     captured_context = SimpleNamespace(
         active_server_id="server-a",
@@ -2380,7 +2546,9 @@ async def test_remote_research_dispatch_rechecks_qualified_identity_before_servi
         created_at="2026-08-24T10:00:00Z",
         updated_at="2026-08-24T10:00:00Z",
     )
-    app.research_source_operation_store = SimpleNamespace(get=lambda _operation_id: operation)
+    app.research_source_operation_store = SimpleNamespace(
+        get=lambda _operation_id: operation
+    )
     app.server_context_provider = SimpleNamespace(
         get_active_context=lambda: changed_context
     )
@@ -2440,9 +2608,7 @@ def test_submit_refuses_active_server_duplicate_before_remote_call(
     source = tmp_path / "a.txt"
     source.write_text("body")
     monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "server")
-    active = app.library_ingest_jobs.submit(
-        source_path=str(source), origin="server"
-    )
+    active = app.library_ingest_jobs.submit(source_path=str(source), origin="server")
     remote = MagicMock()
     monkeypatch.setattr(app, "_submit_server_ingest_job", remote)
 
@@ -2956,9 +3122,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     assert progress_context == (app._ingest_parse_pool_generation, valid.job_id)
     assert options["transcription_provider"] == "faster-whisper"
     routing_warnings = [
-        message
-        for message in warning_messages
-        if "batch STT routing failed" in message
+        message for message in warning_messages if "batch STT routing failed" in message
     ]
     assert len(routing_warnings) == 1
     assert invalid.job_id in routing_warnings[0]
@@ -3044,20 +3208,14 @@ class TestWriteStageFailureCategory:
         )
 
         exc = NoContentExtractedError("No text could be extracted from x.pdf.")
-        assert (
-            app_module._library_ingest_write_failure_category(exc)
-            == "no_content"
-        )
+        assert app_module._library_ingest_write_failure_category(exc) == "no_content"
 
     def test_a_real_database_failure_is_a_write_error(self) -> None:
         """The one cause a bare retry can genuinely clear keeps its name."""
         from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError
 
         exc = DatabaseError("database is locked")
-        assert (
-            app_module._library_ingest_write_failure_category(exc)
-            == "write_error"
-        )
+        assert app_module._library_ingest_write_failure_category(exc) == "write_error"
 
     def test_an_unknown_write_stage_failure_is_silent_not_optimistic(
         self,
@@ -3101,9 +3259,7 @@ class TestServerSubmitRefusesZeroByteSources:
         )
         return app
 
-    def test_a_zero_byte_file_fails_locally_and_is_never_sent(
-        self, tmp_path
-    ) -> None:
+    def test_a_zero_byte_file_fails_locally_and_is_never_sent(self, tmp_path) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
             server_ingest_refusal,
         )
@@ -3168,6 +3324,4 @@ class TestServerSubmitRefusesZeroByteSources:
         )
 
         assert job.state is IngestJobState.QUEUED
-        assert [kwargs["file_paths"] for _job_id, kwargs in app._sent] == [
-            [str(real)]
-        ]
+        assert [kwargs["file_paths"] for _job_id, kwargs in app._sent] == [[str(real)]]

@@ -2652,6 +2652,7 @@ class LibraryIngestQueueMixin:
         active_duplicate_consent: ActiveIngestConsentScope | None = None,
         research_source_operation_id: str | None = None,
         required_origin: str | None = None,
+        _prepare_only: bool = False,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -2710,6 +2711,10 @@ class LibraryIngestQueueMixin:
                 expected_origin=normalized_required_origin,
             )
         expanded = self._expand_library_ingest_source(source_path)
+        if _prepare_only and expanded is not None:
+            raise ValueError(
+                "Research source preparation accepts one file or URL, not a folder."
+            )
         if research_source_operation_id and expanded is not None and len(expanded) > 1:
             raise ValueError(
                 "Folder imports require one Research source operation per catalog item."
@@ -2816,7 +2821,7 @@ class LibraryIngestQueueMixin:
             assert first_job is not None
             return first_job
 
-        return self._submit_library_ingest_job_admitted(
+        admitted_kwargs = dict(
             source_path=source_path,
             ingest_options=normalized_options,
             title=title,
@@ -2828,6 +2833,107 @@ class LibraryIngestQueueMixin:
             batch_id=batch_id,
             backend=backend,
             research_source_operation_id=research_source_operation_id,
+        )
+        if _prepare_only:
+            return self._prepare_library_ingest_job_admitted(
+                **admitted_kwargs,
+                require_persisted=True,
+            )
+        return self._submit_library_ingest_job_admitted(**admitted_kwargs)
+
+    def prepare_research_source_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any] | None = None,
+        title: str = "",
+        author: str = "",
+        keywords: tuple[str, ...] = (),
+        perform_analysis: bool = False,
+        chunk_enabled: bool = False,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        research_source_operation_id: str,
+        required_origin: str,
+    ) -> LibraryIngestJob:
+        """Durably queue one qualified Research source without dispatching it."""
+
+        return self.submit_library_ingest_job(
+            source_path=source_path,
+            ingest_options=ingest_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            research_source_operation_id=research_source_operation_id,
+            required_origin=required_origin,
+            _prepare_only=True,
+        )
+
+    def _prepare_library_ingest_job_admitted(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+        backend: str,
+        research_source_operation_id: str | None,
+        require_persisted: bool,
+    ) -> LibraryIngestJob:
+        """Create one queued row without starting its Local or Server owner."""
+
+        detected_type = ""
+        if backend == "server":
+            if is_web_clip_source(source_path):
+                build_web_clip_kwargs(
+                    source_path,
+                    options=ingest_options,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                )
+                detected_type = "web"
+            else:
+                kwargs = build_server_ingest_kwargs(
+                    source_path,
+                    options=ingest_options,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                    perform_analysis=perform_analysis,
+                )
+                detected_type = str(kwargs.get("media_type") or "")
+        else:
+            try:
+                detected_type = classify_ingest_source(source_path) or ""
+            except FileIngestionError:
+                detected_type = ""
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"classify_ingest_source failed unexpectedly for {source_path!r}; "
+                    "treating as light work (heavy-lane cap may not apply)."
+                )
+        return self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            detected_type=detected_type,
+            ingest_options=ingest_options,
+            origin=backend,
+            batch_id=batch_id,
+            research_source_operation_id=research_source_operation_id,
+            require_persisted=require_persisted,
         )
 
     def _submit_library_ingest_job_admitted(
@@ -2894,40 +3000,23 @@ class LibraryIngestQueueMixin:
         research_source_operation_id: str | None,
     ) -> LibraryIngestJob:
         """Append one admitted local source and top up the parse pool."""
-        try:
-            detected_type = classify_ingest_source(source_path) or ""
-        except FileIngestionError:
-            # Expected for an unsupported extension -- treat as light work.
-            detected_type = ""
-        except Exception:
-            # An UNEXPECTED classification failure must not silently disable the
-            # heavy-lane cap (an empty type is treated as light work, so a
-            # misclassified audio/video job would bypass the transcription cap).
-            # Log it so a regression is observable, then fall back to light.
-            logger.opt(exception=True).warning(
-                f"classify_ingest_source failed unexpectedly for {source_path!r}; "
-                "treating as light work (heavy-lane cap may not apply)."
-            )
-            detected_type = ""
-        job = self.library_ingest_jobs.submit(
+        job = self._prepare_library_ingest_job_admitted(
             source_path=source_path,
+            ingest_options=ingest_options,
             title=title,
             author=author,
             keywords=keywords,
             perform_analysis=perform_analysis,
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
-            detected_type=detected_type,
-            ingest_options=ingest_options,
             batch_id=batch_id,
+            backend="local",
             research_source_operation_id=research_source_operation_id,
+            require_persisted=False,
         )
+        self._dispatch_research_source_catalog_job(job.job_id)
         if self.media_db is None:
-            failed = self.library_ingest_jobs.mark_failed(
-                job.job_id, error="Media database is unavailable."
-            )
-            return failed if failed is not None else job
-        self._top_up_ingest_parse_pool()
+            return self.library_ingest_jobs.get_job(job.job_id) or job
         return job
 
     def retry_library_ingest_job(
@@ -2985,8 +3074,52 @@ class LibraryIngestQueueMixin:
             return None
         return self.library_ingest_jobs.requeue(job_id)
 
+    def _cancel_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
+        """Durably cancel an undispatched row whose operation link failed."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            raise ValueError("Prepared Research ingest job does not exist.")
+        if current.state in {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }:
+            return current
+        cancelled = self.library_ingest_jobs.mark_cancelled(
+            job_id,
+            reason="Research source operation could not be linked.",
+            require_persisted=True,
+        )
+        if cancelled is None:
+            raise ValueError("Prepared Research ingest job cannot be cancelled.")
+        return cancelled
+
+    def _fail_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
+        """Durably fail a linked row whose owner dispatch did not start."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            raise ValueError("Prepared Research ingest job does not exist.")
+        if current.state in {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }:
+            return current
+        failed = self.library_ingest_jobs.mark_failed(
+            job_id,
+            error="Research catalog dispatch could not be started.",
+            require_persisted=True,
+        )
+        if failed is None:
+            raise ValueError("Prepared Research ingest job cannot be failed.")
+        return failed
+
     def _dispatch_research_source_catalog_job(self, job_id: str) -> None:
-        """Dispatch an already-persisted replacement through its bound adapter."""
+        """Dispatch an already-persisted ingest through its bound adapter."""
 
         requeued = self.library_ingest_jobs.get_job(job_id)
         if requeued is None:
@@ -5156,13 +5289,19 @@ class LibraryIngestQueueMixin:
             be sent at all.
         """
         try:
-            kwargs = build_server_ingest_kwargs(
-                source_path,
-                options=ingest_options,
+            job = self._prepare_library_ingest_job_admitted(
+                source_path=source_path,
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
                 perform_analysis=perform_analysis,
+                chunk_enabled=False,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                batch_id=None,
+                backend="server",
+                research_source_operation_id=research_source_operation_id,
+                require_persisted=False,
             )
         except ServerIngestUnsupported as exc:
             job = self.library_ingest_jobs.submit(
@@ -5175,23 +5314,10 @@ class LibraryIngestQueueMixin:
                 ingest_options=ingest_options,
                 research_source_operation_id=research_source_operation_id,
             )
-            failed = self.library_ingest_jobs.mark_failed(
+            return self.library_ingest_jobs.mark_failed(
                 job.job_id, error=str(exc), permanent=True
-            )
-            return failed if failed is not None else job
-
-        job = self.library_ingest_jobs.submit(
-            source_path=source_path,
-            title=title,
-            author=author,
-            keywords=keywords,
-            perform_analysis=perform_analysis,
-            detected_type=str(kwargs.get("media_type") or ""),
-            origin="server",
-            ingest_options=ingest_options,
-            research_source_operation_id=research_source_operation_id,
-        )
-        self._send_server_ingest_job(job.job_id, kwargs)
+            ) or job
+        self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
     def _submit_web_clip_job(
@@ -5218,12 +5344,19 @@ class LibraryIngestQueueMixin:
             be clipped at all.
         """
         try:
-            kwargs = build_web_clip_kwargs(
-                source_path,
-                options=ingest_options,
+            job = self._prepare_library_ingest_job_admitted(
+                source_path=source_path,
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
+                perform_analysis=perform_analysis,
+                chunk_enabled=False,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                batch_id=None,
+                backend="server",
+                research_source_operation_id=research_source_operation_id,
+                require_persisted=False,
             )
         except NotAWebClipSource as exc:
             job = self.library_ingest_jobs.submit(
@@ -5236,23 +5369,10 @@ class LibraryIngestQueueMixin:
                 ingest_options=ingest_options,
                 research_source_operation_id=research_source_operation_id,
             )
-            failed = self.library_ingest_jobs.mark_failed(
+            return self.library_ingest_jobs.mark_failed(
                 job.job_id, error=str(exc), permanent=True
-            )
-            return failed if failed is not None else job
-
-        job = self.library_ingest_jobs.submit(
-            source_path=source_path,
-            title=title,
-            author=author,
-            keywords=keywords,
-            perform_analysis=perform_analysis,
-            detected_type="web",
-            origin="server",
-            ingest_options=ingest_options,
-            research_source_operation_id=research_source_operation_id,
-        )
-        self._send_web_clip_job(job.job_id, kwargs)
+            ) or job
+        self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
     @work(group="library_ingest_remote_submit")

@@ -596,6 +596,13 @@ class LibraryIngestJobRegistry:
         except Exception:
             logger.opt(exception=True).debug(f"ingest job persist failed: {job.job_id}")
 
+    def _persist_required(self, job: LibraryIngestJob) -> None:
+        """Persist ``job`` or raise before exposing a durable-only mutation."""
+
+        if self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
+        self._store.upsert_job(job)
+
     def _persist_delete(self, job_id: str) -> None:
         """Best-effort delete ``job_id`` from the attached store, if any.
 
@@ -770,6 +777,7 @@ class LibraryIngestJobRegistry:
         origin: str = "local",
         batch_id: str | None = None,
         research_source_operation_id: str | None = None,
+        require_persisted: bool = False,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -794,10 +802,14 @@ class LibraryIngestJobRegistry:
                 ``None`` for single-file submissions.
             research_source_operation_id: Opaque durable Research Workspace
                 source operation to retain across completion and retry.
+            require_persisted: Persist before exposing the queued row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
         """
+        if require_persisted and self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
         operation_id = (
             None
             if research_source_operation_id is None
@@ -820,9 +832,14 @@ class LibraryIngestJobRegistry:
             batch_id=batch_id,
             research_source_operation_id=operation_id,
         )
-        self._jobs.append(job)
-        self._notify_listeners()
-        self._persist(job)
+        if require_persisted:
+            self._persist_required(job)
+            self._jobs.append(job)
+            self._notify_listeners()
+        else:
+            self._jobs.append(job)
+            self._notify_listeners()
+            self._persist(job)
         return _copy_job(job)
 
     def next_queued(
@@ -1037,6 +1054,7 @@ class LibraryIngestJobRegistry:
         stt_failure_provenance: (
             FailedTranscriptionAttempt | dict[str, Any] | None
         ) = None,
+        require_persisted: bool = False,
     ) -> LibraryIngestJob | None:
         """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
@@ -1053,6 +1071,8 @@ class LibraryIngestJobRegistry:
                 failure time.
             stt_failure_provenance: Complete sanitized context for this
                 job's failed STT attempt.
+            require_persisted: Persist before exposing the terminal row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -1092,8 +1112,12 @@ class LibraryIngestJobRegistry:
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
-        self._jobs[index] = updated
-        self._persist(updated)
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
         self._notify_listeners()
         return _copy_job(updated)
 
@@ -1204,7 +1228,11 @@ class LibraryIngestJobRegistry:
         return _copy_job(updated)
 
     def mark_cancelled(
-        self, job_id: str, *, reason: str = ""
+        self,
+        job_id: str,
+        *,
+        reason: str = "",
+        require_persisted: bool = False,
     ) -> LibraryIngestJob | None:
         """Transition a still-running job to ``CANCELLED``.
 
@@ -1219,6 +1247,8 @@ class LibraryIngestJobRegistry:
             job_id: The job to transition.
             reason: Optional human-readable reason, stored in ``error`` since
                 that is the field the queue row already surfaces.
+            require_persisted: Persist before exposing the terminal row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is unknown,
@@ -1240,8 +1270,12 @@ class LibraryIngestJobRegistry:
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
-        self._jobs[index] = updated
-        self._persist(updated)
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
         self._notify_listeners()
         return _copy_job(updated)
 
