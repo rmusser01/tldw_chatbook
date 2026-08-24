@@ -99,7 +99,20 @@ if os.environ.get("TLDW_TEST_REAL_KEYRING") != "1":
 #
 # `TLDW_TEST_ALLOW_HF_DOWNLOADS=1` opts out, for a test that genuinely needs a
 # live fetch.
-if os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS") != "1":
+# Truthy, not `== "1"`. `Tests/RAG_Search/conftest.py` already reads this same
+# flag as `.strip().lower() in {"1","true","yes","on"}`, so an exact-match test
+# here meant `TLDW_TEST_ALLOW_HF_DOWNLOADS=true` opted out there and stayed
+# offline here -- one flag, two answers (TASK-21562.1).
+_HF_DOWNLOAD_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _hf_downloads_allowed() -> bool:
+    """Whether this session opted into real HuggingFace downloads."""
+    raw = os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS", "")
+    return raw.strip().lower() in _HF_DOWNLOAD_TRUTHY
+
+
+if not _hf_downloads_allowed():
     os.environ["HF_HUB_OFFLINE"] = "1"
 
 import pytest  # noqa: E402
@@ -536,7 +549,7 @@ def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     per-test is restored -- the same reasoning as
     ``Tests/RAG_Eval/conftest.py``'s fixture, which does this for its own scope.
     """
-    if os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS") == "1":
+    if _hf_downloads_allowed():
         return
     constants = sys.modules.get("huggingface_hub.constants")
     if constants is None:
