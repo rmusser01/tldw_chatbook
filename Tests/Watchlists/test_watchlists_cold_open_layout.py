@@ -35,10 +35,13 @@ this would silently measure the conftest stub, not this task's fix.
 from __future__ import annotations
 
 import pytest
+import tomllib
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook import config as config_module
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
@@ -55,39 +58,33 @@ _LOAD_REGION_LAYOUT_TARGET = (
 )
 
 
-class _SwapCounter:
-    """Counts `WatchlistsWorkbench._swap_region_widget` calls while installed.
-
-    Wraps rather than replaces: the real swap still runs (call-through), so
-    this only observes -- it never changes what the screen actually renders.
-    """
+class _RegionBuildCounter:
+    """Count pane factory construction during the cold-open lifecycle."""
 
     def __init__(self) -> None:
         self.regions: list[Region] = []
-        self._original = WatchlistsWorkbench._swap_region_widget
+        self._original = WatchlistsWorkbench._region_body
 
-    def __enter__(self) -> "_SwapCounter":
+    def __enter__(self) -> "_RegionBuildCounter":
         counter = self
         original = self._original
 
-        async def _counting_swap(widget_self, region, parent, index):
+        def _counting_build(widget_self, region):
             counter.regions.append(region)
-            return await original(widget_self, region, parent, index)
+            return original(widget_self, region)
 
-        WatchlistsWorkbench._swap_region_widget = _counting_swap
+        WatchlistsWorkbench._region_body = _counting_build
         return self
 
     def __exit__(self, *exc_info) -> None:
-        WatchlistsWorkbench._swap_region_widget = self._original
+        WatchlistsWorkbench._region_body = self._original
 
 
 def _right_rail_is_collapsed(screen) -> bool:
-    header = screen.query("#wl-header-right_rail")
+    grip = screen.query_one("#wl-grip-right_rail")
     body = screen.query("#wl-region-right_rail")
-    assert bool(header) != bool(body), (
-        "RIGHT_RAIL must render as exactly one of its two forms, never both or neither"
-    )
-    return bool(header)
+    assert getattr(grip, "expanded") is bool(body)
+    return not bool(body)
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +135,10 @@ async def test_construction_seeds_region_layout_from_a_single_persisted_load(
         "anything else (a keypress, a later _schedule_layout_persist call) "
         "can race it"
     )
-    assert get_cli_setting("watchlists", "content_reader_migrated", False) is True, (
-        "the one-time migration write load_region_layout performs on a "
-        "never-saved config must have already landed on disk by the time "
-        "__init__ returns -- it is synchronous, on the UI thread, by design"
+    assert get_cli_setting("watchlists", "layout_version", None) == (
+        region_layout_store.LAYOUT_VERSION
     )
+    assert get_cli_setting("watchlists", "content_reader_migrated", None) is None
 
 
 async def test_construction_seeds_an_explicitly_saved_non_default_layout(monkeypatch):
@@ -188,7 +184,7 @@ async def test_cold_open_with_the_first_run_default_shows_the_collapsed_rail_wit
     )
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
-    with _SwapCounter() as swaps:
+    with _RegionBuildCounter() as builds:
         async with host.run_test(size=(180, 50)) as pilot:
             await pilot.pause(0.2)
             screen = host.screen_stack[-1]
@@ -202,10 +198,7 @@ async def test_cold_open_with_the_first_run_default_shows_the_collapsed_rail_wit
                 "_FIRST_RUN_DEFAULT"
             )
 
-    assert swaps.regions == [], (
-        "a normal cold open must perform zero _swap_region_widget calls; "
-        f"got {swaps.regions!r}"
-    )
+    assert Region.RIGHT_RAIL not in builds.regions
 
 
 async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
@@ -223,7 +216,7 @@ async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
     )
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
-    with _SwapCounter() as swaps:
+    with _RegionBuildCounter() as builds:
         async with host.run_test(size=(180, 50)) as pilot:
             await pilot.pause(0.2)
             screen = host.screen_stack[-1]
@@ -236,16 +229,13 @@ async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
                 "RIGHT_RAIL was not part of the user's saved collapse set "
                 "and must render expanded"
             )
-            assert screen.query("#wl-header-left_rail"), (
+            assert not screen.query_one("#wl-grip-left_rail").expanded, (
                 "LEFT_RAIL is the region the user actually collapsed and "
                 "must render collapsed on the first paint"
             )
             assert not screen.query("#wl-region-left_rail")
 
-    assert swaps.regions == [], (
-        "a deliberately-chosen non-default layout must still cold-open with "
-        f"zero swaps; got {swaps.regions!r}"
-    )
+    assert Region.LEFT_RAIL not in builds.regions
 
 
 async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_no_swap(
@@ -262,7 +252,7 @@ async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_
     )
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
-    with _SwapCounter() as swaps:
+    with _RegionBuildCounter() as builds:
         async with host.run_test(size=(180, 50)) as pilot:
             await pilot.pause(0.2)
             screen = host.screen_stack[-1]
@@ -276,9 +266,7 @@ async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_
                 "already collapsed"
             )
 
-    assert swaps.regions == [], (
-        f"a real fresh-config cold open must perform zero swaps; got {swaps.regions!r}"
-    )
+    assert Region.RIGHT_RAIL not in builds.regions
 
 
 # ---------------------------------------------------------------------------
@@ -317,3 +305,76 @@ async def test_mount_schedules_no_persist_worker_when_nothing_changed(monkeypatc
             "on_mount must not schedule a persist worker when construction "
             "already loaded and primed this exact layout"
         )
+
+
+async def test_preferred_layout_survives_an_isolated_fresh_restart(
+    monkeypatch, tmp_path
+) -> None:
+    """Only preferred side-pane state crosses a real config restart."""
+    profile = tmp_path / "restart-profile"
+    home = profile / "home"
+    config_home = profile / "config-home"
+    config_path = config_home / "tldw_cli" / "config.toml"
+    home.mkdir(parents=True)
+    config_path.parent.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    for name in (
+        "_CONFIG_CACHE",
+        "_CONFIG_CACHE_SOURCE",
+        "_SETTINGS_CACHE",
+        "_SETTINGS_CACHE_SOURCE",
+    ):
+        monkeypatch.setattr(config_module, name, None)
+    monkeypatch.setattr(
+        _LOAD_REGION_LAYOUT_TARGET, region_layout_store.load_region_layout
+    )
+
+    desired = RegionLayout(
+        collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS})
+    )
+    assert save_settings_to_cli_config(
+        {
+            "watchlists": {
+                "collapsed_regions": [
+                    "content",
+                    Region.LEFT_RAIL.value,
+                    Region.ITEMS.value,
+                ],
+                "layout_version": 1,
+            }
+        }
+    )
+
+    first = WatchlistsCollectionsScreen(_build_test_app())
+    assert first.region_layout == desired
+    first._article_focus_active = True
+    first._effective_region_layout = RegionLayout(
+        collapsed=frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
+        )
+    )
+    first._responsive_priority_target = Region.RIGHT_RAIL
+
+    config_module._invalidate_config_caches()
+    restarted = WatchlistsCollectionsScreen(_build_test_app())
+    assert restarted.region_layout == desired
+    assert restarted._effective_region_layout == desired
+    assert restarted._article_focus_active is False
+    assert restarted._responsive_priority_target is None
+
+    persisted = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["watchlists"]["collapsed_regions"] == [
+        Region.LEFT_RAIL.value,
+        Region.ITEMS.value,
+    ]
+    assert persisted["watchlists"]["layout_version"] == (
+        region_layout_store.LAYOUT_VERSION
+    )
+    assert "content" not in persisted["watchlists"]["collapsed_regions"]
+
+    config_module._invalidate_config_caches()
+    restarted_again = WatchlistsCollectionsScreen(_build_test_app())
+    assert restarted_again.region_layout == desired
+    assert Region.CONTENT not in restarted_again.region_layout.collapsed

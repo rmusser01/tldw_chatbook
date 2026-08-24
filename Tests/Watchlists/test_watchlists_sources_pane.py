@@ -3,7 +3,7 @@
 import pytest
 from rich.style import Style
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Switch, TextArea
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
@@ -376,7 +376,7 @@ def sample_sources():
 @pytest.mark.asyncio
 async def test_sources_pane_renders_table_and_toolbar():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         assert pane.query_one("#sources-search-input", Input)
         assert pane.query_one("#sources-type-select", Select)
@@ -390,7 +390,7 @@ async def test_the_last_checked_column_uses_the_check_vocabulary():
     column was the one holdout still saying "Last scraped" while every
     button/toast elsewhere on this screen says "check"/"Check now"."""
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         table = pane.query_one("#sources-table", DataTable)
         columns = [str(col.label) for col in table.columns.values()]
@@ -408,7 +408,7 @@ async def test_toolbar_filter_selects_each_carry_a_visible_label():
     each Select instead carries a `tooltip` naming what it filters -- the
     one mechanism here that costs no column."""
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
 
         def tooltip_mentions(select_id: str, *keywords: str) -> None:
@@ -541,7 +541,7 @@ async def test_sources_pane_new_source_form_carries_selected_check_frequency():
 @pytest.mark.asyncio
 async def test_sources_pane_action_buttons_exist():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         assert pane.query_one("#sources-preview-button", Button)
         assert pane.query_one("#sources-check-now-button", Button)
@@ -552,7 +552,7 @@ async def test_sources_pane_action_buttons_exist():
 @pytest.mark.asyncio
 async def test_sources_pane_preview_and_check_now_disabled_without_selection():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(SourcesPane)
         preview = pane.query_one("#sources-preview-button", Button)
         check_now = pane.query_one("#sources-check-now-button", Button)

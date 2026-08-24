@@ -18,10 +18,8 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static
 
 from ...Subscriptions.html_text import readable_body_text, strip_control_characters
-from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
-from .inspector_pane import IngestRequested, ToggleBriefingQueueRequested
 from .items_pane import NextUnreadRequested
 
 # Every item persisted before Phase A carries `content = NULL`, and it cannot
@@ -262,27 +260,6 @@ class UnreadToggleRequested(Message):
         super().__init__()
 
 
-class ViewSnapshotRequested(Message):
-    """Posted when the reader asks to see a `change` item's stored page.
-
-    TASK-1494: the design spec's Content-pane mockup promised `[full page]`
-    and `[previous snapshot]` affordances reading from `url_snapshots`, and
-    Phase D shipped both renderers without them -- the data was stored and
-    unreachable. `which` is `"full_page"` for the newest `url_snapshots`
-    row (the page this change's diff was measured against) or `"previous"`
-    for the second-newest (the page as it was one check before that); the
-    screen's handler resolves which row that actually is, since this pane
-    holds no DB handle of its own (see `ContentPane`'s own docstring).
-    Carries the full item dict, same as `UnreadToggleRequested`, so the
-    handler can read `source_id`/`url` off it without a second lookup.
-    """
-
-    def __init__(self, item: dict[str, Any] | None, which: str) -> None:
-        self.item = item
-        self.which = which
-        super().__init__()
-
-
 class StarToggleRequested(Message):
     """Posted when the reader's Star button is pressed (TASK-3072 plan task 7).
 
@@ -308,19 +285,6 @@ class OpenInBrowserRequested(Message):
         self.item = item
         super().__init__()
 
-class ExpandReaderRequested(Message):
-    """Posted when the reader asks for (or gives back) the whole centre stack.
-
-    TASK-2307 AC#2 (UAT F27). The reader is bounded in the ordinary centre
-    stack, and the only keyboard ways to enlarge it -- `z` on the sibling
-    regions, `Z` on this one -- require focus to already be inside the region.
-    This is the visible affordance for the same existing layout action.
-
-    Carries no payload: the screen owns `region_layout` and this pane must not
-    hold a second opinion about it (see `ContentPane.expanded`).
-    """
-
-
 class ContentPane(RecomposeCaptureGuard, Vertical):
     """Hosts the reader for the currently selected item.
 
@@ -336,47 +300,9 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
 
     item: reactive[dict[str, Any] | None] = reactive(None, recompose=True)
 
-    #: Whether CONTENT is currently the only expanded centre region, i.e.
-    #: whether the expand button should offer to give the room BACK.
-    #:
-    #: Seeded by `WatchlistsCollectionsScreen._build_content_pane` from the
-    #: live `RegionLayout` and never written here: the layout has exactly one
-    #: owner, and a pane that guessed would show `Restore` over a bounded
-    #: reader the moment the two drifted. A plain reactive, not
-    #: `recompose=True`: `watch_expanded` relabels the one button in place,
-    #: which is the whole visible difference (task-15461).
-    expanded: reactive[bool] = reactive(False)
-
-    def watch_expanded(self, expanded: bool) -> None:
-        """Relabel the expand button in place -- never a reader recompose.
-
-        Until task-15461 this reactive needed no watcher: EVERY layout change
-        recomposed the whole workbench, so `_build_content_pane` rebuilt this
-        pane (button label included) from the fresh layout. Layout changes are
-        now scoped to the regions whose form actually moved, and soloing
-        CONTENT does not move CONTENT's own form -- it collapses ITEMS, the
-        sibling -- so this pane keeps its instance and the label is the one
-        thing left to repaint. Without this, pressing Expand left a button
-        still reading "Expand" over a reader that had already taken the whole
-        centre.
-
-        Args:
-            expanded: Whether CONTENT is now the only expanded centre region.
-        """
-        try:
-            self.query_one("#content-expand-button", Button).label = (
-                "Restore" if expanded else "Expand"
-            )
-        except NoMatches:
-            # Pre-mount seeding (`_build_content_pane`), or the empty state,
-            # which composes no action strip at all; `compose` reads the
-            # reactive itself.
-            pass
-
     #: The reader footer's "N of M" (TASK-3072 plan task 9).
     #:
-    #: Screen-pushed, exactly like `expanded` above and for the same reason:
-    #: this pane holds no list state, so it cannot number the open item
+    #: Screen-pushed because this pane holds no list state, so it cannot number the open item
     #: itself -- the screen computes the position from the article list's
     #: `displayed_items()` on every selection and pushes the string here
     #: (and re-seeds it in `_build_content_pane`, so a region rebuild
@@ -403,16 +329,15 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
 
         Yields:
             A single `#content-empty` `Static` when no item is selected;
-            otherwise a one-row `#content-actions` strip holding
-            `#content-mark-unread-button`, `#content-expand-button`
-            (TASK-2307) and, on a `change`-kind item only, the
-            `#content-full-page-button`/`#content-previous-snapshot-button`
-            pair (TASK-1494) -- followed by `#content-body-scroll`, which
-            contains the existing `#content-body` `Static`, and the fixed
-            `#content-footer` action strip.
+            otherwise a one-row `#content-actions` strip holding Star,
+            Mark unread, and Open -- followed by `#content-body-scroll`,
+            which contains the existing `#content-body` `Static`, and the
+            fixed `#content-footer` action strip.
         """
         if self.item is None:
-            yield Static("Select an item to read it.", id="content-empty")
+            yield Static(
+                "Select a feed item to display it here.", id="content-empty"
+            )
             return
         # Task 5: the reader marks an item read on open (see the screen's
         # `_mark_item_read_on_open`); this button is the deliberate way
@@ -425,18 +350,9 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         # three rows tall (top border, label, bottom border); the established
         # one-row reader chrome keeps those rows available for the article.
         #
-        # TASK-2307: the buttons share ONE `.destination-filter-strip` row
-        # (`height: 1`, the same chrome every toolbar on this screen uses)
-        # rather than stacking. A `change` item previously spent three of the
-        # reader on three stacked buttons; it now spends one, which preserves
-        # the body budget and makes room for the expand affordance.
+        # The buttons share one one-row toolbar so the article keeps the body
+        # budget.
         with HorizontalScroll(id="content-actions", classes="destination-filter-strip"):
-            yield Button(
-                "Mark unread",
-                id="content-mark-unread-button",
-                tooltip=_GLOBAL_STATUS_NOTE,
-                compact=True,
-            )
             # TASK-3072 plan task 7: the same star the `s` key toggles, as a
             # button. The label reflects the open item's state on compose and
             # flips on the screen's SUCCESS path (see `on_button_pressed` --
@@ -447,69 +363,19 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 tooltip=_GLOBAL_STAR_NOTE,
                 compact=True,
             )
-            # TASK-3072 plan task 8: the rest of the reader's verbs. Open is
-            # the `o` key's button half; Ingest and Queue/Unqueue post the
-            # Inspector's OWN message classes, so one screen handler serves
-            # both surfaces (the queue label states the CURRENT value, the
-            # Inspector's own `_queue_briefing_button` rule). Buttons only --
-            # the spec assigns no keys to these two.
+            yield Button(
+                "Mark unread",
+                id="content-mark-unread-button",
+                tooltip=_GLOBAL_STATUS_NOTE,
+                compact=True,
+            )
+            # TASK-3072 plan task 8: Open is the `o` key's button half.
             yield Button(
                 "Open",
                 id="content-open-button",
                 tooltip="Open this item in your browser (keyboard: o).",
                 compact=True,
             )
-            yield Button(
-                "Ingest",
-                id="content-ingest-button",
-                tooltip=(
-                    "File this item into the library. Ingesting is shared: "
-                    "it shows as ingested everywhere it appears."
-                ),
-                compact=True,
-            )
-            yield Button(
-                "Unqueue" if self.item.get("queued_for_briefing") else "Queue",
-                id="content-queue-button",
-                tooltip=(
-                    "Remove this item from the pool the next briefing draws from."
-                    if self.item.get("queued_for_briefing")
-                    else "Add this item to the pool the next briefing draws from."
-                ),
-                compact=True,
-            )
-            # AC#2. `Z` does the same thing from the keyboard, and the tooltip
-            # says so -- but only once the user knows the region has to be
-            # focused first, which is exactly the knowledge F27 says nothing
-            # on screen conveys. The button needs no focus at all.
-            yield Button(
-                "Restore" if self.expanded else "Expand",
-                id="content-expand-button",
-                compact=True,
-                tooltip=(
-                    "Give the reader the whole centre pane, and press again "
-                    "to put Feeds and Items back (keyboard: Z)."
-                ),
-            )
-            if str(self.item.get("content_kind") or "") == CONTENT_KIND_CHANGE:
-                # TASK-1494: the two affordances the design spec promised for
-                # a site change and Phase D never wired up. Article items
-                # never get these -- only `URLMonitor.check_url` (a
-                # `change`-kind producer) ever writes `url_snapshots`, so an
-                # article item has no rows there to show and the buttons would
-                # open a modal with nothing in it.
-                yield Button(
-                    "Full page",
-                    id="content-full-page-button",
-                    compact=True,
-                    tooltip="Open the page this change was measured against.",
-                )
-                yield Button(
-                    "Previous snapshot",
-                    id="content-previous-snapshot-button",
-                    compact=True,
-                    tooltip="Open the page as it was before this change.",
-                )
         with VerticalScroll(id="content-body-scroll"):
             yield Static(render_for(self.item), id="content-body")
         # TASK-3072 plan task 9: the position footer. "N of M" is seeded and
@@ -541,30 +407,6 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         elif event.button.id == "content-open-button":
             event.stop()
             self.post_message(OpenInBrowserRequested(self.item))
-        elif event.button.id == "content-ingest-button":
-            event.stop()
-            self.post_message(IngestRequested(self.item))
-        elif event.button.id == "content-queue-button":
-            event.stop()
-            # The Inspector's own press-site shape: the raw row id, and the
-            # value to set the flag TO (the flip of the current one).
-            item = self.item or {}
-            item_id = item.get("item_id")
-            if item_id is not None:
-                self.post_message(
-                    ToggleBriefingQueueRequested(
-                        item_id, not bool(item.get("queued_for_briefing"))
-                    )
-                )
         elif event.button.id == "content-next-unread-button":
             event.stop()
             self.post_message(NextUnreadRequested())
-        elif event.button.id == "content-full-page-button":
-            event.stop()
-            self.post_message(ViewSnapshotRequested(self.item, "full_page"))
-        elif event.button.id == "content-previous-snapshot-button":
-            event.stop()
-            self.post_message(ViewSnapshotRequested(self.item, "previous"))
-        elif event.button.id == "content-expand-button":
-            event.stop()
-            self.post_message(ExpandReaderRequested())

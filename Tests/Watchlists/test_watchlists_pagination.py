@@ -657,7 +657,7 @@ async def test_tree_scope_change_resets_and_reloads_page_one():
 
 
 @pytest.mark.asyncio
-async def test_backend_change_reloads_read_but_not_a_hidden_read_section():
+async def test_backend_change_blocks_server_read_and_does_not_load_hidden_read():
     controller = AsyncMock()
     controller.list_items.return_value = _items(100, 51)
 
@@ -669,11 +669,11 @@ async def test_backend_change_reloads_read_but_not_a_hidden_read_section():
         controller.list_items.return_value = _items(0, 1)
 
         screen.runtime_backend = "server"
-        await _wait_until(pilot, lambda: controller.list_items.await_count == 1)
-        await _wait_until(pilot, lambda: not screen._items_page_loading)
-        assert controller.list_items.await_args.kwargs["runtime_backend"] == "server"
-        assert controller.list_items.await_args.kwargs["offset"] == 0
+        await pilot.pause(0.2)
+        assert controller.list_items.await_count == 0
         assert screen._items_page_index == 0
+        assert screen._items_page_loading is False
+        assert screen._loaded_items == []
 
         screen.active_section = "sources"
         await pilot.pause(0.1)
@@ -710,7 +710,7 @@ async def test_selection_during_search_debounce_keeps_prior_committed_key():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("changed_field", ["backend", "scope", "status", "search"])
+@pytest.mark.parametrize("changed_field", ["scope", "status", "search"])
 async def test_query_context_changes_do_not_pin_the_open_item(changed_field):
     controller = AsyncMock()
     controller.list_items.return_value = _items(0, 2)
@@ -720,9 +720,7 @@ async def test_query_context_changes_do_not_pin_the_open_item(changed_field):
         open_item = screen._loaded_items[0]
         screen._selected_content_item = open_item
         screen._selected_content_page_key = screen._items_committed_page_key
-        if changed_field == "backend":
-            screen.__dict__["_reactive_runtime_backend"] = "server"
-        elif changed_field == "scope":
+        if changed_field == "scope":
             screen.__dict__["_reactive_tree_scope"] = TreeScope(
                 kind="watchlist", watchlist_id=7
             )

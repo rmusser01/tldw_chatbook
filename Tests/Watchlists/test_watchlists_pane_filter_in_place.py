@@ -38,7 +38,10 @@ pytestmark = pytest.mark.unit
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if now.astimezone().hour < 6:
+        return now + timedelta(hours=12)
+    return now
 
 
 def _item(
