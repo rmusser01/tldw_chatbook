@@ -153,7 +153,18 @@ def mosaic_contain_cell_size(
     box_cols: int,
     box_lines: int,
 ) -> tuple[int, int]:
-    """Return the exact cell grid produced by the mosaic contain path."""
+    """Return the exact cell grid produced by the mosaic contain path.
+
+    Args:
+        pixel_width: Source image width in pixels.
+        pixel_height: Source image height in pixels.
+        box_cols: Available terminal width in character cells.
+        box_lines: Available terminal height in character cells.
+
+    Returns:
+        Rendered width and height in terminal cells, or ``(0, 0)`` when the
+        destination box has no usable area.
+    """
 
     if box_cols <= 0 or box_lines <= 0:
         return 0, 0

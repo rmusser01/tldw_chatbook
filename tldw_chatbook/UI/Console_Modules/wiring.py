@@ -174,6 +174,19 @@ def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
     speech_controls.sync_hands_free_state(active)
 
 
+def _query_console_owner(
+    screen: Any,
+    selector: str,
+    fallback: object | None,
+) -> object | None:
+    """Return a mounted Console owner or its stable lifecycle fallback."""
+
+    try:
+        return screen.query_one(selector)
+    except QueryError:
+        return fallback
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
@@ -452,12 +465,20 @@ def build_console_controllers(
         wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
         workspace_tree_owner_accessor=(
-            lambda: screen.query_one("#console-workspace-tree")
+            lambda: _query_console_owner(
+                screen,
+                "#console-workspace-tree",
+                None,
+            )
         ),
         flat_conversation_owner_accessor=(
             lambda: (
                 getattr(screen, "_console_conversation_browser_owner", None)
-                or screen.query_one("#console-workspace-context")
+                or _query_console_owner(
+                    screen,
+                    "#console-workspace-context",
+                    screen,
+                )
             )
         ),
         screen_lifecycle_token_accessor=lambda: getattr(screen, "_task", screen),

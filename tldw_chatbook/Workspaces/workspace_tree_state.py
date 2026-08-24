@@ -48,7 +48,22 @@ def build_workspace_tree_state(
     active_workspace_id: str | None = None,
     query: str = "",
 ) -> tuple[WorkspaceTreeWorkspace, ...]:
-    """Build the named-workspace projection without I/O or UI dependencies."""
+    """Build the named-workspace projection without I/O or UI dependencies.
+
+    Args:
+        workspaces: Workspace ID and display-label pairs.
+        rows: Conversation rows eligible for workspace projection.
+        next_cursors: Next page cursor by workspace ID.
+        loading: Loading state by workspace ID.
+        errors: User-visible page error by workspace ID.
+        retry_cursors: Retry cursor by workspace ID.
+        membership_unknown: Whether workspace membership is incomplete by ID.
+        active_workspace_id: Currently active workspace ID, if any.
+        query: Case-insensitive workspace or conversation-title filter.
+
+    Returns:
+        Named workspace nodes with deterministic conversation ordering.
+    """
     cursors = dict(next_cursors or {})
     loading_by_workspace = dict(loading or {})
     errors_by_workspace = dict(errors or {})

@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from textual.css.query import QueryError
 from textual.widgets import Button, Input
 
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -138,6 +139,34 @@ async def test_default_row_labeled_everyday_chats() -> None:
         assert DEFAULT_WORKSPACE_ID not in {
             node.workspace_id for node in state.workspace_tree
         }
+
+
+@pytest.mark.asyncio
+async def test_owner_tokens_fall_back_while_rail_widgets_are_unmounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._workspace
+
+        def query_unmounted(*_args, **_kwargs):
+            raise QueryError("rail widget is not mounted")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                console,
+                "_console_conversation_browser_owner",
+                None,
+                raising=False,
+            )
+            patch.setattr(console, "query_one", query_unmounted)
+
+            assert controller._workspace_tree_owner_token() is None
+            assert controller._flat_conversation_owner_token() is console
 
 
 @pytest.mark.asyncio

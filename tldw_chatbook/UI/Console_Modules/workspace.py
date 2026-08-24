@@ -106,15 +106,15 @@ def persist_console_workspace_tree_expansion_preferences(
         logger.warning("Failed to persist Workspace Tree disclosure: {}", exc)
 
 
-class _UnknownMembership:
+class UnknownMembership:
     __slots__ = ()
 
 
-_MEMBERSHIP_UNKNOWN = _UnknownMembership()
+_MEMBERSHIP_UNKNOWN = UnknownMembership()
 
 
 @dataclass(slots=True)
-class _SearchAttemptState:
+class SearchAttemptState:
     """One projection's explicit debounce, request, result, and Retry state."""
 
     query: str = ""
@@ -135,7 +135,7 @@ class _SearchAttemptState:
 
 
 @dataclass(slots=True)
-class _PageAttemptState:
+class PageAttemptState:
     """One workspace's bounded page request and accumulated child state."""
 
     generation: int = 0
@@ -360,9 +360,9 @@ class ConsoleWorkspaceController:
             lambda _conversation_id: None
         )
 
-        self._workspace_tree_search = _SearchAttemptState()
-        self._flat_conversation_search = _SearchAttemptState()
-        self._workspace_page_attempts: dict[str, _PageAttemptState] = {}
+        self._workspace_tree_search = SearchAttemptState()
+        self._flat_conversation_search = SearchAttemptState()
+        self._workspace_page_attempts: dict[str, PageAttemptState] = {}
         self._collapsed_workspace_ids: set[str] = set()
         self._workspace_membership_rows: dict[
             str, tuple[ConsoleConversationBrowserInputRow, ...]
@@ -980,12 +980,12 @@ class ConsoleWorkspaceController:
         *,
         rows: Iterable[ConsoleConversationBrowserInputRow] = (),
         next_cursor: int | None = None,
-    ) -> _PageAttemptState:
-        return _PageAttemptState(rows=tuple(rows), next_cursor=next_cursor)
+    ) -> PageAttemptState:
+        return PageAttemptState(rows=tuple(rows), next_cursor=next_cursor)
 
     def _workspace_membership_token(
         self, workspace_id: str
-    ) -> tuple[str, ...] | _UnknownMembership:
+    ) -> tuple[str, ...] | UnknownMembership:
         service = getattr(self.app_instance, "workspace_registry_service", None)
         list_conversations = getattr(service, "list_workspace_conversations", None)
         if not callable(list_conversations):
@@ -1006,7 +1006,7 @@ class ConsoleWorkspaceController:
         workspace_id = str(workspace_id or "").strip()
         cursor = max(0, int(cursor))
         attempt = self._workspace_page_attempts.setdefault(
-            workspace_id, _PageAttemptState()
+            workspace_id, PageAttemptState()
         )
         if attempt.loading and attempt.request_key is not None:
             return
@@ -1067,7 +1067,7 @@ class ConsoleWorkspaceController:
     def request_workspace_tree_page(self, workspace_id: str, cursor: int) -> None:
         """Schedule one page worker without canceling another workspace lane."""
         target = str(workspace_id or "").strip()
-        attempt = self._workspace_page_attempts.setdefault(target, _PageAttemptState())
+        attempt = self._workspace_page_attempts.setdefault(target, PageAttemptState())
         if attempt.loading:
             return
         attempt.loading = True
@@ -1503,7 +1503,7 @@ class ConsoleWorkspaceController:
                 )
                 continue
             attempt = self._workspace_page_attempts.setdefault(
-                workspace_id, _PageAttemptState()
+                workspace_id, PageAttemptState()
             )
             attempt.rows = self._merge_page_rows(attempt.rows, rows)
             attempt.membership_token = current_tokens[workspace_id]
