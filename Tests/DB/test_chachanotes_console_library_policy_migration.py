@@ -1,4 +1,13 @@
-"""V47 -> V48 Console Library policy and dispatch schema migration."""
+"""V47 -> V48 Console Library policy and dispatch schema migration.
+
+This file held the repo's exact current-schema-version pin while v48 was the
+newest step. task-21128 added v48 -> v49, so the pin moved to
+``Tests/DB/test_chachanotes_v49_messages_fts_update_scope.py`` -- the pin
+belongs to the NEWEST migration's own file, so a schema bump touches the file
+that caused it. The end-state assertions here now read
+``_CURRENT_SCHEMA_VERSION`` instead of a literal; a version literal stays
+correct only at a fixture's SEEDED starting point, never after an upgrade.
+"""
 
 from __future__ import annotations
 
@@ -166,7 +175,7 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
     )
     connection = db.get_connection()
 
-    assert _version(connection) == 48
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert _column_contract(connection, "console_conversation_library_policy") == [
         ("conversation_id", "TEXT", 0, None, 1),
         ("schema_version", "INTEGER", 1, "1", 0),
@@ -664,4 +673,8 @@ def test_two_concurrent_openers_converge_on_one_complete_seed(
 
     assert len(calls) == 1
     winner = int(calls[0])
-    assert results == [(48, (winner, winner)), (48, (winner, winner))]
+    current = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    assert results == [
+        (current, (winner, winner)),
+        (current, (winner, winner)),
+    ]

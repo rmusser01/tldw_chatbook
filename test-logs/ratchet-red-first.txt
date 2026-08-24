@@ -1,5 +1,0 @@
-pin                      = 97
-base 30c7e1fe9 count     = 107  -> ratchet FAILS (RED, as required)
-converted tree count     = 97  -> ratchet PASSES
-net per-click reduction  = 10 statements
-RED-FIRST CONFIRMED

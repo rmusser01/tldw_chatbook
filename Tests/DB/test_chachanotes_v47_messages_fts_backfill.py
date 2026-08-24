@@ -23,12 +23,19 @@ empty-but-consistent after the upgrade commits and fills oldest-rowid-first in
 the background; message-content search returns progressively more history
 until the backfill completes, never errors, and never returns tombstoned rows.
 
-This module carries the repo's EXACT current-schema-version pin. It reached
-here from ``test_chachanotes_sync_log_retention_migration.py`` (v46) because
-the pin belongs to the NEWEST migration's own file, so a schema bump touches
-the file that caused it rather than an unrelated older one (older files assert
-``>=`` their own version instead). Updating the number here is a deliberate
-schema-review act.
+This module CARRIED the repo's EXACT current-schema-version pin while v47 was
+the newest step; the pin moved on to
+``Tests/DB/test_chachanotes_v48_messages_fts_update_scope.py`` when task-21128
+added v48, because the pin belongs to the NEWEST migration's own file, so a
+schema bump touches the file that caused it rather than an unrelated older
+one. This file now asserts ``>= 47``, like every older migration file, and its
+end-state assertions read ``_CURRENT_SCHEMA_VERSION`` rather than a literal --
+a version literal is only correct at a fixture's SEEDED starting point.
+
+task-21128 (v48) narrowed ``messages_au`` to ``AFTER UPDATE OF content,
+deleted``. Every guard this module pins is unaffected: the delete half still
+carries ``old.deleted = 0`` plus the ``messages_fts_docsize`` membership test,
+and every mutation exercised below writes ``content`` or ``deleted``.
 
 Assertion style follows ``test_fts_soft_delete_index_witness.py``: the FTS
 index is queried DIRECTLY (never through a consumer that re-filters on
@@ -172,10 +179,10 @@ def db(tmp_path: Path):
     instance.close_connection()
 
 
-def test_schema_version_is_47(db):
-    """The one exact current-version pin (see this module's docstring)."""
-    assert _version(db.get_connection()) == 47
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 47
+def test_schema_version_is_at_least_47(db):
+    """The exact pin moved with the newest step (see this module's docstring)."""
+    assert _version(db.get_connection()) >= 47
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 47
 
 
 def test_fresh_schema_guards_the_messages_fts_delete_halves_on_membership(db):
@@ -217,7 +224,7 @@ def test_upgrade_from_v45_defers_the_messages_fts_reinsert(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v47-upgrade")
     try:
-        assert _version(migrated.get_connection()) == 47
+        assert _version(migrated.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         # The version bump landed WITHOUT the O(total chat text) reinsert.
         assert _docsize_rowids(migrated) == set()
         # Window semantics: search is empty-but-consistent, never an error.
@@ -343,7 +350,7 @@ while True:
 
     resumed = CharactersRAGDB(db_path, client_id="v47-after-kill")
     try:
-        assert _version(resumed.get_connection()) == 47
+        assert _version(resumed.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         remaining = backfill_chachanotes_messages_fts(resumed, chunk_size=7)
         assert 0 < remaining <= 40 - 4
         assert _docsize_rowids(resumed) == _live_rowids(resumed)
@@ -501,7 +508,7 @@ def test_v47_leaves_a_complete_index_alone(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v47-complete")
     try:
-        assert _version(migrated.get_connection()) == 47
+        assert _version(migrated.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _docsize_rowids(migrated) == complete
         assert len(_fts_rowids(migrated, "completeneedle002")) == 1
         # Nothing pending: the driver's first chunk finds nothing.
@@ -550,7 +557,7 @@ def test_a_failure_mid_v47_rewinds_the_whole_chain(
     monkeypatch.undo()
     migrated = CharactersRAGDB(db_path, client_id="poison-removed")
     try:
-        assert _version(migrated.get_connection()) == 47
+        assert _version(migrated.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _docsize_rowids(migrated) == set()
         assert backfill_chachanotes_messages_fts(migrated) == 1
         assert _fts_rowids(migrated, "poisonneedle") == rowids
