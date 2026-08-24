@@ -20,8 +20,8 @@ spatial roles:
 The redesign keeps the existing media-reading scope service, list state, viewer state, and media
 records authoritative. It changes the information architecture and interaction model rather than
 creating a parallel media backend. Manual pane choices persist; responsive collapses are temporary.
-The Reader defaults to complete stored text and may add a richer preview when the current runtime
-can render one safely.
+The Reader defaults to complete stored text and adds a capability-gated inline image preview for
+eligible local image records without replacing that text.
 
 Library Media and Watchlists deliberately share an interaction grammar—permanent centre content,
 full-height five-column ASCII grips, preferred-versus-effective layout, and minimum-width
@@ -69,6 +69,22 @@ The existing service layer already provides:
 - authoritative stored content and metadata used by Console handoff.
 
 The redesign exposes these capabilities in a stable reader shell instead of duplicating them.
+
+### Backend scope
+
+The Media Items pane remains **local-only** in this redesign. It starts in Local, has no backend
+selector, does not merge local and server records, and sends list, filter, detail, Read Later,
+progress, delete, restore, and Console-handoff operations through `mode="local"`. This matches the
+current Library Media browse population and avoids presenting an unshipped server catalogue as if
+it already existed.
+
+The existing finished-server-ingest route remains a compatibility exception: opening its remote
+result may show that single server item in Reader, explicitly labelled **Server item · not in local
+Media list**. Items keeps its local snapshot and has no selected or loaded row for that external
+detail session. The external detail is read-only except for Find, Open original, and Use in Console
+when their existing contracts are available; it does not expose local-only Read Later, progress,
+Highlights, metadata mutation, or delete actions. Back or selecting any local row exits the external
+session. Adding server browse/search or a persistent backend selector is a separate design task.
 
 ## Information architecture
 
@@ -126,8 +142,9 @@ Layout has three explicit layers:
 3. **Effective layout** — the derived layout rendered for the current width.
 
 The default is fixed target widths. Settings may opt into custom pane widths and reset them to
-defaults. Custom widths are clamped to declared minimums and a reasonable maximum before they
-participate in resolution. Derived responsive collapses are never written back as preferences.
+defaults. Custom widths are clamped to declared minimums and implementation constants for their
+maximums before they participate in resolution. Derived responsive collapses are never written
+back as preferences.
 
 ### Width calculation
 
@@ -141,9 +158,22 @@ terminal width—and declared target/minimum component widths:
 | Reader | flexible / 44 comfort columns |
 | Each mounted grip | 5 fixed columns |
 
-Starting from the preferred layout, the resolver collapses side panes until Reader comfort, all
-mounted grips, and expanded-pane minimums fit. Normal collapse priority is Library first, then
-Items. Reader is never a candidate.
+Normal responsive resolution uses the configured **target** widths, not a fluid interpolation
+between target and minimum. Starting from the preferred layout, it evaluates whether Reader
+comfort, every mounted grip, and the expanded panes at target width fit. If they do not, it
+collapses Library first, then Items, and re-evaluates after each collapse. For the chosen pane set,
+expanded panes receive exactly their configured targets and Reader receives every remaining
+column. This makes the fixed-default promise and capture thresholds deterministic. Reader is never
+a collapse candidate.
+
+Minimum widths are used for two narrower contracts only: validating custom-width settings and
+honouring any explicit request to open a currently collapsed pane at the current width, whether it
+was preferred-collapsed or responsively hidden. On explicit open, preferred state becomes open, the
+requested pane becomes the temporary priority target, the other pane collapses first if necessary,
+and the requested pane may compress only as far as its minimum. If Reader comfort still cannot fit,
+Reader may consume less than 44 columns because comfort is soft; the requested pane and both grips
+remain reachable. Returning width restores that pane to its target. Normal resize never leaves an
+expanded pane at an intermediate width.
 
 The 44-column Reader value is a comfort threshold, not a hard CSS minimum. When both panes are
 collapsed, both grips remain and Reader consumes the remaining width with `min-width: 0`; no
@@ -151,11 +181,12 @@ horizontal overflow is introduced. The supported live-verification floor is 60 s
 grips consume 10 and Reader receives 50. Below that floor the content may truncate, but the shell
 must remain reachable and must not raise a compositor exception.
 
-If the user explicitly opens a pane hidden by the responsive override, that pane becomes the
-temporary priority target for the current width. Its preferred state is persisted as open and the
-resolver may collapse the other side pane to honor the action. A small hysteresis band around
-collapse/expand thresholds prevents layout thrash during resize. Repeated shrink/expand cycles are
-idempotent and restore the preferred wide layout when space returns.
+Activating any collapsed grip is an explicit open and therefore uses that temporary-priority rule;
+the resolver may not immediately collapse the requested pane again at the same width. The priority
+lasts until another manual pane action or until available width can render the full preferred
+layout. A small hysteresis band around collapse/expand thresholds prevents layout thrash during
+resize. Repeated shrink/expand cycles are idempotent and restore the preferred wide layout when
+space returns.
 
 Representative whole-terminal captures should normally produce:
 
@@ -163,7 +194,7 @@ Representative whole-terminal captures should normally produce:
 | --- | --- |
 | 160×50 | Library + Items + Reader |
 | 120×35 | Items + Reader, Library responsively collapsed |
-| 100×30 | Items + Reader when minima fit; otherwise Reader-only |
+| 100×30 | Items + Reader when the Items target and Reader comfort fit; otherwise Reader-only |
 | 80×24 | Reader-only with both grips available |
 
 These captures validate the resolver; they do not define breakpoints. Actual decisions derive from
@@ -195,6 +226,16 @@ The pane distinguishes:
 - **Loaded in Reader** — Reader is showing that row's detail.
 
 This prevents a blue highlight from falsely claiming that adjacent stale content belongs to it.
+
+### Existing bulk actions
+
+Media multi-select, select-all-visible, bulk export, and bulk delete remain available as existing
+list-level capabilities. Entering selection mode changes the Items header to the current selected
+count and its established Select all, Clear, Export, Move to trash, and Cancel actions; Reader keeps
+showing the last singly loaded item but does not imply that it represents the bulk set. This slice
+does not redesign bulk export payloads, bulk-delete partial-failure behavior, or add bulk Undo.
+Single-item selection/loading and the single-item Undo contract below resume when selection mode
+ends.
 
 ## Selection and loading model
 
@@ -274,14 +315,26 @@ semantics in a separately accepted task.
 
 ## Stored content, rich preview, and provenance
 
-Complete stored text/Markdown is always the authoritative readable fallback and is never replaced
-or truncated merely because richer rendering is available. Rich preview is optional enhancement:
+Complete stored text/Markdown is always the authoritative readable representation and is never
+replaced or truncated merely because richer rendering is available. V1 rich preview has one narrow
+contract:
 
-- mount it only when the record advertises a supported representation and the current Textual
-  runtime can render it safely;
-- keep the complete text representation reachable in the same item session;
-- label preview failure without turning the item into an overall load failure;
-- never require rich rendering in headless tests.
+- it is eligible only for a local record whose original file is available and whose normalized
+  media type or MIME type is PNG, JPEG, or WebP;
+- it uses a small injected renderer adapter over the application's existing terminal-image
+  capability ladder; it does not introduce a new general media framework;
+- when eligible, Read mounts the image above the complete stored text and exposes **Hide preview** /
+  **Show preview** in the Read surface; showing the preview is the per-item session default;
+- hiding or failing the preview never hides, replaces, or changes the complete stored text below;
+- GIF animation, PDF pages, audio, video, remote URLs, and server-item rich preview are out of
+  scope;
+- no remote asset is fetched merely to create a preview;
+- headless operation uses capability-off behavior unless a fake renderer is injected.
+
+Eligibility and rendering are separate: an eligible file with unavailable optional dependencies
+shows complete text plus **Image preview unavailable**. Decode/render failure shows **Image preview
+failed — showing complete stored text** and an item-local Retry action without turning the overall
+item load into a failure.
 
 Info identifies:
 
@@ -314,7 +367,7 @@ soft delete:
 3. load that row into Reader, or show the empty state;
 4. show a bounded **Undo** action.
 
-Undo calls the existing `restore_media_item` scope-service seam for the same backend-qualified id,
+Undo calls the existing `restore_media_item(mode="local")` scope-service seam for the same id,
 reinserts the restored item according to current sort/filter rules, and reselects it when it still
 matches the active result scope. If it no longer matches, Undo still succeeds and explains that the
 item was restored outside the current filter. Permanent delete is not introduced here.
@@ -379,7 +432,8 @@ backend abstraction or a general-purpose pane framework.
 - Page/filter failure preserves the previous stable Items snapshot and offers Retry.
 - Detail failure affects Reader only; Items remains navigable.
 - Rich-preview failure falls back to complete stored content and is labelled locally.
-- Backend switch clears incompatible request generations and backend-qualified selection anchors.
+- entering or leaving the one-off external server-detail session clears incompatible request
+  generations and backend-qualified selection anchors.
 - Empty filter copy includes the active query and a clear-filter action.
 - No state relies on color, icon, or focus styling alone.
 
@@ -420,6 +474,9 @@ Tests should be focused by contract instead of accumulated in one large shell te
 - append preserves selection and ignores duplicate ids;
 - filter clear restores the prior unfiltered selection when possible;
 - local and server backend-qualified ids cannot collide;
+- ordinary Items listing, filtering, and mutation remain local-only;
+- the existing server-ingest compatibility route opens one explicitly labelled external detail
+  without merging it into Items;
 - delete selects the correct adjacent row;
 - Undo restores and reselects, including the restored-outside-filter message.
 
@@ -430,7 +487,8 @@ Tests should be focused by contract instead of accumulated in one large shell te
 - Find searches only loaded item content;
 - Console handoff matches the representation declared in Info;
 - reading progress writes only for the loaded identity;
-- rich-preview capability-on uses a fake renderer;
+- rich-preview capability-on uses a fake local PNG/JPEG/WebP renderer and mounts preview above the
+  unchanged complete text;
 - mandatory capability-off coverage proves complete text fallback;
 - preview failure does not become item failure.
 
@@ -447,7 +505,8 @@ Tests should be focused by contract instead of accumulated in one large shell te
   no overlap, and no horizontal overflow.
 
 Headless tests do not assert image rendering. Live verification should exercise a real local media
-record and, when configured, a real server record, following the repository's evidence guidance.
+record and, when configured, the existing finished-server-ingest external-detail route, following
+the repository's evidence guidance.
 
 ## Delivery boundaries
 

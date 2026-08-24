@@ -26,12 +26,18 @@ Selection and loaded Reader identity are separate, and every detail request is g
 qualified id plus a request generation. The Items list uses the existing paginated list and search
 contracts rather than filtering only its initially loaded records.
 
-Complete stored text/Markdown remains the authoritative readable fallback. Rich media preview is
-optional, capability-gated enhancement and must never block access to the complete stored
-representation. Info identifies provenance and the exact representation passed by Use in Console.
+The Items catalogue remains local-only with no backend selector or merged population. The existing
+finished-server-ingest route may continue to open one explicitly labelled external server detail,
+without inserting it into the local Items list. Server browse/search is outside this decision.
 
-Soft deletion includes a bounded Undo action implemented through the existing restore seam. The
-redesign does not add unread or starred state to Library media.
+Complete stored text/Markdown remains authoritative. V1 rich preview is limited to capability-
+gated local PNG, JPEG, and WebP originals rendered above—not instead of—the complete text. It never
+fetches remote assets; other media types and server-item previews are outside this slice. Info
+identifies provenance and the exact representation passed by Use in Console.
+
+Local soft deletion includes a bounded Undo action implemented through the existing restore seam.
+The one-off external server detail remains read-only. The redesign does not add unread or starred
+state to Library media.
 
 ## Context
 
@@ -66,12 +72,19 @@ rather than only as routine UI polish.
   remains the orchestration owner.
 - Both collapsed panes continue to consume five columns each for reachable grips; Reader receives
   all remaining width.
+- Normal responsive resolution fits expanded panes at fixed target widths, collapses Library before
+  Items on shortfall, and gives remaining columns to Reader. Only an explicit open may compress the
+  requested pane toward its minimum after collapsing the other pane; this applies to both manually
+  preferred-collapsed and responsively hidden panes.
 - Settings persist only manual pane choices and optional normalized custom widths. Responsive
   collapse, focus, selection, pending loads, and active mode remain transient.
 - Detail loading must distinguish selected from loaded ids and reject stale completions.
 - Items filtering and pagination must use the existing scope-service contracts and stable backend-
   qualified identity.
-- Delete UX must include Undo because both local and server restore seams already exist.
+- Existing media multi-select, bulk export, and bulk delete remain list-level capabilities; this
+  design does not change their payload or partial-failure contracts and adds Undo only to the
+  single-item delete flow.
+- Local single-item delete UX must include Undo through the existing restore seam.
 - Rich preview requires capability-on and capability-off behavior, with complete text always
   reachable.
 - Watchlists and Library Media may duplicate a small amount of pane code initially. A later ADR can
