@@ -7680,3 +7680,43 @@ stable file. This repo has many `inspect.getsource` / source-text structural
 tests, so the failure looks exactly like a pre-existing red in someone else's
 area. Do not edit the tree while a run you intend to quote is running — and
 before A/B-ing any suspicious red, re-run it once against a quiescent tree.
+## A filing's prescribed fix is a hypothesis, not a spec (TASK-21128, 2026-08-23)
+
+The finding I filed said: scope the `messages_au` FTS trigger to `AFTER UPDATE OF
+content`. The implementer built the trigger matrix *before* writing the change and
+found that `OF content` alone does not fire on `UPDATE messages SET deleted = 1`, so
+a soft-deleted message's tokens would have stayed in the index — a retention bug
+introduced by the "fix". Shipped as `OF content, deleted` instead, and the acceptance
+criteria were amended before any code was written.
+
+**The rule this produced**, now enforced by a census test: the `UPDATE OF` column set
+is *every column the index stores* ∪ *every column that decides membership or
+visibility*. Widening an fts5 table without widening its trigger now fails at
+authoring time.
+
+**The generalisation**: a prescription written by whoever *found* a problem is a
+hypothesis about the fix, and the person implementing it is the last one positioned
+to falsify it. Build the differential harness first; if it contradicts the brief,
+the brief loses. Two separate reviewers reproduced this independently — it was not
+subtle, it was simply never tested before being written down.
+
+*Scope honesty, also worth keeping:* I first wrote this up as "soft-deleted messages
+stay searchable". Review corrected it — all six production `messages_fts` consumers
+re-filter on `m.deleted = 0`, so the retention was reachable only by a direct index
+query. Still a real regression of task-19567's guarantee, but not a user-visible
+search leak. State the blast radius you can prove, not the worst one you can imagine.
+
+## A thread-assert is only as honest as the double it runs against (TASK-21125, 2026-08-23)
+
+The acceptance criterion prescribed offloading the Writing backend at the *controller*.
+Every `WritingScopeService` method is already `async def`, so a controller-level
+`to_thread` would have moved **zero** work in the shipped app — while still passing a
+"runs off the event loop" assertion, because the test fake it ran against was
+synchronous. The offload landed at `_service_for_mode` instead.
+
+The same review turned up the matching failure of a *concurrency* assertion: a plain
+`gather` of 8 writers passed against a deliberately broken single-thread pool. It only
+began discriminating once every writer parked on a barrier inside the version check —
+then the mutant failed 5/5. Before trusting either kind of assertion, **run it against
+a deliberately broken implementation**; one that still passes is measuring the double,
+not the subject.
