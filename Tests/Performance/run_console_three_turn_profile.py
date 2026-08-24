@@ -6395,7 +6395,18 @@ async def run_mounted_sample(
             snapshot[name] != expected
             for name, expected in expected_queue_counts.items()
         ):
-            raise RuntimeError("mounted_queue_contract_failed")
+            observed = ":".join(
+                f"{label}{snapshot[name]}"
+                for label, name in (
+                    ("d", "dispatch_count"),
+                    ("a", "accepted_count"),
+                    ("q", "drain_count"),
+                    ("w", "worker_count"),
+                    ("t", "after_turn_count"),
+                    ("m", "durable_count"),
+                )
+            )
+            raise RuntimeError(f"mounted_queue_contract_failed:{observed}")
         if len(provider_calls) != 5:
             raise RuntimeError("provider_round_contract_failed")
         provider_usage = [call["usage"] for call in provider_calls]
