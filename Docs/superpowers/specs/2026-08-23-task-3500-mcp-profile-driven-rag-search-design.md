@@ -164,10 +164,11 @@ One shared-runtime honesty gap must be closed at its owner: if reranking is
 enabled but reranker construction fails, the service currently logs the
 failure and silently continues with `self.reranker = None`. The V2 service
 will retain a credential-safe unavailability detail containing only the
-exception type and, when more than one base result exists (the same condition
-under which reranking would run), tag the first result with the existing
-`reranking_skipped` metadata key. The setup state is cleared before
-construction and profile-switch attempts so a
+exception type and, when any base result exists, tag the first result with
+the existing `reranking_skipped` metadata key. This disclosure reports that
+the configured reranker was unavailable even when only one result made
+reordering unnecessary. The setup state is cleared before construction and
+profile-switch attempts so a
 later successful or disabled profile cannot inherit a stale reranker or
 failure reason. This minimal shared fix gives both Library and MCP the same
 disclosure; the MCP adapter must not synthesize its own tag.
@@ -229,8 +230,8 @@ Focused tests will pin:
 - `use_semantic=False` remains the explicit keyword override;
 - existing exact request and response shapes remain unchanged;
 - reranking metadata survives the MCP formatter, and constructor/runtime
-  reranker failures return multi-result base results with the shared skip
-  disclosure without leaving stale setup state after a profile switch;
+  reranker failures return base results with the shared skip disclosure
+  without leaving stale setup state after a profile switch;
 - inspector interpretation for vector, hybrid-with-vector, FTS-only hybrid,
   reranker, and unscored keyword rows, with provenance read from nested MCP
   metadata;
