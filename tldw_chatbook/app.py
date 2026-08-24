@@ -762,7 +762,83 @@ SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
 # multi-thousand-line modules -- import them first so a thread that gets cut
 # short (app quit shortly after startup) still banked the highest-value work
 # before spending time on the rest of the registry.
+#
+# TASK-21113 considered reordering this to start with the CONFIGURED DEFAULT
+# TAB and measured the idea dead: the whole-registry pass is armed by
+# `_schedule_deferred_startup_work()`, the last statement of
+# `_post_mount_setup()`, and BOTH boot paths run `_push_initial_screen()` to
+# completion first (`_run_no_splash_post_mount_setup` awaits them in order;
+# the splash path pushes, then `call_after_refresh(self._post_mount_setup)`).
+# So the configured default tab's module is always already in `sys.modules`
+# before this list is consulted -- and if the initial push raised, this pass
+# never runs at all. Reordering would have moved a `sys.modules` dict hit.
 SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "settings")
+
+# TASK-21113 pacing for the whole-registry pre-importer. The pass is a
+# GIL-holding CPU burst on a daemon thread; on a 1-2 core machine the event
+# loop is sharing a core with it for the whole post-boot window. Measured on
+# a fast M-series with the initial screen already warm (the real boot
+# condition, see above): 21 routes, **361 ms** total, of which library
+# 110.6 ms + settings 95.9 ms + personas 82.3 ms are **80%** -- the other 18
+# routes cost 72.8 ms between them.
+#
+# That skew is what these constants answer. A flat inter-route sleep would
+# treat a 0.5 ms module exactly like a 110 ms one, so the gap is instead
+# proportional to the time the previous import just took: hand the event loop
+# back (ratio x) what was just taken from it, capped. On the numbers above
+# that inserts ~0.35 s of quiet across the pass, i.e. it stops being a
+# continuous competitor and becomes a ~50%-duty-cycle one, at zero cost to
+# anything that waits on it (nothing does).
+#
+# What a gap CANNOT do is subdivide a single `import_module`: those three
+# 80-110 ms bursts are indivisible, and on constrained hardware they are the
+# multi-hundred-millisecond stretches that actually hurt. That is what the
+# low-core tier is for -- same mechanism, 3x the yield and a much higher cap,
+# so a 400 ms import on a slow box is followed by ~1.2 s of quiet.
+SCREEN_PREIMPORT_YIELD_RATIO = 1.0
+SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS = 0.10
+SCREEN_PREIMPORT_LOW_CORE_YIELD_RATIO = 3.0
+SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS = 1.5
+# Below this many usable CPUs the pass is throttled rather than switched off:
+# disabling it would push each screen's import back onto the event loop at
+# first navigation, which is work the user has actually asked for, on the
+# machines least able to absorb it. Throttling keeps the win and drops the
+# pressure.
+SCREEN_PREIMPORT_LOW_CORE_THRESHOLD = 4
+# While a screen navigation holds `_screen_navigation_lock`, the event loop is
+# doing its own import + compose + mount; the speculative pass steps aside
+# until it finishes. Bounded, so a lock that is never released (a navigation
+# blocked on a confirm dialog the user leaves open) throttles the pass instead
+# of stranding it.
+SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS = 0.05
+SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS = 5.0
+SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS = max(
+    1,
+    round(
+        SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS
+        / SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS
+    ),
+)
+
+
+def _usable_cpu_count() -> int:
+    """How many CPUs this process may actually run on.
+
+    Prefers the scheduler affinity mask where the platform has one (a
+    container pinned to one core reports the host's core count from
+    ``os.cpu_count()``), and falls back to ``os.cpu_count()``. Returns 1 when
+    neither will answer -- the conservative direction here, since the only
+    consequence of guessing low is that a background pass nothing waits on
+    paces itself more politely.
+    """
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        try:
+            return max(1, len(affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
 
 # TASK-1240. The `component` this module passes to `persist_event`. It is a
 # bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
@@ -5743,8 +5819,9 @@ class TldwCli(
     # the DBStatusManager resolves the visible widget on the active screen.
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
-    # DB size update timer moved to DBStatusManager
-    _token_count_update_timer: Optional[Timer] = None
+    # DB size update timer moved to DBStatusManager; the 10 s token-count
+    # timer that used to live here was retired by task-21133 (its consumer
+    # surface went with task-17653).
     ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
@@ -9188,17 +9265,15 @@ class TldwCli(
             return
 
     def _stop_footer_status_timers(self) -> None:
-        """Stop footer status timers and clear their diagnostic entries."""
-        timer = getattr(self, "_token_count_update_timer", None)
-        if timer is not None:
-            try:
-                timer.stop()
-            except Exception as exc:
-                logger.debug(f"Footer token timer stop skipped: {exc}")
-            finally:
-                self._token_count_update_timer = None
+        """Clear the footer status timers' diagnostic entries.
+
+        The timer object itself is owned by ``DBStatusManager`` and stopped
+        by its ``stop_periodic_updates()``; both shutdown hooks call that
+        immediately before this. task-21133 removed the second, token-count
+        timer this method also used to own, so there is no longer a handle
+        to stop here.
+        """
         self._record_ui_responsiveness_timer_stopped("footer-db-size-periodic")
-        self._record_ui_responsiveness_timer_stopped("footer-token-periodic")
 
     def _record_footer_timer_created(self, name: str) -> None:
         """Record footer timer creation without making diagnostics mandatory."""
@@ -12221,10 +12296,6 @@ class TldwCli(
         """Updates the database size information in the shell status line."""
         await self.db_status_manager.update_db_sizes()
 
-    async def update_token_count_display(self) -> None:
-        """Updates the token count in the footer when on Chat tab."""
-        await self.db_status_manager.update_token_count_display()
-
     def _active_footer_status(self) -> Optional[AppFooterStatus]:
         """The visible screen's footer, falling back to the default-screen one.
 
@@ -12496,7 +12567,19 @@ class TldwCli(
             self._legacy_citation_migration_in_flight = False
 
     def _schedule_footer_status_updates(self) -> None:
-        """Wire status-line DB/token status updates after UI readiness."""
+        """Wire the status-line DB-size updates after UI readiness.
+
+        task-21133: this used to arm a second pair of timers -- a 0.5 s
+        one-shot and a 10 s interval -- for a token counter whose entire
+        consumer surface task-17653 removed. Nothing armed the footer's
+        ``#footer-token-count`` chip any more (``BaseAppScreen`` composes
+        every ``AppFooterStatus`` with ``show_token_count=False``, and that
+        is the only construction site in the package), so each tick resolved
+        the active footer, ran three ``query_one`` selectors that no live
+        screen composes, and threw the answer away in a debug log. The
+        interval, its handle, and the whole chain behind it are gone; the
+        DB-size timers below are unchanged.
+        """
 
         def record_footer_timer(name: str) -> None:
             record_timer = getattr(self, "_record_footer_timer_created", None)
@@ -12515,8 +12598,8 @@ class TldwCli(
             # resolve the ACTIVE screen's footer via `_active_footer_status`.
             # Splash and the first-run wizard mount no AppFooterStatus, so a
             # miss here must not abort timer setup (task-2721: it previously
-            # logged two tracebacks per fresh install and left the DB-size and
-            # token timers never started for the whole session).
+            # logged two tracebacks per fresh install and left the DB-size
+            # timers never started for the whole session).
             try:
                 self._db_size_status_widget = self.query_one(AppFooterStatus)
                 self.loguru_logger.info("AppFooterStatus widget instance acquired.")
@@ -12536,14 +12619,6 @@ class TldwCli(
             self.loguru_logger.info(
                 "DB size update timer started for the shell status line (interval: 2 minutes)."
             )
-
-            self.set_timer(0.5, self.update_token_count_display)
-            record_footer_timer("footer-token-periodic")
-            self._token_count_update_timer = self.set_interval(
-                10,
-                lambda: self.call_after_refresh(self.update_token_count_display),
-            )
-            self.loguru_logger.info("Token count update timer started (10s interval).")
         except Exception as e_db_size:
             self.loguru_logger.opt(exception=True).error(
                 f"Error setting up DB size indicator for the shell status line: {e_db_size}",
@@ -12642,12 +12717,31 @@ class TldwCli(
         about what a real navigation to that route does next: it fails again,
         identically (AC #3).
 
+        TASK-21113 added pacing BETWEEN routes: after each import the thread
+        hands the event loop back a slice proportional to what it just took
+        (see ``SCREEN_PREIMPORT_YIELD_RATIO`` and friends), and parks
+        entirely while a screen navigation is resolving. Both are strictly
+        between-route, so the single-route call this method also serves --
+        task-21110's initial-screen warm-up, racing the splash -- reaches its
+        one ``load_screen_class()`` with nothing added in front of it. The
+        loop also drops out on ``_shutting_down`` so quit does not wait on a
+        daemon thread's remaining registry.
+
         Args:
             routes: The routes to pre-import, in order. Factored out of
                 ``_preimport_heavy_screens`` so tests can target one or two
                 routes directly instead of the whole registry.
         """
-        for route in routes:
+        yield_ratio, max_gap = self._screen_preimport_pacing()
+        previous_cost = 0.0
+        for index, route in enumerate(routes):
+            if index:
+                self._pause_between_preimports(
+                    min(previous_cost * yield_ratio, max_gap)
+                )
+            if getattr(self, "_shutting_down", False):
+                return
+            started = time.monotonic()
             try:
                 route.load_screen_class()
             except Exception as exc:
@@ -12656,6 +12750,68 @@ class TldwCli(
                     route.screen_name,
                     type(exc).__name__,
                 )
+            previous_cost = time.monotonic() - started
+
+    def _screen_preimport_pacing(self) -> tuple[float, float]:
+        """``(yield_ratio, max_gap_seconds)`` for the between-route pause.
+
+        One helper so the core-count question is answered in exactly one
+        place. It governs the SPECULATIVE whole-registry pass only, and
+        deliberately not task-21110's initial-screen warm-up, which shares
+        ``_preimport_screens`` but passes a single route: that import is work
+        the boot is certainly going to pay either way, and moving it off the
+        event loop is worth more, not less, on a slow machine (task-21110
+        measured splash-close-to-usable -46% on a cold first boot). Slowing
+        or skipping it would put a certain cost back on the loop to avoid a
+        speculative one. A single-route list has no between-route gap, so
+        that separation needs no branch.
+        """
+        if _usable_cpu_count() < SCREEN_PREIMPORT_LOW_CORE_THRESHOLD:
+            return (
+                SCREEN_PREIMPORT_LOW_CORE_YIELD_RATIO,
+                SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS,
+            )
+        return (SCREEN_PREIMPORT_YIELD_RATIO, SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS)
+
+    def _screen_navigation_in_progress(self) -> bool:
+        """Whether a screen navigation currently holds the FIFO nav lock.
+
+        Read from the pre-import thread, so it must not touch the loop:
+        ``asyncio.Lock.locked()`` is a plain attribute read, and the
+        attribute is read directly rather than through
+        ``_screen_navigation_lock()`` so a probe never *constructs* a lock
+        off-loop. Absent lock (nothing has navigated yet) means not
+        navigating.
+        """
+        lock = getattr(self, "_screen_navigation_lock_instance", None)
+        if lock is None:
+            return False
+        try:
+            return bool(lock.locked())
+        except Exception:
+            return False
+
+    def _pause_between_preimports(self, gap_seconds: float) -> None:
+        """Yield the CPU between two route imports, then wait out any nav.
+
+        Runs on the pre-import daemon thread. The park is bounded by
+        ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS`` and abandoned
+        immediately on ``_shutting_down`` so neither a wedged navigation nor
+        a quit can leave this thread sleeping in a loop.
+        """
+        if gap_seconds > 0:
+            time.sleep(gap_seconds)
+        # Counted, not accumulated: summing 0.05 a hundred times lands either
+        # side of 5.0 depending on float rounding, which would make the bound
+        # off by one at random.
+        polls = 0
+        while (
+            polls < SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS
+            and not getattr(self, "_shutting_down", False)
+            and self._screen_navigation_in_progress()
+        ):
+            time.sleep(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS)
+            polls += 1
 
     def _preimport_heavy_screens(self) -> None:
         """Warm ``sys.modules`` for every registered screen route.
@@ -12718,6 +12874,17 @@ class TldwCli(
         keypress can close the splash inside the scheduling delay -- past that
         point the push either already happened or is imminent, and a second
         thread would only contend with it.
+
+        Deliberately NOT gated on core count (TASK-21113). The two
+        pre-importers share ``_preimport_screens`` and one enable switch, but
+        the core-count question has opposite answers for them: the
+        whole-registry pass is speculative work for screens the user may
+        never open, so a slow machine should be throttled; this one is the
+        initial screen's own import, which the boot pays either way, and
+        moving it off the event loop is worth *more* on a slow machine
+        (task-21110 measured close-to-usable -46% on a cold first boot).
+        Throttling it would put a certain cost back on the loop to dodge a
+        speculative one. See ``_screen_preimport_pacing``.
         """
         if not self._screen_preimport_enabled():
             return

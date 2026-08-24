@@ -2,7 +2,7 @@
 id: TASK-21127
 title: >-
   Research runs - per-op leaked connects and loop-side periodic reads/writes while a run is active
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
