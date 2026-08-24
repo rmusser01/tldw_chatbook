@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -15,26 +15,27 @@ from textual.widgets import Input, Select, Static
 
 from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow, _styled_line
 from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
-from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 
 
 # UX-072 -----------------------------------------------------------------
 def test_every_destination_has_a_hotkey_route() -> None:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Navigation.shell_destinations import (
+        SHELL_DESTINATION_SHORTCUTS,
+    )
 
     actions = {
         binding.action
         for binding in TldwCli.BINDINGS
         if binding.action.startswith("shell_destination(")
     }
-    expected = {
-        f"shell_destination({index})" for index in range(len(SHELL_DESTINATION_ORDER))
-    }
+    expected = {f"shell_destination({destination_id})" for destination_id in SHELL_DESTINATION_SHORTCUTS}
     assert actions == expected
 
 
 def test_fkey_labels_on_late_destinations() -> None:
+    assert nav_button_label(3, "Research", destination_id="research") == "F10 Research"
     assert nav_button_label(10, "Lab") == "F7 Lab"
     assert nav_button_label(11, "Logs") == "F8 Logs"
     assert nav_button_label(12, "Settings") == "F9 Settings"

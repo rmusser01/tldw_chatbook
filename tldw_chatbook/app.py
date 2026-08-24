@@ -157,6 +157,7 @@ from tldw_chatbook.Constants import (
     TAB_STUDY,
     TAB_WRITING,
     TAB_RESEARCH,
+    TAB_RESEARCH_WORKSPACE,
     TAB_CHATBOOKS,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
@@ -508,7 +509,11 @@ from .UI.Navigation.screen_registry import (
     resolve_screen_target,
     screen_load_error,
 )
-from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+from .UI.Navigation.shell_destinations import (
+    SHELL_DESTINATION_ORDER,
+    SHELL_DESTINATION_SHORTCUTS,
+    get_shell_destination,
+)
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
 from .UI.stable_command_palette import StableCommandPalette
@@ -1053,6 +1058,7 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
+        TAB_RESEARCH_WORKSPACE: "Open Research Workspace for grounded research",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
@@ -1135,6 +1141,10 @@ class TabNavigationProvider(Provider):
         }
         if destination.full_label:
             terms.add(destination.full_label)
+        for related_route in destination.related_routes:
+            terms.add(related_route)
+            terms.add(get_tab_display_label(related_route))
+        terms.update(destination.palette_aliases)
         for legacy_route in destination.legacy_routes:
             terms.add(legacy_route)
             terms.add(get_tab_display_label(legacy_route))
@@ -5701,13 +5711,8 @@ class TldwCli(
             )
         return sources + super()._get_default_css()
 
-    # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
-    # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
-    # (Lab, Logs, Settings) so every destination has a keyboard route.
-    SHELL_DESTINATION_HOTKEYS: tuple[str, ...] = tuple(
-        f"ctrl+{digit}" for digit in "1234567890"
-    )
-    SHELL_DESTINATION_FKEYS: tuple[str, ...] = ("f7", "f8", "f9")
+    # Shell shortcuts are keyed by stable destination ID so inserting a new
+    # destination cannot transfer an existing shortcut to another screen.
     BINDINGS = (
         [
             Binding("ctrl+q", "quit", "Quit App", show=True),
@@ -5723,31 +5728,14 @@ class TldwCli(
         ]
         + [
             Binding(
-                key,
-                f"shell_destination({index})",
+                SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
+                f"shell_destination({destination.destination_id})",
                 f"Go to {destination.accessible_label}",
-                show=False,
+                show=SHELL_DESTINATION_SHORTCUTS[
+                    destination.destination_id
+                ].startswith("f"),
             )
-            for index, (key, destination) in enumerate(
-                zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
-            )
-        ]
-        + [
-            # 10 = len of the ctrl+digit layer ("1234567890"); a class-body
-            # comprehension cannot reference class-level names, so this stays a
-            # literal.
-            Binding(
-                key,
-                f"shell_destination({10 + fkey_index})",
-                f"Go to {destination.accessible_label}",
-                show=True,
-            )
-            for fkey_index, (key, destination) in enumerate(
-                zip(
-                    SHELL_DESTINATION_FKEYS,
-                    SHELL_DESTINATION_ORDER[len("1234567890") :],
-                )
-            )
+            for destination in SHELL_DESTINATION_ORDER
         ]
     )
     COMMANDS = App.COMMANDS | {
@@ -14065,21 +14053,16 @@ class TldwCli(
         )
         self.push_screen(WorkbenchHelpPanel(state))
 
-    def action_shell_destination(self, index: int | str) -> None:
-        """Navigate to the shell destination at ``index`` (Ctrl+1..9, Ctrl+0 layer).
+    def action_shell_destination(self, destination_id: str) -> None:
+        """Navigate to the shell destination identified by a stable ID.
 
         Args:
-            index: Zero-based destination index. Textual binding action arguments
-                are passed as strings, so this is accepted as either an ``int``
-                (direct calls/tests) or ``str`` (hotkey bindings) and coerced.
+            destination_id: Shell destination ID from the Textual binding.
         """
         try:
-            idx = int(index)
-        except (ValueError, TypeError):
+            destination = get_shell_destination(destination_id)
+        except KeyError:
             return
-        if idx < 0 or idx >= len(SHELL_DESTINATION_ORDER):
-            return
-        destination = SHELL_DESTINATION_ORDER[idx]
         self.post_message(NavigateToScreen(destination.primary_route))
 
     async def action_focus_next_workbench_pane(self) -> None:

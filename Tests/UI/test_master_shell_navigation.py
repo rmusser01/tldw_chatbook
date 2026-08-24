@@ -110,6 +110,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-home", "\u23031 Home"),
         ("nav-console", "\u23032 Console"),
         ("nav-library", "\u23033 Library"),
+        ("nav-research", "F10 Research"),
         ("nav-artifacts", "\u23034 Artifacts"),
         ("nav-personas", "\u23035 Roleplay"),
         ("nav-watchlists_collections", "\u23036 Watchlists"),
@@ -366,7 +367,12 @@ async def test_every_visible_master_shell_nav_destination_resolves():
 
     app = _build_test_app()
 
+    # Research Workspace is registered lazily before its screen-owning task
+    # creates the module, so route metadata (not importability) is Task 1's
+    # contract for this one destination.
     for destination in SHELL_DESTINATION_ORDER:
+        if destination.destination_id == "research":
+            continue
         _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
             destination.primary_route
         )
@@ -379,7 +385,7 @@ def test_folded_routes_highlight_owning_destination():
         "media": ("library", "media"),
         "study": ("library", "study"),
         "writing": ("library", "writing"),
-        "research": ("library", "research"),
+        "research": ("research", "research"),
         "ingest": ("library", "ingest"),
         "llm": ("lab", "llm"),
         "stts": ("lab", "stts"),
@@ -420,10 +426,13 @@ async def test_folded_screen_boxes_owning_destination_button():
         assert not lab_app.query_one("#nav-library", Button).has_class("is-active")
 
 
-def test_shell_destination_hotkeys_follow_destination_order():
-    """Ctrl+1..9 then Ctrl+0 map onto SHELL_DESTINATION_ORDER, in order."""
+def test_shell_destination_hotkeys_keep_existing_destination_owners():
+    """Inserting Research cannot move any existing destination's shortcut."""
     from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+    from tldw_chatbook.UI.Navigation.shell_destinations import (
+        SHELL_DESTINATION_ORDER,
+        SHELL_DESTINATION_SHORTCUTS,
+    )
 
     hotkey_bindings = [
         binding
@@ -431,36 +440,33 @@ def test_shell_destination_hotkeys_follow_destination_order():
         if binding.action.startswith("shell_destination(")
     ]
 
-    expected_keys = list(TldwCli.SHELL_DESTINATION_HOTKEYS) + list(
-        TldwCli.SHELL_DESTINATION_FKEYS
-    )
-    assert expected_keys == [
-        "ctrl+1",
-        "ctrl+2",
-        "ctrl+3",
-        "ctrl+4",
-        "ctrl+5",
-        "ctrl+6",
-        "ctrl+7",
-        "ctrl+8",
-        "ctrl+9",
-        "ctrl+0",
-        "f7",
-        "f8",
-        "f9",
-    ]
-    # One binding per hotkey, zipped against the destination order: ctrl+digits
-    # cover the first ten, F7/F8/F9 the remaining three — every destination
-    # has a keyboard route and none is skipped.
-    assert len(hotkey_bindings) == min(len(expected_keys), len(SHELL_DESTINATION_ORDER))
+    assert dict(SHELL_DESTINATION_SHORTCUTS) == {
+        "home": "ctrl+1",
+        "console": "ctrl+2",
+        "library": "ctrl+3",
+        "artifacts": "ctrl+4",
+        "personas": "ctrl+5",
+        "watchlists_collections": "ctrl+6",
+        "schedules": "ctrl+7",
+        "workflows": "ctrl+8",
+        "mcp": "ctrl+9",
+        "acp": "ctrl+0",
+        "lab": "f7",
+        "logs": "f8",
+        "settings": "f9",
+        "research": "f10",
+    }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
-    for index, binding in enumerate(hotkey_bindings):
-        destination = SHELL_DESTINATION_ORDER[index]
-        assert binding.key == expected_keys[index]
-        assert binding.action == f"shell_destination({index})"
+    for binding in hotkey_bindings:
+        destination_id = binding.action.removeprefix("shell_destination(").removesuffix(")")
+        destination = next(
+            candidate
+            for candidate in SHELL_DESTINATION_ORDER
+            if candidate.destination_id == destination_id
+        )
+        assert binding.key == SHELL_DESTINATION_SHORTCUTS[destination_id]
+        assert binding.action == f"shell_destination({destination_id})"
         assert destination.accessible_label in binding.description
-        # Index numbers belong to the key layer, not the nav labels.
-        assert str(index + 1) not in destination.label
 
 
 def test_action_shell_destination_posts_primary_route():
@@ -472,8 +478,8 @@ def test_action_shell_destination_posts_primary_route():
     posted = []
     fake_app = SimpleNamespace(post_message=posted.append)
 
-    for index, destination in enumerate(SHELL_DESTINATION_ORDER):
-        TldwCli.action_shell_destination(fake_app, index)
+    for destination in SHELL_DESTINATION_ORDER:
+        TldwCli.action_shell_destination(fake_app, destination.destination_id)
         message = posted[-1]
         assert isinstance(message, NavigateToScreen)
         assert message.screen_name == destination.primary_route, (
@@ -482,15 +488,13 @@ def test_action_shell_destination_posts_primary_route():
 
     # Textual binding actions pass the argument as a string.
     posted.clear()
-    TldwCli.action_shell_destination(fake_app, "0")
+    TldwCli.action_shell_destination(fake_app, "research")
     assert isinstance(posted[-1], NavigateToScreen)
-    assert posted[-1].screen_name == SHELL_DESTINATION_ORDER[0].primary_route
+    assert posted[-1].screen_name == "research_workspace"
 
-    # Out-of-range indices are a safe no-op.
+    # Unknown destination IDs are a safe no-op.
     posted.clear()
-    TldwCli.action_shell_destination(fake_app, len(SHELL_DESTINATION_ORDER))
-    TldwCli.action_shell_destination(fake_app, -1)
-    TldwCli.action_shell_destination(fake_app, "not-a-number")
+    TldwCli.action_shell_destination(fake_app, "not-a-destination")
     assert posted == []
 
 
@@ -776,11 +780,10 @@ async def test_naive_colorless_capture_false_positives_on_ghosted_labels():
     REAL destination the re-critique quoted -- then contrasts it with the
     color-aware check that proves the label is not actually legible.
 
-    80 cols, active="home": `nav-watchlists_collections` ("Watchlists")
-    straddles the "More ▾" edge exactly as task-3200's own DEFAULT_CSS-tier
-    test already established at 100 cols for a different destination --
-    this test's job is specifically the BUNDLED CSS tier and the exact
-    "Watc" fragment the re-critique reported, not new geometry.
+    At 100 cols, active="home", one non-active destination straddles the
+    "More ▾" edge. The concrete edge destination changes as destinations are
+    added, so this test pins the user-visible ghosting behavior rather than
+    its incidental position in the strip.
     """
 
     class TestApp(ConsolidatedCSSApp):
@@ -791,35 +794,37 @@ async def test_naive_colorless_capture_false_positives_on_ghosted_labels():
 
     app = TestApp()
 
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(100, 24)) as pilot:
         await pilot.pause(0.6)
 
-        watchlists = app.query_one("#nav-watchlists_collections", Button)
-        assert watchlists.has_class("nav-button-clip-ghost"), (
-            "test premise: Watchlists straddles and is ghosted at 80 cols "
-            "under the bundled stylesheet, matching the re-critique's setup"
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        assert ghosted, (
+            "test premise: a destination straddles and is ghosted at 100 cols "
+            "under the bundled stylesheet"
         )
+        destination = ghosted[0]
+        fragment = str(destination.label).strip().split(" ", 1)[-1][:4]
 
-        naive_text = _plain_nav_text(app)
-        # This is the re-critique's own reported fragment, reproduced
-        # exactly: a colorless read of the buffer DOES contain it, even
-        # though the button is ghosted (fg == bg) and disabled.
-        assert "Watc" in naive_text, (
-            "expected the colorless capture to reproduce the re-critique's "
-            "'⌃6 Watc' finding -- if this ever fails, the fragment itself "
-            "moved and this test's premise needs updating, not the "
-            "conclusion below"
+        # A colorless capture sees the clipped fragment even though the
+        # button is ghosted (fg == bg) and disabled.
+        assert fragment in _plain_nav_text(app), (
+            "expected the colorless capture to include the ghosted destination "
+            "fragment"
         )
 
         # The color-aware check (already established by task-3200, reused
         # here against the SAME render) shows the fragment is not actually
         # readable: this is the correction to the re-critique's conclusion.
         readable_text = _readable_nav_text(app)
-        assert "Watc" not in readable_text, (
-            "Watchlists' ghosted fragment IS color-distinguishable from its "
-            "background -- a real regression, not a measurement artifact"
+        assert fragment not in readable_text, (
+            f"{destination.id}'s ghosted fragment is color-distinguishable "
+            "from its background -- a real regression, not a measurement artifact"
         )
-        assert watchlists.disabled, (
+        assert destination.disabled, (
             "a ghosted button must stay disabled -- consistent with the "
             "re-critique's own click-test finding that the blank cell did "
             "not navigate"

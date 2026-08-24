@@ -7,7 +7,7 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP
+from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_RESEARCH_WORKSPACE
 from .shell_destinations import resolve_shell_route
 
 
@@ -156,6 +156,15 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     # (UI/Workbench/route_inventory.py).
     "research": ScreenRoute(
         "research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"
+    ),
+    # Task 1 records the lazy route contract. The screen module is created by
+    # the dedicated screen task, so this metadata is intentionally not
+    # importable yet.
+    "research_workspace": ScreenRoute(
+        "research_workspace",
+        TAB_RESEARCH_WORKSPACE,
+        "tldw_chatbook.UI.Screens.research_workspace_screen",
+        "ResearchWorkspaceScreen",
     ),
     "chatbooks": ScreenRoute(
         "chatbooks",
