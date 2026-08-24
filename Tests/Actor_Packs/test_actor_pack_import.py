@@ -22,6 +22,7 @@ from tldw_chatbook.Actor_Packs.importer import (
     ActorPackImportService,
 )
 from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
+from tldw_chatbook.Utils.private_paths import PrivatePathResult, PrivatePathStatus
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -506,3 +507,44 @@ def test_startup_sweep_removes_only_authenticated_bounded_candidates(
     assert not authenticated.exists()
     assert malformed.exists()
     assert replacement.sweep_staging(max_candidates=1) == 0
+
+
+def test_startup_sweep_skips_usable_unverified_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = CharactersRAGDB(
+        str(tmp_path / "profile.db"), client_id="actor-pack-import-unverified"
+    )
+    repository = ActorPackRepository(db)
+    staging_root = tmp_path / "staging"
+    candidate = staging_root / f".import-{'0' * 32}"
+    candidate.mkdir(parents=True)
+    privacy = PrivatePathResult(
+        staging_root,
+        PrivatePathStatus.UNVERIFIED_PLATFORM,
+        reason="native_acl_not_verified",
+    )
+
+    monkeypatch.setattr(
+        importer_module,
+        "secure_private_directory",
+        lambda *_args, **_kwargs: privacy,
+    )
+
+    def unexpected_access(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("unverified staging contents must not be examined")
+
+    monkeypatch.setattr(importer_module.os, "scandir", unexpected_access)
+    monkeypatch.setattr(
+        importer_module, "_read_candidate_authority", unexpected_access
+    )
+
+    service = ActorPackImportService(
+        repository,
+        staging_root=staging_root,
+        profile_root=tmp_path,
+    )
+
+    assert service.sweep_staging() == 0
+    assert candidate.exists()
