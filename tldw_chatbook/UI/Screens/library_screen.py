@@ -3193,6 +3193,8 @@ class LibraryScreen(BaseAppScreen):
         # media, raw for everything else); the toggle handlers below flip
         # it in place without touching the default-selection logic.
         self._library_media_content_mode: str = "raw"
+        self._library_media_read_scroll_by_id: dict[str, tuple[int, int]] = {}
+        self._library_media_progress_restored_id: str | None = None
         self._library_notes_view: str = "list"
         self._library_notes_lasting_origin: str | None = None
         self._library_notes_select_mode: bool = False
@@ -3928,6 +3930,15 @@ class LibraryScreen(BaseAppScreen):
             or self._library_note_editor_active()
             or self._library_prompt_editor_active()
         ):
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "viewer"
+            ):
+                return (
+                    ("/", "focus search"),
+                    ("F6", "next pane"),
+                    ("esc", self._library_media_escape_label()),
+                )
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -5157,6 +5168,19 @@ class LibraryScreen(BaseAppScreen):
         if width <= 0:
             return
         previous = self._library_media_reader_layout
+        # ``__init__`` resolves a zero-width sentinel before Textual has
+        # assigned the mounted shell its first real region. Treating that
+        # sentinel as a genuine previous layout lets hysteresis preserve its
+        # necessarily-collapsed panes at borderline usable widths forever.
+        # The first settled measurement has no user-visible prior layout, so
+        # resolve it without hysteresis; subsequent measurements keep the
+        # normal anti-flap behavior.
+        if (
+            previous.reader_width == 0
+            and previous.library_width == 0
+            and previous.items_width == 0
+        ):
+            previous = None
         layout = resolve_media_reader_layout(
             width,
             self._library_media_reader_preferences,
@@ -7292,6 +7316,11 @@ class LibraryScreen(BaseAppScreen):
                 focused,
                 user_intent,
             )
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "viewer"
+            ):
+                self._register_footer_shortcuts()
 
         if not self._library_pending_list_entry_focus:
             return
@@ -12230,6 +12259,8 @@ class LibraryScreen(BaseAppScreen):
         identity = self._library_media_reader_identity(media_id)
         if identity is None:
             return
+        self._capture_library_media_loaded_progress()
+        self._library_media_progress_restored_id = None
         canonical_id, backing_id = identity
         current = self._library_media_reader_session
         if (
@@ -13798,6 +13829,11 @@ class LibraryScreen(BaseAppScreen):
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         highlights = [] if external_detail else await self._fetch_library_media_highlights(media_id)
+        reading_progress = (
+            None
+            if external_detail
+            else await self._fetch_library_media_reading_progress(media_id)
+        )
         current_session = self._library_media_reader_session
         current_pending = current_session.pending_request
         request_is_current = (
@@ -13824,6 +13860,9 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_detail = detail
             self._library_media_highlights = highlights
             if request_generation is not None and not external_detail:
+                self._cache_library_media_reading_progress(
+                    request_generation, requested_id, reading_progress
+                )
                 self._library_media_reader_session = settle_success(
                     self._library_media_reader_session,
                     request_generation,
@@ -13874,6 +13913,51 @@ class LibraryScreen(BaseAppScreen):
             # the identity guard below avoids a duplicate large-document parse.
             self.call_next(self._recompose_library_media_detail_if_unrendered)
         return None
+
+    async def _fetch_library_media_reading_progress(
+        self, media_id: str
+    ) -> Mapping[str, Any] | None:
+        """Fetch local progress for a detail request that still owns Reader."""
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_progress = getattr(service, "get_reading_progress", None)
+        if not callable(get_progress):
+            return None
+        try:
+            progress = await self._run_library_service_call(
+                get_progress,
+                mode="local",
+                media_id=self._required_library_media_backing_id(media_id),
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Failed to load Library media reading progress.")
+            return None
+        return progress if isinstance(progress, Mapping) else None
+
+    def _cache_library_media_reading_progress(
+        self,
+        request_generation: int,
+        requested_id: str,
+        progress: Mapping[str, Any] | None,
+    ) -> bool:
+        """Cache fetched progress only while its detail request still owns Reader."""
+        pending = self._library_media_reader_session.pending_request
+        if (
+            pending is None
+            or pending.generation != request_generation
+            or pending.requested_id != requested_id
+            or not isinstance(progress, Mapping)
+        ):
+            return False
+        try:
+            offset = (
+                int(progress.get("scroll_x", 0)),
+                int(progress.get("scroll_y", 0)),
+            )
+        except (TypeError, ValueError):
+            return False
+        self._library_media_read_scroll_by_id[requested_id] = offset
+        return True
 
     def _recompose_library_media_detail_if_unrendered(self) -> None:
         """Project the media surface unless a compose already rendered the
@@ -18830,6 +18914,8 @@ class LibraryScreen(BaseAppScreen):
                 by the caller before any recompose could change it.
         """
         restored_items: list[Mapping[str, Any]] = []
+        restored_selection: tuple[str, str] | None = None
+        restored_outside_filter = False
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             restore_media_item = getattr(service, "restore_media_item", None)
@@ -18883,26 +18969,53 @@ class LibraryScreen(BaseAppScreen):
                     f"Could not restore {len(failed)} of {len(media_ids)} {item_word}."
                 )
 
-            if self.is_mounted:
-                # Full recompose, mirroring ``_delete_library_media_selection``'s
-                # own tail: the rail's "Media N" count just changed too, and
-                # the canvas-scoped ``_sync_library_canvas`` deliberately
-                # skips the rail.
-                self.refresh(recompose=True)
-                # task-4022 review round 1: ``recompose=True`` unconditionally
-                # destroys and remounts the receipt row, taking the focused
-                # "Undo" button with it -- on EVERY completion path, not just
-                # full success (a partial failure still narrows the receipt
-                # and re-renders it with a brand-new "Undo" button instance).
-                # Mirrors ``_delete_library_media_selection``'s own tail,
-                # which arms this unconditionally for the identical reason
-                # (its "now armed on EVERY completion path" comment, task-3020
-                # AC3 review round 2).
-                self._arm_library_list_entry_focus()
+            if len(media_ids) == 1 and len(restored_items) == 1:
+                restored_item = restored_items[0]
+                scope = self._library_media_browse_controller.applied_scope
+                visible = bool(
+                    scope is not None
+                    and not scope.query
+                    and (
+                        scope.media_type is None
+                        or restored_item["media_type"] == scope.media_type
+                    )
+                )
+                if visible:
+                    restored_id = str(restored_item["id"])
+                    restored_selection = (
+                        restored_id,
+                        str(restored_item.get("title") or restored_id),
+                    )
+                else:
+                    restored_outside_filter = True
         finally:
             self._complete_library_media_mutation(
                 upsert_items=tuple(restored_items),
             )
+
+        # Reconcile the restored summary into the controller before selection
+        # or rendering. Otherwise a mounted refresh can rebuild Items from the
+        # pre-Undo retained set and immediately erase the Reader selection.
+        if restored_selection is not None:
+            select_row = getattr(self, "_select_library_media_reader_row", None)
+            if callable(select_row):
+                select_row(*restored_selection, immediate=True)
+        elif restored_outside_filter:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Restored outside the current filter.")
+
+        if self.is_mounted:
+            # Full recompose, mirroring ``_delete_library_media_selection``'s
+            # own tail: the rail's "Media N" count just changed too, and the
+            # canvas-scoped ``_sync_library_canvas`` deliberately skips the
+            # rail.
+            self.refresh(recompose=True)
+            # The focused Undo control is destroyed on every completion path.
+            # Arm Items focus only when no restored item has just claimed the
+            # permanent Reader; that selection is the intentional recovery.
+            if restored_selection is None:
+                self._arm_library_list_entry_focus()
 
     # ------------------------------------------------------------------
     # task-4025: the media Trash view -- browse + restore
@@ -31796,7 +31909,94 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing_analysis = False
             self._sync_library_media_viewer_or_recompose()
             return
-        self._exit_library_media_viewer()
+        focused = self.focused
+        try:
+            find_controls = self.query_one("#library-media-content-search-controls")
+        except (NoMatches, QueryError):
+            find_controls = None
+        if find_controls is not None and focused is not None and (
+            focused is find_controls or find_controls in focused.ancestors
+        ):
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self._sync_library_media_viewer_or_recompose()
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-reader-find"
+            )
+            return
+        if self._library_media_reader_session.more_open:
+            self._library_media_reader_session = set_more_open(
+                self._library_media_reader_session, False
+            )
+            self._sync_library_media_viewer_or_recompose()
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-reader-more"
+            )
+            return
+        try:
+            shell = self.query_one(
+                "#library-media-reader-shell", LibraryMediaReaderShell
+            )
+        except (NoMatches, QueryError):
+            self._exit_library_media_viewer()
+            return
+        layout = shell.effective_layout
+        if focused is not None and (
+            focused is shell.items or shell.items in focused.ancestors
+        ):
+            if layout.library_open:
+                self._focus_library_rail_action("#library-search-input")
+            else:
+                self._exit_library_media_viewer()
+            return
+        if focused is not None and (
+            focused is shell.library or shell.library in focused.ancestors
+        ):
+            self._exit_library_media_viewer()
+            return
+        if layout.items_open:
+            self._focus_library_control("#library-media-filter")
+        elif layout.library_open:
+            self._focus_library_rail_action("#library-search-input")
+        else:
+            self._exit_library_media_viewer()
+        self._register_footer_shortcuts()
+
+    def _library_media_escape_label(self) -> str:
+        """Describe the action Escape will take from the current effective role."""
+        session = self._library_media_reader_session
+        if self._library_media_confirming_delete:
+            return "cancel delete"
+        if session.more_open:
+            return "close more"
+        focused = self.focused
+        try:
+            shell = self.query_one(
+                "#library-media-reader-shell", LibraryMediaReaderShell
+            )
+        except (NoMatches, QueryError):
+            return "back to list"
+        try:
+            find_controls = self.query_one("#library-media-content-search-controls")
+        except (NoMatches, QueryError):
+            find_controls = None
+        if find_controls is not None and focused is not None and (
+            focused is find_controls or find_controls in focused.ancestors
+        ):
+            return "close find"
+        if focused is not None and (
+            focused is shell.items or shell.items in focused.ancestors
+        ):
+            return "focus Library" if shell.effective_layout.library_open else "back"
+        if focused is not None and (
+            focused is shell.library or shell.library in focused.ancestors
+        ):
+            return "back"
+        if shell.effective_layout.items_open:
+            return "focus Items"
+        if shell.effective_layout.library_open:
+            return "focus Library"
+        return "back"
 
     @on(Button.Pressed, "#library-media-edit")
     def handle_library_media_edit(self, event: Button.Pressed) -> None:
@@ -32112,6 +32312,23 @@ class LibraryScreen(BaseAppScreen):
             media_id: The Library media item id to delete.
         """
         deleted = False
+        controller = getattr(self, "_library_media_browse_controller", None)
+        retained = getattr(controller, "retained_items", ())
+        deleted_index = next(
+            (
+                index
+                for index, item in enumerate(retained)
+                if str(item["id"]) == media_id
+            ),
+            None,
+        )
+        adjacent = (
+            retained[deleted_index + 1]
+            if deleted_index is not None and deleted_index + 1 < len(retained)
+            else retained[deleted_index - 1]
+            if deleted_index is not None and deleted_index > 0
+            else None
+        )
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             delete_media_item = getattr(service, "delete_media_item", None)
@@ -32149,7 +32366,6 @@ class LibraryScreen(BaseAppScreen):
                 # cleared at arm-time (``handle_library_media_delete``),
                 # so it always reflects only what just happened.
                 self._library_media_delete_receipt_ids = (media_id,)
-                self._library_media_view = "list"
                 self._library_media_detail = None
                 self._library_media_composed_detail = None
                 self._library_media_highlights = []
@@ -32157,10 +32373,26 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_content_query = ""
                 self._library_media_content_match_index = 0
                 self._library_media_content_mode = "raw"
-                self._selected_media_id = ""
+                if adjacent is None:
+                    self._selected_media_id = ""
+                    session = getattr(self, "_library_media_reader_session", None)
+                    if session is None:
+                        self._library_media_view = "list"
+                    else:
+                        self._library_media_reader_session = LibraryMediaReaderSessionState(
+                            request_generation=session.request_generation + 1,
+                            mode=session.mode,
+                        )
+                else:
+                    self._select_library_media_reader_row(
+                        str(adjacent["id"]),
+                        str(adjacent.get("title") or adjacent["id"]),
+                        immediate=True,
+                        sync_surfaces=False,
+                    )
             if self.is_mounted:
                 self.refresh(recompose=True)
-                if deleted:
+                if deleted and adjacent is None:
                     # task-2853 review round 2: this is exactly the "back to
                     # list from viewer" transition ``_exit_library_media_
                     # viewer`` established the entry-focus convention for
@@ -32551,6 +32783,15 @@ class LibraryScreen(BaseAppScreen):
         if detail is not None:
             self._library_media_composed_detail = detail
         self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
+        loaded_id = self._library_media_reader_session.loaded_id
+        if (
+            loaded_id is not None
+            and self._library_media_progress_restored_id != loaded_id
+        ):
+            self._library_media_progress_restored_id = loaded_id
+            self.call_after_refresh(
+                self._restore_library_media_loaded_progress, loaded_id
+            )
         return True
 
     @on(Button.Pressed, "#library-media-reader-retry")
@@ -32583,10 +32824,81 @@ class LibraryScreen(BaseAppScreen):
         if not button_id.startswith(prefix):
             return
         mode = button_id.removeprefix(prefix)
+        self._capture_library_media_loaded_progress()
+        if mode == "read":
+            self._library_media_progress_restored_id = None
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session, mode  # type: ignore[arg-type]
         )
         self._sync_library_media_viewer_or_recompose()
+        if mode == "read":
+            loaded_id = self._library_media_reader_session.loaded_id
+            if loaded_id is not None:
+                self.call_after_refresh(
+                    self._restore_library_media_loaded_progress, loaded_id
+                )
+
+    def _capture_library_media_loaded_progress(self) -> None:
+        """Snapshot and persist the mounted local content body's scroll offset."""
+        session = self._library_media_reader_session
+        loaded_id = session.loaded_id
+        if session.external_detail or loaded_id is None or not loaded_id.startswith(
+            "local:media:"
+        ):
+            return
+        try:
+            content = self.query_one("#library-media-viewer-content", VerticalScroll)
+        except (NoMatches, QueryError):
+            return
+        offset = (int(content.scroll_x), int(content.scroll_y))
+        self._library_media_read_scroll_by_id[loaded_id] = offset
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        update_progress = getattr(service, "update_reading_progress", None)
+        if not callable(update_progress):
+            return
+        self.run_worker(
+            self._write_library_media_loaded_progress(
+                session.loaded_backing_id, offset
+            ),
+            group="library_media_reading_progress",
+        )
+
+    async def _write_library_media_loaded_progress(
+        self, backing_id: int | str | None, offset: tuple[int, int]
+    ) -> None:
+        """Persist a scroll snapshot already fenced to one loaded identity."""
+        if backing_id is None:
+            return
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        update_progress = getattr(service, "update_reading_progress", None)
+        if not callable(update_progress):
+            return
+        try:
+            await self._run_library_service_call(
+                update_progress,
+                mode="local",
+                media_id=backing_id,
+                progress_data={"scroll_x": offset[0], "scroll_y": offset[1]},
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Failed to persist Library media reading progress.")
+
+    def _restore_library_media_loaded_progress(self, expected_id: str) -> None:
+        """Restore only while the expected local identity still owns Reader."""
+        session = self._library_media_reader_session
+        if session.external_detail or session.loaded_id != expected_id:
+            return
+        offset = self._library_media_read_scroll_by_id.get(expected_id)
+        if offset is None:
+            return
+        try:
+            content = self.query_one("#library-media-viewer-content", VerticalScroll)
+        except (NoMatches, QueryError):
+            return
+        content.scroll_to(
+            x=offset[0], y=offset[1], animate=False, force=True
+        )
 
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:

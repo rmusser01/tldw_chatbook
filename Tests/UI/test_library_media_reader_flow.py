@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import MethodType, SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Input, Static
@@ -27,7 +28,12 @@ from tldw_chatbook.Library.library_media_state import (
     build_library_media_browse_state,
     build_media_browse_result,
 )
-from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.Library.library_media_reader_state import (
+    LibraryMediaReaderSessionState,
+    begin_selection,
+    set_mode,
+)
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
 class ControlledDetailMediaService(StaticLibraryMediaScopeService):
@@ -38,6 +44,8 @@ class ControlledDetailMediaService(StaticLibraryMediaScopeService):
         self.detail_entered: dict[int, threading.Event] = {}
         self.detail_release: dict[int, threading.Event] = {}
         self.detail_outcomes: dict[int, object] = {}
+        self.progress_calls: list[dict[str, object]] = []
+        self.progress_outcomes: dict[int, object] = {}
 
     def get_media_item(self, *, media_id, **kwargs):
         self.detail_calls.append({"media_id": media_id, **kwargs})
@@ -60,6 +68,10 @@ class ControlledDetailMediaService(StaticLibraryMediaScopeService):
         if outcome is not None:
             self.detail_outcomes[media_id] = outcome
         self.detail_release.setdefault(media_id, threading.Event()).set()
+
+    def get_reading_progress(self, *, media_id, **kwargs):
+        self.progress_calls.append({"media_id": media_id, **kwargs})
+        return self.progress_outcomes.get(media_id)
 
 
 def _flow_app(count: int = 65):
@@ -632,3 +644,386 @@ async def test_entering_select_mode_cancels_pending_single_item_settlement():
         assert screen._library_media_select_mode is True
         assert screen._library_media_reader_session.pending_request is None
         assert service.detail_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_selects_following_row_then_previous_then_empty():
+    """Single delete keeps traversal anchored to the pre-delete ordering."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        ordered = [
+            _row_identity(screen.query_one(f"#library-media-row-{index}", Button))
+            for index in range(3)
+        ]
+        previous_id, previous_backing_id, _ = ordered[0]
+        middle_id, middle_backing_id, _ = ordered[1]
+        following_id, following_backing_id, _ = ordered[2]
+
+        screen.query_one("#library-media-row-1", Button).press()
+        await _wait_for_detail_call(service, middle_backing_id)
+        service.release(middle_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == middle_id,
+            message="Middle item did not load before delete.",
+        )
+
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await screen._delete_library_media_item(middle_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_delete_receipt_ids == (middle_id,),
+            message="Single delete did not settle through the shared receipt.",
+        )
+
+        assert screen._library_media_reader_session.selected_id == following_id
+        await _wait_for_detail_call(service, following_backing_id)
+        service.release(following_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == following_id,
+            message="Following item did not load after delete.",
+        )
+
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await screen._delete_library_media_item(following_id)
+        assert screen._library_media_reader_session.selected_id == previous_id
+        await _wait_for_detail_call(service, previous_backing_id)
+        service.release(previous_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == previous_id,
+            message="Previous item did not load after deleting the final row.",
+        )
+
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await screen._delete_library_media_item(previous_id)
+        assert screen._library_media_reader_session.selected_id is None
+        assert screen._library_media_reader_session.loaded_id is None
+        assert screen._library_media_detail is None
+
+
+@pytest.mark.asyncio
+async def test_stale_detail_never_writes_progress_under_new_selected_id():
+    """Progress persists under the mounted loaded item, not traversal intent."""
+    loaded = LibraryMediaReaderSessionState(
+        selected_id="local:media:1",
+        selected_backing_id=1,
+        selected_title="Loaded",
+        loaded_id="local:media:1",
+        loaded_backing_id=1,
+        loaded_title="Loaded",
+    )
+    session = begin_selection(loaded, "local:media:2", 2, "Selected")
+    calls = []
+
+    async def update_reading_progress(**kwargs):
+        calls.append(kwargs)
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    workers = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=session,
+        _library_media_read_scroll_by_id={},
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=SimpleNamespace(
+                update_reading_progress=update_reading_progress
+            )
+        ),
+        query_one=lambda *_args, **_kwargs: SimpleNamespace(scroll_x=0, scroll_y=17),
+        run_worker=lambda coro, **_kwargs: workers.append(coro),
+    )
+    fake._write_library_media_loaded_progress = MethodType(
+        LibraryScreen._write_library_media_loaded_progress, fake
+    )
+    fake._run_library_service_call = run_service_call
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+    await workers[0]
+    stale_cached = LibraryScreen._cache_library_media_reading_progress(
+        fake,
+        loaded.request_generation,
+        "local:media:1",
+        {"scroll_x": 0, "scroll_y": 99},
+    )
+
+    assert calls == [
+        {
+            "mode": "local",
+            "media_id": 1,
+            "progress_data": {"scroll_x": 0, "scroll_y": 17},
+        }
+    ]
+    assert stale_cached is False
+    assert fake._library_media_read_scroll_by_id["local:media:1"] == (0, 17)
+
+
+def test_progress_restores_after_loaded_content_mounts():
+    """The loaded local identity owns the offset restored into its body."""
+    calls = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="local:media:7",
+            selected_backing_id=7,
+            selected_title="Seven",
+            loaded_id="local:media:7",
+            loaded_backing_id=7,
+            loaded_title="Seven",
+        ),
+        _library_media_read_scroll_by_id={"local:media:7": (2, 19)},
+        query_one=lambda *_args, **_kwargs: SimpleNamespace(
+            scroll_to=lambda **kwargs: calls.append(kwargs)
+        ),
+    )
+
+    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:7")
+
+    assert calls == [{"x": 2, "y": 19, "animate": False, "force": True}]
+
+
+@pytest.mark.asyncio
+async def test_progress_loads_from_service_when_detail_has_no_embedded_progress():
+    """Fresh sessions use the progress service after fenced detail ownership."""
+    calls = []
+
+    async def get_reading_progress(**kwargs):
+        calls.append(kwargs)
+        return {"scroll_x": 0, "scroll_y": 12}
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    session = begin_selection(
+        LibraryMediaReaderSessionState(), "local:media:1", 1, "One"
+    )
+    fake = SimpleNamespace(
+        _library_media_reader_session=session,
+        _library_media_read_scroll_by_id={},
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=SimpleNamespace(
+                get_reading_progress=get_reading_progress
+            )
+        ),
+        _run_library_service_call=run_service_call,
+    )
+    fake._required_library_media_backing_id = MethodType(
+        LibraryScreen._required_library_media_backing_id, fake
+    )
+    fake._library_media_backing_id = MethodType(
+        LibraryScreen._library_media_backing_id, fake
+    )
+    detail = {"id": 1, "content": "No embedded progress"}
+
+    progress = await LibraryScreen._fetch_library_media_reading_progress(
+        fake, "local:media:1"
+    )
+    cached = LibraryScreen._cache_library_media_reading_progress(
+        fake, session.request_generation, "local:media:1", progress
+    )
+
+    assert "reading_progress" not in detail
+    assert calls == [{"mode": "local", "media_id": 1}]
+    assert cached is True
+    assert fake._library_media_read_scroll_by_id["local:media:1"] == (0, 12)
+
+
+def test_mode_change_preserves_per_item_read_scroll_for_session():
+    """Leaving and returning to Read uses the loaded item's session snapshot."""
+    restored = []
+    body = SimpleNamespace(
+        scroll_x=0,
+        scroll_y=23,
+        scroll_to=lambda **kwargs: restored.append(kwargs),
+    )
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="local:media:4",
+            selected_backing_id=4,
+            selected_title="Four",
+            loaded_id="local:media:4",
+            loaded_backing_id=4,
+            loaded_title="Four",
+        ),
+        _library_media_read_scroll_by_id={},
+        app_instance=SimpleNamespace(media_reading_scope_service=None),
+        query_one=lambda *_args, **_kwargs: body,
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "analysis"
+    )
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "read"
+    )
+    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:4")
+
+    assert restored == [{"x": 0, "y": 23, "animate": False, "force": True}]
+
+
+def test_external_server_detail_does_not_use_local_progress_seam():
+    """External detail has no local loaded-id progress ownership."""
+    queried = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            selected_id="server:media:9",
+            selected_backing_id=9,
+            selected_title="Server",
+            loaded_id="server:media:9",
+            loaded_backing_id=9,
+            loaded_title="Server",
+            external_detail=True,
+        ),
+        _library_media_read_scroll_by_id={},
+        query_one=lambda *_args, **_kwargs: queried.append(True),
+        run_worker=lambda *_args, **_kwargs: pytest.fail("local progress worker ran"),
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+
+    assert queried == []
+
+
+def _escape_fake(*, region: str, more_open: bool = False):
+    layout = SimpleNamespace(items_open=True, library_open=True)
+    library = SimpleNamespace(role="library", ancestors=())
+    items = SimpleNamespace(role="items", ancestors=())
+    reader = SimpleNamespace(role="reader", ancestors=())
+    shell = SimpleNamespace(
+        library=library,
+        items=items,
+        reader=reader,
+        effective_layout=layout,
+    )
+    find = SimpleNamespace(role="find", ancestors=())
+    owner = {"library": library, "items": items, "reader": reader, "find": find}[
+        region
+    ]
+    focused = SimpleNamespace(ancestors=(owner,))
+    calls = []
+    fake = SimpleNamespace(
+        focused=focused,
+        _library_media_bulk_delete_in_flight=False,
+        _library_media_editing=False,
+        _library_media_confirming_delete=False,
+        _library_media_editing_analysis=False,
+        _library_media_content_query="needle",
+        _library_media_content_match_index=1,
+        _library_media_reader_session=LibraryMediaReaderSessionState(
+            more_open=more_open
+        ),
+        query_one=lambda selector, *_args: (
+            shell
+            if selector == "#library-media-reader-shell"
+            else find
+        ),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
+        _exit_library_media_viewer=lambda: calls.append("back"),
+        _register_footer_shortcuts=lambda: calls.append("footer"),
+        call_after_refresh=lambda callback, *args: callback(*args),
+    )
+    return fake, calls, shell, find
+
+
+def test_escape_closes_more_find_confirmation_before_leaving_reader():
+    """Every Reader transient consumes Escape before outward graduation."""
+    fake, calls, _shell, _find = _escape_fake(region="reader", more_open=True)
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_reader_session.more_open is False
+    assert calls == ["sync", ("focus", "#library-media-reader-more")]
+
+    fake, calls, _shell, _find = _escape_fake(region="find")
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_content_query == ""
+    assert calls == ["sync", ("focus", "#library-media-reader-find")]
+
+    fake, calls, _shell, _find = _escape_fake(region="reader")
+    fake._library_media_confirming_delete = True
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_confirming_delete is False
+    assert calls == ["sync"]
+
+    fake, calls, _shell, _find = _escape_fake(region="reader")
+    fake._library_media_editing = True
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_editing is False
+    assert calls == ["sync"]
+
+    fake, calls, _shell, _find = _escape_fake(region="reader")
+    fake._library_media_editing_analysis = True
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_editing_analysis is False
+    assert calls == ["sync"]
+
+
+def test_escape_moves_reader_to_items_then_library_then_screen_back():
+    """One outward handler graduates through the effective pane hierarchy."""
+    fake, calls, shell, _find = _escape_fake(region="reader")
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls[:1] == [("focus", "#library-media-filter")]
+
+    fake.focused = SimpleNamespace(ancestors=(shell.items,))
+    calls.clear()
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == [("rail", "#library-search-input")]
+
+    fake.focused = SimpleNamespace(ancestors=(shell.library,))
+    calls.clear()
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == ["back"]
+
+
+def test_escape_skips_responsively_collapsed_panes():
+    """Collapsed intermediate roles are absent from outward graduation."""
+    fake, calls, shell, _find = _escape_fake(region="reader")
+    shell.effective_layout.items_open = False
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls[:1] == [("rail", "#library-search-input")]
+
+    calls.clear()
+    shell.effective_layout.library_open = False
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls == ["back", "footer"]
+
+
+@pytest.mark.asyncio
+async def test_hidden_panes_have_no_focusable_descendants_but_grips_remain_reachable():
+    """A collapsed pane leaves only its fixed grip in the focus chain."""
+    app, _service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        shell = screen.query_one("#library-media-reader-shell")
+        screen.query_one("#library-media-items-grip", Button).press()
+        await pilot.pause()
+
+        assert shell.items.display is False
+        assert shell.items.disabled is True
+        assert all(
+            widget is not shell.items and shell.items not in widget.ancestors
+            for widget in screen.focus_chain
+        )
+        assert shell.items_grip in screen.focus_chain
+
+
+def test_footer_advertises_only_working_current_actions():
+    """The Escape hint names the currently effective focus destination."""
+    fake, _calls, shell, _find = _escape_fake(region="reader")
+    assert LibraryScreen._library_media_escape_label(fake) == "focus Items"
+    fake.focused = SimpleNamespace(ancestors=(shell.items,))
+    assert LibraryScreen._library_media_escape_label(fake) == "focus Library"
+    shell.effective_layout.library_open = False
+    assert LibraryScreen._library_media_escape_label(fake) == "back"

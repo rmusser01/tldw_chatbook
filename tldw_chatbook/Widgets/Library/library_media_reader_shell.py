@@ -119,6 +119,7 @@ class LibraryMediaReaderShell(Horizontal):
             (self.items, layout.items_open, layout.items_width),
         ):
             pane.display = open
+            pane.disabled = not open
             pane.styles.width = width
             pane.styles.min_width = width
             pane.styles.max_width = width

@@ -248,8 +248,8 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
         await _wait_for_compact_class(screen, pilot, compact=False)
-        open_viewer = screen.query_one("#library-media-open-viewer", Button)
-        open_viewer.focus()
+        row = screen.query_one("#library-media-row-0", Button)
+        row.focus()
         await pilot.pause()
 
         pending = []
@@ -549,7 +549,14 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "media_id", None) == target_id,
-            message="Viewer Back did not first restore the retained page-2 row.",
+            message=lambda: (
+                "Viewer Back did not first restore the retained page-2 row: "
+                f"target={target_id!r}, focused={screen.focused!r}, "
+                f"focused_media={getattr(screen.focused, 'media_id', None)!r}, "
+                f"pending={screen._library_pending_list_entry_focus!r}, return="
+                f"{screen._library_pending_list_entry_media_return!r}, layout="
+                f"{screen._library_media_reader_layout!r}."
+            ),
         )
         assert len(service.search_calls) == reads_before_back == 1
 

@@ -37,6 +37,8 @@ def _bind_media_mutation_seams(fake):
     events = []
     scope = MediaBrowseScope()
     controller = SimpleNamespace(
+        applied_scope=scope,
+        retained_items=(),
         mutation_refresh_scope=scope,
         begin_mutation=lambda: events.append(("begin",)) or scope,
         reconcile_committed_mutation=lambda **kwargs: events.append(
@@ -1263,6 +1265,65 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     assert any(event[0] == "request" for event in fake._mutation_events)
     assert any(event[0] == "facets" for event in fake._mutation_events)
 
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_undo_reinserts_and_reselects_when_item_matches_active_scope(tmp_path):
+    """A one-item receipt returns to Reader when its summary is in scope."""
+    db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="undo-visible")
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Visible", content="body", media_type="article", keywords=[]
+    )
+    assert db.mark_as_trash(media_id) is True
+    fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
+    fake._library_media_browse_controller.applied_scope = MediaBrowseScope(
+        media_type="article"
+    )
+    selections = []
+    def select_restored(*args, **kwargs):
+        fake._mutation_events.append(("select", args[0]))
+        selections.append((args, kwargs))
+
+    fake._select_library_media_reader_row = select_restored
+
+    identity = f"local:media:{media_id}"
+    await LibraryScreen._undo_library_media_bulk_delete(fake, (identity,))
+
+    assert selections == [((identity, "Visible"), {"immediate": True})]
+    reconcile_index = next(
+        index
+        for index, event in enumerate(fake._mutation_events)
+        if event[0] == "reconcile"
+    )
+    select_index = fake._mutation_events.index(("select", identity))
+    assert reconcile_index < select_index
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_undo_succeeds_with_restored_outside_current_filter_message(tmp_path):
+    """A filtered-out restore keeps Reader selection stable and explains why."""
+    db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="undo-filtered")
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Visible", content="body", media_type="article", keywords=[]
+    )
+    assert db.mark_as_trash(media_id) is True
+    fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
+    fake._library_media_browse_controller.applied_scope = MediaBrowseScope(
+        query="different"
+    )
+    selections = []
+    fake._select_library_media_reader_row = lambda *args, **kwargs: selections.append(
+        (args, kwargs)
+    )
+
+    await LibraryScreen._undo_library_media_bulk_delete(
+        fake, (f"local:media:{media_id}",)
+    )
+
+    assert selections == []
+    assert fake._notified == [("Restored outside the current filter.", {})]
     db.close_connection()
 
 

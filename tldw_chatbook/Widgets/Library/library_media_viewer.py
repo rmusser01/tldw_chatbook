@@ -204,6 +204,13 @@ class LibraryMediaViewer(Vertical):
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Delete", id="library-media-delete-confirm", compact=True
+                )
+                yield Button(
+                    "Cancel", id="library-media-delete-cancel", compact=True
+                )
 
         yield from self._compose_active_body()
 
