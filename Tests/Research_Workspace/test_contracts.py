@@ -96,3 +96,14 @@ def test_unknown_capability_fails_closed_with_typed_exact_capability() -> None:
         owner="research_workspace",
         recovery_action="Refresh capabilities or choose another action.",
     )
+
+
+@pytest.mark.parametrize("available", ["false", 0, 1, None])
+def test_research_capability_rejects_non_boolean_availability(available: object) -> None:
+    with pytest.raises(TypeError, match="available must be bool"):
+        ResearchCapability(
+            available=available,  # type: ignore[arg-type]
+            reason_code="malformed",
+            user_message="Malformed capability.",
+            owner="server",
+        )

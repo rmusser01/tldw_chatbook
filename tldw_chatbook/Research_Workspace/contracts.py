@@ -82,6 +82,8 @@ class ResearchCapability:
     capability_revision: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.available) is not bool:
+            raise TypeError("available must be bool")
         object.__setattr__(
             self, "reason_code", _required_text(self.reason_code, "reason_code")
         )

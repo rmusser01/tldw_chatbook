@@ -14,7 +14,11 @@ from tldw_chatbook.runtime_policy.server_event_scope import (
     event_principal_id_from_active_context,
 )
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.tldw_api.exceptions import APIConnectionError, AuthenticationError
+from tldw_chatbook.tldw_api.exceptions import (
+    APIConnectionError,
+    APIResponseError,
+    AuthenticationError,
+)
 
 from .contracts import (
     CapabilityUnavailableError,
@@ -26,16 +30,17 @@ from .contracts import (
 )
 
 
-_OPERATIONS = (
-    "list",
-    "get",
-    "create",
-    "update",
-    "duplicate",
-    "archive",
-    "restore",
-    "delete",
-)
+_AUDITED_SERVICE_METHODS = {
+    "list": "list_workspaces",
+    "get": "list_workspaces",
+    "create": "save_workspace",
+    "update": "save_workspace",
+    "duplicate": "save_workspace",
+    "archive": "save_workspace",
+    "restore": "save_workspace",
+    "delete": "delete_workspace",
+}
+_AUDITED_CAPABILITY_REVISION = "server-notes-workspace-service-v1"
 _RECOVERY_BY_REASON = {
     "server_not_configured": "Configure a server.",
     "server_profile_missing": "Choose or configure a server profile.",
@@ -180,6 +185,19 @@ class ServerResearchWorkspaceAdapter:
     ) -> bool:
         context = self._context_for_ref(ref)
         require_capability(self._capabilities_for_context(context), "delete")
+        if expected_version is not None:
+            raise CapabilityUnavailableError(
+                ResearchCapability(
+                    available=False,
+                    reason_code="version_precondition_unavailable",
+                    user_message=(
+                        "The selected server cannot enforce a delete version precondition."
+                    ),
+                    owner="server",
+                    recovery_action="Reload the workspace and delete without a version.",
+                    capability_revision=self._capability_revision(context),
+                )
+            )
         result = await self._server_call(
             self._service.delete_workspace(ref.workspace_id), context=context
         )
@@ -254,42 +272,74 @@ class ServerResearchWorkspaceAdapter:
     def _capabilities_for_context(
         self, context: Any
     ) -> Mapping[str, ResearchCapability]:
-        context_capabilities = getattr(context, "capabilities", {})
-        workspace_capabilities = (
-            context_capabilities.get("research_workspace", {})
-            if isinstance(context_capabilities, Mapping)
-            else {}
-        )
-        operations = (
-            workspace_capabilities.get("operations", {})
-            if isinstance(workspace_capabilities, Mapping)
-            else {}
-        )
-        if not isinstance(operations, Mapping):
-            operations = {}
         revision = self._capability_revision(context)
+        unavailable = self._context_health_unavailable(context, revision=revision)
         result: dict[str, ResearchCapability] = {}
-        for operation in _OPERATIONS:
-            available = operations.get(operation) is True
-            result[operation] = ResearchCapability(
-                available=available,
-                reason_code=(
-                    "available" if available else "server_capability_unavailable"
-                ),
-                user_message=(
-                    "Available on the selected server."
-                    if available
-                    else f"The selected server does not support workspace {operation}."
-                ),
+        for operation, service_method in _AUDITED_SERVICE_METHODS.items():
+            if unavailable is not None:
+                result[operation] = unavailable
+            elif callable(getattr(self._service, service_method, None)):
+                result[operation] = ResearchCapability(
+                    available=True,
+                    reason_code="available",
+                    user_message="Available on the selected server.",
+                    owner="server",
+                    capability_revision=revision,
+                )
+            else:
+                result[operation] = ResearchCapability(
+                    available=False,
+                    reason_code="server_capability_unavailable",
+                    user_message=(
+                        f"The selected server service cannot perform workspace {operation}."
+                    ),
+                    owner="server",
+                    recovery_action="Choose another action or update the server service.",
+                    capability_revision=revision,
+                )
+        return result
+
+    @staticmethod
+    def _context_health_unavailable(
+        context: Any, *, revision: str
+    ) -> ResearchCapability | None:
+        capabilities = getattr(context, "capabilities", {})
+        if not isinstance(capabilities, Mapping):
+            capabilities = {}
+        if capabilities.get("server_configured") is False:
+            return ResearchCapability(
+                available=False,
+                reason_code="server_not_configured",
+                user_message="A server is not configured.",
                 owner="server",
-                recovery_action=(
-                    ""
-                    if available
-                    else "Choose another action or server with this capability."
-                ),
+                recovery_action="Configure a server.",
                 capability_revision=revision,
             )
-        return result
+        if capabilities.get("reachability") == "unreachable":
+            return ResearchCapability(
+                available=False,
+                reason_code="server_unavailable",
+                user_message="The selected server is unavailable.",
+                owner="server",
+                recovery_action="Retry or change the selected server.",
+                capability_revision=revision,
+            )
+        auth_state = capabilities.get("auth_state")
+        if auth_state in {"auth_required", "session_invalid"}:
+            stale = auth_state == "session_invalid"
+            return ResearchCapability(
+                available=False,
+                reason_code="stale_authorization" if stale else "auth_required",
+                user_message=(
+                    "Authorization with the selected server is stale."
+                    if stale
+                    else "Authentication with the selected server is required."
+                ),
+                owner="server",
+                recovery_action="Reauthenticate with the selected server.",
+                capability_revision=revision,
+            )
+        return None
 
     async def _server_call(
         self, operation: Awaitable[_ServerResult], *, context: Any
@@ -322,6 +372,43 @@ class ServerResearchWorkspaceAdapter:
                     capability_revision=self._capability_revision(context),
                 )
             ) from exc
+        except APIResponseError as exc:
+            permission_denied = exc.status_code == 403
+            capability_missing = exc.status_code in {404, 405, 501}
+            raise CapabilityUnavailableError(
+                ResearchCapability(
+                    available=False,
+                    reason_code=(
+                        "server_permission_denied"
+                        if permission_denied
+                        else (
+                            "server_capability_unavailable"
+                            if capability_missing
+                            else "server_request_failed"
+                        )
+                    ),
+                    user_message=(
+                        "The selected server denied this workspace action."
+                        if permission_denied
+                        else (
+                            "The selected server does not expose this workspace action."
+                            if capability_missing
+                            else "The selected server could not complete this action."
+                        )
+                    ),
+                    owner="server",
+                    recovery_action=(
+                        "Review server permissions and retry."
+                        if permission_denied
+                        else (
+                            "Update the selected server or choose another action."
+                            if capability_missing
+                            else "Retry or review server diagnostics."
+                        )
+                    ),
+                    capability_revision=self._capability_revision(context),
+                )
+            ) from exc
         except (APIConnectionError, ConnectionError, OSError, TimeoutError) as exc:
             raise CapabilityUnavailableError(
                 ResearchCapability(
@@ -338,11 +425,10 @@ class ServerResearchWorkspaceAdapter:
     def _capability_revision(context: Any) -> str:
         capabilities = getattr(context, "capabilities", {})
         if not isinstance(capabilities, Mapping):
-            return ""
-        workspace = capabilities.get("research_workspace", {})
-        if not isinstance(workspace, Mapping):
-            return ""
-        return str(workspace.get("revision") or "").strip()
+            capabilities = {}
+        reachability = str(capabilities.get("reachability") or "unknown").strip()
+        auth_state = str(capabilities.get("auth_state") or "unknown").strip()
+        return f"{_AUDITED_CAPABILITY_REVISION}:{reachability}:{auth_state}"
 
     @staticmethod
     def _context_failure_capability(exc: ServerContextError) -> ResearchCapability:

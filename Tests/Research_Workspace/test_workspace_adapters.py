@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.Research_Workspace.contracts import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
@@ -20,8 +21,12 @@ from tldw_chatbook.Research_Workspace.server_adapter import (
 )
 from tldw_chatbook.Workspaces.models import WorkspaceRecord
 from tldw_chatbook.runtime_policy import PolicyDeniedError
-from tldw_chatbook.runtime_policy.server_context import ServerContextUnavailable
-from tldw_chatbook.tldw_api.exceptions import AuthenticationError
+from tldw_chatbook.runtime_policy.server_context import (
+    RuntimeServerContextProvider,
+    ServerContextUnavailable,
+)
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.tldw_api.exceptions import APIResponseError, AuthenticationError
 
 
 class RecordingLocalService:
@@ -226,30 +231,39 @@ class RecordingServerService:
         return {"deleted": True}
 
 
-def server_context(**capability_overrides: object) -> object:
-    operations = {
-        "list": True,
-        "get": True,
-        "create": True,
-        "update": True,
-        "duplicate": False,
-        "archive": True,
-        "restore": True,
-        "delete": True,
-    }
-    operations.update(capability_overrides)
+def server_context(
+    *, reachability: str = "reachable", auth_state: str = "authenticated"
+) -> object:
+    """Build capabilities through the real active-context projection."""
+
+    runtime_context_provider = SimpleNamespace(
+        runtime_context=SimpleNamespace(
+            state=RuntimeSourceState(
+                active_source="server",
+                active_server_id="profile-1",
+                server_configured=True,
+                server_reachability=reachability,
+                server_auth_state=auth_state,
+                last_known_server_label="Server",
+            )
+        )
+    )
+    target = ConfiguredServerTarget(
+        server_id="profile-1",
+        label="Server",
+        base_url="https://server.example/api",
+        last_known_reachability=reachability,
+        last_known_auth_state=auth_state,
+    )
+    capabilities = RuntimeServerContextProvider._build_capabilities(
+        runtime_context_provider, target
+    )
+
     return SimpleNamespace(
         active_server_id="profile-1",
         auth_token="not-a-secret-test-token",
         credential_source="test",
-        capabilities={
-            "reachability": "reachable",
-            "auth_state": "authenticated",
-            "research_workspace": {
-                "revision": "cap-rev-1",
-                "operations": operations,
-            },
-        },
+        capabilities=capabilities,
     )
 
 
@@ -307,41 +321,154 @@ async def test_server_missing_profile_fails_closed_without_local_fallback() -> N
 
 
 @pytest.mark.asyncio
-async def test_server_denied_operation_raises_exact_server_capability() -> None:
+async def test_server_projects_audited_lifecycle_from_real_context_shape() -> None:
     service = RecordingServerService()
-    provider = RecordingServerContextProvider(context=server_context(delete=False))
+    provider = RecordingServerContextProvider(context=server_context())
     adapter = ServerResearchWorkspaceAdapter(service, provider)
     ref = (await adapter.list_workspaces())[0].ref
     capabilities = await adapter.capabilities(ref)
 
-    with pytest.raises(CapabilityUnavailableError) as exc_info:
-        await adapter.delete_workspace(ref)
-
-    assert exc_info.value.capability == capabilities["delete"]
-    assert exc_info.value.capability.reason_code == "server_capability_unavailable"
+    assert set(capabilities) == {
+        "list",
+        "get",
+        "create",
+        "update",
+        "duplicate",
+        "archive",
+        "restore",
+        "delete",
+    }
+    assert all(capability.available is True for capability in capabilities.values())
+    assert {capability.capability_revision for capability in capabilities.values()} == {
+        "server-notes-workspace-service-v1:reachable:authenticated"
+    }
     assert service.calls == [("list",)]
 
 
 @pytest.mark.asyncio
-async def test_server_omitted_operation_capability_fails_closed() -> None:
-    context = server_context()
-    context.capabilities["research_workspace"]["operations"].pop("delete")
+async def test_server_projection_exposes_only_concrete_audited_service_methods() -> None:
+    class ServiceWithoutDelete:
+        async def list_workspaces(self):
+            return [{"id": "server-1", "name": "Remote", "version": 4}]
+
+        async def save_workspace(self, **kwargs):
+            return {"id": kwargs["workspace_id"], "name": "Remote", "version": 1}
+
+    adapter = ServerResearchWorkspaceAdapter(
+        ServiceWithoutDelete(),  # type: ignore[arg-type]
+        RecordingServerContextProvider(context=server_context()),
+    )
+    ref = (await adapter.list_workspaces())[0].ref
+
+    capabilities = await adapter.capabilities(ref)
+
+    assert capabilities["list"].available is True
+    assert capabilities["create"].available is True
+    assert capabilities["delete"].available is False
+    assert capabilities["delete"].reason_code == "server_capability_unavailable"
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.delete_workspace(ref)
+    assert exc_info.value.capability == capabilities["delete"]
+
+
+@pytest.mark.asyncio
+async def test_server_lifecycle_calls_use_exact_service_arguments() -> None:
     service = RecordingServerService()
-    provider = RecordingServerContextProvider(context=context)
+    new_ids = iter(("server-new", "server-copy"))
+    provider = RecordingServerContextProvider(context=server_context())
+    adapter = ServerResearchWorkspaceAdapter(
+        service, provider, id_factory=lambda: next(new_ids)
+    )
+
+    listed = await adapter.list_workspaces()
+    ref = listed[0].ref
+    fetched = await adapter.get_workspace(ref)
+    created = await adapter.create_workspace(name="Created")
+    updated = await adapter.update_workspace(
+        ref, name="Renamed", expected_version=4
+    )
+    duplicated = await adapter.duplicate_workspace(ref, name="Copy")
+    archived = await adapter.archive_workspace(ref, expected_version=4)
+    restored = await adapter.restore_workspace(ref, expected_version=5)
+    deleted = await adapter.delete_workspace(ref)
+
+    assert fetched == listed[0]
+    assert created.ref.workspace_id == "server-new"
+    assert updated.name == "Renamed"
+    assert duplicated.ref.workspace_id == "server-copy"
+    assert archived.archived is True
+    assert restored.archived is False
+    assert deleted is True
+    assert service.calls == [
+        ("list",),
+        ("list",),
+        ("save", {"workspace_id": "server-new", "name": "Created"}),
+        (
+            "save",
+            {"workspace_id": "server-1", "name": "Renamed", "version": 4},
+        ),
+        ("save", {"workspace_id": "server-copy", "name": "Copy"}),
+        (
+            "save",
+            {"workspace_id": "server-1", "archived": True, "version": 4},
+        ),
+        (
+            "save",
+            {"workspace_id": "server-1", "archived": False, "version": 5},
+        ),
+        ("delete", "server-1"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["update", "archive", "restore"])
+async def test_server_versioned_lifecycle_requires_expected_version(
+    operation: str,
+) -> None:
+    service = RecordingServerService()
+    provider = RecordingServerContextProvider(context=server_context())
     adapter = ServerResearchWorkspaceAdapter(service, provider)
     ref = (await adapter.list_workspaces())[0].ref
 
     with pytest.raises(CapabilityUnavailableError) as exc_info:
-        await adapter.delete_workspace(ref)
+        if operation == "update":
+            await adapter.update_workspace(ref, name="Changed")
+        elif operation == "archive":
+            await adapter.archive_workspace(ref)
+        else:
+            await adapter.restore_workspace(ref)
 
-    assert exc_info.value.capability.reason_code == "server_capability_unavailable"
+    assert exc_info.value.capability.reason_code == "version_required"
     assert service.calls == [("list",)]
 
 
 @pytest.mark.asyncio
-async def test_server_missing_research_capability_block_fails_before_service_call() -> None:
-    context = server_context()
-    context.capabilities.pop("research_workspace")
+async def test_server_delete_rejects_unenforceable_expected_version() -> None:
+    service = RecordingServerService()
+    provider = RecordingServerContextProvider(context=server_context())
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+    ref = (await adapter.list_workspaces())[0].ref
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.delete_workspace(ref, expected_version=4)
+
+    assert exc_info.value.capability.reason_code == "version_precondition_unavailable"
+    assert exc_info.value.capability.owner == "server"
+    assert service.calls == [("list",)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "reason_code"),
+    [
+        (server_context(reachability="unreachable"), "server_unavailable"),
+        (server_context(auth_state="auth_required"), "auth_required"),
+        (server_context(auth_state="session_invalid"), "stale_authorization"),
+    ],
+)
+async def test_server_context_health_disables_audited_lifecycle(
+    context: object, reason_code: str
+) -> None:
     service = RecordingServerService()
     adapter = ServerResearchWorkspaceAdapter(
         service, RecordingServerContextProvider(context=context)
@@ -350,7 +477,7 @@ async def test_server_missing_research_capability_block_fails_before_service_cal
     with pytest.raises(CapabilityUnavailableError) as exc_info:
         await adapter.list_workspaces()
 
-    assert exc_info.value.capability.reason_code == "server_capability_unavailable"
+    assert exc_info.value.capability.reason_code == reason_code
     assert service.calls == []
 
 
@@ -380,7 +507,9 @@ async def test_server_network_failure_is_typed_unavailable_for_detail() -> None:
         user_message="The selected server is unavailable.",
         owner="server",
         recovery_action="Retry or change the selected server.",
-        capability_revision="cap-rev-1",
+        capability_revision=(
+            "server-notes-workspace-service-v1:reachable:authenticated"
+        ),
     )
     assert "secret host details" not in str(exc_info.value)
 
@@ -432,8 +561,42 @@ async def test_server_policy_denial_carries_exact_permission_capability() -> Non
         user_message="Select Server workspace data.",
         owner="server",
         recovery_action="Review server permissions and retry.",
-        capability_revision="cap-rev-1",
+        capability_revision=(
+            "server-notes-workspace-service-v1:reachable:authenticated"
+        ),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "reason_code", "recovery_action"),
+    [
+        (403, "server_permission_denied", "Review server permissions and retry."),
+        (
+            404,
+            "server_capability_unavailable",
+            "Update the selected server or choose another action.",
+        ),
+    ],
+)
+async def test_server_api_denial_is_typed_and_payload_safe(
+    status_code: int, reason_code: str, recovery_action: str
+) -> None:
+    class DeniedServerService(RecordingServerService):
+        async def list_workspaces(self):
+            raise APIResponseError(status_code, "secret server response")
+
+    adapter = ServerResearchWorkspaceAdapter(
+        DeniedServerService(),
+        RecordingServerContextProvider(context=server_context()),
+    )
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.list_workspaces()
+
+    assert exc_info.value.capability.reason_code == reason_code
+    assert exc_info.value.capability.recovery_action == recovery_action
+    assert "secret server response" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
