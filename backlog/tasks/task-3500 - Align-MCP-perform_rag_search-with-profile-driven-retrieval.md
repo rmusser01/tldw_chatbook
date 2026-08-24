@@ -4,7 +4,7 @@ title: Align MCP perform_rag_search with profile-driven retrieval
 status: Done
 assignee: []
 created_date: '2026-08-07 20:34'
-updated_date: '2026-08-24 08:44'
+updated_date: '2026-08-24 08:54'
 labels:
   - rag
   - mcp
@@ -62,4 +62,6 @@ Local GREEN evidence: consolidated suite **670 passed, 10 warnings in 135.36s**;
 Static evidence: `git diff --check origin/dev...HEAD` is green. Dynamic changed-Python audit covered 21 files: 20 `origin/dev` counterparts plus one added test. It found no TASK-3500-added Ruff or formatting violations after the focused shared-mode import fix. Whole-file Ruff/format cannot exit zero due inherited debt: HEAD retains 7 E702 + 7 E402 findings and 12 format candidates, versus 17 Ruff findings and 15 candidates in the same `origin/dev` counterparts; the new test is formatted. The justified deviation and import fix are documented in the Task 7 plan.
 
 CI, the full suite, and live-provider UAT were explicitly excluded. The existing testing-evidence lesson records the vacuous snake_case selector incident (**0/50** selected) and its correction (**10** selected/passed). Genuine RED discrimination evidence was preserved: T1 missing helpers/delegation; T2 `$in` semantic/basic/citation misses plus nonserializable-cache crash and false metrics; T3 eager construction, missing profile/helper, runtime lifecycle/old-mode race, vacuous selector, falsey/off-thread gaps; T4 safe reason/one-result tag, construction/runtime secret leaks, wrong experiment arm, disabled-base activation and total-degraded metrics; T5 score provenance then bool/nonfinite/oversized malformed scores; T6 public copy, stale local-control descriptor, and missing schema description.
+
+Final Task 7 scope/ADR-084 review confirms: no Library multi-source MCP route; no MCP-local service cache; no eager enhanced-runtime construction; the exact media-only `source_type=("media",)` allowlist; no fabricated keyword or vector similarity; no raw construction/runtime exception disclosure; and an unchanged public request schema with the existing seven response keys.
 <!-- SECTION:NOTES:END -->

@@ -766,15 +766,17 @@ git commit -m "docs(mcp): explain profile-driven RAG search"
 - Verify all files above
 - Modify: `backlog/tasks/task-3500 - Align-MCP-perform_rag_search-with-profile-driven-retrieval.md`
 
-- [ ] **Step 1: Run the focused behavioral suite**
+- [x] **Step 1: Run the focused behavioral suite**
 
 ```bash
-PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py Tests/RAG/simplified/test_metadata_filter_matching.py Tests/RAG/simplified/test_search_service.py Tests/RAG_Search/test_reranker_construction.py Tests/RAG_Search/test_reranker_degraded_paths.py Tests/MCP/test_rag_search_tool.py Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py Tests/UI/test_mcp_inspector.py Tests/Library/test_library_rag_state.py -q --tb=short
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py Tests/RAG/simplified/test_metadata_filter_matching.py Tests/RAG/simplified/test_search_service.py Tests/RAG_Search/test_reranker_construction.py Tests/RAG_Search/test_reranker_degraded_paths.py Tests/MCP/test_rag_search_tool.py Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py Tests/UI/test_mcp_inspector.py Tests/Library/test_library_rag_state.py Tests/MCP/test_local_control_service.py -q --tb=short
 ```
 
 Expected: all tests PASS. Record exact pass count, duration, warnings, and any sandbox-only pytest temp cleanup messages separately.
+`Tests/Library/test_library_rag_state.py` owns the helper-hardening coverage;
+the score-kind filename originally proposed for this command does not exist.
 
-- [ ] **Step 2: Freshly rerun the load-bearing engine/lifecycle guards**
+- [x] **Step 2: Freshly rerun the load-bearing engine/lifecycle guards**
 
 Run these separately so an ingestion-only `-k` filter cannot deselect either
 engine module:
@@ -788,7 +790,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 Expected: all three commands PASS, freshly proving all-leg media confinement,
 keyword-leg filtering, and shared singleton reset/generation ownership.
 
-- [ ] **Step 3: Run static and patch hygiene checks on changed Python files**
+- [x] **Step 3: Run static and patch hygiene checks on changed Python files**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/RAG_Search/simplified/active_config.py tldw_chatbook/Library/library_local_rag_search_service.py tldw_chatbook/RAG_Search/simplified/rag_service.py tldw_chatbook/RAG_Search/simplified/search_service.py tldw_chatbook/MCP/tools.py tldw_chatbook/MCP/server.py tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py tldw_chatbook/UI/MCP_Modules/mcp_inspector.py tldw_chatbook/Library/library_rag_state.py Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py Tests/RAG/simplified/test_metadata_filter_matching.py Tests/RAG/simplified/test_search_service.py Tests/RAG_Search/test_reranker_construction.py Tests/MCP/test_rag_search_tool.py Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py Tests/UI/test_mcp_inspector.py
@@ -815,7 +817,7 @@ baseline formatting or lint debt was churned. This differential evidence is
 the acceptance gate for static hygiene, and `git diff --check origin/dev...HEAD`
 remains required to exit zero.
 
-- [ ] **Step 4: Review the final diff against scope and ADR-084**
+- [x] **Step 4: Review the final diff against scope and ADR-084**
 
 ```bash
 git diff --stat origin/dev...HEAD
@@ -824,13 +826,13 @@ git diff origin/dev...HEAD -- tldw_chatbook/RAG_Search/simplified/search_service
 
 Confirm: no Library multi-source routing, no MCP-local service cache, no eager enhanced construction, no non-media allowlist, no fabricated keyword/vector score, no raw construction exception disclosure, and no public schema/key changes.
 
-- [ ] **Step 5: Record TDD discrimination evidence**
+- [x] **Step 5: Record TDD discrimination evidence**
 
 In the task notes, preserve the actual RED results collected in Tasks 1-6. Together they prove the focused guards detect: missing/changed mode arms, removed media confinement, equality-only `$in` regression at semantic and keyword sites, stale shared-service reuse, missing reranker construction disclosure, and blind vector-score defaults. Do not replace these with generic “tests added” prose.
 
 No live model/provider UAT is required: the change does not alter a provider contract, and the focused tests exercise the runtime boundary with deterministic injected shared services plus the real MediaDatabase. Do not download embedding/reranker models or call a cloud provider merely for this task.
 
-- [ ] **Step 6: Complete TASK-3500 only with actual local evidence**
+- [x] **Step 6: Complete TASK-3500 only with actual local evidence**
 
 Use Backlog CLI to add concise implementation notes naming the approach, ADR-084, exact commands/counts, warnings, changed files, and the explicit user-directed CI exclusion. State whether a new lesson was needed; do not invent one. Replace each `<actual ...>` token below with observed evidence before running it:
 
@@ -846,14 +848,14 @@ backlog task 3500 --plain
 backlog task edit 3500 -s Done --plain
 ```
 
-- [ ] **Step 7: Commit task completion metadata**
+- [x] **Step 7: Commit task completion metadata**
 
 ```bash
 git add "backlog/tasks/task-3500 - Align-MCP-perform_rag_search-with-profile-driven-retrieval.md"
 git commit -m "docs: complete TASK-3500"
 ```
 
-- [ ] **Step 8: Confirm final branch state**
+- [x] **Step 8: Confirm final branch state**
 
 ```bash
 git status --short --branch
