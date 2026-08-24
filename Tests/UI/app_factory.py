@@ -167,6 +167,7 @@ def _build_test_app(
     configured_default: str | None = None,
     *,
     first_run_setup_completed: bool = True,
+    preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
@@ -178,6 +179,24 @@ def _build_test_app(
             this app's snapshot only -- see `build_test_app_config`, and
             prefer `save_setting_to_cli_config` for anything a refreshing
             seam must also see.
+        preserve_profile_admission: Defaults to False, which clears
+            ``library_new_profile_admission``. `app.py` sets that flag from
+            `first_profile_created_this_session()`, and the per-test config
+            sandbox creates a profile for every test -- so every factory-built
+            app claimed to be a brand-new profile. The Library rail answers
+            that claim by composing a compact starter rail (two rows plus
+            "Explore all tools") and returning before the search input, the
+            Browse/Create sections and the Details disclosure, which made
+            rows like ``#library-row-browse-media`` unreachable for the many
+            tests written before progressive disclosure existed.
+            Three Library test modules had already hand-rolled exactly this
+            clearing in local `_build_test_app` wrappers; this hoists it to
+            the one factory they all go through. Cleared rather than pinning
+            a lifecycle value, so the screen still derives its own state --
+            an existing profile with no persisted lifecycle settles to
+            Expanded, which is the product's own contract (see
+            `test_library_real_existing_config_without_lifecycle_defaults_expanded`).
+            Pass ``True`` for a test that is *about* new-profile admission.
         first_run_setup_completed: Defaults to True: task-11 added a
             first-run setup wizard that FirstRunSetupWizard.first_run_setup_state.
             should_offer_wizard() auto-offers (pushed on top of whatever the
@@ -350,4 +369,9 @@ def _build_test_app(
         # shipping app must use). A test that wants generation assigns its
         # own fake callable.
         app.library_rag_answer_chat = None
+        # See `preserve_profile_admission` above: the config sandbox creates a
+        # profile per test, so this flag is True for every factory-built app
+        # and the Library rail answers it with the compact starter rail.
+        if not preserve_profile_admission:
+            app.library_new_profile_admission = False
         return app
