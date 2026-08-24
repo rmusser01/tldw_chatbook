@@ -34,6 +34,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 RUN_A = "run-aaaa"
@@ -200,6 +201,99 @@ def test_appending_the_session_costs_one_rescan_not_one_per_tick(monkeypatch):
 
     assert counter.snapshots == 0
     assert counter.list_calls == 0
+
+
+#
+# -- The signature must be sampled BEFORE the scan --------------------------
+#
+
+
+class _AppendDuringScanList(list):
+    """A view list whose reverse scan races a concurrent marker append.
+
+    Review fix round. The real race is not hypothetical:
+    `ConsoleAgentBridge._append_change_markers` appends its TOOL marker
+    through the `append_todo_marker` seam, which fires on the agent
+    WORKER thread with no `call_from_thread` marshalling, while
+    `run_reply` runs under `asyncio.to_thread` -- so an append genuinely
+    can land while the event loop is inside the guard's scan.
+
+    Overriding `__reversed__` reproduces exactly that interleaving,
+    deterministically: `list.__reversed__` snapshots the size when the
+    iterator is created, so the scan below still walks only the
+    pre-append items, and the append is visible to any `len()` taken
+    afterwards. That is the whole bug -- a length sampled after the scan
+    describes a list the answer never saw.
+    """
+
+    def __init__(self, items, *, on_scan=None) -> None:
+        super().__init__(items)
+        self._on_scan = on_scan
+        self.fired = False
+
+    def __reversed__(self):
+        iterator = super().__reversed__()
+        if not self.fired and self._on_scan is not None:
+            self.fired = True
+            self._on_scan()
+        return iterator
+
+
+def test_a_marker_appended_during_the_scan_is_not_memoized_away_forever():
+    """The memo must never pair a pre-append answer with a post-append length.
+
+    Red before the fix: the guard sampled `len(view)` AFTER the loop, so
+    it stored `(view, post_append_len, None)`. Every later tick then
+    passed the full signature check and served that stale `None` until
+    something replaced the list object -- which for a settled run may
+    never happen, so the rail's `✎ N` badge stops refreshing for good.
+    Base recomputed every tick and self-corrected on the next one; the
+    memo is what makes it durable, so this is a fix-round regression
+    test, not a pre-existing-bug test.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    store = ConsoleChatStore()
+    session = store.create_session()
+    for index in range(6):
+        store.append_message(
+            session.id,
+            role=(
+                ConsoleMessageRole.USER
+                if index % 2 == 0
+                else ConsoleMessageRole.ASSISTANT
+            ),
+            content=f"turn {index}",
+        )
+
+    late_marker = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=MARKER_TEXT,
+        status="complete",
+        change_review_run_id="run-LATE",
+    )
+    racing = _AppendDuringScanList(
+        store._messages_by_session[session.id],
+        on_scan=lambda: racing.append(late_marker),
+    )
+    store._messages_by_session[session.id] = racing
+
+    screen = _build_screen(store)
+    first = screen._console_changed_files_scope()
+
+    assert racing.fired, "the fixture never forced the interleaving"
+    # The scan legitimately could not see a marker appended after its
+    # iterator was created -- that tick answering None is correct.
+    assert first == (CONV_ID, None)
+
+    # ...but every LATER tick must see it. This is the assertion the
+    # post-scan `len()` broke: it went None, forever.
+    for tick in range(5):
+        assert screen._console_changed_files_scope() == (CONV_ID, "run-LATE"), (
+            f"tick {tick + 1} after a scan-racing append still served the "
+            "stale pre-append answer -- the memo recorded the post-append "
+            "length beside it"
+        )
 
 
 #
@@ -427,14 +521,54 @@ def test_closing_the_memoized_session_does_not_strand_a_stale_answer():
     assert store.newest_change_review_run_id(survivor.id) is None
 
 
+def test_teardown_releases_the_memo_instead_of_pinning_a_dead_session():
+    """Review fix round: the slot must not outlive the session it names.
+
+    The eviction argument ("the next query for another session replaces
+    it") fails precisely when the closed session was the ACTIVE one:
+    `_console_changed_files_scope` short-circuits on a falsy
+    `active_session_id` and never queries again, so the slot would pin
+    that session's entire view -- every `ConsoleChatMessage` in it -- for
+    the rest of the store's life.
+    """
+    for teardown in ("close", "rollback"):
+        store = ConsoleChatStore()
+        settings = ConsoleSessionSettings(provider="openai", model="m")
+        session = store.create_session(
+            settings=settings, canonical_settings_baseline=settings
+        )
+        if teardown == "close":
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.TOOL,
+                content=MARKER_TEXT,
+                change_review_run_id=RUN_A,
+            )
+            assert store.newest_change_review_run_id(session.id) == RUN_A
+            store.close_session(session.id)
+        else:
+            assert store.newest_change_review_run_id(session.id) is None
+            assert store.rollback_created_pristine_session(
+                session.id,
+                expected_session=session,
+                expected_settings=settings,
+                prior_active_session_id=None,
+            )
+
+        assert store._newest_change_review_memo is None, (
+            f"{teardown} left the memo pinning the torn-down session's view"
+        )
+
+
 def test_restore_state_is_not_served_the_pre_restore_answer():
     """`restore_state` replaces the view wholesale without any memo hook.
 
     The marker is anchored to a real turn here, deliberately. An
     anchor-`None` marker (one appended before the session had any node)
-    SURVIVES a restore into the rebuilt view, because `restore_state`
-    clears `_messages_by_session` but not `_tool_markers_by_session` and
-    `_with_tool_markers` leads every rebuilt view with the anchor-`None`
+    SURVIVES a restore that reuses the same session id, because
+    `restore_state` clears `_messages_by_session` but not
+    `_tool_markers_by_session` (which is keyed by session id) and
+    `_with_tool_markers` leads the rebuilt view with the anchor-`None`
     ones. That is a pre-existing store defect, reproduced identically by
     the pre-TASK-21121 reverse scan (verified against base `fb0a9601e`)
     and filed as TASK-21311 -- not something this memo may paper over,

@@ -11382,7 +11382,11 @@ class ChatScreen(BaseAppScreen):
         pass on every 0.2s tick -- worst case (no marker anywhere in the
         session) being the COMMON case. The store-side memo re-verifies
         its own signature on every hit, so it can only change how long
-        this takes, never what it returns.
+        this takes, never what it returns -- a property that holds
+        because that signature is sampled BEFORE the scan it describes
+        (see `newest_change_review_run_id`; sampling it after let a
+        concurrent marker append pair a pre-append answer with a
+        post-append length, which the memo then served indefinitely).
         """
         conversation_id = self._character._current_console_rail_conversation_id()
         store = self._console_chat_store

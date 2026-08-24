@@ -102,17 +102,34 @@ Counter probe, 25 simulated run ticks with a reply streaming, measuring the guar
 
 The reported scope tuple is identical before and after in all four arms. Numbers are recorded in `Docs/Design/2026-08-22-holistic-perf-review.md` ("Landed after close-out").
 
-`Tests/UI/test_console_changed_files_scope_memo.py` (14 tests, new): 3 cost tests parametrized over two session sizes so the assertion states the SHAPE (flat in session size); 6 control-arm correctness tests; 5 store lifetime/teardown tests. Red-first at base: 7 fail there (2 on the per-tick count, 4 on the missing store API, 1 both). Mutation-tested three ways — `return None` kills 8 tests; dropping the length check kills 1; dropping the identity check killed 0 until `test_scope_re_derives_when_a_same_length_branch_replaces_the_view` was added for it.
+`Tests/UI/test_console_changed_files_scope_memo.py` (new; 15 test functions = 18 node ids after parametrization): 2 cost functions (5 node ids) parametrized over session size AND marker presence so the assertion states the SHAPE (flat in session size) and "always return `None`" fails the cost half too; 6 control-arm correctness functions; 1 scan-race function; 6 store lifetime/teardown functions. Red-first at base `fb0a9601e`: 11 node ids across 9 functions fail there. Mutation-tested four ways — `return None` kills 13 node ids across 12 functions; dropping the length check kills 1; dropping the identity check killed 0 until `test_scope_re_derives_when_a_same_length_branch_replaces_the_view` was added for it; reverting the length hoist kills exactly the scan-race test.
+
+## Review fix round
+
+A reviewer independently reproduced the census, the probe (all eight arms, byte-identical scope tuple), the write-once property and the console red set, fuzzed 138,565 probes with 0 violations (non-vacuous: identity dropped → 465 violations, length dropped → 4,158) — and found one real hole, fixed here.
+
+**MAJOR — the signature was sampled after the work it describes.** `len(view)` was evaluated *after* the reverse scan, so an append landing in between recorded the post-append length beside the pre-append answer. Every later tick then passed the full signature check and served that stale value until the list object was replaced — for a settled run, potentially never, so the rail's `✎ N` badge would stop refreshing for good. This is genuinely reachable: `ConsoleAgentBridge._append_change_markers` appends through the `append_todo_marker` seam, which its own docstring says fires on the agent worker thread with **no `call_from_thread` marshalling**, while `run_reply` runs under `asyncio.to_thread` — so the append races the event-loop tick running the guard. Note the failure MODE is a regression even though the memo is new: base recomputed every tick and self-corrected on the next one; the memo made it durable.
+
+Fix: hoist `length = len(view)` above the scan. `reversed()` snapshots the size at iterator creation, so the scan is already consistent with the pre-append length, and recording a length that is short can only cost an extra miss — never a stale hit.
+
+Regression test `test_a_marker_appended_during_the_scan_is_not_memoized_away_forever` forces the interleaving deterministically with a `list` subclass whose `__reversed__` performs the append after creating the iterator. Its red-first evidence is the **mutation** (revert the hoist → it, and only it, fails), not the base run: at base the fixture cannot fire at all (base reverses a *snapshot copy*, never the store's own list), so its base red is `assert racing.fired`, i.e. fixture inapplicability rather than the bug. Base does not have this bug.
+
+Also in this round:
+
+- **Retention.** `close_session` and `rollback_created_pristine_session` now drop the slot via `_drop_newest_change_review_memo`. The "next query for another session evicts it" argument fails exactly when the closed session was the ACTIVE one: `_console_changed_files_scope` then short-circuits on a falsy `active_session_id` and never queries again, so the slot pinned that session's whole view — every `ConsoleChatMessage` in it — for the life of the store. Dropping a memo can only cost a recompute, so this is hygiene, not an invalidation protocol.
+- **Docstrings corrected.** Both "can never serve a stale run id" (store) and "can only change how long this takes, never what it returns" (screen) were true only *given* the sampling order; both now say so explicitly, so the next reader knows what the guarantee rests on.
+- **`session_id` reworded.** Dropping that component kills zero tests and zero of the reviewer's 138,565 fuzz probes, because identity already covers it (a view list is uniquely owned by one session and the memo pins it alive). Kept as defence-in-depth, no longer described as load-bearing.
+- **Counts corrected** above; every drift was conservative (the real evidence was stronger than claimed).
 
 ## Discovered, not fixed
 
-`restore_state` clears `_messages_by_session` but not `_tool_markers_by_session`, so an anchor-`None` TOOL marker from the replaced state is re-spliced into the head of every restored session's view — including change-summary markers. Confirmed at base with the pre-21121 reverse scan, so pre-existing and unchanged here. Filed as TASK-21311.
+`restore_state` clears `_messages_by_session` but not `_tool_markers_by_session`, so an anchor-`None` TOOL marker from the replaced state is re-spliced into the head of a restored session that reuses the SAME session id (the registry is keyed by session id, so unrelated sessions are unaffected) — change-summary markers included. Confirmed at base with the pre-21121 reverse scan, so pre-existing and unchanged here. Filed as TASK-21311.
 
 ## Files
 
-- `tldw_chatbook/Chat/console_chat_store.py` — memo slot + `newest_change_review_run_id`
+- `tldw_chatbook/Chat/console_chat_store.py` — memo slot, `newest_change_review_run_id`, `_drop_newest_change_review_memo` + its two teardown call sites
 - `tldw_chatbook/UI/Screens/chat_screen.py` — `_console_changed_files_scope` repointed
 - `Tests/UI/test_console_changed_files_scope_memo.py` — new
 - `Docs/Design/2026-08-22-holistic-perf-review.md` — measurements
-- `backlog/docs/lessons-testing-evidence.md` — the early-break-over-a-copy trap + the fixture-billed-counter trap
+- `backlog/docs/lessons-testing-evidence.md` — the early-break-over-a-copy trap, the fixture-billed-counter trap, and the sample-the-signature-first trap
 <!-- SECTION:NOTES:END -->

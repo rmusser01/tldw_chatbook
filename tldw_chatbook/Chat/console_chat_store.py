@@ -1267,6 +1267,7 @@ class ConsoleChatStore:
         ):
             return False
         self._messages_by_session.pop(session_id, None)
+        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
@@ -1738,6 +1739,7 @@ class ConsoleChatStore:
             self._character_emote_captures.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
+        self._drop_newest_change_review_memo(session_id)
         self._tool_markers_by_session.pop(session_id, None)
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
@@ -2918,9 +2920,13 @@ class ConsoleChatStore:
         :class:`~tldw_chatbook.Chat.console_cost_tracker.TokenEstimateCache`
         shape: a hit is served only after re-checking the full signature the
         answer depends on, so a missed "bump" can cost a recompute but can
-        never serve a stale run id. The signature is ``(session_id, the view
-        list OBJECT, its length)``, and it is exact because of two store
-        invariants:
+        never serve a stale run id. **That guarantee rests on the signature
+        being sampled BEFORE the scan, not after** -- see the comment at the
+        `length = len(view)` line below; a length taken after the loop can
+        outrun the answer it is stored with, and the memo then keeps
+        matching on a signature the answer never had. The signature is
+        ``(session_id, the view list OBJECT, its length)``, and it is exact
+        because of two store invariants:
 
         * ``change_review_run_id`` is write-once -- set in the
           ``ConsoleChatMessage`` constructor (live markers via
@@ -2937,12 +2943,20 @@ class ConsoleChatStore:
           branch of ``append_message``, the ONLY in-place mutation). Identity
           catches the first, length catches the second.
 
+        Those two components carry the correctness. ``session_id`` is kept as
+        cheap defence-in-depth, not as a load-bearing check: a view list is
+        uniquely owned by one session and the memo pins that list alive, so
+        identity alone already cannot match across sessions.
+
         Single-slot on purpose: the only caller asks about the ACTIVE session
-        every tick, so one slot hits ~always, retains exactly one list, and
-        needs no teardown hook to avoid outliving a closed session by more
-        than one query. ``close_session``/``restore_state`` are free to drop
-        their session state without telling this memo -- the next query for a
-        different session misses on ``session_id`` and re-derives.
+        every tick, so one slot hits ~always and retains exactly one list.
+        ``close_session``/``rollback_created_pristine_session`` drop the slot
+        explicitly -- purely to stop it pinning a dead session's whole view
+        (and therefore every ``ConsoleChatMessage`` in it) for an unbounded
+        time when the closed session was the active one and nothing queries
+        again. Dropping a memo can only cost a recompute, so that is hygiene,
+        not an invalidation protocol; ``restore_state`` needs no such hook
+        because the next query re-derives against a new list anyway.
 
         Args:
             session_id: Native Console session id.
@@ -2968,14 +2982,47 @@ class ConsoleChatStore:
             and memo[2] == len(view)
         ):
             return memo[3]
+        # Sample the length BEFORE the scan, never after (review fix
+        # round). A marker append can land concurrently -- the agent
+        # bridge's marker seam runs on the worker thread with no
+        # `call_from_thread` marshalling while `run_reply` is under
+        # `asyncio.to_thread` -- and `reversed()` snapshots the size when
+        # its iterator is created, so the answer below describes the list
+        # as it was HERE. Sampling afterwards would pair a pre-append
+        # answer with a post-append length: a signature that keeps
+        # matching, so the stale answer is served for as long as the list
+        # object survives. Recording a length that is short can only cost
+        # an extra miss; recording one that is long is a stale hit.
+        length = len(view)
         newest: str | None = None
         for message in reversed(view):
             run_id = getattr(message, "change_review_run_id", None)
             if run_id:
                 newest = str(run_id)
                 break
-        self._newest_change_review_memo = (session_id, view, len(view), newest)
+        self._newest_change_review_memo = (session_id, view, length, newest)
         return newest
+
+    def _drop_newest_change_review_memo(self, session_id: str) -> None:
+        """Release the memo slot if it belongs to ``session_id``.
+
+        Called from the two session-teardown paths. Purely a RETENTION
+        fix, never a correctness one: the slot pins the session's whole
+        view list, and hence every ``ConsoleChatMessage`` in it, and the
+        usual "the next query for another session evicts it" argument
+        fails exactly when the closed session was the ACTIVE one --
+        `_console_changed_files_scope` then short-circuits on a falsy
+        `active_session_id` and never queries again, so nothing evicts it
+        for the remaining life of the store. Dropping a memo can only
+        cost a recompute, so this adds no invalidation protocol to get
+        wrong.
+
+        Args:
+            session_id: Session being torn down.
+        """
+        memo = self._newest_change_review_memo
+        if memo is not None and memo[0] == session_id:
+            self._newest_change_review_memo = None
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
