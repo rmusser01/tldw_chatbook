@@ -221,15 +221,15 @@ Repository CI checks are not part of this workstream per user direction.
 
 ## ADR check
 
-ADR required: no new ADR.
+ADR required: yes.
 
-ADR path: `backlog/decisions/003-settings-library-rag-defaults.md`
+ADR path: `backlog/decisions/084-mcp-profile-driven-rag-search-contract.md`
 
-Reason: TASK-3500 implements the accepted active-profile configuration and
-runtime-ownership boundaries. It reuses the established process-wide shared
-RAG service and does not introduce a new storage model, service contract, or
-runtime owner. The public compatibility rule is a narrow interpretation of an
-existing boolean field and is recorded in this design and the MCP docs.
+Reason: TASK-3500 changes the lasting public meaning of `use_semantic=True`
+and makes MCP a profile-driven consumer of the process-wide shared RAG runtime.
+ADR-084 records that service contract, cross-module runtime boundary, media
+confinement, and shared score/degradation provenance. ADR-003 remains the
+accepted Settings/defaults boundary that this decision amends.
 
 ## Rejected alternatives
 

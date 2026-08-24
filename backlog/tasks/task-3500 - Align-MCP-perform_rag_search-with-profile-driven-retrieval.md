@@ -20,6 +20,10 @@ The RAG-port P0 programme (TASK-3170) made Library rag-mode search honor the act
 This task aligns only MCP `perform_rag_search`. The legacy agent-owner premise is already satisfied and superseded: `LibraryRagToolProvider.search_library_rag` owns fallback RAG retrieval and `LibraryToolProvider.library_search_notes` owns direct note retrieval under ADR-030. Those agent paths are no longer in scope here.
 <!-- SECTION:DESCRIPTION:END -->
 
+## Architecture Decision
+
+- [ADR-084: MCP profile-driven RAG search contract](../decisions/084-mcp-profile-driven-rag-search-contract.md)
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 MCP `perform_rag_search` resolves and honors the active RAG profile's `default_search_mode` the same way Library rag-mode search does instead of using hardcoded search behavior
