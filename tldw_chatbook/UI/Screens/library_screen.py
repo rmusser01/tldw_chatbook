@@ -15593,11 +15593,11 @@ class LibraryScreen(BaseAppScreen):
         ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
         ``mark_failed``/``requeue`` -- from two different call shapes:
 
-        - **Synchronously inside a message handler.** The "Start import"
-          and "Retry" button handlers call ``submit_library_ingest_job``/
-          ``retry_library_ingest_job`` directly, which mutate the registry
-          (firing this listener) *before* the handler's own trailing
-          ``self.refresh(recompose=True)`` runs.
+        - **Synchronously inside a message handler.** "Start import" and
+          ordinary Library "Retry" actions mutate the registry (firing this
+          listener) before their handler's trailing dynamic-region update.
+          A Research-owned retry is scheduled through its durable operation
+          owner and fires the listener when that owner persists its replacement.
         - **Marshaled from a background thread**, via ``call_from_thread``
           for ``mark_parsing``/``mark_writing`` (the F3 parse-pool
           coordinator, itself invoked from a pool callback thread) and
@@ -30232,10 +30232,9 @@ class LibraryScreen(BaseAppScreen):
             return
         retry = getattr(self.app_instance, "retry_library_ingest_job", None)
         if callable(retry):
-            # ``retry_library_ingest_job``/``LibraryIngestJobRegistry.requeue``
-            # are already id-based and validate state themselves (FAILED,
-            # not already superseded/dismissed) -- a stale or now-wrong-state
-            # job id is a safe no-op, not a mis-targeted retry.
+            # The shared app seam validates the exact job and chooses either
+            # ordinary registry requeueing or the Research operation owner.
+            # A stale or now-wrong-state id is a safe no-op.
             retry(job_id)
         # (task-2100) In place: the registry listener already updated the
         # queue; a trailing full recompose yanked the scroll off the queue.

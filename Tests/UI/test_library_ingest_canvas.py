@@ -1219,6 +1219,36 @@ async def test_transcribe_cpp_failure_renders_only_eligible_recovery_actions():
 
 
 @pytest.mark.asyncio
+async def test_research_failure_renders_only_honest_catalog_retry_action():
+    """Research ownership suppresses provider overrides that bypass its receipt."""
+
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/private/voice.wav",
+        state=IngestJobState.FAILED,
+        error="The selected GGUF cannot be used by transcribe.cpp.",
+        permanent=False,
+        error_detail={
+            "category": "stt_failure",
+            "code": "artifact_incompatible",
+            "message": "The selected GGUF cannot be used by transcribe.cpp.",
+            "actions": ["choose_another_gguf", "retry_faster_whisper"],
+        },
+        research_source_operation_id="source-op-retry-library-row",
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+
+    async with app.run_test() as pilot:
+        retry = pilot.app.query_one("#library-ingest-retry-ingest-job-1", Button)
+        assert str(retry.label) == "Retry Research source"
+        assert not list(
+            pilot.app.query("#library-ingest-retry-faster-whisper-ingest-job-1")
+        )
+        assert not list(pilot.app.query("#library-ingest-choose-gguf-ingest-job-1"))
+
+
+@pytest.mark.asyncio
 async def test_transcribe_cpp_provider_shows_path_free_configured_picker():
     form = _default_form()
     form.type_options = {

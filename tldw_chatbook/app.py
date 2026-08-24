@@ -2345,6 +2345,11 @@ class LibraryIngestQueueMixin:
     touches either heavy worker).
     """
 
+    _RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY = (
+        "Research source retry is unavailable. Open Research Workspace "
+        "and retry from its receipt."
+    )
+
     def _init_library_ingest_runtime_state(self) -> None:
         """Initialize every host attribute the ingest job loop reads.
 
@@ -3179,11 +3184,11 @@ class LibraryIngestQueueMixin:
         *,
         transcription_provider: str | None = None,
     ) -> Optional[LibraryIngestJob]:
-        """Requeue a previously failed job and top up the parse pool.
+        """Retry a previously failed Library or Research-owned ingest job.
 
-        UI-thread only. A thin wrapper over
-        ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
-        when ``job_id`` is unknown or the job is not currently ``FAILED``.
+        UI-thread only. Ordinary Library jobs use the legacy synchronous
+        ``LibraryIngestJobRegistry.requeue`` path. Research-owned jobs hand
+        catalog retry ownership to their durable source-operation scheduler.
 
         Args:
             job_id: The failed job to requeue.
@@ -3191,15 +3196,24 @@ class LibraryIngestQueueMixin:
         Returns:
             The newly appended ``QUEUED`` job (or immediately ``FAILED``
             when ``media_db`` is unavailable), or ``None`` when nothing was
-            requeued.
+            requeued. Research-owned jobs schedule their durable catalog-stage
+            retry and return ``None``; the async owner returns the exact
+            replacement only after its operation lineage is reconciled.
         """
         replacement_options = None
         if transcription_provider not in {None, "faster-whisper"}:
             return None
+        source = self.library_ingest_jobs.get_job(job_id)
+        if source is None:
+            return None
+        operation_id = str(source.research_source_operation_id or "").strip()
+        if operation_id:
+            self._schedule_research_source_catalog_retry(
+                source,
+                operation_id=operation_id,
+            )
+            return None
         if transcription_provider is not None:
-            source = self.library_ingest_jobs.get_job(job_id)
-            if source is None:
-                return None
             replacement_options = deepcopy(source.ingest_options)
             replacement_options.setdefault("audio_video", {})[
                 "transcription_provider"
@@ -3217,6 +3231,138 @@ class LibraryIngestQueueMixin:
             return failed if failed is not None else requeued
         self._top_up_ingest_parse_pool()
         return requeued
+
+    def _schedule_research_source_catalog_retry(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+        notify_unavailable: bool = True,
+    ) -> bool:
+        """Queue the durable Research retry owner without generic requeueing."""
+
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        run_worker = getattr(self, "run_worker", None)
+        if (
+            source.state is not IngestJobState.FAILED
+            or source.superseded
+            or source.dismissed
+            or source.permanent
+            or scheduler is None
+            or operation_store is None
+            or not callable(run_worker)
+        ):
+            if notify_unavailable:
+                self._notify_research_source_retry_unavailable()
+            return False
+        awaitable = self._retry_research_source_catalog_job(
+            source,
+            operation_id=operation_id,
+        )
+        try:
+            run_worker(awaitable, group="research_source_catalog_retry")
+        except Exception:
+            awaitable.close()
+            if notify_unavailable:
+                self._notify_research_source_retry_unavailable()
+            return False
+        return True
+
+    async def _retry_research_source_catalog_job(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+    ) -> LibraryIngestJob | None:
+        """Retry one exact Research catalog receipt and reload its replacement."""
+
+        operation_store = getattr(self, "research_source_operation_store", None)
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if operation_store is None or scheduler is None:
+            self._notify_research_source_retry_unavailable()
+            return None
+        try:
+            operation = await asyncio.to_thread(operation_store.get, operation_id)
+        except Exception:
+            operation = None
+        operation_source = getattr(
+            getattr(operation, "data_source", None), "value", ""
+        )
+        expected_origin = (
+            operation_source if operation_source in {"local", "server"} else ""
+        )
+        if (
+            operation is None
+            or operation.operation_id != operation_id
+            or operation.ingest_job_id != source.job_id
+            or source.research_source_operation_id != operation_id
+            or source.origin != expected_origin
+        ):
+            self._notify_research_source_retry_unavailable()
+            return None
+        try:
+            receipt = await scheduler.retry(
+                operation_id,
+                stage=SourceOperationStage.CATALOG,
+            )
+        except Exception:
+            receipt = None
+        replacement = self._research_source_retry_replacement(
+            source,
+            operation_id=operation_id,
+            receipt=receipt,
+        )
+        if replacement is None:
+            # A second click may have waited behind the scheduler fence. Re-read
+            # the durable winner so every caller converges on the same job.
+            try:
+                receipt = await asyncio.to_thread(operation_store.get, operation_id)
+            except Exception:
+                receipt = None
+            replacement = self._research_source_retry_replacement(
+                source,
+                operation_id=operation_id,
+                receipt=receipt,
+            )
+        if replacement is None:
+            self._notify_research_source_retry_unavailable()
+        return replacement
+
+    def _research_source_retry_replacement(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+        receipt: Any,
+    ) -> LibraryIngestJob | None:
+        """Return only the released replacement named by the exact receipt."""
+
+        if receipt is None or getattr(receipt, "operation_id", "") != operation_id:
+            return None
+        replacement_id = str(getattr(receipt, "ingest_job_id", "") or "")
+        if not replacement_id or replacement_id == source.job_id:
+            return None
+        replacement = self.library_ingest_jobs.get_job(replacement_id)
+        if (
+            replacement is None
+            or replacement.retry_of_job_id != source.job_id
+            or replacement.research_source_operation_id != operation_id
+            or replacement.origin != source.origin
+            or replacement.dispatch_held
+        ):
+            return None
+        return replacement
+
+    def _notify_research_source_retry_unavailable(self) -> None:
+        """Report a fixed path-free recovery without exposing owner failures."""
+
+        notify = getattr(self, "notify", None)
+        if callable(notify):
+            notify(
+                self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
+                severity="warning",
+            )
 
     def _requeue_research_source_catalog_job(
         self, job_id: str
@@ -3329,7 +3475,11 @@ class LibraryIngestQueueMixin:
         job_id: str,
         provider: str,
     ) -> Optional[LibraryIngestJob]:
-        """Run the one supported explicit cross-provider recovery action."""
+        """Run the supported provider recovery for ordinary Library jobs.
+
+        Research-owned jobs preserve the operation's captured options and
+        route through the durable catalog retry owner instead.
+        """
 
         if provider != "faster-whisper":
             return None
@@ -7686,20 +7836,55 @@ class TldwCli(
     ) -> HomeControlResult:
         """Retry the active Home item through the configured adapter.
 
-        Library ingest job targets (``local:ingest:<job_id>``) are requeued
-        directly through ``retry_library_ingest_job`` -- the real requeue
-        seam over ``self.library_ingest_jobs`` -- instead of falling through
-        to ``_handle_home_control_action``/the adapter, which has no
-        visibility into the in-memory ingest job registry and always
-        degrades to the honest "not connected to an active run service yet"
-        fallback for this target shape. Non-ingest targets (approvals,
-        watchlist runs, schedules) are unaffected and still route through
-        the adapter exactly as before.
+        Library ingest targets (``local:ingest:<job_id>``) use the ingest
+        retry seam instead of the generic Home adapter. Ordinary jobs retain
+        synchronous registry requeueing; Research-owned jobs schedule their
+        durable catalog-stage retry and report Research Workspace recovery.
+        Non-ingest targets are unaffected and still route through the adapter.
         """
         if target_id is not None and str(target_id).startswith("local:ingest:"):
             job_id = str(target_id)[len("local:ingest:") :]
-            requeued = self.retry_library_ingest_job(job_id)
-            if requeued is None:
+            source = self.library_ingest_jobs.get_job(job_id)
+            operation_id = str(
+                getattr(source, "research_source_operation_id", "") or ""
+            ).strip()
+            research_retry_requested = bool(
+                source is not None
+                and operation_id
+                and self._schedule_research_source_catalog_retry(
+                    source,
+                    operation_id=operation_id,
+                    notify_unavailable=False,
+                )
+            )
+            requeued = (
+                None
+                if operation_id
+                else self.retry_library_ingest_job(job_id)
+            )
+            if research_retry_requested:
+                basename = escape_markup(
+                    Path(str(source.source_path)).name or str(source.source_path)
+                )
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Research source retry requested for {basename}.",
+                    recovery_route=TAB_RESEARCH_WORKSPACE,
+                    target_id=target_id,
+                    target_route=TAB_RESEARCH_WORKSPACE,
+                )
+            elif operation_id:
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.UNAVAILABLE,
+                    message=self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
+                    severity="warning",
+                    recovery_route=TAB_RESEARCH_WORKSPACE,
+                    target_id=target_id,
+                    target_route=TAB_RESEARCH_WORKSPACE,
+                )
+            elif requeued is None:
                 # Unknown job id, or the job is no longer FAILED (e.g. it
                 # was already retried/finished by the time the button was
                 # pressed) -- ``requeue`` is a documented no-op in that case.

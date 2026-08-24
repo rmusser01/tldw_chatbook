@@ -282,3 +282,62 @@ transaction.
   App neighbor's pre-existing third-party SWIG deprecations. The full suite was
   not run, per repository policy. TASK-21508 remains controller-owned and is
   excluded from the fix commit.
+
+## Review fix round 4
+
+The Library/Home/provider retry review finding was reproduced at the shared app
+seam. A failed Research-owned ingest had been sent through the ordinary
+`LibraryIngestJobRegistry.requeue` path, creating an unheld replacement,
+topping up the Local parse pool, and leaving the durable source operation linked
+to the failed job. No new ADR is required: this fix enforces ADR-078 through the
+catalog retry owner and the dispatch-hold contract added in fix round 3.
+
+- The shared retry seam now detects `research_source_operation_id` and routes
+  only Research-owned catalog failures through
+  `ResearchSourceAssociationScheduler.retry`. The scheduler's existing fence,
+  held requeue, operation relink, and release/dispatch flow remain the sole owner.
+- Exact operation/job lineage and Local/Server authority are checked before the
+  scheduler can mutate. Missing owners, mismatches, and scheduler failures fail
+  closed with fixed path-free Research Workspace recovery; no generic requeue,
+  provider override, dispatch, or parse-pool top-up occurs.
+- Concurrent retry requests converge on the one durable replacement selected by
+  the scheduler fence. The async app worker returns only the released replacement
+  named by the exact receipt, while the public UI-thread seam remains nonblocking.
+- Ordinary Library jobs preserve the legacy synchronous replacement return and
+  top-up behavior. Home reports the async Research request honestly, and Library
+  rows suppress provider-specific recovery buttons that would bypass the saved
+  operation options.
+
+### Fix-round-4 RED and inverse evidence
+
+- Initial production probe/new app matrix: **6 expected failures, 1 ordinary
+  control pass**. It captured an unheld replacement, one generic top-up, stale
+  operation linkage, generic Home copy, mutation with no scheduler, lineage
+  mismatch mutation, and scheduler bypass under concurrent clicks.
+- Disabling the final Research branch made the Local direct contract red with an
+  immediate unheld replacement. Restoring provider actions for a Research row
+  made the mounted honest-recovery contract red. Both mutations were restored
+  and the exact controls returned **3 passed**.
+
+### Fix-round-4 GREEN and closeout evidence
+
+- Direct Local+Server, provider, Home, missing-owner, scheduler-error privacy,
+  lineage, authority, concurrency, restart, and ordinary contracts plus the
+  Library canvas: **146 passed, 1 baseline case deselected**.
+- App/ingest DB/registry/Research association neighbors: **309 passed**, including
+  the final **11 passed** Task 4 app contract. Home/Library screen/adapter
+  neighbors: **140 passed, 1 baseline case
+  deselected**. Library runner: **145 passed, 1 Windows-only skipped**. Focused
+  Research source/workspace/UI neighbors: **194 passed**.
+- Two broader UI failures were reproduced unchanged in a detached worktree at
+  base `5cc0292eefe251db7083e36c49bde7df14cf5555`: the retained server-only
+  prompt fixture still reports `server`, and the legacy Library fixture cannot
+  find `#library-ingest-top-button`. They are excluded as proven baselines, not
+  hidden regressions.
+- Scoped production/new-test Ruff lint, new-test Ruff format, changed-production
+  `compileall`, `git diff --check`, and the one-shot Impeccable detector (`[]`)
+  pass. Warnings are the accepted Requests dependency warning and pre-existing
+  third-party SWIG deprecations in an untouched PDF neighbor. Full pytest was
+  not run, per repository policy.
+
+TASK-21508 remains controller-owned and is excluded from the fix commit.

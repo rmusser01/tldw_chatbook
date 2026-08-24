@@ -1,5 +1,50 @@
 # Task 4 review package — Research Sources workbench
 
+Fix-round-4 review base:
+
+`5cc0292eefe251db7083e36c49bde7df14cf5555`
+
+The controller-owned dirty TASK-21508 file remains excluded from the
+implementation and commit.
+
+## Fix-round-4 review order
+
+1. `app.py`: the public Library/Home/provider retry seam detects Research
+   operation ownership, validates exact lineage and authority, and delegates to
+   the existing catalog scheduler instead of generic requeue/top-up.
+2. `library_ingest_state.py` and `library_ingest_canvas.py`: Research ownership
+   reaches the row projection and replaces provider-specific recovery actions
+   with one honest Research retry action.
+3. Direct real-SQLite/store/scheduler tests: Local+Server held replacement,
+   durable relink-before-release, restart, missing owner, scheduler exception
+   privacy, forged lineage, cross-authority denial, concurrent fence, Home,
+   provider delegation, and ordinary legacy compatibility.
+4. Split Library/Home/runner/Research/static/inverse/detector evidence and the
+   two exact base-proven unrelated UI failures in the Task 4 report.
+
+### Fix-round-4 high-risk invariants
+
+- A Research-owned failure never enters the ordinary unheld requeue/top-up path,
+  even when retry starts from Library, Home, or a provider recovery callback.
+- The durable operation still names the clicked failed job and the same explicit
+  Local/Server authority before the scheduler can replace it.
+- Held replacement persistence, operation relink, and release/dispatch remain
+  scheduler-owned and fenced; concurrent clicks create one lineage and dispatch.
+- Missing scheduler/store, mismatched lineage/authority, and worker exceptions
+  mutate nothing and expose no exception text, secret, or local path.
+- Ordinary Library retries retain their exact synchronous return and top-up
+  contract; Research rows do not advertise unsupported provider overrides.
+
+### Fix-round-4 verification snapshot
+
+- New direct app contract: **11 passed**; combined Library canvas gate: **146
+  passed, 1 base-proven case deselected**.
+- App/DB/association neighbors: **309 passed**; Home/Library/adapter neighbors:
+  **140 passed, 1 base-proven case deselected**; Runner **145 passed, 1
+  Windows-only skipped**; Research source/workspace/UI neighbors **194 passed**.
+- Scoped Ruff/format, compilation, whitespace, restored inverse controls, and
+  one-shot Impeccable detector (`[]`) pass. Full pytest was not run by policy.
+
 Fix-round-3 review base:
 
 `119c55b624f8918840fe9587ae52adfbbdede4a2`
