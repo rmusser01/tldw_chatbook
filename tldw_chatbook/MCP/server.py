@@ -124,6 +124,11 @@ _AST_SIMPLE_TYPES = {
     "bool": "boolean",
 }
 
+_SEARCH_RAG_USE_SEMANTIC_DESCRIPTION = (
+    "False forces media keyword search; true or omission follows the active RAG "
+    "profile's plain, semantic, or hybrid search mode."
+)
+
 
 def _annotation_to_property(node: ast.expr | None) -> dict:
     """Best-effort JSON-schema fragment for one annotation AST node.
@@ -236,7 +241,12 @@ def _extract_registered_entries(
                         ):
                             entry["uri"] = first_arg.value
                     if decorator_name == "tool":
-                        entry["inputSchema"] = _signature_to_input_schema(nested)
+                        input_schema = _signature_to_input_schema(nested)
+                        if nested.name == "search_rag":
+                            input_schema["properties"]["use_semantic"][
+                                "description"
+                            ] = _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION
+                        entry["inputSchema"] = input_schema
                     elif decorator_name == "prompt":
                         entry["arguments"] = _signature_to_prompt_arguments(nested)
                     entries.append(entry)

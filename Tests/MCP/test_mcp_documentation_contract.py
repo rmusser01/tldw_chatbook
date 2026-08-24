@@ -256,6 +256,8 @@ def test_mcp_documents_explain_profile_driven_rag_search_compatibility() -> None
 
 def test_user_guide_explains_weak_match_similarity_provenance() -> None:
     normalized = " ".join(USER_GUIDE_DOCUMENT.read_text(encoding="utf-8").split())
+    assert "every similarity-bearing row" in normalized
+    assert "every scored row" not in normalized
     for contract in (
         "ordinary semantic rows use their score",
         "hybrid rows use the preserved vector leg when present",

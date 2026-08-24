@@ -282,7 +282,8 @@ A completed run shows:
   or on its own — a line naming *why* the run was allowed to happen, e.g.
   "Ran because you approved this run (the tool is set to Ask)." or "Ran
   because this tool is set to Allow. Inherited from the global default."
-- **A weak-match notice**, when every scored row in the result bands weak:
+- **A weak-match notice**, when every similarity-bearing row is in the weak
+  result bands:
   "No strong semantic matches — results below are weak." beside the
   summary line — so a nonsense `search_rag` query that still comes back
   with rows reads as the weak match it is, not a bare `OK · N results`
