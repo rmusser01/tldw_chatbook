@@ -20520,7 +20520,7 @@ CodingWindow {
 }
 
 .watchlists-region-left_rail {
-    width: 24;
+    width: 28;
     min-width: 24;
     height: 100%;
     border: round $ds-grid-line;
@@ -20532,7 +20532,7 @@ CodingWindow {
  * pane, is the survivor.
  */
 .watchlists-region-right_rail {
-    width: 30;
+    width: 34;
     min-width: 30;
     height: 100%;
     border: round $ds-grid-line;
@@ -20590,7 +20590,7 @@ CodingWindow {
 }
 
 .watchlists-read-mode .watchlists-region-items {
-    width: 32;
+    width: 40;
     min-width: 32;
     height: 100%;
     overflow: hidden;

@@ -48,6 +48,30 @@ def test_region_titles_cover_exactly_the_live_regions() -> None:
     assert set(REGION_TITLES) == set(Region)
 
 
+@pytest.mark.parametrize(
+    ("selector", "target", "minimum"),
+    [
+        (".watchlists-region-left_rail", 28, 24),
+        (".watchlists-read-mode .watchlists-region-items", 40, 32),
+        (".watchlists-region-right_rail", 34, 30),
+    ],
+)
+def test_side_pane_css_keeps_approved_target_and_minimum_widths(
+    selector: str, target: int, minimum: int
+) -> None:
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "features"
+        / "_watchlists.tcss"
+    )
+    block = css_path.read_text().split(f"{selector} {{", 1)[1].split("}", 1)[0]
+
+    assert f"\n    width: {target};" in block
+    assert f"\n    min-width: {minimum};" in block
+
+
 @pytest.mark.asyncio
 async def test_read_mounts_header_above_exact_horizontal_body_order() -> None:
     class _App(App[None]):
