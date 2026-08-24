@@ -11681,3 +11681,22 @@ def test_mounted_sample_mutation_path_tracks_revision_authority(tmp_path: Path):
         console_runtime=console_runtime,
         session_id="session-a",
     ) == scratch_root / "measured/turn-two.txt"
+
+
+def test_mounted_queue_contract_tracks_nonblocking_candidate_finalization():
+    assert profile.expected_mounted_queue_counts("legacy") == {
+        "dispatch_count": 3,
+        "accepted_count": 3,
+        "drain_count": 2,
+        "worker_count": 3,
+        "after_turn_count": 2,
+        "durable_count": 3,
+    }
+    assert profile.expected_mounted_queue_counts("candidate") == {
+        "dispatch_count": 3,
+        "accepted_count": 3,
+        "drain_count": 3,
+        "worker_count": 3,
+        "after_turn_count": 3,
+        "durable_count": 3,
+    }

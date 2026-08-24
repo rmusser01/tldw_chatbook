@@ -5727,6 +5727,24 @@ def mounted_sample_mutation_path(
     return root / "measured/turn-two.txt"
 
 
+def expected_mounted_queue_counts(revision_kind: str) -> dict[str, int]:
+    """Return queue boundaries observable before each revision releases turn 3."""
+    if revision_kind == "legacy":
+        settled_turns = 2
+    elif revision_kind == "candidate":
+        settled_turns = 3
+    else:
+        raise RuntimeError(f"unknown_target_revision_kind:{revision_kind}")
+    return {
+        "dispatch_count": 3,
+        "accepted_count": 3,
+        "drain_count": settled_turns,
+        "worker_count": 3,
+        "after_turn_count": settled_turns,
+        "durable_count": 3,
+    }
+
+
 class _MountedObservation:
     """Thread-safe, body-free observations for one mounted real-provider sample."""
 
@@ -6370,13 +6388,12 @@ async def run_mounted_sample(
         assert observation is not None
         snapshot = observation.snapshot()
         provider_calls = snapshot["provider_calls"]
-        if (
-            snapshot["dispatch_count"] != 3
-            or snapshot["accepted_count"] != 3
-            or snapshot["drain_count"] != 2
-            or snapshot["worker_count"] != 3
-            or snapshot["after_turn_count"] != 2
-            or snapshot["durable_count"] != 3
+        expected_queue_counts = expected_mounted_queue_counts(
+            adapter.revision_kind
+        )
+        if any(
+            snapshot[name] != expected
+            for name, expected in expected_queue_counts.items()
         ):
             raise RuntimeError("mounted_queue_contract_failed")
         if len(provider_calls) != 5:
