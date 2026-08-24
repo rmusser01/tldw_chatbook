@@ -883,6 +883,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # back at `None` on every collapse/expand, clearing the
         # reader out from under a user who hadn't touched Items at all.
         self._selected_content_item: dict[str, Any] | None = None
+        self._read_recovery_active = False
         # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
         # in exactly three queries (`list_watchlists`,
         # `get_watchlist_item_counts`, `get_source_item_counts`),
@@ -1817,15 +1818,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         this the selection highlight would reset to nothing every time,
         even though the scope itself survived on the screen.
         """
+        recovering = self.active_section == "items" and self._read_recovery_active
         return WatchlistTree(
-            watchlists=self._tree_watchlists,
-            counts=self._tree_counts,
-            source_rows_loader=self._load_source_rows_for_tree,
-            expanded=self._tree_expanded,
-            active_tag=self._tree_active_tag,
+            watchlists=[] if recovering else self._tree_watchlists,
+            counts={} if recovering else self._tree_counts,
+            source_rows_loader=(
+                (lambda _watchlist_id: [])
+                if recovering
+                else self._load_source_rows_for_tree
+            ),
+            expanded=frozenset() if recovering else self._tree_expanded,
+            active_tag=None if recovering else self._tree_active_tag,
             active_scope=self.tree_scope,
             write_disabled_reason=self._tree_write_disabled_reason(),
-            source_counts=self._tree_source_counts,
+            source_counts={} if recovering else self._tree_source_counts,
             id="wl-tree",
         )
 
@@ -1861,6 +1867,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         watchlist is expanded, and `list_source_rows` is one JOIN (Task 1),
         not a fan-out of per-source queries.
         """
+        if self.active_section == "items" and self._read_recovery_active:
+            return []
         try:
             return self._watchlist_bundle_service().list_source_rows(watchlist_id)
         except Exception:
@@ -1892,6 +1900,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             One dict per source with ``id``, ``name`` and ``type``, or an
             empty list if the bundle service is unavailable or lookup fails.
         """
+        if self.active_section == "items" and self._read_recovery_active:
+            return []
         service = self._watchlist_bundle_service()
         if service is None:
             return []
@@ -2137,13 +2147,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             snapshot state.
         """
         section = self.active_section if section is None else section
-        scoped_rows = self.scoped_source_rows()
         children: list[Widget] = [
             WatchlistsTabStrip(active_section=section, id="wl-tabs"),
         ]
-        children.extend(
-            self._watchlists_status_marker_widgets(scoped_rows, section=section)
-        )
+        if section == "items" and self._read_recovery_active:
+            children.append(
+                Static(
+                    "Server-backed Read is unavailable. Switch to Local in Reader.",
+                    id="watchlists-read-recovery-status",
+                )
+            )
+        else:
+            scoped_rows = self.scoped_source_rows()
+            children.extend(
+                self._watchlists_status_marker_widgets(scoped_rows, section=section)
+            )
         return Vertical(
             *children,
             id="wl-centre-status",
@@ -2421,6 +2439,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _enter_server_read_recovery(self) -> None:
         """Clear local Read state before presenting the Server recovery UI."""
+        self._read_recovery_active = True
         self._reset_items_paging_for_context(loading=False)
         self._items_status_filter = "all"
         self._items_search_query = ""
@@ -2428,10 +2447,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._selected_content_page_key = None
         self._loaded_items = []
         self._selected_content_item = None
-        # Watchlist/source rows are management data shared with the other
-        # tabs. Only their local item-count overlays belong to Read.
+        self._tree_watchlists = []
         self._tree_counts = {}
         self._tree_source_counts = {}
+        self._tree_expanded = frozenset()
+        self._tree_active_tag = None
+        self._breadcrumb_labels = []
+        self.set_reactive(
+            WatchlistsCollectionsScreen.tree_scope, TreeScope(kind="all")
+        )
+        self.set_reactive(
+            WatchlistsCollectionsScreen.selected_scope, TreeScope(kind="all")
+        )
+        self._local_watchlist_records = ()
+        self._local_watchlist_count = 0
+        self._wc_lookup_error = None
+        self._wc_lookup_recovery_state = None
+        self._wc_loaded = False
         try:
             pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
@@ -2442,7 +2474,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pane.status_filter = "all"
             pane.search_query = ""
             self._push_items_pager_state()
-        self._request_surface_refresh(self._SURFACE_RAIL, self._SURFACE_READER)
+        self._request_surface_refresh(
+            self._SURFACE_RAIL,
+            self._SURFACE_HEADER,
+            self._SURFACE_READER,
+            self._SURFACE_INSPECTOR,
+        )
+
+    async def _recover_local_read(self) -> None:
+        """Commit local navigation only after the normal item load succeeds."""
+        if not await self._load_items():
+            return
+        if self.runtime_backend != "local" or self.active_section != "items":
+            return
+        self._read_recovery_active = False
+        self._load_tree_data()
+        self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
+        self._request_surface_refresh(
+            self._SURFACE_RAIL,
+            self._SURFACE_HEADER,
+            self._SURFACE_READER,
+            self._SURFACE_INSPECTOR,
+        )
 
     def _build_content_pane(self) -> Widget:
         """Build the CONTENT-region content: the reader for the last
@@ -2466,7 +2520,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         generic "Content" title above whatever this returns.
 
         """
-        if self.active_section == "items" and self.runtime_backend != "local":
+        if self.active_section == "items" and self._read_recovery_active:
             return Vertical(
                 Static(
                     "Read and its permanent Reader are local-only. "
@@ -2942,6 +2996,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _available_layout_width(self) -> int:
         """Best live width for the pure responsive resolver."""
+        if not self.is_mounted:
+            return 10_000
         candidates: list[int] = []
         try:
             workbench = self.query_one(WatchlistsWorkbench)
@@ -4716,8 +4772,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if read_is_active:
             if local_read_is_active:
                 self._reset_items_paging_for_context(loading=True)
-                self._load_tree_data()
-                self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+                if self._read_recovery_active:
+                    self.run_worker(
+                        self._recover_local_read(),
+                        exclusive=True,
+                        group="wc_items",
+                    )
+                else:
+                    self._load_tree_data()
+                    self.run_worker(
+                        self._load_items(), exclusive=True, group="wc_items"
+                    )
             else:
                 self._enter_server_read_recovery()
         else:
@@ -4770,8 +4835,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # every pane from exactly these attributes). `selected_entity` is
         # the one that already had its own watcher.
         self._reseed_live_detail_pane()
-        self._refresh_local_wc_snapshot()
-        self._refresh_overview_data()
+        if not (read_is_active and self._read_recovery_active):
+            self._refresh_local_wc_snapshot()
+            self._refresh_overview_data()
 
     def _reseed_live_detail_pane(self) -> None:
         """Push the screen's mirrored rows/selection into the mounted pane.
@@ -4897,7 +4963,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         selector = self.query_one("#watchlists-backend-select", PruneSafeSelect)
         if self.runtime_backend == "local":
-            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+            self.run_worker(
+                self._recover_local_read(), exclusive=True, group="wc_items"
+            )
         else:
             selector.value = "local"
 

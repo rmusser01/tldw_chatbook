@@ -982,17 +982,9 @@ SOURCE_PREP_WORKBENCHES = {
         "markers": ("#personas-library-empty", "#personas-library-count"),
         "marker_container": "#personas-library-pane",
     },
-    # Watchlists moved from the placeholder 3-column shell onto
-    # `WatchlistsWorkbench` (rails around a VERTICALLY stacked centre — see
-    # `watchlists_workbench.py`'s docstring on why the shared
-    # `DestinationWorkbench`/3-column-ASCII contract can't express this
-    # layout). `#watchlists-detail-pane` and the reader now stack one above
-    # the other inside `#wl-centre`, not side by side, so this entry is kept
-    # for the `markers`/`marker_container`/`actions` keys (still valid --
-    # those panes still exist, just not horizontally arranged) but excluded
-    # from the two horizontal-geometry parametrizations below via
-    # `SOURCE_PREP_WORKBENCHES_HORIZONTAL`, the same way "personas" above
-    # excluded itself from the retired snapshot-worker markers.
+    # Watchlists uses its own responsive horizontal body with permanent grips,
+    # so the generic always-expanded three-pane contract cannot express it.
+    # This entry remains the source for its markers and actions.
     # task-2513: `#watchlists-list-pane` died with the FEEDS region; the
     # snapshot markers live in the always-mounted centre header now.
     "watchlists_collections": {
@@ -1033,12 +1025,8 @@ SOURCE_PREP_WORKBENCHES = {
     },
 }
 
-#: `SOURCE_PREP_WORKBENCHES` minus destinations that no longer lay their
-#: list/detail/inspector panes out horizontally. Watchlists' rehost onto
-#: `WatchlistsWorkbench` stacks ITEMS/CONTENT vertically inside a
-#: centre column by deliberate design (see `watchlists_workbench.py`), so it
-#: cannot satisfy `_assert_horizontal_panes` — that is a real, intentional
-#: geometry change, not a regression to paper over.
+#: `SOURCE_PREP_WORKBENCHES` minus Watchlists, whose responsive grips may
+#: intentionally hide side panes at the generic contract's fixed viewport.
 SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
     route: contract
     for route, contract in SOURCE_PREP_WORKBENCHES.items()
@@ -1142,21 +1130,11 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
 
-        # The Rule-divided three-column body was replaced by the collapsible
-        # WatchlistsWorkbench (rails around a vertically stacked centre; see
-        # watchlists_workbench.py) — region borders replace Rule dividers, so
-        # the old #watchlists-*-divider ids no longer exist. Assert the new
-        # structural landmarks instead: the workbench container, and each
-        # region wrapper.
+        # The Rule-divided body was replaced by WatchlistsWorkbench's
+        # horizontal responsive body. Region borders replace Rule dividers.
         #
-        # CONTENT is unmounted on every tab except Read
-        # (`WatchlistsCollectionsScreen._hidden_centre_regions`), and the
-        # FEEDS region was removed outright in task-2513, so it has no DOM
-        # presence anywhere. ITEMS is the one centre region that is always
-        # present; the tab strip and snapshot markers this test already
-        # asserted above ("Sources"/"State: ready"/... in `visible_text`)
-        # come from `#wl-centre-status` (`_build_centre_status_header`),
-        # mounted on every tab.
+        # CONTENT is the permanent Reader on Read and unmounted on management
+        # tabs; ITEMS becomes the management canvas there.
         assert screen.query_one("#wl-workbench")
         assert screen.query_one("#wl-centre-status")
         for region_id in (
@@ -1168,9 +1146,8 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         assert not screen.query("#wl-region-feeds")
         assert not screen.query("#wl-header-feeds")
         assert not screen.query("#wl-region-content")
-        assert not screen.query("#wl-header-content")
 
-        # ... and on Read (the default), the reader IS part of the stack.
+        # ... and on Read, the Reader is part of the horizontal body.
         screen.active_section = "items"
         await pilot.pause(0.2)
         assert screen.query_one("#wl-region-content")
@@ -1178,17 +1155,8 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
 
 
 @pytest.mark.asyncio
-async def test_watchlists_centre_regions_stack_vertically_in_order():
-    """Vertical-geometry replacement for the horizontal contract Watchlists
-    was excluded from (see `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above): its
-    rehost onto `WatchlistsWorkbench` stacks ITEMS/CONTENT vertically inside
-    the centre column by deliberate design, so `_assert_horizontal_panes`
-    (which asserts `left.region.x < right.region.x`) can never apply — but
-    that must not mean Watchlists has zero automated geometry coverage.
-
-    task-2513: the always-mounted centre header (`#wl-centre-status`, the
-    tab strip + snapshot markers) sits above the stack on every tab.
-    """
+async def test_watchlists_read_body_is_horizontal_in_display_order():
+    """Read lays side panes, grips, and the permanent Reader left-to-right."""
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
 
@@ -1196,64 +1164,36 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
-        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
-        # round 1. This test is specifically about the centre stack, so it
-        # must be on that tab (the default since task-2513), independent of
-        # whatever the section otherwise defaults to.
         screen.active_section = "items"
         await pilot.pause()
-
-        # Force every region open so both centre regions have real
-        # geometry to compare — independent of whatever CONTENT's persisted
-        # collapse state happens to be (region_layout_store.load_region_layout).
         screen._apply_layout(RegionLayout())
         await pilot.pause()
 
         header = screen.query_one("#wl-centre-status")
-        items = screen.query_one("#wl-region-items")
-        content = screen.query_one("#wl-region-content")
-        centre = screen.query_one("#wl-centre")
-
-        assert header.region.y < items.region.y < content.region.y, (
-            f"centre regions are not stacked top-to-bottom: "
-            f"header={header.region} items={items.region} content={content.region}"
+        body = screen.query_one("#wl-workbench-body")
+        selectors = (
+            "#wl-region-left_rail",
+            "#wl-grip-left_rail",
+            "#wl-region-items",
+            "#wl-grip-items",
+            "#wl-region-content",
+            "#wl-grip-right_rail",
+            "#wl-region-right_rail",
         )
-        for selector, pane in (
-            ("#wl-centre-status", header),
-            ("#wl-region-items", items),
-            ("#wl-region-content", content),
-        ):
-            assert pane.region.width > 0, f"{selector} has no width"
-            assert pane.region.height > 0, f"{selector} has no height"
-            assert 0 <= pane.region.x < 160, selector
-            assert pane.region.right <= 160, selector
+        widgets = [screen.query_one(selector) for selector in selectors]
 
-        # No two centre regions may overlap.
-        for top, bottom in ((header, items), (items, content)):
-            assert top.region.y + top.region.height <= bottom.region.y, (
-                f"centre regions overlap: {top.region} vs {bottom.region}"
-            )
-
-        # Compact terminals intentionally show the stack through the outer
-        # centre viewport instead of shrinking either region below its floor.
-        assert centre.max_scroll_y > 0
-        centre.scroll_end(animate=False)
-        await pilot.pause()
-        assert content.region.intersection(centre.content_region).height > 0
+        assert header.region.bottom <= body.region.y
+        assert all(widget.region.height == body.region.height for widget in widgets)
+        assert all(
+            left.region.right <= right.region.x
+            for left, right in zip(widgets, widgets[1:])
+        )
+        assert all(body.region.contains_region(widget.region) for widget in widgets)
 
 
 @pytest.mark.asyncio
 async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport():
-    """Fix round 2, Finding 1 (CRITICAL): `.watchlists-region-header`'s
-    `width: 100%` rule was unscoped, so a RAIL header (a direct child of the
-    workbench `Horizontal`, not the centre `Vertical`) took the ENTIRE
-    workbench width instead of a narrow collapsed-handle width -- pushing
-    every region after it off-screen. Measured pre-fix at 160x42 after
-    collapsing both rails: the right rail's header landed at
-    x=161 with the workbench only 160 wide, unreachable by mouse. This forces
-    the exact reproduction and asserts every remaining region/header stays
-    inside the 160-wide viewport.
-    """
+    """Collapsed rail grips and the Reader remain inside the body."""
     app = _build_test_app()
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -1274,35 +1214,26 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
         await pilot.pause()
 
         for selector in (
-            "#wl-header-left_rail",
+            "#wl-grip-left_rail",
             "#wl-region-items",
+            "#wl-grip-items",
             "#wl-region-content",
-            "#wl-header-right_rail",
+            "#wl-grip-right_rail",
         ):
             widget = screen.query_one(selector)
             assert 0 <= widget.region.x < 160, selector
             assert widget.region.right <= 160, selector
             assert widget.region.height > 0, selector
 
-        left_header = screen.query_one("#wl-header-left_rail")
-        right_header = screen.query_one("#wl-header-right_rail")
-        assert left_header.region.width < 160, (
-            f"left rail header claimed (close to) the full workbench width: "
-            f"{left_header.region}"
-        )
-        assert right_header.region.x + right_header.region.width <= 160, (
-            f"right rail header fell outside the viewport: {right_header.region}"
-        )
-        centre = screen.query_one("#wl-centre")
-        content = screen.query_one("#wl-region-content")
-        centre.scroll_end(animate=False)
-        await pilot.pause()
-        assert content.region.intersection(centre.content_region).height > 0
+        assert not screen.query("#wl-region-left_rail")
+        assert not screen.query("#wl-region-right_rail")
+        assert screen.query_one("#wl-grip-left_rail").region.width == 5
+        assert screen.query_one("#wl-grip-right_rail").region.width == 5
 
 
 @pytest.mark.asyncio
 async def test_watchlists_read_regions_keep_their_idle_floors():
-    """The outer centre scroll owns compact layouts; neither region is crushed."""
+    """Expanded Feed Items and Reader retain their horizontal width floors."""
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
 
@@ -1320,10 +1251,12 @@ async def test_watchlists_read_regions_keep_their_idle_floors():
 
         items = screen.query_one("#wl-region-items")
         content = screen.query_one("#wl-region-content")
+        body = screen.query_one("#wl-workbench-body")
 
-        assert items.region.height >= 10, items.region
-        assert content.region.height == 20, content.region
-        assert screen.query_one("#wl-centre").max_scroll_y > 0
+        assert items.region.width >= 32, items.region
+        assert content.region.width >= 44, content.region
+        assert items.region.height == body.region.height
+        assert content.region.height == body.region.height
 
 
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
@@ -1409,12 +1342,10 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
         await pilot.pause()
 
         # 1. Every region draws its own box, and draws it `round`.
-        centre = screen.query_one("#wl-centre")
+        body = screen.query_one("#wl-workbench-body")
         for region in Region:
             widget = screen.query_one(f"#wl-region-{region.value}")
-            if region in (Region.ITEMS, Region.CONTENT):
-                centre.scroll_to_widget(widget, animate=False)
-                await pilot.pause()
+            assert body.region.contains_region(widget.region)
             rows = _composited_rows(widget)
             assert rows[0].startswith("╭") and rows[0].endswith("╮"), (
                 f"{region.value} has no round top border: {rows[0]!r}"
@@ -1431,9 +1362,6 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
             "watchlists-inspector-pane",
         ):
             pane = screen.query_one(f"#{pane_id}")
-            if pane_id == "watchlists-detail-pane":
-                centre.scroll_to_widget(pane, animate=False)
-                await pilot.pause()
             rows = _composited_rows(pane)
             edges = (rows[0][0], rows[0][-1], rows[-1][0], rows[-1][-1])
             assert not any(ch in _ROUND_CORNERS + _SQUARE_CORNERS for ch in edges), (
@@ -1523,22 +1451,8 @@ async def test_watchlists_active_section_tab_label_is_visible():
 
 @pytest.mark.parametrize("size", [(160, 42), (100, 40)])
 @pytest.mark.asyncio
-async def test_watchlists_soloed_centre_region_fills_the_centre(size):
-    """Task 6 fix round 3, Finding 3, kept current by task-2513: a soloed
-    region must fill the centre, not stay pinned at its cap.
-
-    Solo (`action_solo_region` -> `RegionLayout.solo`) collapses the other
-    centre region to a one-line header. CONTENT is the only capped region
-    left (FEEDS, whose solo first exposed this, is gone), so a soloed
-    CONTENT would stay pinned at `max-height: 50` while the collapsed
-    header took one row -- the same degenerate view FEEDS once produced.
-    `_region_widget` adds `.watchlists-region-sole-centre` for exactly that
-    state and the stylesheet lifts the cap there.
-
-    The invariant now includes the always-mounted centre header
-    (`#wl-centre-status`): header + soloed body + collapsed header(s) must
-    cover the centre exactly, with nothing left blank.
-    """
+async def test_watchlists_article_focus_gives_the_reader_the_flexible_body(size):
+    """Article Focus leaves only fixed grips beside the permanent Reader."""
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
 
@@ -1546,47 +1460,31 @@ async def test_watchlists_soloed_centre_region_fills_the_centre(size):
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
-        # CONTENT only occupies space on the Items (Read) tab -- the
-        # default since task-2513. Soloing/un-soloing it below needs it
-        # genuinely present.
         screen.active_section = "items"
         await pilot.pause()
 
         screen._apply_layout(RegionLayout())
         await pilot.pause()
+        preferred_before = screen.region_layout
+        screen.action_article_focus()
+        await pilot.pause()
+        await pilot.pause()
 
-        for soloed in (Region.ITEMS, Region.CONTENT):
-            screen._apply_layout(RegionLayout().solo(soloed))
-            await pilot.pause()
-            await pilot.pause()
-
-            # Re-query every widget after each layout change: the workbench
-            # reactive is `recompose=True`, so the previous iteration's
-            # references are unmounted and report a zero-sized region.
-            centre = screen.query_one("#wl-centre")
-            # `#wl-centre` also contains the shared header (tab strip +
-            # snapshot summary) on every tab, Read included. Its rows are
-            # real content of `#wl-centre` and must count toward "covered",
-            # or this assertion would demand the region widgets alone fill
-            # space the header is legitimately occupying.
-            header = screen.query_one("#wl-centre-status")
-            body = screen.query_one(f"#wl-region-{soloed.value}")
-            headers = [
-                screen.query_one(f"#wl-header-{other.value}")
-                for other in (Region.ITEMS, Region.CONTENT)
-                if other is not soloed
-            ]
-            covered = (
-                header.region.height
-                + body.region.height
-                + sum(h.region.height for h in headers)
-            )
-            assert covered == centre.region.height, (
-                f"solo({soloed.value}) leaves "
-                f"{centre.region.height - covered} of the centre's "
-                f"{centre.region.height} rows blank: header={header.region} "
-                f"body={body.region} headers={[h.region for h in headers]}"
-            )
+        body = screen.query_one("#wl-workbench-body")
+        reader = screen.query_one("#wl-region-content")
+        grips = [
+            screen.query_one(f"#wl-grip-{region.value}")
+            for region in (Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL)
+        ]
+        assert screen.region_layout == preferred_before
+        assert screen._article_focus_active is True
+        assert not screen.query("#wl-region-left_rail")
+        assert not screen.query("#wl-region-items")
+        assert not screen.query("#wl-region-right_rail")
+        assert reader.region.height == body.region.height
+        assert reader.region.width + sum(grip.region.width for grip in grips) == (
+            body.region.width
+        )
 @pytest.mark.parametrize("size", [(235, 52), (160, 42)])
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_does_not_clip_action_labels(size):
@@ -1961,12 +1859,9 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     # Watchlists' loading marker (#wc-loading-state) still exists and is
     # still checked (Tests/UI/test_destination_shells.py::
     # test_watchlists_collections_initial_load_uses_distinct_loading_copy),
-    # but `_assert_ascii_workbench_contract` requires the list/detail/
-    # inspector panes to be laid out horizontally, which Watchlists' rehost
-    # onto the collapsible WatchlistsWorkbench deliberately no longer does
-    # (ITEMS/CONTENT stack vertically inside a centre column — see
-    # watchlists_workbench.py). See `SOURCE_PREP_WORKBENCHES_HORIZONTAL`
-    # above for the same exclusion applied to the two sibling tests.
+    # but `_assert_ascii_workbench_contract` requires three always-expanded
+    # panes. Watchlists instead resolves responsive side-pane grips around a
+    # permanent centre canvas. See `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above.
     (
         "skills",
         skills_screen_module.SkillsScreen,
