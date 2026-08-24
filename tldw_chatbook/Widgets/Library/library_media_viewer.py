@@ -78,6 +78,7 @@ class LibraryMediaViewer(Vertical):
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
+        loading: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -89,12 +90,13 @@ class LibraryMediaViewer(Vertical):
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
+        self.loading = loading
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
         # space and lets the text bodies wrap.
         self.styles.width = "1fr"
-        self.styles.min_width = 40
+        self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
         """Render the back control, title, metadata, content, and actions.
@@ -114,6 +116,23 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the media viewer canvas.
         """
+        if not self.viewer.media_id:
+            yield Static(
+                "Loading media…"
+                if self.loading
+                else "Select a media item to read it here.",
+                id="library-media-reader-empty",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        if self.loading:
+            yield Static(
+                "Loading media…",
+                id="library-media-viewer-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
         yield Button(
             "‹ Back to list",
             id="library-media-back",

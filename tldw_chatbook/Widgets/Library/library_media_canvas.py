@@ -60,6 +60,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
         compact: bool = False,
+        show_preview: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -71,6 +72,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
         self.compact = compact
+        self.show_preview = show_preview
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -91,6 +93,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
         compact: bool = False,
+        show_preview: bool = True,
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -108,6 +111,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
         self.compact = compact
+        self.show_preview = show_preview
         self.refresh(recompose=True)
 
     def apply_compact_presentation(self, compact: bool) -> None:
@@ -143,8 +147,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             open_viewer = self.query_one("#library-media-open-viewer", Button)
         except NoMatches:
             return
-        preview.display = self._has_preview and not compact
-        open_viewer.can_focus = not compact
+        preview.display = self.show_preview and self._has_preview and not compact
+        open_viewer.can_focus = self.show_preview and not compact
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
         """Apply the controller's stale-page gate to one unsafe action."""
@@ -514,7 +518,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # meanwhile shows a previously-selected different item" finding), so
         # the whole block is hidden entirely rather than tracking a second,
         # separate "focused row" concept select mode has no use for.
-        has_preview = (
+        has_preview = self.show_preview and (
             not select_mode
             and bool(self.canvas.selected_id and self.canvas.preview_lines)
         )
@@ -601,7 +605,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    open_viewer.can_focus = not self.compact
+                    open_viewer.can_focus = self.show_preview and not self.compact
                     yield self._gate_stale_action(open_viewer, "Open in viewer")
 
             # task-14900: the wide split's detail half never sits blank --
@@ -612,7 +616,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # compact rule that hides it in the preserved stacked layout):
             # hidden while the workbench carries ``has-preview``, and hidden
             # entirely below the breakpoint.
-            yield Static(
+            detail_empty = Static(
                 (
                     "No preview in Select mode."
                     if select_mode
@@ -621,6 +625,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-media-detail-empty",
                 markup=False,
             )
+            detail_empty.display = self.show_preview
+            yield detail_empty
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-owned Media pager below the row viewport."""

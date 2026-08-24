@@ -157,6 +157,15 @@ from ...Library.library_media_state import (
     build_library_media_state,
     build_library_media_trash_state,
 )
+from ...Library.library_media_reader_state import (
+    LibraryMediaReaderSessionState,
+    MediaReaderEffectiveLayout,
+    MediaReaderLayoutPreferences,
+    begin_selection,
+    resolve_media_reader_layout,
+    settle_failure,
+    settle_success,
+)
 from ...Library.library_media_viewer_state import (
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
@@ -420,10 +429,13 @@ from ...Widgets.Library import (
     LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryMediaCanvas,
+    LibraryMediaReaderShell,
+    MediaShellResized,
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
     LibraryNavigationRailHandle,
+    PaneToggleRequested,
     LibraryPromptsListCanvas,
     LibraryRail,
     LibrarySearchRagPanel,
@@ -3135,6 +3147,11 @@ class LibraryScreen(BaseAppScreen):
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
         self._library_media_view: str = "list"
+        self._library_media_reader_session = LibraryMediaReaderSessionState()
+        self._library_media_reader_preferences = MediaReaderLayoutPreferences()
+        self._library_media_reader_layout: MediaReaderEffectiveLayout = (
+            resolve_media_reader_layout(0, self._library_media_reader_preferences)
+        )
         # task-14902: True while the media type chooser's direct-pick strip
         # replaces the browse toolbar row (the Notes Sort strip pattern).
         self._library_media_type_choices_visible: bool = False
@@ -5059,8 +5076,13 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
-            if media_canvas.compact != self._library_notes_compact:
-                media_canvas.apply_compact_presentation(self._library_notes_compact)
+            if (
+                not self.query("#library-media-reader-shell")
+                and media_canvas.compact != self._library_notes_compact
+            ):
+                media_canvas.apply_compact_presentation(
+                    self._library_notes_compact
+                )
         compact_single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
@@ -5116,6 +5138,106 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             note_back.display = not wide_focused_task
+
+    def _sync_library_media_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+        focus_intent: tuple[Widget, int] | None = None,
+    ) -> None:
+        """Resolve the settled Media shell width and patch geometry in place."""
+        try:
+            shell = self.query_one(
+                "#library-media-reader-shell", LibraryMediaReaderShell
+            )
+        except (NoMatches, QueryError):
+            return
+        width = shell.region.width
+        if width <= 0:
+            return
+        previous = self._library_media_reader_layout
+        layout = resolve_media_reader_layout(
+            width,
+            self._library_media_reader_preferences,
+            previous=previous,
+            priority=priority,
+        )
+        focused = self.focused
+        if (
+            focus_intent is not None
+            and (
+                focus_intent[1] == self._library_notes_focus_intent_generation
+                or self._library_notes_resize_settling
+            )
+        ):
+            focused = focus_intent[0]
+        hidden_focus_target: tuple[Widget, Widget] | None = None
+        for now_open, pane, grip in (
+            (
+                layout.library_open,
+                shell.library,
+                shell.library_grip,
+            ),
+            (
+                layout.items_open,
+                shell.items,
+                shell.items_grip,
+            ),
+        ):
+            if (
+                not now_open
+                and focused is not None
+                and (focused is pane or pane in focused.ancestors)
+            ):
+                hidden_focus_target = (focused, grip)
+                break
+        generation = self._library_notes_focus_intent_generation
+        shell.sync_layout(layout)
+        self._library_media_reader_layout = layout
+        if hidden_focus_target is not None:
+            self._focus_library_media_grip_if_current(
+                generation,
+                *hidden_focus_target,
+            )
+
+    def _focus_library_media_grip_if_current(
+        self,
+        generation: int,
+        hidden_focus: Widget,
+        grip: Widget,
+    ) -> None:
+        """Move focus only when no newer user focus intent superseded resize."""
+        if (
+            generation != self._library_notes_focus_intent_generation
+            and not self._library_notes_resize_settling
+        ):
+            return
+        focused = self.focused
+        if focused is hidden_focus or focused is None or not focused.display:
+            self.set_focus(grip, scroll_visible=False)
+
+    @on(PaneToggleRequested)
+    def _toggle_library_media_reader_pane(
+        self, event: PaneToggleRequested
+    ) -> None:
+        """Apply one session-only preferred pane choice and explicit priority."""
+        event.stop()
+        layout = self._library_media_reader_layout
+        opening = not (
+            layout.library_open if event.pane == "library" else layout.items_open
+        )
+        self._library_media_reader_preferences = dataclasses.replace(
+            self._library_media_reader_preferences,
+            **{f"{event.pane}_open": opening},
+        )
+        self._sync_library_media_reader_layout_from_shell(
+            event.pane if opening else None
+        )
+
+    @on(MediaShellResized)
+    def _resize_library_media_reader_shell(self, event: MediaShellResized) -> None:
+        """Resolve a mounted shell after Textual assigns its real width."""
+        event.stop()
+        self._sync_library_media_reader_layout_from_shell()
 
     def _sync_library_ingest_rail_for_width(self, width: int) -> None:
         """Auto-collapse the rail only while narrow Ingest needs the space."""
@@ -5194,6 +5316,16 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_notes_stage_visibility()
         self._apply_library_note_presentation_state()
         self._apply_library_notes_footer_context()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self.query("#library-media-reader-shell")
+        ):
+            # Media's resolver owns pane visibility and focus settlement;
+            # the Notes tuple would otherwise restore focus into hidden Items.
+            self.call_after_refresh(
+                self._sync_library_media_reader_layout_from_shell
+            )
+            return
         self.call_after_refresh(
             self._restore_library_notes_focus_identity,
             identity,
@@ -5462,6 +5594,16 @@ class LibraryScreen(BaseAppScreen):
         del event
         self._library_notes_resize_epoch += 1
         self._library_notes_resize_settling = True
+        focused = self.focused
+        focus_intent = (
+            (focused, self._library_notes_focus_intent_generation)
+            if focused is not None
+            else None
+        )
+        self.call_after_refresh(
+            self._sync_library_media_reader_layout_from_shell,
+            focus_intent=focus_intent,
+        )
         try:
             width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -6085,6 +6227,7 @@ class LibraryScreen(BaseAppScreen):
         viewer) that ``apply_navigation_context`` could not run before mount.
         """
         self._register_footer_shortcuts()
+        self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
         if (
             self._library_new_profile_admission
             and not self._library_lifecycle_was_stored
@@ -6186,6 +6329,19 @@ class LibraryScreen(BaseAppScreen):
             # mirrors the note case: ``_refresh_library_media_detail``
             # notifies and falls back to the list view when the id no
             # longer resolves.
+            if self._library_media_reader_session.pending_request is None:
+                reader_identity = self._library_media_reader_identity(
+                    self._selected_media_id
+                )
+                if reader_identity is not None:
+                    canonical_id, backing_id = reader_identity
+                    self._library_media_reader_session = begin_selection(
+                        self._library_media_reader_session,
+                        canonical_id,
+                        backing_id,
+                        self._selected_media_id,
+                        immediate=True,
+                    )
             self.run_worker(
                 self._refresh_library_media_detail(
                     self._selected_media_id,
@@ -8710,7 +8866,7 @@ class LibraryScreen(BaseAppScreen):
         # lessons-testing-evidence.md records for TASK-15706.
 
     async def _apply_library_media_active_surface(self) -> None:
-        """Swap the canvas child to the current media list/loading/viewer.
+        """Synchronize the permanent Media Reader without replacing Items.
 
         Shared completion seam for the media open click and the media
         detail worker (task-21116). Skips entirely when the media surface
@@ -8729,11 +8885,10 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             return
-        if self._library_media_view == "trash":
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None and self._sync_library_media_viewer_state(viewer):
             return
-        await self._apply_library_open_item_surface(
-            self._build_library_media_active_child
-        )
+        self.refresh(recompose=True)
 
     async def _apply_library_media_list_return(
         self,
@@ -8750,22 +8905,15 @@ class LibraryScreen(BaseAppScreen):
         """
         if (
             self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
-            or self._library_media_view != "list"
+            or self._library_media_view == "trash"
         ):
             return
-        # The task-2856 AC1 entry-focus arm (and its media_return scroll
-        # restore) rides the replacement's ``then=`` so it runs only after
-        # the mounted list's own sync recompose settles. Arming from this
-        # continuation directly was measurably too early: the restore's
-        # ``scroll_to`` clamped against a not-yet-laid-out list
-        # (``max_scroll_y == 0``) and the compact viewer-back scroll came
-        # back as 0 -- the same clamp the 15457 notes-canvas fix recorded.
-        await self._apply_library_open_item_surface(
-            self._build_library_media_active_child,
-            then=lambda: self._arm_library_list_entry_focus(
-                media_return=media_return
-            ),
-        )
+        # Items remain mounted in the Reader shell, so the arm can run in
+        # this continuation; its own after-refresh focus attempt observes
+        # the already-laid-out list without an extra scheduling race.
+        self._register_footer_shortcuts()
+        self._sync_library_media_viewer_or_recompose()
+        self._arm_library_list_entry_focus(media_return=media_return)
 
     async def _reconcile_library_entry_state(
         self, generation: int, route_key: tuple[object, ...]
@@ -8978,6 +9126,15 @@ class LibraryScreen(BaseAppScreen):
             if restore_focus is not None:
                 restore_focus()
             return self._retry_or_fail_library_entry_reconcile(generation, route_key)
+
+        if shell.canvas_kind == "media":
+            viewer = self._mounted_library_media_viewer()
+            if viewer is None or not self._sync_library_media_viewer_state(viewer):
+                if restore_focus is not None:
+                    restore_focus()
+                return self._retry_or_fail_library_entry_reconcile(
+                    generation, route_key
+                )
 
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             try:
@@ -10829,6 +10986,37 @@ class LibraryScreen(BaseAppScreen):
             not self._library_notes_compact
             and self._library_notes_focused_task_active()
         )
+        if shell.canvas_kind == "media":
+            rail = LibraryRail(
+                shell,
+                preferences,
+                query=self._library_rag_query,
+                search_placeholder=self._library_rail_search_placeholder(),
+                workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
+                id="library-rail",
+                classes="destination-workbench-pane",
+            )
+            items_host = Vertical(
+                self._build_library_media_active_child(),
+                id="library-canvas",
+                classes="destination-workbench-pane",
+            )
+            reader = self._build_library_media_reader()
+            with shell_grid:
+                yield LibraryMediaReaderShell(
+                    rail,
+                    items_host,
+                    reader,
+                    self._library_media_reader_layout,
+                    id="library-media-reader-shell",
+                )
+            self.call_after_refresh(
+                self._sync_library_media_reader_layout_from_shell
+            )
+            return
         with shell_grid:
             rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
             rail_handle.styles.height = "100%"
@@ -11695,7 +11883,8 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_media_bulk_delete_in_flight
                 else ""
             ),
-            "compact": self._library_notes_compact,
+            "compact": False,
+            "show_preview": False,
         }
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
@@ -11801,7 +11990,7 @@ class LibraryScreen(BaseAppScreen):
         """Project accepted Media page/facet state into the mounted list."""
         if (
             self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
-            or self._library_media_view != "list"
+            or self._library_media_view == "trash"
         ):
             return
         applied = self._library_media_browse_controller.applied_scope
@@ -13261,12 +13450,27 @@ class LibraryScreen(BaseAppScreen):
             media_id: The Library media item id to fetch full detail for.
         """
         entry_route_key = self._library_entry_route_key() if entry_origin else None
+        entry_generation = (
+            self._library_snapshot_state_generation if entry_origin else None
+        )
+        pending = self._library_media_reader_session.pending_request
+        reader_identity = self._library_media_reader_identity(media_id)
+        requested_id = reader_identity[0] if reader_identity is not None else media_id
+        request_generation = (
+            pending.generation
+            if pending is not None and pending.requested_id == requested_id
+            else None
+        )
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         get_media_item = getattr(service, "get_media_item", None)
         if not callable(get_media_item):
-            self._library_media_detail = None
-            self._library_media_composed_detail = None
-            self._library_media_highlights = []
+            if request_generation is not None:
+                self._library_media_reader_session = settle_failure(
+                    self._library_media_reader_session,
+                    request_generation,
+                    requested_id,
+                    "Media service is unavailable.",
+                )
             self._library_media_view = "list"
             self._load_library_media_list_if_needed()
             if self.is_mounted:
@@ -13320,8 +13524,22 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        self._library_media_detail = detail if isinstance(detail, Mapping) else None
-        self._library_media_highlights = highlights
+        if isinstance(detail, Mapping):
+            self._library_media_detail = detail
+            self._library_media_highlights = highlights
+            if request_generation is not None:
+                self._library_media_reader_session = settle_success(
+                    self._library_media_reader_session,
+                    request_generation,
+                    requested_id,
+                )
+        elif request_generation is not None:
+            self._library_media_reader_session = settle_failure(
+                self._library_media_reader_session,
+                request_generation,
+                requested_id,
+                "Media item is unavailable.",
+            )
         # LIB-13: default the content view per item, from the just-fetched
         # detail's own is_markdown -- computed here (once, at load) rather
         # than on every recompose, so a later Rendered<->Raw toggle press
@@ -13335,7 +13553,22 @@ class LibraryScreen(BaseAppScreen):
             else "raw"
         )
         if (
-            self._library_media_detail is None
+            entry_generation is not None
+            and entry_generation != self._library_snapshot_state_generation
+        ):
+            # The worker still owns and settles its fetched state, but a
+            # newer same-route snapshot owns projection into the permanent
+            # Reader (the pre-shell replacement seam enforced this fence).
+            current_route_key = self._library_entry_route_key()
+            if entry_route_key == current_route_key and self.is_attached:
+                self._library_entry_reconcile_dirty = True
+                self._schedule_library_entry_reconcile(
+                    self._library_snapshot_state_generation,
+                    current_route_key,
+                )
+            return LibraryEntryReconcileResult.SUPERSEDED
+        if (
+            not isinstance(detail, Mapping)
             and media_id == self._selected_media_id
             and self._library_media_view == "viewer"
         ):
@@ -13349,12 +13582,11 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Media item is unavailable.", severity="warning")
             self._library_media_view = "list"
-            self._load_library_media_list_if_needed()
         if self.is_mounted:
             if entry_origin:
                 if entry_route_key != self._library_entry_route_key():
                     return LibraryEntryReconcileResult.SUPERSEDED
-                self.refresh(recompose=True)
+                await self._apply_library_media_active_surface()
                 return LibraryEntryReconcileResult.APPLIED
             # task-15458: deliberately defer the legacy non-entry refresh.
             # The open-time compose may already be rendering this exact detail;
@@ -17289,6 +17521,9 @@ class LibraryScreen(BaseAppScreen):
             should use the whole-screen fallback.
         """
         try:
+            media_shell_mounted = bool(self.query("#library-media-reader-shell"))
+            if (shell.canvas_kind == "media") != media_shell_mounted:
+                return False
             notes_source_strip_mounted = bool(self.query("#library-notes-source-strip"))
             destination_uses_notes_source_strip = (
                 shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
@@ -17563,6 +17798,7 @@ class LibraryScreen(BaseAppScreen):
             # The strict posture projection requires its retained owner to exist.
             self._refresh_library_skills_trust_posture()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,
                 focus_identity="#library-media-row-0",
@@ -18699,6 +18935,8 @@ class LibraryScreen(BaseAppScreen):
                 row-press behavior for a row missing its ``media_id``).
         """
         media_id = str(media_id or "")
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
         self._library_media_viewer_return = None
         if media_id and self._library_media_view == "list" and self.is_mounted:
             try:
@@ -18711,14 +18949,29 @@ class LibraryScreen(BaseAppScreen):
         if media_id:
             self._acknowledge_library_destination_change()
             self._selected_media_id = media_id
+            title = next(
+                (
+                    row.title
+                    for row in self._build_library_media_state().rows
+                    if row.media_id == media_id
+                ),
+                media_id,
+            )
+            reader_identity = self._library_media_reader_identity(media_id)
+            if reader_identity is not None:
+                canonical_id, backing_id = reader_identity
+                self._library_media_reader_session = begin_selection(
+                    self._library_media_reader_session,
+                    canonical_id,
+                    backing_id,
+                    title,
+                    immediate=True,
+                )
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
         self._library_media_view = "viewer"
-        self._library_media_browse_controller.invalidate()
         # task-14902: an open type strip must not survive the trip through
         # the viewer and reappear (stale) on the way back.
         self._library_media_type_choices_visible = False
-        self._library_media_detail = None
-        self._library_media_composed_detail = None
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
@@ -18735,10 +18988,7 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_media_detail",
             )
-        # task-21116: list -> viewer/loading is a canvas-child swap;
-        # scheduled because this shared seam is synchronous while the
-        # replacement awaits its unmount/mount.
-        self.call_next(self._apply_library_media_active_surface)
+        self._sync_library_media_viewer_or_recompose()
 
     def _library_media_backing_id(self, media_id: str) -> int | str:
         """Resolve a canonical list identity to the positive local backing id."""
@@ -18752,6 +19002,19 @@ class LibraryScreen(BaseAppScreen):
             if backing_id > 0:
                 return backing_id
         return media_id
+
+    def _library_media_reader_identity(
+        self, media_id: str
+    ) -> tuple[str, int | str] | None:
+        """Normalize retained legacy ids for the canonical Reader session."""
+        backing_id = self._library_media_backing_id(media_id)
+        if type(backing_id) is int:
+            return f"local:media:{backing_id}", backing_id
+        if media_id.startswith("media-") and media_id[6:].isdecimal():
+            backing_id = int(media_id[6:])
+            if backing_id > 0:
+                return f"local:media:{backing_id}", backing_id
+        return None
 
     def _required_library_media_backing_id(self, media_id: str) -> int:
         """Return one positive local mutation id or fail before persistence."""
@@ -31822,7 +32085,7 @@ class LibraryScreen(BaseAppScreen):
             )
 
     def _build_library_media_active_child(self) -> Widget:
-        """Build the media child for the CURRENT ``_library_media_view``.
+        """Build the mounted Items child for the current Media subview.
 
         Covers all three of the media canvas's views. The "trash" branch is
         not decoration: this builder is the shared source of truth for
@@ -31845,26 +32108,28 @@ class LibraryScreen(BaseAppScreen):
                 trash_state,
                 id="library-media-trash-canvas",
             )
-        if self._library_media_view != "viewer":
-            media_state = self._build_library_media_state()
+        media_state = self._build_library_media_state()
+        if media_state.selected_id or self._library_media_view == "list":
             self._selected_media_id = media_state.selected_id
-            return LibraryMediaCanvas(
-                media_state,
-                **self._library_media_canvas_presentation(),
-                id="library-media-canvas",
-            )
-        if self._library_media_detail is None:
-            return Static(
-                "Loading media…",
-                id="library-media-viewer-loading",
-                classes="destination-purpose",
-                markup=False,
-            )
-        self._library_media_composed_detail = self._library_media_detail
+        return LibraryMediaCanvas(
+            media_state,
+            **self._library_media_canvas_presentation(),
+            id="library-media-canvas",
+        )
+
+    def _build_library_media_reader(self) -> LibraryMediaViewer:
+        """Build the permanent Reader from loaded detail or its empty state."""
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
+        if detail is not None:
+            self._library_media_composed_detail = detail
         arrival_note = self._pop_library_media_arrival_note()
         viewer = LibraryMediaViewer(
             build_library_media_viewer_state(
-                self._library_media_detail,
+                detail,
                 arrival_note=arrival_note,
             ),
             editing=self._library_media_editing,
@@ -31876,6 +32141,10 @@ class LibraryScreen(BaseAppScreen):
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
+            loading=(
+                self._library_media_reader_session.pending_request is not None
+                and self._library_media_reader_session.error is None
+            ),
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -31896,13 +32165,19 @@ class LibraryScreen(BaseAppScreen):
         comparison is structural.
         """
         if (
-            self._library_media_view != "viewer"
-            or not isinstance(self._library_media_detail, Mapping)
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
         ):
             return False
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
         viewer_state = build_library_media_viewer_state(
-            self._library_media_detail,
-            arrival_note=str(getattr(viewer, "_library_entry_arrival_note", "") or ""),
+            detail,
+            arrival_note=str(
+                getattr(viewer, "_library_entry_arrival_note", "") or ""
+            ),
         )
         highlights = tuple(
             build_library_media_highlight_rows(self._library_media_highlights)
@@ -31917,6 +32192,11 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_match_index
             == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
+            and viewer.loading
+            == (
+                self._library_media_reader_session.pending_request is not None
+                and self._library_media_reader_session.error is None
+            )
         )
         if not unchanged:
             viewer.viewer = viewer_state
@@ -31927,7 +32207,13 @@ class LibraryScreen(BaseAppScreen):
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
+            viewer.loading = (
+                self._library_media_reader_session.pending_request is not None
+                and self._library_media_reader_session.error is None
+            )
             viewer.refresh(recompose=True)
+        if detail is not None:
+            self._library_media_composed_detail = detail
         self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
         return True
 
@@ -33685,8 +33971,16 @@ class LibraryScreen(BaseAppScreen):
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._library_media_view = "viewer"
-            self._library_media_detail = None
-            self._library_media_composed_detail = None
+            reader_identity = self._library_media_reader_identity(record_id)
+            if reader_identity is not None:
+                canonical_id, backing_id = reader_identity
+                self._library_media_reader_session = begin_selection(
+                    self._library_media_reader_session,
+                    canonical_id,
+                    backing_id,
+                    record_id,
+                    immediate=True,
+                )
             self._library_media_editing = False
             self._library_media_confirming_delete = False
             self._library_media_highlights = []
@@ -33694,16 +33988,6 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_content_query = ""
             self._library_media_content_match_index = 0
             self._library_media_content_mode = "raw"
-            if entry_origin:
-                generation = self._library_snapshot_state_generation
-                route_key = self._library_entry_route_key()
-                result = await self._replace_library_canvas_child(
-                    self._build_library_media_active_child(),
-                    generation=generation,
-                    route_key=route_key,
-                )
-                if result is not LibraryEntryReconcileResult.APPLIED:
-                    return result
             self.run_worker(
                 self._refresh_library_media_detail(
                     record_id,
@@ -33714,11 +33998,7 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            # task-21116: per-click open routes through the same targeted
-            # canvas-child replacement the entry lifecycle uses.
-            await self._apply_library_open_item_surface(
-                self._build_library_media_active_child
-            )
+            await self._apply_library_media_active_surface()
             return None
 
         if source_type == "notes":
