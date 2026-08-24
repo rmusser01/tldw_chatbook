@@ -6,6 +6,7 @@ import base64
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from .contracts import BoundedPageResult, QualifiedWorkspaceRef, WorkspaceDataSource
 
@@ -49,9 +50,14 @@ class ResearchNoteSaveRequest:
     expected_version: int | None = None
     message_ids: tuple[str, ...] = ()
     source_ids: tuple[str, ...] = ()
+    operation_id: str = ""
 
     def __post_init__(self) -> None:
-        title = _required_text(self.title, "title", max_chars=1000)
+        if not isinstance(self.title, str):
+            raise TypeError("title must be text")
+        title = self.title.strip() or "Untitled Note"
+        if len(title) > 1000:
+            raise ValueError("title is invalid")
         if not isinstance(self.content, str):
             raise TypeError("content must be text")
         if len(self.content) > 2_000_000:
@@ -71,6 +77,15 @@ class ResearchNoteSaveRequest:
         if any(_is_provenance_keyword(tag) for tag in tags):
             raise ValueError("tags cannot use reserved provenance prefixes")
         object.__setattr__(self, "title", title)
+        object.__setattr__(
+            self,
+            "operation_id",
+            _required_text(
+                self.operation_id or f"research-note-{uuid4().hex}",
+                "operation_id",
+                max_chars=1024,
+            ),
+        )
         object.__setattr__(self, "note_id", note_id)
         object.__setattr__(self, "tags", tags)
         object.__setattr__(

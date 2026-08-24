@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -14,9 +15,12 @@ from tldw_chatbook.Research_Workspace import (
     ResearchNoteConflictError,
     ResearchQuickNote,
     ResearchWorkspaceController,
+    ResearchWorkspaceCatalogState,
     ResearchWorkspaceSummary,
     WorkspaceDataSource,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
 
 LOCAL_REF = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "notes-local")
@@ -135,6 +139,39 @@ async def test_quick_note_load_preview_clear_and_undo_patch_in_place() -> None:
         await pilot.pause()
         assert title.value == "Grounded finding"
         assert body.text == "**Evidence-backed** note"
+
+
+@pytest.mark.asyncio
+async def test_cleared_existing_note_saves_as_untitled_without_losing_dirty_retry() -> None:
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    port = _MountedNotePort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    app = _ResearchHarness(screen)
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if controller.selected_ref == LOCAL_REF:
+                break
+        section = screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(port.row)
+        section.query_one("#research-quick-note-clear", Button).press()
+        await pilot.pause()
+        section.query_one("#research-quick-note-save", Button).press()
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if port.saved:
+                break
+
+        assert port.saved[-1][1].title == "Untitled Note"
+        assert port.saved[-1][1].content == ""
+        assert not section.is_dirty
 
 
 class _MountedNotePort:
@@ -434,6 +471,179 @@ async def test_unavailable_note_owner_operations_remain_visibly_fail_closed() ->
             assert section.query_one(f"#{button_id}", Button).disabled
         assert "unavailable for this owner" in str(
             section.query_one("#research-quick-note-owner-limits", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_capability_refresh_from_full_to_empty_resets_every_control_fail_closed() -> (
+    None
+):
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+
+    app = _StudioHarness()
+    async with app.run_test(size=(72, 44)) as pilot:
+        await pilot.pause()
+        section = app.screen.query_one(ResearchQuickNotesSection)
+        section.sync_workspace(LOCAL_REF)
+        available = ResearchCapability(True, "available", "Available.", "notes")
+        section.sync_capabilities(
+            {
+                name: available
+                for name in ("list_notes", "get_note", "save_note", "delete_note")
+            }
+        )
+        section.sync_capabilities({})
+
+        for widget_id in (
+            "research-quick-note-search",
+            "research-quick-note-search-submit",
+            "research-quick-note-load",
+            "research-quick-note-new",
+            "research-quick-note-save",
+            "research-quick-note-delete",
+        ):
+            assert section.query_one(f"#{widget_id}").disabled
+        assert "unavailable" in str(
+            section.query_one("#research-quick-note-owner-limits", Static).render()
+        ).lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner_error",
+    [
+        WorkspaceRegistryServiceError("PRIVATE OWNER DETAIL"),
+        CharactersRAGDBError("PRIVATE OWNER DETAIL"),
+    ],
+)
+async def test_expected_local_owner_errors_keep_editor_recoverable(owner_error) -> None:
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    port = _MountedNotePort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    app = _ResearchHarness(screen)
+
+    async def fail():
+        raise owner_error
+
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if controller.selected_ref == LOCAL_REF:
+                break
+        section = screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(port.row)
+        section.query_one("#research-quick-note-body", TextArea).text = "Retained draft"
+
+        await screen._guard_quick_note_action(fail())
+
+        status = str(section.query_one("#research-quick-note-status", Static).render())
+        assert "PRIVATE OWNER DETAIL" not in status
+        assert "retained" in status.lower()
+        assert section.query_one("#research-quick-note-body", TextArea).text == (
+            "Retained draft"
+        )
+
+
+@pytest.mark.asyncio
+async def test_navigation_flush_retries_exact_original_ref_even_if_editor_ref_changes() -> (
+    None
+):
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    local = _MountedNotePort(LOCAL_REF)
+    local.conflict = True
+    server = _MountedNotePort(SERVER_REF)
+    controller = ResearchWorkspaceController(
+        {WorkspaceDataSource.LOCAL: local, WorkspaceDataSource.SERVER: server}
+    )
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    app = _ResearchHarness(screen)
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if controller.selected_ref == LOCAL_REF:
+                break
+        section = screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(local.row)
+        section.query_one("#research-quick-note-body", TextArea).text = (
+            "Exact original draft"
+        )
+        flush = asyncio.create_task(screen.flush_pending_work())
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if app.screen.id == "research-note-switch-recovery-modal":
+                break
+
+        section.editor_ref = SERVER_REF
+        local.conflict = False
+        app.screen.query_one("#research-note-switch-retry", Button).press()
+        assert await flush is True
+        assert local.saved[-1][0] == LOCAL_REF
+        assert local.saved[-1][1].note_id == "note-1"
+        assert server.saved == []
+
+
+@pytest.mark.asyncio
+async def test_catalog_fallback_cancel_preserves_dirty_editor_and_selected_workspace() -> (
+    None
+):
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    local = _MountedNotePort(LOCAL_REF)
+    local.conflict = True
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: local})
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    app = _ResearchHarness(screen)
+    fallback_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "fallback")
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if controller.selected_ref == LOCAL_REF:
+                break
+        section = screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(local.row)
+        section.query_one("#research-quick-note-body", TextArea).text = (
+            "Catalog must not destroy this"
+        )
+        state = ResearchWorkspaceCatalogState(
+            data_source=WorkspaceDataSource.LOCAL,
+            context_revision=controller.context_revision,
+            catalog_generation=controller.catalog_generation,
+            workspaces=(ResearchWorkspaceSummary(ref=fallback_ref, name="Fallback"),),
+        )
+        apply_state = asyncio.create_task(screen._apply_catalog_state(state))
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if app.screen.id == "research-note-switch-recovery-modal":
+                break
+
+        assert app.screen.id == "research-note-switch-recovery-modal"
+        app.screen.query_one("#research-note-switch-cancel", Button).press()
+        await apply_state
+
+        assert controller.selected_ref == LOCAL_REF
+        assert section.editor_ref == LOCAL_REF
+        assert section.query_one("#research-quick-note-body", TextArea).text == (
+            "Catalog must not destroy this"
         )
 
 

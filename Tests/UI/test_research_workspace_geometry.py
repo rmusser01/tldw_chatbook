@@ -120,6 +120,74 @@ async def test_active_sources_keeps_essential_controls_painted_and_reachable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size", [(160, 40), (120, 30), (100, 30), (84, 24), (80, 24), (60, 20)]
+)
+async def test_active_studio_quick_note_actions_reflow_and_focus_into_view(
+    size: tuple[int, int],
+) -> None:
+    from tldw_chatbook.Research_Workspace import (
+        QualifiedWorkspaceRef,
+        ResearchCapability,
+        ResearchQuickNote,
+        WorkspaceDataSource,
+    )
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+
+    app = _ProductionWorkspaceHarness()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        studio = screen.query_one("#research-studio-pane")
+        if not studio.display:
+            screen.query_one("#research-pane-mode-studio", Button).press()
+            await pilot.pause()
+        section = studio.query_one(ResearchQuickNotesSection)
+        ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "geometry")
+        available = ResearchCapability(True, "available", "Available.", "notes")
+        section.sync_workspace(ref)
+        section.sync_capabilities(
+            {
+                name: available
+                for name in ("list_notes", "get_note", "save_note", "delete_note")
+            }
+        )
+        section.sync_note(
+            ResearchQuickNote(
+                ref=ref,
+                note_id="geometry-note",
+                title="Geometry",
+                content="Body",
+                version=1,
+            )
+        )
+        section.query_one("#research-quick-note-clear", Button).press()
+        await pilot.pause()
+
+        for widget_id in (
+            "research-quick-note-save",
+            "research-quick-note-delete",
+            "research-quick-note-download",
+            "research-quick-note-clear",
+            "research-quick-note-undo",
+        ):
+            action = section.query_one(f"#{widget_id}", Button)
+            assert not action.disabled, (size, widget_id)
+            assert action.display and action.region.width > 0 and action.region.height > 0
+            action.focus()
+            await pilot.pause()
+            assert app.focused is action, (size, widget_id)
+            assert studio.region.overlaps(action.region), (
+                size,
+                widget_id,
+                studio.region,
+                action.region,
+            )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 40), (60, 20)])
 async def test_production_runs_window_stays_inside_remaining_screen_content(
     size: tuple[int, int],

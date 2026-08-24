@@ -874,10 +874,12 @@ class LocalWorkspaceRegistryService:
         *,
         limit: int = 100,
         offset: int = 0,
+        role: str = "note",
     ) -> tuple[tuple[WorkspaceMembership, ...], int]:
         """Return one bounded page of canonical Notes associations."""
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_role = _normalize_required_text(role, "role")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         if type(offset) is not int or not 0 <= offset <= 10_000:
@@ -891,9 +893,9 @@ class LocalWorkspaceRegistryService:
                         FROM workspace_memberships
                         WHERE workspace_id = ?
                             AND item_type = 'note'
-                            AND role = 'note'
+                            AND role = ?
                         """,
-                        (safe_workspace_id,),
+                        (safe_workspace_id, safe_role),
                     ).fetchone()[0]
                 )
                 rows = conn.execute(
@@ -902,15 +904,31 @@ class LocalWorkspaceRegistryService:
                     FROM workspace_memberships
                     WHERE workspace_id = ?
                         AND item_type = 'note'
-                        AND role = 'note'
+                        AND role = ?
                     ORDER BY created_at DESC, item_id ASC, membership_id ASC
                     LIMIT ? OFFSET ?
                     """,
-                    (safe_workspace_id, limit, offset),
+                    (safe_workspace_id, safe_role, limit, offset),
                 ).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows), total
+
+    def list_workspace_note_receipts(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
+        """Return payload-free pending Local Quick Note association receipts."""
+
+        return self.list_workspace_note_memberships(
+            workspace_id,
+            limit=limit,
+            offset=offset,
+            role="note_pending",
+        )
 
     def get_workspace_source_membership(
         self, workspace_id: str, membership_id: str

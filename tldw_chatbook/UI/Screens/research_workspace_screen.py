@@ -20,6 +20,7 @@ from textual.events import Resize
 from textual.widgets import Button, Static
 
 from ...Library.library_ingest_jobs import IngestJobState
+from ...DB.ChaChaNotes_DB import CharactersRAGDBError
 from ...Research_Workspace import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
@@ -47,6 +48,7 @@ from ...Research_Workspace.source_operations import (
     SourceOperationStatus,
 )
 from ...tldw_api.exceptions import TLDWAPIError
+from ...Workspaces.registry_service import WorkspaceRegistryServiceError
 from ...Research_Workspace.layout_state import (
     ResearchPaneLayout,
     ResearchPanePreferences,
@@ -444,6 +446,24 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     async def _apply_catalog_state(self, state: ResearchWorkspaceCatalogState) -> None:
         if not self.controller.is_current_catalog_state(state):
             return
+        intended_ref = self.controller.selected_ref
+        target_ref = None
+        if state.recovery is None and state.workspaces:
+            target_ref = next(
+                (
+                    candidate.ref
+                    for candidate in state.workspaces
+                    if intended_ref is not None and candidate.ref == intended_ref
+                ),
+                state.workspaces[0].ref,
+            )
+        section = self.query_one(ResearchQuickNotesSection)
+        if target_ref != section.editor_ref:
+            async with self._quick_note_lock:
+                if not await self._flush_quick_note_before_owner_switch():
+                    return
+            if not self.controller.is_current_catalog_state(state):
+                return
         header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
         header.sync_catalog_state(state)
         selection = self.query_one("#research-workspace-selection", Static)
@@ -486,7 +506,6 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             notes.show_recovery("Create a Research workspace to use Quick Notes.")
             return
 
-        intended_ref = self.controller.selected_ref
         workspace = next(
             (
                 candidate
@@ -602,12 +621,24 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             TypeError,
             ValueError,
             RuntimeError,
+            WorkspaceRegistryServiceError,
+            CharactersRAGDBError,
             TLDWAPIError,
             httpx.HTTPError,
         ) as exc:
             if self.controller.is_current_request(capture):
                 logger.warning(
                     "Research Quick Notes refresh failed: {}", type(exc).__name__
+                )
+                section.show_recovery(
+                    "Quick Notes could not be loaded from the selected owner. Retry."
+                )
+            return
+        except Exception as exc:
+            if self.controller.is_current_request(capture):
+                logger.error(
+                    "Unexpected Research Quick Notes refresh failure: {}",
+                    type(exc).__name__,
                 )
                 section.show_recovery(
                     "Quick Notes could not be loaded from the selected owner. Retry."
@@ -626,9 +657,15 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         section = self.query_one(ResearchQuickNotesSection)
         if not section.has_nonempty_dirty_draft:
             return True
+        try:
+            ref, request = section.capture_save_request()
+        except (TypeError, ValueError):
+            ref = None
+            request = None
         while True:
             try:
-                ref, request = section.capture_save_request()
+                if ref is None or request is None:
+                    raise ValueError("Quick Note editor state is invalid")
                 saved = await self.controller.save_note(ref, request)
             except asyncio.CancelledError:
                 raise
@@ -637,20 +674,35 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                     "Research Quick Note owner-switch flush failed: {}",
                     type(exc).__name__,
                 )
-                action = await self.app.push_screen_wait(
-                    ResearchNoteSwitchRecoveryModal()
-                )
+                action = await self._wait_for_quick_note_switch_resolution()
                 if action == "retry":
                     continue
                 if action == "discard":
                     section.discard_for_switch()
                     return True
-                section.show_recovery("Authority switch cancelled; draft retained.")
+                section.show_recovery("Transition cancelled; editor draft retained.")
                 return False
             else:
                 if section.editor_ref == saved.ref == self.controller.selected_ref:
                     section.sync_note(saved)
                 return True
+
+    async def flush_pending_work(self) -> bool:
+        """Participate in the app's awaited, fail-closed navigation protocol."""
+
+        async with self._quick_note_lock:
+            return await self._flush_quick_note_before_owner_switch()
+
+    async def _wait_for_quick_note_switch_resolution(self) -> str | None:
+        """Await the recovery modal through a worker, including app navigation."""
+
+        worker = self.run_worker(
+            self.app.push_screen_wait(ResearchNoteSwitchRecoveryModal()),
+            group="research-quick-note-switch-recovery",
+            exclusive=False,
+            exit_on_error=False,
+        )
+        return await worker.wait()
 
     def _run_quick_note_action(self, action: Awaitable[Any], *, group: str) -> None:
         self.run_worker(
@@ -675,12 +727,22 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             TypeError,
             ValueError,
             RuntimeError,
+            WorkspaceRegistryServiceError,
+            CharactersRAGDBError,
             TLDWAPIError,
             httpx.HTTPError,
         ) as exc:
             logger.warning("Research Quick Note action failed: {}", type(exc).__name__)
             self.query_one(ResearchQuickNotesSection).show_recovery(
                 "Quick Note action failed. The editor draft is retained; retry."
+            )
+        except Exception as exc:
+            logger.error(
+                "Unexpected Research Quick Note action failure: {}",
+                type(exc).__name__,
+            )
+            self.query_one(ResearchQuickNotesSection).show_recovery(
+                "Unexpected Quick Note failure. The editor draft is retained; retry."
             )
 
     @on(ResearchQuickNotesSection.SearchRequested)
@@ -788,6 +850,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             saved = await self.controller.save_note(ref, request)
         except ResearchNoteConflictError:
             action = await self.app.push_screen_wait(ResearchNoteConflictModal())
+            if ref != section.editor_ref or ref != self.controller.selected_ref:
+                return
             if action == "reload" and request.note_id is not None:
                 accepted = await self.controller.load_selected_note(request.note_id)
                 if accepted and self.controller.visible_note is not None:
@@ -860,6 +924,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             deleted = await self.controller.delete_note(ref, note_id, expected_version)
         except ResearchNoteConflictError:
             action = await self.app.push_screen_wait(ResearchNoteConflictModal())
+            if ref != section.editor_ref or ref != self.controller.selected_ref:
+                return
             if action == "reload":
                 accepted = await self.controller.load_selected_note(note_id)
                 if accepted and self.controller.visible_note is not None:
@@ -867,7 +933,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                         self.controller.visible_note
                     )
             elif action == "copy":
-                ref, request = section.capture_save_request()
+                captured_ref, request = section.capture_save_request()
+                if captured_ref != ref:
+                    section.show_recovery(
+                        "Conflict owner changed; editor draft retained."
+                    )
+                    return
                 saved = await self.controller.save_note(
                     ref,
                     ResearchNoteSaveRequest(

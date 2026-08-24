@@ -29,6 +29,7 @@ from tldw_chatbook.Research_Workspace.server_adapter import (
     ServerResearchWorkspaceAdapter,
 )
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
 
 LOCAL_REF = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
@@ -123,7 +124,9 @@ class RecordingNotesScope:
         self.calls.append(("save", kwargs))
         if self.conflict:
             raise ConflictError("stale title only", entity="notes", entity_id="note-1")
-        note_id = str(kwargs.get("note_id") or "note-new")
+        note_id = str(
+            kwargs.get("note_id") or kwargs.get("create_note_id") or "note-new"
+        )
         version = int(kwargs.get("version") or 0) + 1
         row = {
             "id": note_id,
@@ -144,6 +147,36 @@ class RecordingNotesScope:
             )
         self.rows.pop(str(kwargs["note_id"]), None)
         return True
+
+
+class FailingMembershipRegistry:
+    """Inject one role-specific registry failure while retaining real SQLite."""
+
+    def __init__(
+        self,
+        service: LocalWorkspaceRegistryService,
+        *,
+        fail_link_role: str | None = None,
+        fail_unlink_role: str | None = None,
+    ) -> None:
+        self.service = service
+        self.fail_link_role = fail_link_role
+        self.fail_unlink_role = fail_unlink_role
+
+    def __getattr__(self, name):
+        return getattr(self.service, name)
+
+    def link_membership(self, workspace_id, **kwargs):
+        if kwargs.get("role") == self.fail_link_role:
+            self.fail_link_role = None
+            raise WorkspaceRegistryServiceError("injected registry link failure")
+        return self.service.link_membership(workspace_id, **kwargs)
+
+    def unlink_membership(self, workspace_id, **kwargs):
+        if kwargs.get("role") == self.fail_unlink_role:
+            self.fail_unlink_role = None
+            raise WorkspaceRegistryServiceError("injected registry unlink failure")
+        return self.service.unlink_membership(workspace_id, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -181,25 +214,25 @@ async def test_local_notes_are_paged_by_workspace_membership_and_keep_qualified_
 
 
 @pytest.mark.asyncio
-async def test_local_create_saves_canonical_note_then_links_note_membership() -> None:
+async def test_local_create_preclaims_canonical_id_then_promotes_note_membership() -> (
+    None
+):
     registry = RecordingRegistry()
     notes = RecordingNotesScope()
     adapter = LocalResearchWorkspaceAdapter(
         registry, notes_scope_service=notes, notes_user_id="chatbook-user"
     )
 
-    saved = await adapter.save_note(
-        LOCAL_REF,
-        ResearchNoteSaveRequest(
-            title="Capture",
-            content="Grounded observation",
-            tags=("review",),
-            message_ids=("message-7",),
-            source_ids=("source-9",),
-        ),
+    request = ResearchNoteSaveRequest(
+        title="Capture",
+        content="Grounded observation",
+        tags=("review",),
+        message_ids=("message-7",),
+        source_ids=("source-9",),
     )
+    saved = await adapter.save_note(LOCAL_REF, request)
 
-    save_kwargs = notes.calls[0][1]
+    save_kwargs = next(kwargs for action, kwargs in notes.calls if action == "save")
     assert save_kwargs["scope"] == "local_note"
     assert save_kwargs["user_id"] == "chatbook-user"
     assert save_kwargs["keywords"] == [
@@ -207,22 +240,66 @@ async def test_local_create_saves_canonical_note_then_links_note_membership() ->
         "research-message-id:bWVzc2FnZS03",
         "research-source-id:c291cmNlLTk",
     ]
-    assert registry.calls[-1] == (
-        "link",
-        "workspace-local",
-        {
-            "item_type": "note",
-            "item_id": "note-new",
-            "role": "note",
-            "title": "Capture",
-        },
-    )
+    assert save_kwargs["create_note_id"] == request.operation_id
+    assert registry.calls == [
+        (
+            "link",
+            "workspace-local",
+            {
+                "item_type": "note",
+                "item_id": request.operation_id,
+                "role": "note_pending",
+                "title": "",
+            },
+        ),
+        (
+            "link",
+            "workspace-local",
+            {
+                "item_type": "note",
+                "item_id": request.operation_id,
+                "role": "note",
+                "title": "Capture",
+            },
+        ),
+        (
+            "unlink",
+            "workspace-local",
+            {
+                "item_type": "note",
+                "item_id": request.operation_id,
+                "role": "note_pending",
+            },
+        ),
+    ]
     assert saved.ref == LOCAL_REF
-    assert saved.note_id == "note-new"
+    assert saved.note_id == request.operation_id
     assert saved.version == 1
     assert saved.tags == ("review",)
     assert saved.message_ids == ("message-7",)
     assert saved.source_ids == ("source-9",)
+
+
+@pytest.mark.asyncio
+async def test_local_create_registry_preclaim_failure_writes_no_canonical_note() -> None:
+    class PreclaimFailure(RecordingRegistry):
+        def link_membership(self, workspace_id, **kwargs):
+            if kwargs["role"] == "note_pending":
+                raise WorkspaceRegistryServiceError("injected preclaim failure")
+            return super().link_membership(workspace_id, **kwargs)
+
+    registry = PreclaimFailure()
+    notes = RecordingNotesScope()
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, notes_scope_service=notes, notes_user_id="chatbook-user"
+    )
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        await adapter.save_note(
+            LOCAL_REF, ResearchNoteSaveRequest(title="No orphan", content="Body")
+        )
+
+    assert notes.calls == []
 
 
 @pytest.mark.asyncio
@@ -304,6 +381,43 @@ async def test_local_delete_is_versioned_and_cleans_membership_after_owner_succe
             {"item_type": "note", "item_id": "note-1", "role": "note"},
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_local_delete_retry_cleans_membership_when_owner_returns_false() -> None:
+    class RetryNotes(RecordingNotesScope):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delete_count = 0
+
+        async def delete_note(self, **kwargs):
+            self.calls.append(("delete", kwargs))
+            self.delete_count += 1
+            self.rows.pop(str(kwargs["note_id"]), None)
+            return self.delete_count == 1
+
+    class RetryRegistry(RecordingRegistry):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_unlink = True
+
+        def unlink_membership(self, workspace_id, **kwargs):
+            if kwargs["role"] == "note" and self.fail_unlink:
+                self.fail_unlink = False
+                raise WorkspaceRegistryServiceError("injected cleanup failure")
+            return super().unlink_membership(workspace_id, **kwargs)
+
+    registry = RetryRegistry()
+    notes = RetryNotes()
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, notes_scope_service=notes, notes_user_id="chatbook-user"
+    )
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        await adapter.delete_note(LOCAL_REF, "note-1", 3)
+
+    assert await adapter.delete_note(LOCAL_REF, "note-1", 3) is True
+    assert registry.get_item_memberships("note", "note-1") == ()
 
 
 @pytest.mark.asyncio
@@ -397,6 +511,157 @@ async def test_local_note_round_trip_uses_real_sqlite_owners_and_cleans_membersh
     finally:
         registry_db.close()
         notes_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concurrent_retry(
+    tmp_path,
+) -> None:
+    notes_path = tmp_path / "canonical-notes.sqlite"
+    workspace_path = tmp_path / "workspace.sqlite"
+    notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
+    notes_scope = NotesScopeService(
+        local_notes_service=NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="research-client",
+            global_db_to_use=notes_db,
+        ),
+        server_service=None,
+        policy_enforcer=None,
+    )
+    registry_db = WorkspaceDB(workspace_path, client_id="research-client")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    failing = FailingMembershipRegistry(registry, fail_link_role="note")
+    adapter = LocalResearchWorkspaceAdapter(
+        failing,
+        notes_scope_service=notes_scope,
+        notes_user_id="research-user",
+    )
+    request = ResearchNoteSaveRequest(title="Durable", content="Canonical body")
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        await adapter.save_note(LOCAL_REF, request)
+
+    canonical = await notes_scope.get_note_detail(
+        scope="local_note", note_id=request.operation_id, user_id="research-user"
+    )
+    assert canonical is not None and canonical["content"] == "Canonical body"
+    assert [
+        item.role for item in registry.get_item_memberships("note", request.operation_id)
+    ] == ["note_pending"]
+    registry_db.close()
+    notes_db.close_connection()
+
+    reopened_notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
+    reopened_notes_scope = NotesScopeService(
+        local_notes_service=NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="research-client",
+            global_db_to_use=reopened_notes_db,
+        ),
+        server_service=None,
+        policy_enforcer=None,
+    )
+    reopened_registry_db = WorkspaceDB(workspace_path, client_id="research-client")
+    reopened_registry = LocalWorkspaceRegistryService(reopened_registry_db)
+    reopened_adapter = LocalResearchWorkspaceAdapter(
+        reopened_registry,
+        notes_scope_service=reopened_notes_scope,
+        notes_user_id="research-user",
+    )
+    try:
+        reopened_page = await reopened_adapter.list_notes(
+            LOCAL_REF, ResearchNotePageRequest(limit=20)
+        )
+        assert [note.note_id for note in reopened_page.items] == [request.operation_id]
+        first, second = await asyncio.gather(
+            reopened_adapter.save_note(LOCAL_REF, request),
+            reopened_adapter.save_note(LOCAL_REF, request),
+        )
+
+        assert first.note_id == second.note_id == request.operation_id
+        assert len(reopened_notes_db.list_notes(limit=100, offset=0)) == 1
+        assert [
+            item.role
+            for item in reopened_registry.get_item_memberships(
+                "note", request.operation_id
+            )
+        ] == ["note"]
+    finally:
+        reopened_registry_db.close()
+        reopened_notes_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_local_delete_retry_cleans_membership_after_owner_already_deleted(
+    tmp_path,
+) -> None:
+    notes_path = tmp_path / "canonical-delete.sqlite"
+    workspace_path = tmp_path / "workspace-delete.sqlite"
+    notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
+    notes_scope = NotesScopeService(
+        local_notes_service=NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="research-client",
+            global_db_to_use=notes_db,
+        ),
+        server_service=None,
+        policy_enforcer=None,
+    )
+    registry_db = WorkspaceDB(workspace_path, client_id="research-client")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    adapter = LocalResearchWorkspaceAdapter(
+        registry,
+        notes_scope_service=notes_scope,
+        notes_user_id="research-user",
+    )
+    created = await adapter.save_note(
+        LOCAL_REF, ResearchNoteSaveRequest(title="Delete me", content="Body")
+    )
+    adapter._service = FailingMembershipRegistry(
+        registry, fail_unlink_role="note"
+    )
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        await adapter.delete_note(LOCAL_REF, created.note_id, created.version)
+
+    assert (
+        await notes_scope.get_note_detail(
+            scope="local_note", note_id=created.note_id, user_id="research-user"
+        )
+        is None
+    )
+    assert registry.get_item_memberships("note", created.note_id)
+    registry_db.close()
+    notes_db.close_connection()
+
+    reopened_notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
+    reopened_notes_scope = NotesScopeService(
+        local_notes_service=NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="research-client",
+            global_db_to_use=reopened_notes_db,
+        ),
+        server_service=None,
+        policy_enforcer=None,
+    )
+    reopened_registry_db = WorkspaceDB(workspace_path, client_id="research-client")
+    reopened_registry = LocalWorkspaceRegistryService(reopened_registry_db)
+    reopened_adapter = LocalResearchWorkspaceAdapter(
+        reopened_registry,
+        notes_scope_service=reopened_notes_scope,
+        notes_user_id="research-user",
+    )
+    try:
+        assert await reopened_adapter.delete_note(
+            LOCAL_REF, created.note_id, created.version
+        )
+        assert reopened_registry.get_item_memberships("note", created.note_id) == ()
+    finally:
+        reopened_registry_db.close()
+        reopened_notes_db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -613,6 +878,34 @@ def test_note_request_rejects_update_without_version_and_unbounded_provenance() 
             content="C",
             message_ids=tuple(f"message-{index}" for index in range(21)),
         )
+
+
+def test_blank_quick_note_title_uses_webui_untitled_default() -> None:
+    request = ResearchNoteSaveRequest(title="  ", content="Body-only note")
+
+    assert request.title == "Untitled Note"
+
+
+@pytest.mark.asyncio
+async def test_server_get_note_fetches_owner_once_when_target_is_101st() -> None:
+    service = RecordingWorkspaceNotesService()
+    service.rows = [
+        {
+            "id": index,
+            "workspace_id": SERVER_REF.workspace_id,
+            "title": f"Note {index}",
+            "content": "",
+            "keywords": [],
+            "version": 1,
+        }
+        for index in range(1, 102)
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, RecordingContextProvider())
+
+    loaded = await adapter.get_note(SERVER_REF, "101")
+
+    assert loaded is not None and loaded.note_id == "101"
+    assert service.calls == [("list_notes", SERVER_REF.workspace_id)]
 
 
 def test_note_owner_content_and_tags_may_discuss_credentials_without_logging_them() -> (

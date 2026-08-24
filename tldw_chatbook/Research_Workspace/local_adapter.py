@@ -134,6 +134,7 @@ class LocalResearchWorkspaceAdapter:
         self._now_factory = now_factory or _utc_now
         self._notes_scope = notes_scope_service
         self._notes_user_id = notes_user_id.strip()
+        self._note_write_lock = asyncio.Lock()
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -278,6 +279,8 @@ class LocalResearchWorkspaceAdapter:
         notes = self._require_notes_scope("list_notes")
         if not isinstance(page, ResearchNotePageRequest):
             raise TypeError("page must be ResearchNotePageRequest")
+        async with self._note_write_lock:
+            await self._reconcile_pending_note_receipts(notes, ref)
         if not page.query:
             memberships, total = await asyncio.to_thread(
                 self._service.list_workspace_note_memberships,
@@ -358,37 +361,120 @@ class LocalResearchWorkspaceAdapter:
         notes = self._require_notes_scope("save_note")
         if not isinstance(request, ResearchNoteSaveRequest):
             raise TypeError("request must be ResearchNoteSaveRequest")
-        if request.note_id is not None and not await self._is_workspace_note(
-            ref, request.note_id
-        ):
-            raise ValueError("Local note is not associated with this workspace")
-        try:
-            row = await notes.save_note(
-                scope="local_note",
-                note_id=request.note_id,
-                title=request.title,
-                content=request.content,
-                keywords=encode_note_keywords(request),
-                version=request.expected_version,
-                user_id=self._notes_user_id,
-            )
-        except ConflictError as exc:
-            raise ResearchNoteConflictError(ref, request.note_id or "new") from exc
-        if not isinstance(row, Mapping):
-            raise ValueError("Local Notes returned an invalid saved note")
-        note = self._note_from_row(ref, row)
-        if request.note_id is None:
-            await asyncio.to_thread(
-                self._service.link_membership,
-                ref.workspace_id,
-                item_type="note",
-                item_id=note.note_id,
-                role="note",
-                title=note.title,
-            )
-        elif note.note_id != request.note_id:
+        async with self._note_write_lock:
+            return await self._save_note_locked(notes, ref, request)
+
+    async def _save_note_locked(
+        self,
+        notes: Any,
+        ref: QualifiedWorkspaceRef,
+        request: ResearchNoteSaveRequest,
+    ) -> ResearchQuickNote:
+        if request.note_id is not None:
+            if not await self._is_workspace_note(ref, request.note_id):
+                raise ValueError("Local note is not associated with this workspace")
+            try:
+                row = await notes.save_note(
+                    scope="local_note",
+                    note_id=request.note_id,
+                    title=request.title,
+                    content=request.content,
+                    keywords=encode_note_keywords(request),
+                    version=request.expected_version,
+                    user_id=self._notes_user_id,
+                )
+            except ConflictError as exc:
+                raise ResearchNoteConflictError(ref, request.note_id) from exc
+            if not isinstance(row, Mapping):
+                raise ValueError("Local Notes returned an invalid saved note")
+            note = self._note_from_row(ref, row)
+            if note.note_id != request.note_id:
+                raise ValueError("Local Notes returned a mismatched canonical note id")
+            return note
+
+        note_id = request.operation_id
+        await asyncio.to_thread(
+            self._service.link_membership,
+            ref.workspace_id,
+            item_type="note",
+            item_id=note_id,
+            role="note_pending",
+            title="",
+        )
+        note = await self._load_local_note(notes, ref, note_id)
+        if note is None:
+            try:
+                row = await notes.save_note(
+                    scope="local_note",
+                    note_id=None,
+                    create_note_id=note_id,
+                    title=request.title,
+                    content=request.content,
+                    keywords=encode_note_keywords(request),
+                    version=None,
+                    user_id=self._notes_user_id,
+                )
+            except ConflictError:
+                note = await self._load_local_note(notes, ref, note_id)
+                if note is None:
+                    raise
+            else:
+                if not isinstance(row, Mapping):
+                    raise ValueError("Local Notes returned an invalid saved note")
+                note = self._note_from_row(ref, row)
+        if note.note_id != note_id:
             raise ValueError("Local Notes returned a mismatched canonical note id")
+        await self._promote_pending_note(ref, note)
         return note
+
+    async def _promote_pending_note(
+        self, ref: QualifiedWorkspaceRef, note: ResearchQuickNote
+    ) -> None:
+        await asyncio.to_thread(
+            self._service.link_membership,
+            ref.workspace_id,
+            item_type="note",
+            item_id=note.note_id,
+            role="note",
+            title=note.title,
+        )
+        await asyncio.to_thread(
+            self._service.unlink_membership,
+            ref.workspace_id,
+            item_type="note",
+            item_id=note.note_id,
+            role="note_pending",
+        )
+
+    async def _reconcile_pending_note_receipts(
+        self, notes: Any, ref: QualifiedWorkspaceRef
+    ) -> None:
+        list_receipts = getattr(self._service, "list_workspace_note_receipts", None)
+        if not callable(list_receipts):
+            return
+        processed = 0
+        while processed <= 10_000:
+            receipts, total = await asyncio.to_thread(
+                list_receipts, ref.workspace_id, limit=100, offset=0
+            )
+            if not receipts:
+                return
+            for receipt in receipts:
+                note = await self._load_local_note(notes, ref, receipt.item_id)
+                if note is None:
+                    await asyncio.to_thread(
+                        self._service.unlink_membership,
+                        ref.workspace_id,
+                        item_type="note",
+                        item_id=receipt.item_id,
+                        role="note_pending",
+                    )
+                else:
+                    await self._promote_pending_note(ref, note)
+            processed += len(receipts)
+            if len(receipts) >= total:
+                return
+        raise ValueError("Local Quick Note receipt reconciliation exceeded its bound")
 
     async def delete_note(
         self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
@@ -397,37 +483,51 @@ class LocalResearchWorkspaceAdapter:
         notes = self._require_notes_scope("delete_note")
         if type(expected_version) is not int or expected_version < 1:
             raise ValueError("expected_version must be a positive integer")
-        if not await self._is_workspace_note(ref, str(note_id)):
-            raise ValueError("Local note is not associated with this workspace")
-        try:
-            deleted = await notes.delete_note(
-                scope="local_note",
-                note_id=str(note_id),
-                version=expected_version,
-                user_id=self._notes_user_id,
-            )
-        except ConflictError as exc:
-            raise ResearchNoteConflictError(ref, str(note_id)) from exc
-        if type(deleted) is not bool:
-            raise ValueError("Local Notes returned an invalid delete result")
-        if deleted:
-            memberships = await asyncio.to_thread(
-                self._service.get_item_memberships, "note", str(note_id)
-            )
-            await asyncio.gather(
-                *(
-                    asyncio.to_thread(
-                        self._service.unlink_membership,
-                        membership.workspace_id,
-                        item_type="note",
-                        item_id=str(note_id),
-                        role="note",
-                    )
-                    for membership in memberships
-                    if membership.role == "note"
+        async with self._note_write_lock:
+            safe_note_id = str(note_id)
+            if not await self._is_workspace_note(ref, safe_note_id):
+                raise ValueError("Local note is not associated with this workspace")
+            try:
+                deleted = await notes.delete_note(
+                    scope="local_note",
+                    note_id=safe_note_id,
+                    version=expected_version,
+                    user_id=self._notes_user_id,
                 )
+            except ConflictError as exc:
+                remaining = await self._load_local_note(notes, ref, safe_note_id)
+                if remaining is not None:
+                    raise ResearchNoteConflictError(ref, safe_note_id) from exc
+                deleted = True
+            if type(deleted) is not bool:
+                raise ValueError("Local Notes returned an invalid delete result")
+            if not deleted:
+                remaining = await self._load_local_note(notes, ref, safe_note_id)
+                if remaining is not None:
+                    return False
+                deleted = True
+            memberships = await asyncio.to_thread(
+                self._service.get_item_memberships, "note", safe_note_id
             )
-        return deleted
+            ordered_memberships = sorted(
+                memberships,
+                key=lambda item: (
+                    item.workspace_id == ref.workspace_id and item.role == "note",
+                    item.workspace_id,
+                    item.role,
+                ),
+            )
+            for membership in ordered_memberships:
+                if membership.role not in {"note", "note_pending"}:
+                    continue
+                await asyncio.to_thread(
+                    self._service.unlink_membership,
+                    membership.workspace_id,
+                    item_type="note",
+                    item_id=safe_note_id,
+                    role=membership.role,
+                )
+            return deleted
 
     async def list_sources(
         self,

@@ -139,6 +139,19 @@ canonical item. If catalog ingestion succeeds and association or indexing
 fails, the item remains in the general catalog and the failed stage is
 independently retryable.
 
+Local Quick Note creation is the narrow exception to create-then-associate
+ordering because Notes and the workspace registry are independent SQLite
+owners with no shared transaction. Before the canonical Notes write, the
+registry reserves the generated canonical UUID in a payload-free
+`WorkspaceMembership(item_type="note", role="note_pending")`. Notes then writes
+that exact UUID; the registry adds the authoritative `role="note"` membership
+and removes the pending receipt. A retry or restart may inspect the canonical
+owner by that reserved identity and finish promotion idempotently. The receipt
+never stores the body, tags, or provenance, and it is not workspace membership
+for listing/retrieval until promoted. This ordering avoids both deleting an
+independently useful canonical Note and creating duplicates after a partial
+cross-owner failure.
+
 ### 5. Server folders and annotations are explicit device-only overlays
 
 The server has no canonical Research Workspace folder or annotation APIs.

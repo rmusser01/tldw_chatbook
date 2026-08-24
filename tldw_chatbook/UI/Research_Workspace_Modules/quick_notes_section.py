@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from uuid import uuid4
 
 from textual import on
 from textual.app import ComposeResult
@@ -104,6 +105,7 @@ class ResearchQuickNotesSection(Vertical):
         self._get_available = False
         self._save_available = False
         self._delete_available = False
+        self._operation_id = f"research-note-{uuid4().hex}"
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="research-quick-note-heading-row"):
@@ -167,6 +169,7 @@ class ResearchQuickNotesSection(Vertical):
                 disabled=True,
             )
             yield Button("Delete", id="research-quick-note-delete", disabled=True)
+        with Horizontal(id="research-quick-note-file-actions"):
             yield Button("Download .md", id="research-quick-note-download")
             yield Button("Clear", id="research-quick-note-clear")
             yield Button("Undo", id="research-quick-note-undo", disabled=True)
@@ -274,10 +277,16 @@ class ResearchQuickNotesSection(Vertical):
             "save_note": "_save_available",
             "delete_note": "_delete_available",
         }
+        unavailable_reason = (
+            "Quick Notes capabilities are unavailable for this owner. "
+            "Refresh the workspace or reconfigure the owner."
+        )
         tooltips: dict[str, str | None] = {}
         for capability_name, attribute in attributes.items():
+            setattr(self, attribute, False)
             capability = capabilities.get(capability_name)
             if capability is None:
+                tooltips[capability_name] = unavailable_reason
                 continue
             unavailable = not capability.available
             setattr(self, attribute, not unavailable)
@@ -294,6 +303,8 @@ class ResearchQuickNotesSection(Vertical):
                 limitations.append(reason)
             else:
                 tooltips[capability_name] = None
+        if any(capabilities.get(name) is None for name in attributes):
+            limitations.append(unavailable_reason)
         controls = {
             "list_notes": (
                 "research-quick-note-search",
@@ -364,6 +375,7 @@ class ResearchQuickNotesSection(Vertical):
             expected_version=self._version if self._note_id is not None else None,
             message_ids=snapshot.message_ids,
             source_ids=snapshot.source_ids,
+            operation_id=self._operation_id,
         )
 
     def discard_for_switch(self) -> None:
@@ -410,6 +422,7 @@ class ResearchQuickNotesSection(Vertical):
         self._sync_provenance()
 
     def _reset_editor(self) -> None:
+        self._operation_id = f"research-note-{uuid4().hex}"
         self._note_id = None
         self._version = None
         self._message_ids = ()

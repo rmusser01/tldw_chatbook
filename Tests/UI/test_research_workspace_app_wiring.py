@@ -18,6 +18,7 @@ from tldw_chatbook.Research_Workspace import (
     ResearchWorkspaceCatalogState,
     ResearchWorkspaceController,
     ResearchWorkspaceSummary,
+    ResearchNoteSaveRequest,
     WorkspaceDataSource,
 )
 from tldw_chatbook.UI.Screens.research_workspace_screen import (
@@ -99,6 +100,7 @@ def _unmounted_app(
     app.server_notes_workspace_service = server_service
     app.server_context_provider = server_context_provider
     app.notes_scope_service = None
+    app.notes_user_id = "configured-notes-user"
     return app
 
 
@@ -131,7 +133,7 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
     )
     assert first_local_port._service is first_local
     assert first_local_port._notes_scope is first_notes
-    assert first_local_port._notes_user_id
+    assert first_local_port._notes_user_id == app.notes_user_id
     assert first_server_port._service is first_server
     assert first_server_port._context_provider is first_provider
     assert first.overlay_store.path == tmp_path / "research_workspace_overlay.json"
@@ -171,6 +173,88 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
     )
     assert second.controller is not first.controller
     assert second.overlay_store is not first.overlay_store
+
+
+@pytest.mark.asyncio
+async def test_research_local_note_mutation_uses_canonical_app_notes_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    class Registry(_LocalWorkspaceService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.memberships = []
+
+        def link_membership(self, workspace_id, **kwargs):
+            membership = SimpleNamespace(workspace_id=workspace_id, **kwargs)
+            if not any(
+                item.workspace_id == workspace_id
+                and item.item_id == membership.item_id
+                and item.role == membership.role
+                for item in self.memberships
+            ):
+                self.memberships.append(membership)
+            return membership
+
+        def unlink_membership(self, workspace_id, **kwargs):
+            before = len(self.memberships)
+            self.memberships = [
+                item
+                for item in self.memberships
+                if not (
+                    item.workspace_id == workspace_id
+                    and item.item_id == kwargs["item_id"]
+                    and item.role == kwargs["role"]
+                )
+            ]
+            return len(self.memberships) != before
+
+        def get_item_memberships(self, item_type, item_id):
+            return tuple(
+                item
+                for item in self.memberships
+                if item.item_type == item_type and item.item_id == item_id
+            )
+
+    class Notes:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def get_note_detail(self, **kwargs):
+            return None
+
+        async def save_note(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "id": kwargs["create_note_id"],
+                "title": kwargs["title"],
+                "content": kwargs["content"],
+                "keywords": kwargs["keywords"],
+                "version": 1,
+            }
+
+    registry = Registry()
+    notes = Notes()
+    app = _unmounted_app(
+        local_service=registry,
+        server_service=None,
+        server_context_provider=None,
+    )
+    app.notes_user_id = "notes-owner-from-users-name"
+    app.notes_scope_service = notes
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
+    port = screen.controller.port_for_data_source(WorkspaceDataSource.LOCAL)
+
+    await port.save_note(
+        QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, registry.workspace_id),
+        ResearchNoteSaveRequest(title="Owner trace", content="Canonical body"),
+    )
+
+    assert port._notes_user_id == app.notes_user_id
+    assert notes.calls[0]["scope"] == "local_note"
+    assert notes.calls[0]["user_id"] == app.notes_user_id
 
 
 @pytest.mark.asyncio

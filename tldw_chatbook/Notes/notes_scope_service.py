@@ -984,8 +984,17 @@ class NotesScopeService:
         workspace_id: Optional[str] = None,
         keywords: Optional[Sequence[str]] = None,
         sync_v2_profile: Optional[Mapping[str, Any]] = None,
+        create_note_id: Optional[str] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        if create_note_id is not None:
+            if normalized_scope != ScopeType.LOCAL_NOTE or note_id is not None:
+                raise ValueError(
+                    "create_note_id is only valid for new Local Notes records"
+                )
+            if not isinstance(create_note_id, str) or not create_note_id.strip():
+                raise ValueError("create_note_id must be non-blank text")
+            create_note_id = create_note_id.strip()
         self._enforce_policy(
             self._note_action_id(
                 normalized_scope,
@@ -1031,7 +1040,7 @@ class NotesScopeService:
                 local_user_id,
                 title,
                 content,
-                note_id=note_id,
+                note_id=create_note_id,
             )
             if not created_note_id:
                 return created_note_id

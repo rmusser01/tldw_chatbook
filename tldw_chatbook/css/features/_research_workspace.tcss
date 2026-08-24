@@ -619,7 +619,8 @@ ResearchQuickNotesSection Button:focus {
 
 #research-quick-note-provenance-row,
 #research-quick-note-mode-row,
-#research-quick-note-actions {
+#research-quick-note-actions,
+#research-quick-note-file-actions {
     margin-top: 1;
 }
 

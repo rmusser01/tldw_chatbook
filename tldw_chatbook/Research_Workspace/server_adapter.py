@@ -328,19 +328,9 @@ class ServerResearchWorkspaceAdapter:
     async def list_notes(
         self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest
     ) -> ResearchNotePage:
-        context = self._context_for_ref(ref)
-        require_capability(self._note_capabilities(context), "list_notes")
         if not isinstance(page, ResearchNotePageRequest):
             raise TypeError("page must be ResearchNotePageRequest")
-        rows = await self._server_call(
-            self._service.list_workspace_notes(ref.workspace_id), context=context
-        )
-        if (
-            not isinstance(rows, list)
-            or len(rows) > MAX_RESEARCH_SELECTION_IDS
-            or any(not isinstance(row, Mapping) for row in rows)
-        ):
-            raise ValueError("Server workspace notes returned an invalid bounded owner")
+        context, rows = await self._workspace_note_rows(ref)
         if page.query:
             search = getattr(self._service, "search_workspace_notes", None)
             if not callable(search):
@@ -376,23 +366,28 @@ class ServerResearchWorkspaceAdapter:
     async def get_note(
         self, ref: QualifiedWorkspaceRef, note_id: str
     ) -> ResearchQuickNote | None:
-        page = await self.list_notes(
-            ref,
-            ResearchNotePageRequest(limit=100, offset=0),
-        )
         target = self._workspace_note_id(note_id)
-        for note in page.items:
-            if self._workspace_note_id(note.note_id) == target:
-                return note
-        if page.has_more:
-            context = self._context_for_ref(ref)
-            rows = await self._server_call(
-                self._service.list_workspace_notes(ref.workspace_id), context=context
-            )
-            for row in rows:
-                if self._workspace_note_id(row.get("id")) == target:
-                    return self._note_from_row(ref, row)
+        _, rows = await self._workspace_note_rows(ref)
+        for row in rows:
+            if self._workspace_note_id(row.get("id")) == target:
+                return self._note_from_row(ref, row)
         return None
+
+    async def _workspace_note_rows(
+        self, ref: QualifiedWorkspaceRef
+    ) -> tuple[Any, list[Mapping[str, Any]]]:
+        context = self._context_for_ref(ref)
+        require_capability(self._note_capabilities(context), "list_notes")
+        rows = await self._server_call(
+            self._service.list_workspace_notes(ref.workspace_id), context=context
+        )
+        if (
+            not isinstance(rows, list)
+            or len(rows) > MAX_RESEARCH_SELECTION_IDS
+            or any(not isinstance(row, Mapping) for row in rows)
+        ):
+            raise ValueError("Server workspace notes returned an invalid bounded owner")
+        return context, rows
 
     async def save_note(
         self, ref: QualifiedWorkspaceRef, request: ResearchNoteSaveRequest
