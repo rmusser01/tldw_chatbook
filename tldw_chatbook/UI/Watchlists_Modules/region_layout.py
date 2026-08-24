@@ -8,9 +8,6 @@ Every mutator returns a new instance; the type is frozen and hashable, so a
 Textual reactive can hold it and equality comparison decides whether to
 re-render.
 
-The solo members remain temporarily for the live screen's migration and are
-not used by the preferred/effective layout path.
-
 The FEEDS region was removed in task-2513 (reader-first IA, ADR-042) with no
 migration code: a persisted ``"feeds"`` string from before the removal is an
 unknown region name now, dropped with a debug log by
@@ -82,24 +79,16 @@ MANAGEMENT_COLLAPSE_PRIORITY: tuple[Region, ...] = (
     Region.LEFT_RAIL,
 )
 
-#: Migration-only centre-pane vocabulary for the legacy ``solo`` API.
-CENTRE_REGIONS: tuple[Region, ...] = (Region.ITEMS, Region.CONTENT)
-
-
 @dataclass(frozen=True)
 class RegionLayout:
     """A preferred or effective set of collapsed regions.
 
     Attributes:
-        collapsed: Regions currently collapsed. New preferred layouts contain
+        collapsed: Regions currently collapsed. Preferred layouts contain
             only `COLLAPSIBLE_REGIONS`.
-        solo_region: Migration-only legacy solo state for the live screen.
-        _pre_solo: Migration-only legacy restore baseline.
     """
 
     collapsed: frozenset[Region] = frozenset()
-    solo_region: Region | None = None
-    _pre_solo: frozenset[Region] | None = None
 
     def is_collapsed(self, region: Region) -> bool:
         """Whether ``region`` is currently collapsed to its header.
@@ -135,81 +124,9 @@ class RegionLayout:
         if region not in COLLAPSIBLE_REGIONS:
             raise ValueError(f"{region!r} is not a collapsible side pane")
 
-        collapsed = set(self.collapsed_for_persistence()).intersection(
-            COLLAPSIBLE_REGIONS
-        )
+        collapsed = set(self.collapsed).intersection(COLLAPSIBLE_REGIONS)
         collapsed.symmetric_difference_update({region})
         return RegionLayout(collapsed=frozenset(collapsed))
-
-    def toggle(self, region: Region) -> RegionLayout:
-        """Migration-only permissive toggle retained for the live screen.
-
-        A manual toggle clears any solo: the user has edited the layout by
-        hand, so a later solo-restore must not resurrect a stale snapshot.
-
-        Args:
-            region: The region to collapse or expand.
-
-        Returns:
-            A new layout with `region`'s collapse state flipped and no
-            solo in effect (`solo_region` is always `None` afterwards).
-        """
-        collapsed = set(self.collapsed)
-        if region in collapsed:
-            collapsed.discard(region)
-        else:
-            collapsed.add(region)
-        return RegionLayout(collapsed=frozenset(collapsed))
-
-    def solo(self, region: Region) -> RegionLayout:
-        """Migration-only centre solo/restore retained for the live screen.
-
-        Rails are unaffected — solo is about the centre stack only.
-
-        Args:
-            region: The centre region to isolate.
-
-        Returns:
-            A layout with the other centre regions collapsed, or the
-            pre-solo layout if ``region`` is already soloed.
-
-        Raises:
-            ValueError: If ``region`` is a rail rather than a centre region.
-        """
-        if region not in CENTRE_REGIONS:
-            raise ValueError(f"{region!r} is not a centre region; solo applies to {CENTRE_REGIONS}")
-
-        if self.solo_region == region:
-            return RegionLayout(collapsed=self._pre_solo or frozenset())
-
-        # Re-soloing a different pane keeps the ORIGINAL pre-solo snapshot, so
-        # restore always returns to what the user had before soloing at all.
-        baseline = self._pre_solo if self.solo_region is not None else self.collapsed
-        rails = {r for r in self.collapsed if r not in CENTRE_REGIONS}
-        others = {r for r in CENTRE_REGIONS if r != region}
-        return RegionLayout(
-            collapsed=frozenset(rails | others),
-            solo_region=region,
-            _pre_solo=baseline,
-        )
-
-    def collapsed_for_persistence(self) -> frozenset[Region]:
-        """Migration-only accessor for the legacy pre-solo baseline.
-
-        While soloed, `collapsed` is the solo-DERIVED view — the other
-        centre panes collapsed to isolate `solo_region` — not a layout the
-        user configured. Persisting that verbatim would strand a restart in
-        a view the user never chose, with no `_pre_solo` baseline left to
-        restore from. Returning the pre-solo baseline instead means a
-        restart reproduces what the user actually set up, and solo itself
-        genuinely does not survive a restart, matching what
-        `region_layout_store`'s module docstring promises.
-
-        Returns:
-            `_pre_solo` when `solo_region` is set, otherwise `collapsed`
-            unchanged.
-        """
-        return self._pre_solo if self.solo_region is not None else self.collapsed
 
 
 def resolve_effective_layout(
@@ -234,7 +151,7 @@ def resolve_effective_layout(
     """
     mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
     priority = READ_COLLAPSE_PRIORITY if read_mode else MANAGEMENT_COLLAPSE_PRIORITY
-    collapsed = set(preferred.collapsed_for_persistence()).intersection(mounted)
+    collapsed = set(preferred.collapsed).intersection(mounted)
 
     if article_focus:
         return RegionLayout(collapsed=frozenset(collapsed.union(mounted)))

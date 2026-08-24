@@ -12,7 +12,7 @@ import re
 import threading
 import webbrowser
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -166,10 +166,12 @@ from ..Watchlists_Modules.opml_dialogs import (
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.region_layout import (
-    CENTRE_REGIONS,
     COLLAPSIBLE_REGIONS,
+    MANAGEMENT_SIDE_PANE_ORDER,
+    READ_SIDE_PANE_ORDER,
     Region,
     RegionLayout,
+    resolve_effective_layout,
 )
 from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
 from ..Watchlists_Modules.rules_pane import (
@@ -215,7 +217,7 @@ from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackend
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
 from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
 from ..Watchlists_Modules.watchlists_workbench import (
-    REGION_TITLES,
+    RegionLayoutApplied,
     RegionLayoutApplyFailed,
     RegionToggled,
     WatchlistsWorkbench,
@@ -508,7 +510,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
-        ("Z", "solo_region", "Solo"),
+        ("Z", "article_focus", "Article Focus"),
         ("left_square_bracket", "toggle_left_rail", "Left rail"),
         ("right_square_bracket", "toggle_right_rail", "Right rail"),
     ]
@@ -625,9 +627,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
         # Whether focus currently sits in the centre header/tab strip
-        # (`#wl-centre-status`), outside every `wl-region-*`/`wl-header-*`
-        # wrapper -- see `on_descendant_focus` and `action_toggle_region`/
-        # `action_solo_region` (task-1344 fix wave, Qodo correctness).
+        # (`#wl-centre-status`), outside every region/grip wrapper. See
+        # `on_descendant_focus` and `action_toggle_region`.
         self._focus_in_centre_header = False
         self._pending_open_create_form = False
         self._pending_open_import_opml = False
@@ -648,7 +649,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_loaded_runs`/`_loaded_notifications` already do (Finding 2, fix
         # round 2): `_build_detail_pane` constructs a brand new
         # SourcesPane/ItemsPane/RulesPane on every workbench rebuild (any
-        # region collapse/solo/rail toggle, not just switching sections), and
+        # region collapse/expand or tab switch), and
         # a fresh pane's `sources`/`items`/`rules` reactive starts at its
         # class default (`[]`). Without holding the last-loaded rows here and
         # re-seeding them below, the table would render empty until the next
@@ -855,7 +856,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # for the identical reason as `_loaded_items` above: `_build_content_pane`
         # is a factory the workbench calls on every region rebuild, and a
         # freshly built `ContentPane`'s `item` reactive would otherwise start
-        # back at `None` on every collapse/solo/rail toggle, clearing the
+        # back at `None` on every collapse/expand, clearing the
         # reader out from under a user who hadn't touched Items at all.
         self._selected_content_item: dict[str, Any] | None = None
         # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
@@ -985,10 +986,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # calling it again (see `on_mount`).
         loaded_layout = load_region_layout()
         self.set_reactive(WatchlistsCollectionsScreen.region_layout, loaded_layout)
+        self._effective_region_layout = loaded_layout
+        self._article_focus_active = False
+        self._responsive_priority_target: Region | None = None
+        self._manual_layout_rollback: tuple[
+            RegionLayout, RegionLayout, bool, Region | None
+        ] | None = None
+        self._items_view_anchor_id: str | None = None
+        self._items_view_scroll_y = 0.0
+        self._items_view_had_focus = False
         self._last_persisted_collapsed: frozenset[Region] | None = (
-            loaded_layout.collapsed_for_persistence()
+            loaded_layout.collapsed
         )
         self._pending_persist_layout: RegionLayout | None = None
+        self._pending_persist_generation: int | None = None
+        self._layout_persist_generation = 0
+        self._layout_persist_draining = False
         self._layout_persist_lock = threading.Lock()
         # Desired-status coalescing for the four item-status write paths
         # (Ingest, Ignore, the unread toggle, mark-read-on-open) -- TASK-1541,
@@ -1110,7 +1123,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # changes `region_layout` between construction and mount, or a
         # future caller) still gets the persistence reconciliation pass
         # `_apply_layout` performs for anything that genuinely did change.
-        self._apply_layout(self.region_layout)
+        self._recompute_effective_layout()
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         self._load_active_section_data()
@@ -1118,6 +1131,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.set_timer(
             WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
         )
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Re-derive responsive state without changing the preference."""
+        self._recompute_effective_layout()
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply a validated section/run deep link from shell navigation."""
@@ -1405,17 +1422,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # left `#artifacts-scope-note` on the old one. Same seed
             # `_build_detail_pane` applies on a rebuild.
             artifacts.scope_label = self._briefing_scope_label()
-        try:
-            workbench = self.query_one("#wl-workbench", WatchlistsWorkbench)
-        except NoMatches:
-            pass
-        else:
-            # task-2513 Task 9: the collapsed left rail's "N unread" header
-            # suffix tracks the counts this loader just refreshed. In place,
-            # never a recompose — same discipline as every other push here.
-            workbench.set_collapsed_suffixes(
-                {Region.LEFT_RAIL: self._rail_unread_suffix()}
-            )
         # TASK-2304 AC#2, found in live verification, not by the suite. Which
         # sources the current scope covers is WATCHLIST MEMBERSHIP, and this
         # loader runs after every write that changes it (`Add source`,
@@ -2157,7 +2163,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             sources_pane.selected_source = self.selected_source
             # TASK-2309: re-seed from screen state for the identical
             # rebuild-survival reason as `selected_source` on the line
-            # above -- a region rebuild (collapse/solo/rail toggle, a tab
+            # above -- a region rebuild (collapse/expand, a tab
             # switch) constructs a brand new `SourcesPane`, and without this
             # a check still running would render its Check-now button back
             # to enabled/"Check now" until the run's own completion repaint
@@ -2372,7 +2378,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         builder here -- see the factory note on `WatchlistsWorkbench.__init__`.
         Seeded from `_selected_content_item` (Finding pattern established by
         `_build_inspector_pane`'s `selected_entity` seeding above): without
-        this, a collapse/solo/rail toggle would construct a brand new
+        this, a collapse/expand would construct a brand new
         `ContentPane` whose `item` reactive starts back at its class default
         of `None`, silently clearing the reader.
 
@@ -2807,7 +2813,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         id="watchlists-backend-label",
                     )
             yield WatchlistsWorkbench(
-                self._rendered_region_layout(),
+                self._effective_region_layout,
                 content={
                     # Factories, not instances: a region whose rendered form
                     # changes (collapse/expand, and for ITEMS a section
@@ -2822,17 +2828,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.CONTENT: self._build_content_pane,
                     Region.RIGHT_RAIL: self._build_inspector_region,
                 },
-                hidden=self._hidden_centre_regions(),
                 # Unconditional since task-2513: the tab strip and the
                 # snapshot markers are cross-cutting chrome carried by the
                 # centre header on every tab, Read included -- see
                 # `_build_centre_status_header`. (They used to ride inside
                 # the FEEDS region's own body on Read; that region is gone.)
                 header=self._build_centre_status_header,
-                # task-2513 Task 9: the collapsed left rail keeps the total
-                # unread count visible; `_load_tree_data` refreshes it in
-                # place via `set_collapsed_suffixes`.
-                collapsed_suffixes={Region.LEFT_RAIL: self._rail_unread_suffix()},
+                read_mode=self.active_section == "items",
                 id="wl-workbench",
                 classes=(
                     "watchlists-read-mode"
@@ -2841,88 +2843,96 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 ),
             )
 
-    def _hidden_centre_regions(self) -> frozenset[Region]:
-        """Centre regions the workbench must not mount at all on this tab.
+    def _available_layout_width(self) -> int:
+        """Best live width for the pure responsive resolver."""
+        candidates: list[int] = []
+        try:
+            workbench = self.query_one(WatchlistsWorkbench)
+            candidates.extend((workbench.size.width, workbench.container_size.width))
+        except Exception:
+            pass
+        candidates.append(self.size.width)
+        try:
+            candidates.append(self.app.size.width)
+        except Exception:
+            pass
+        return next((width for width in candidates if width > 0), 10_000)
 
-        Per the approved design spec (`### Tabs`): "Only Read uses the
-        three-pane split. Sources, Runs, Rules, and Artifacts take the full
-        centre width — they have no collection→feed→item relationship."
-        `active_section == "items"` is this implementation's Read tab (the
-        spec's five sections don't literally match today's six — Overview
-        and Notifications aren't in the spec's list either — but Items is
-        unambiguously the one with an items-to-read relationship). CONTENT
-        (the reader) is meaningless outside that relationship, so it is
-        hidden on every other tab (Task 4's gating; the FEEDS region, gated
-        the same way by TASK-1344, was removed outright in task-2513).
-
-        TASK-1344 AC#4: hidden means UNMOUNTED, not collapsed to a one-row
-        header — see `_rendered_region_layout`'s docstring for why a header
-        was rejected. `WatchlistsWorkbench.compose()` skips anything in the
-        returned set entirely; nothing here touches `self.region_layout`
-        (the real, persisted preference), so a CONTENT collapse or solo the
-        user set on Read is untouched by which OTHER tab they happen to be
-        looking at.
-
-        Returns:
-            `{Region.CONTENT}` on every section except Read, otherwise the
-            empty set.
-        """
-        if self.active_section == "items":
-            return frozenset()
-        return frozenset({Region.CONTENT})
-
-    def _rendered_region_layout(self) -> RegionLayout:
-        """`self.region_layout`, adjusted for what this tab can actually show.
-
-        CONTENT no longer needs adjusting here at all (TASK-1344):
-        `_hidden_centre_regions` unmounts it outright on every non-Read
-        tab, regardless of its real collapsed/solo state, so the old
-        "force CONTENT into `collapsed`, rebased onto the pre-solo baseline
-        when CONTENT itself is soloed" derivation this method used to need
-        (Task 4's fix round 1) is gone -- unmounting is orthogonal to
-        `RegionLayout.collapsed` instead of reusing it, so there is nothing
-        left to rebase.
-
-        ITEMS is the one region that still needs a derived view. Off the
-        Read tab, ITEMS is not "the middle third of a three-pane split" at
-        all -- it is the section's own full-width pane (`SourcesPane`,
-        `RunsPane`, ...), unconditionally shown, with no chevron that can
-        reach it on that tab. `z`/`Z` CAN still reach it, though --
-        `on_descendant_focus` sets `focused_region = ITEMS` for anything
-        inside `#wl-region-items`, so merely interacting with the section
-        pane off Read points a keybinding at it. That is exactly why
-        `_refuse_region_gesture_off_read_tab` refuses every centre region
-        off Read, not just the ones `_hidden_centre_regions` unmounts
-        (task-1344 whole-branch review, B1): before that fix, a `z` here
-        toggled and PERSISTED a real ITEMS collapse with no visible
-        feedback on the current tab (this method already forced it back
-        out of the render), so the damage stayed invisible until the user
-        returned to Read and found the centre empty. With the gate
-        covering ITEMS too, that mutation can no longer happen -- but
-        `region_layout.collapsed` can still legitimately contain ITEMS from
-        a real Read-tab action: a `z` on ITEMS while soloing CONTENT there
-        (`solo(CONTENT)` collapses the OTHER centre region, ITEMS) leaves
-        `collapsed` containing ITEMS even after the user switches away, and
-        that is a genuine user preference this method must still honor on
-        Read without rendering it as a dead end elsewhere. Rendering that
-        verbatim would collapse e.g. the Sources tab down to a focusable
-        "▸ Items" header over an otherwise empty centre -- the exact
-        dead-end AC#3 exists to rule out, reached from CONTENT's solo
-        bookkeeping. Forcing ITEMS out of `collapsed` on every non-Read tab
-        closes that: the section's pane is always what actually renders
-        there, and `self.region_layout` itself is untouched, so Read still
-        shows whatever ITEMS state the user really left behind.
-
-        Returns:
-            `self.region_layout` verbatim on the Read tab; otherwise a copy
-            with `Region.ITEMS` removed from `collapsed`.
-        """
-        if self.active_section == "items":
-            return self.region_layout
-        return replace(
+    def _recompute_effective_layout(self) -> None:
+        """Resolve and push transient responsive/Article Focus state."""
+        read_mode = self.active_section == "items"
+        width = self._available_layout_width()
+        mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
+        unprioritized = resolve_effective_layout(
             self.region_layout,
-            collapsed=frozenset(self.region_layout.collapsed - {Region.ITEMS}),
+            width=width,
+            read_mode=read_mode,
+            article_focus=False,
+            priority_target=None,
         )
+        preferred_mounted = frozenset(self.region_layout.collapsed.intersection(mounted))
+        if unprioritized.collapsed == preferred_mounted:
+            self._responsive_priority_target = None
+
+        effective = resolve_effective_layout(
+            self.region_layout,
+            width=width,
+            read_mode=read_mode,
+            article_focus=self._article_focus_active,
+            priority_target=self._responsive_priority_target,
+        )
+        previous = self._effective_region_layout
+        if (
+            read_mode
+            and not previous.is_collapsed(Region.ITEMS)
+            and effective.is_collapsed(Region.ITEMS)
+        ):
+            self._capture_items_view_state()
+        self._effective_region_layout = effective
+        try:
+            workbench = self.query_one(WatchlistsWorkbench)
+            if workbench.read_mode == read_mode:
+                workbench.region_layout = effective
+        except Exception:
+            logger.debug("Workbench not mounted yet; layout applies on compose.")
+
+    def _capture_items_view_state(self) -> None:
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+            table = pane.query_one("#items-table")
+        except NoMatches:
+            return
+        highlighted = getattr(table, "highlighted_child", None)
+        self._items_view_anchor_id = getattr(highlighted, "item_id_key", None)
+        self._items_view_scroll_y = float(getattr(table, "scroll_y", 0.0))
+        self._items_view_had_focus = bool(table.has_focus)
+
+    def _restore_items_view_state(self) -> None:
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+            table = pane.query_one("#items-table")
+        except NoMatches:
+            if (
+                self._items_view_anchor_id is not None
+                and self.active_section == "items"
+                and not self._effective_region_layout.is_collapsed(Region.ITEMS)
+            ):
+                self.set_timer(0.01, self._restore_items_view_state)
+            return
+        if self._items_view_anchor_id is not None:
+            restored_anchor = False
+            for index, row in enumerate(table.children):
+                if getattr(row, "item_id_key", None) == self._items_view_anchor_id:
+                    pane._suppressed_highlight_item_id = self._items_view_anchor_id
+                    table.index = index
+                    restored_anchor = True
+                    break
+            if not restored_anchor:
+                self.set_timer(0.01, self._restore_items_view_state)
+                return
+        table.scroll_to(y=self._items_view_scroll_y, animate=False)
+        if self._items_view_had_focus:
+            table.focus()
 
     def _apply_layout(self, layout: RegionLayout) -> None:
         """Set the layout, push it to the workbench, and persist any change.
@@ -2935,22 +2945,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 happens to leave the persisted collapsed set unchanged.
         """
         self.region_layout = layout
-        try:
-            # The workbench reactive is `region_layout`, NOT `layout` —
-            # `Widget.layout` is an existing read-only Textual property the
-            # compositor calls `.arrange()` on every render, so shadowing it
-            # breaks rendering outright. Verified empirically in Task 3.
-            #
-            # Pushes the RENDERED (tab-adjusted) layout, not the raw `layout`
-            # argument -- see `_rendered_region_layout`. Persistence just
-            # below still persists the real, un-derived `layout`. `hidden`/
-            # `header` are constructor-only on the already-mounted workbench
-            # and are not re-pushed here: neither can have changed, since
-            # only `active_section` changing invalidates them and this
-            # method is never called from an `active_section` watcher.
-            self.query_one(WatchlistsWorkbench).region_layout = self._rendered_region_layout()
-        except Exception:
-            logger.debug("Workbench not mounted yet; layout applies on compose.")
+        self._recompute_effective_layout()
         self._schedule_layout_persist(layout)
 
     def _schedule_layout_persist(self, layout: RegionLayout) -> None:
@@ -2966,18 +2961,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         loop (task-280).
 
         Args:
-            layout: The layout whose solo-resolved collapsed set (see
-                `RegionLayout.collapsed_for_persistence`) should be written
-                to config if it differs from what is already persisted.
+            layout: The preferred side-pane layout to write when it differs
+                from what is already persisted.
         """
-        collapsed = layout.collapsed_for_persistence()
-        if collapsed == self._last_persisted_collapsed:
+        collapsed = layout.collapsed
+        if (
+            collapsed == self._last_persisted_collapsed
+            and self._pending_persist_layout is None
+        ):
             return
-        self._last_persisted_collapsed = collapsed
-        self._pending_persist_layout = layout
+        with self._layout_persist_lock:
+            self._layout_persist_generation += 1
+            self._pending_persist_generation = self._layout_persist_generation
+            self._pending_persist_layout = layout
+            if self._layout_persist_draining:
+                return
+            self._layout_persist_draining = True
         self.run_worker(
             self._persist_layout_worker,
-            exclusive=True,
             group="wl-layout-persist",
             thread=True,
         )
@@ -2998,34 +2999,47 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         every `_schedule_layout_persist` call the burst has made so far —
         writes the true final layout, so the last write always wins.
         """
-        with self._layout_persist_lock:
-            layout = self._pending_persist_layout
-            if layout is None:
+        while True:
+            with self._layout_persist_lock:
+                generation = self._pending_persist_generation
+                layout = self._pending_persist_layout
+            if generation is None or layout is None:
+                with self._layout_persist_lock:
+                    self._layout_persist_draining = False
                 return
-            save_region_layout(layout)
+            try:
+                success = save_region_layout(layout)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Failed to persist preferred Watchlists pane layout."
+                )
+                success = False
+            self.app.call_from_thread(
+                self._acknowledge_layout_persist,
+                generation,
+                layout,
+                success,
+            )
+            with self._layout_persist_lock:
+                pending_generation = self._pending_persist_generation
+                if pending_generation is None or pending_generation == generation:
+                    self._layout_persist_draining = False
+                    return
 
-    def _region_hidden_on_active_section(self, region: Region) -> bool:
-        """Whether ``region`` is not rendered at all on the active tab.
-
-        Pure query, no side effects. Distinct from "is this gesture
-        refused" (`_refuse_region_gesture_off_read_tab`, below, refuses
-        every centre region off Read, not only hidden ones -- task-1344
-        review B1): this predicate answers the narrower "is `region`
-        actually unmounted here", which that refusal consults only to pick
-        which notify copy is truthful. The only thing that ever answers
-        `True`: a rail (LEFT_RAIL/RIGHT_RAIL) is never tab-dependent, and
-        ITEMS is always the section's own full-width pane on every tab
-        (visible, just no longer collapsible off Read), so this reduces to
-        "is `region` in `_hidden_centre_regions()`".
-
-        Args:
-            region: The region a gesture (chevron click, `z`, `Z`) targets.
-
-        Returns:
-            `True` when `region` is CONTENT and the active section
-            is not Read (`"items"`), `False` otherwise.
-        """
-        return region in self._hidden_centre_regions()
+    def _acknowledge_layout_persist(
+        self,
+        generation: int,
+        layout: RegionLayout,
+        success: bool,
+    ) -> None:
+        """Commit only the current generation's successful write."""
+        with self._layout_persist_lock:
+            if generation != self._pending_persist_generation:
+                return
+            if success:
+                self._last_persisted_collapsed = layout.collapsed
+                self._pending_persist_layout = None
+                self._pending_persist_generation = None
 
     def _refuse_region_gesture_off_read_tab(self, region: Region) -> bool:
         """Refuse a layout change aimed at a centre region off the Read tab.
@@ -3035,8 +3049,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         gated region when it was written. A stray `focused_region` left over
         from the Read tab (e.g. the user last touched CONTENT there, then
         switched to Sources without moving focus) must be refused the same
-        way -- this is the ONE place both `action_toggle_
-        region`/`action_solo_region`/`_on_region_toggled` consult, per the
+        way -- this is the ONE place both `action_toggle_region` and
+        `_on_region_toggled` consult, per the
         prompt's "one source of truth for is region R visible on section S".
 
         Named as an ACTION, not a predicate (it was `_content_toggle_is_blocked`
@@ -3056,7 +3070,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         did nothing visible, silently flipped the user's genuine preference
         to collapsed, and `_schedule_layout_persist` wrote it to disk, honored
         forever. TASK-1344 AC#4 now unmounts hidden regions outright rather
-        than rendering that header (see `_hidden_centre_regions`), which
+        than rendering that header, which
         removes the click/chevron route entirely -- but `focused_region` is a
         screen-level reactive that outlives the widget that last set it
         (`on_descendant_focus`), so `z`/`Z` can still be invoked with it
@@ -3069,11 +3083,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         regions around one the user cannot see on this tab, the same class
         of harm as the chevron, through the one route that was still open.
 
-        Whole-branch review round 2 (task-1344 review, B1): the check used
-        to be `region in _hidden_centre_regions()`, so ITEMS -- never
-        hidden, always the section's own full-width pane off Read (see
-        `_rendered_region_layout`) -- was never refused. But
-        `_rendered_region_layout` only forces ITEMS out of `collapsed` for
+        Whole-branch review round 2 (task-1344 review, B1): ITEMS is never
+        hidden, always the section's own full-width pane off Read, and was
+        once never refused. But the derived layout only forces ITEMS open for
         the RENDER; the gesture handlers above still call `_apply_layout`
         against the real, persisted layout. So an off-Read `z`/`Z` with
         `focused_region == ITEMS` (reachable any time focus lands inside the
@@ -3083,10 +3095,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         CONTENT already collapsed on Read -- returning to Read rendered
         headers over an empty centre: the exact dead-end AC#3 exists to
         rule out, written to disk, surviving a restart.
-        Region-layout gestures (collapse/solo of the three-pane centre)
+        Region-layout gestures for the Read centre
         simply do not apply to ANY centre region off Read, not just the
         ones that happen to be unmounted there, so the gate now refuses
-        every `region in CENTRE_REGIONS` off Read unconditionally. The
+        ITEMS off Read unconditionally. The
         notify copy forks on whether the region is actually hidden here:
         CONTENT keeps the "only shown on the Read tab" copy (true for
         it), while ITEMS -- visible, just not collapsible from this tab
@@ -3100,19 +3112,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             `True` when the gesture must be refused (and the user has been
             told why), `False` when it may proceed.
         """
-        if self.active_section == "items" or region not in CENTRE_REGIONS:
+        if region is not Region.ITEMS or self.active_section == "items":
             return False
-        if self._region_hidden_on_active_section(region):
-            self.notify(
-                f"{REGION_TITLES[region]} is only shown on the Read tab. "
-                "Switch to Read to change its layout.",
-                markup=False,
-            )
-        else:
-            self.notify(
-                "The pane layout can only be changed on the Read tab.",
-                markup=False,
-            )
+        self.notify(
+            "Feed Items can only be collapsed on the Read tab.",
+            markup=False,
+        )
         return True
 
     def action_toggle_region(self) -> None:
@@ -3122,8 +3127,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness):
         `focused_region` there names wherever the user last actually
         visited, not where they are now, and a rail (LEFT_RAIL/RIGHT_RAIL)
-        is never gated by `_refuse_region_gesture_off_read_tab` below (it
-        only covers `CENTRE_REGIONS`), so without this check a stale
+        is never gated by `_refuse_region_gesture_off_read_tab` below, so
+        without this check a stale
         `focused_region` pointing at a rail would still collapse -- and
         persist -- it from a keypress that has no visible relationship to
         either the rail or the tab strip the user is actually looking at.
@@ -3131,48 +3136,66 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self._focus_in_centre_header:
             return
         region = self.focused_region
+        if region not in COLLAPSIBLE_REGIONS:
+            return
         if self._refuse_region_gesture_off_read_tab(region):
             return
-        self._apply_layout(self.region_layout.toggle(region))
+        self._toggle_preferred_region(region)
 
-    def action_solo_region(self) -> None:
-        """Isolate the focused centre pane; press again to restore.
-
-        Refused for any centre region off the Read tab, exactly as the
-        chevron and `z` already are -- see
-        `_refuse_region_gesture_off_read_tab`. Also silently refused while
-        focus sits in the centre header/tab strip
-        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness),
-        for the same reason `action_toggle_region` checks it just above --
-        `focused_region` is stale there. Checked after the `CENTRE_REGIONS`
-        guard, not before: solo never applies to a rail regardless of
-        focus, so that refusal (and its notify) stays exactly as it was;
-        this only silences the CENTRE-region case, which -- off the Read
-        tab, where the header exists at all -- `_refuse_region_gesture_
-        off_read_tab` below would otherwise refuse anyway, just with a
-        notify keyed to a region the user is not looking at.
-        """
-        if self.focused_region not in CENTRE_REGIONS:
-            self.notify("Solo applies to the Items or Content panes.")
+    def action_article_focus(self) -> None:
+        """Toggle transient Article Focus on Read."""
+        if self.active_section != "items":
+            self.notify("Article Focus is available on Read.", markup=False)
             return
-        if self._focus_in_centre_header:
-            return
-        if self._refuse_region_gesture_off_read_tab(self.focused_region):
-            return
-        self._apply_layout(self.region_layout.solo(self.focused_region))
+        self._article_focus_active = not self._article_focus_active
+        self._recompute_effective_layout()
 
     def action_toggle_left_rail(self) -> None:
-        self._apply_layout(self.region_layout.toggle(Region.LEFT_RAIL))
+        self._toggle_preferred_region(Region.LEFT_RAIL)
 
     def action_toggle_right_rail(self) -> None:
-        self._apply_layout(self.region_layout.toggle(Region.RIGHT_RAIL))
+        self._toggle_preferred_region(Region.RIGHT_RAIL)
+
+    def _toggle_preferred_region(self, region: Region) -> None:
+        """Apply one manual gesture, inferred from effective state."""
+        requested_open = self._effective_region_layout.is_collapsed(region)
+        before = (
+            self.region_layout,
+            self._effective_region_layout,
+            self._article_focus_active,
+            self._responsive_priority_target,
+        )
+        self._article_focus_active = False
+        preferred = self.region_layout
+        if requested_open:
+            if preferred.is_collapsed(region):
+                preferred = preferred.toggle_preferred(region)
+            self._responsive_priority_target = region
+        else:
+            if not preferred.is_collapsed(region):
+                preferred = preferred.toggle_preferred(region)
+            if self._responsive_priority_target is region:
+                self._responsive_priority_target = None
+        changed = preferred != self.region_layout
+        self.region_layout = preferred
+        self._recompute_effective_layout()
+        self._manual_layout_rollback = (
+            self._effective_region_layout,
+            before[0],
+            before[2],
+            before[3],
+        )
+        if changed:
+            self._schedule_layout_persist(preferred)
 
     @on(RegionToggled)
     def _on_region_toggled(self, event: RegionToggled) -> None:
         event.stop()
+        if event.region not in COLLAPSIBLE_REGIONS:
+            return
         if self._refuse_region_gesture_off_read_tab(event.region):
             return
-        self._apply_layout(self.region_layout.toggle(event.region))
+        self._toggle_preferred_region(event.region)
 
     @on(RegionLayoutApplyFailed)
     def _on_region_layout_apply_failed(
@@ -3180,21 +3203,38 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Correct screen preference only while the failed intent is current."""
         event.stop()
-        if self._rendered_region_layout() != event.attempted:
+        if self._effective_region_layout != event.attempted:
             return
-        collapsed = set(self.region_layout.collapsed)
-        for region in COLLAPSIBLE_REGIONS:
-            if event.attempted.is_collapsed(region) == event.fallback.is_collapsed(
-                region
-            ):
-                continue
-            if event.fallback.is_collapsed(region):
-                collapsed.add(region)
-            else:
-                collapsed.discard(region)
-        self._apply_layout(
-            replace(self.region_layout, collapsed=frozenset(collapsed))
-        )
+        rollback = self._manual_layout_rollback
+        if rollback is None or rollback[0] != event.attempted:
+            self._effective_region_layout = event.fallback
+            return
+        current_preferred = self.region_layout
+        _, preferred, article_focus, priority_target = rollback
+        self.region_layout = preferred
+        self._article_focus_active = article_focus
+        self._responsive_priority_target = priority_target
+        self._manual_layout_rollback = None
+        self._recompute_effective_layout()
+        if current_preferred != preferred:
+            self._schedule_layout_persist(preferred)
+
+    @on(RegionLayoutApplied)
+    def _on_region_layout_applied(self, event: RegionLayoutApplied) -> None:
+        """Restore pane-local view state after a successful remount."""
+        event.stop()
+        if event.layout != self._effective_region_layout:
+            return
+        if (
+            self._manual_layout_rollback is not None
+            and self._manual_layout_rollback[0] == event.layout
+        ):
+            self._manual_layout_rollback = None
+        if (
+            event.previous.is_collapsed(Region.ITEMS)
+            and not event.layout.is_collapsed(Region.ITEMS)
+        ):
+            self._restore_items_view_state()
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
@@ -4056,9 +4096,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         * the ITEMS region, whose pane `_build_detail_pane` routes by section;
         * the centre header, which carries the tab strip and the scoped
           snapshot markers;
-        * `_hidden_centre_regions`/`_rendered_region_layout`, i.e. whether
-          CONTENT exists at all on this tab and whether ITEMS may render
-          collapsed there.
+        * the derived effective layout, which parks CONTENT off Read and
+          forces the management canvas open.
 
         The header bar's backend Select is the fourth, and is patched in
         place by `_sync_backend_header_bar` (which also runs synchronously
@@ -4081,12 +4120,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Asked BEFORE the swap: afterwards the widget is already gone and
         # Textual has already re-homed focus (see `_restore_focus_after_swap`).
         rehome_focus = self._swap_will_destroy_focus()
-        workbench.set_class(
-            self.active_section == "items", "watchlists-read-mode"
-        )
+        self._recompute_effective_layout()
         await workbench.apply_section_view(
-            hidden=self._hidden_centre_regions(),
-            layout=self._rendered_region_layout(),
+            read_mode=self.active_section == "items",
+            layout=self._effective_region_layout,
             rebuild_regions=(Region.ITEMS,),
             rebuild_header=True,
         )
@@ -4134,7 +4171,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Re-focusing the freshly built tab restores that refusal by the honest
         route rather than by accident: focus lands in `#wl-centre-status`, so
         `on_descendant_focus` sets `_focus_in_centre_header`, which is exactly
-        what `action_toggle_region`/`action_solo_region` already consult.
+        what `action_toggle_region` already consults.
 
         Only called when the swap really did unmount the focused widget
         (`_swap_will_destroy_focus`): a section change driven from elsewhere
@@ -4300,8 +4337,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Also tracks `_focus_in_centre_header` (task-1344 fix wave, Qodo
         correctness): the centre header/tab strip (`#wl-centre-status`,
         mounted directly under `#wl-centre` by `_build_centre_status_header`
-        -- see `compose_content`) sits OUTSIDE every `wl-region-*`/
-        `wl-header-*` wrapper on every section including Read (TASK-2312;
+        -- see `compose_content`) sits outside every region/grip wrapper on
+        every section including Read (TASK-2312;
         Read used to mount its own copy of the tab strip INSIDE FEEDS's own
         `wl-region-feeds` wrapper, so this branch never fired there and
         focusing the tab strip on Read instead matched the `wl-region-`
@@ -4311,13 +4348,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         indistinguishable here from a live selection: a user who tabs into
         the tab strip and presses `z`/`Z` would act on that stale reference
         with no visible relationship to where they are.
-        `action_toggle_region`/`action_solo_region` consult
-        `_focus_in_centre_header` to refuse exactly that.
+        `action_toggle_region` consults `_focus_in_centre_header` to refuse
+        exactly that.
         """
         node = event.widget
         while node is not None:
             node_id = getattr(node, "id", None) or ""
-            for prefix in ("wl-region-", "wl-header-"):
+            for prefix in ("wl-region-", "wl-grip-"):
                 if node_id.startswith(prefix):
                     try:
                         self.focused_region = Region(node_id[len(prefix):])
@@ -4349,6 +4386,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a stale `True` would wrongly refuse a legitimate `z`/`Z` on the
         # new tab (task-1344 fix wave, Qodo correctness).
         self._focus_in_centre_header = False
+        if self.active_section != "items":
+            self._article_focus_active = False
+        self._recompute_effective_layout()
         if self.active_section == "overview":
             self.selected_entity = None
         if self.active_section != WATCHLISTS_SECTION_RUNS:
@@ -5799,7 +5839,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 limit=100,
             )
             # Mirror to screen state (Finding 2, fix round 2) so a later
-            # workbench rebuild — any region collapse/solo/rail toggle, not
+            # workbench rebuild — any region collapse/expand, not
             # just a fresh section switch — can re-seed a brand new
             # SourcesPane instead of leaving its table empty; see
             # `_build_detail_pane` and `_loaded_sources` in __init__.
@@ -6851,9 +6891,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         LLM wrote, so the same caution `_load_briefings`'s own failure
         toasts already take applies.
 
-        For a resolving id, switches to the Items ("Read") section --
-        `ContentPane` is only ever mounted there (`_hidden_centre_regions`)
-        -- and, once that section's `ItemsPane` exists, hands it the
+        For a resolving id, switches to the Items ("Read") section, the only
+        section where `ContentPane` is mounted, and once that section's
+        `ItemsPane` exists, hands it the
         resolved item via `ItemsPane.select_and_reveal` (NOT `handle_item_
         selected` directly: that method's own docstring warns the pane's
         `selected_item` reactive would go stale against the table's actual

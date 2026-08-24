@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import inspect
 
 import pytest
 from textual.app import App, ComposeResult
@@ -372,12 +373,12 @@ async def test_legacy_content_collapse_cannot_unmount_reader_in_read() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hidden_compatibility_selects_management_horizontal_body() -> None:
+async def test_explicit_management_mode_selects_management_horizontal_body() -> None:
     class _App(App[None]):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
                 RegionLayout(collapsed=frozenset({Region.ITEMS})),
-                hidden=frozenset({Region.CONTENT}),
+                read_mode=False,
                 header=lambda: Static("status", id="wl-centre-status"),
                 id="wl-workbench",
             )
@@ -514,24 +515,13 @@ async def test_grip_activation_uses_shared_region_toggled_message() -> None:
     assert app.toggles == [Region.ITEMS]
 
 
-@pytest.mark.asyncio
-async def test_collapsed_suffix_compatibility_is_a_noop() -> None:
-    class _App(App[None]):
-        def compose(self) -> ComposeResult:
-            yield WatchlistsWorkbench(
-                RegionLayout(collapsed=frozenset({Region.LEFT_RAIL})),
-                collapsed_suffixes={Region.LEFT_RAIL: "12 unread"},
-                id="wl-workbench",
-            )
-
-    app = _App()
-    async with app.run_test():
-        workbench = app.query_one(WatchlistsWorkbench)
-        grip = app.query_one("#wl-grip-left_rail", WatchlistsPaneGrip)
-        label = str(grip.label)
-        workbench.set_collapsed_suffixes({Region.LEFT_RAIL: "7 unread"})
-        assert app.query_one("#wl-grip-left_rail") is grip
-        assert str(grip.label) == label
+def test_transitional_workbench_adapters_are_removed() -> None:
+    constructor = inspect.signature(WatchlistsWorkbench.__init__)
+    apply_view = inspect.signature(WatchlistsWorkbench.apply_section_view)
+    assert "hidden" not in constructor.parameters
+    assert "collapsed_suffixes" not in constructor.parameters
+    assert "hidden" not in apply_view.parameters
+    assert not hasattr(WatchlistsWorkbench, "set_collapsed_suffixes")
 
 
 @pytest.mark.asyncio
@@ -553,6 +543,7 @@ async def test_refresh_region_content_rebuilds_only_named_factory_output() -> No
                     Region.ITEMS: factory("items"),
                     Region.CONTENT: factory("content"),
                 },
+                read_mode=True,
                 id="wl-workbench",
             )
 
@@ -586,6 +577,7 @@ async def test_refresh_region_content_preserves_heading_on_factory_failure() -> 
             yield WatchlistsWorkbench(
                 RegionLayout(),
                 content={Region.LEFT_RAIL: factory},
+                read_mode=True,
                 id="wl-workbench",
             )
 
@@ -621,6 +613,7 @@ async def test_refresh_header_replaces_only_header_and_is_failure_safe() -> None
             yield WatchlistsWorkbench(
                 RegionLayout(),
                 header=header,
+                read_mode=True,
                 id="wl-workbench",
             )
 
@@ -661,6 +654,7 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
                     Region.ITEMS: factory("items"),
                     Region.CONTENT: factory("content"),
                 },
+                read_mode=True,
                 id="wl-workbench",
             )
 
@@ -690,7 +684,7 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
         assert calls == {"items": 2, "content": 1}
 
         await workbench.apply_section_view(
-            hidden=frozenset(),
+            read_mode=True,
             layout=RegionLayout(),
             rebuild_regions=(Region.ITEMS,),
         )
@@ -778,7 +772,7 @@ async def test_read_mode_class_tracks_incremental_mode_switches() -> None:
         assert not workbench.has_class("watchlists-has-expanded-side-pane")
 
         await workbench.apply_section_view(
-            hidden=frozenset(),
+            read_mode=True,
             layout=rails_collapsed,
         )
         assert workbench.has_class("watchlists-read-mode")

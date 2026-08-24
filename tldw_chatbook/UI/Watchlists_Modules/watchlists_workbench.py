@@ -19,6 +19,7 @@ from .region_layout import Region, RegionLayout
 
 __all__ = [
     "REGION_TITLES",
+    "RegionLayoutApplied",
     "RegionLayoutApplyFailed",
     "RegionToggled",
     "WatchlistsWorkbench",
@@ -61,6 +62,15 @@ class RegionLayoutApplyFailed(Message):
         self.fallback = fallback
 
 
+class RegionLayoutApplied(Message):
+    """Acknowledge a successful effective-layout transition."""
+
+    def __init__(self, *, previous: RegionLayout, layout: RegionLayout) -> None:
+        super().__init__()
+        self.previous = previous
+        self.layout = layout
+
+
 class WatchlistsWorkbench(Vertical):
     """Render optional chrome above a permanent horizontal centre.
 
@@ -76,11 +86,9 @@ class WatchlistsWorkbench(Vertical):
         self,
         layout: RegionLayout,
         content: Mapping[Region, Callable[[], Widget]] | None = None,
-        hidden: frozenset[Region] = frozenset(),
         header: Callable[[], Widget] | None = None,
-        collapsed_suffixes: Mapping[Region, str] | None = None,
         *,
-        read_mode: bool | None = None,
+        read_mode: bool,
         **kwargs: Any,
     ) -> None:
         """Build the workbench from reusable region factories.
@@ -89,20 +97,14 @@ class WatchlistsWorkbench(Vertical):
             layout: Effective side-pane collapse state.
             content: Per-region factories. A remounted pane always receives a
                 fresh widget instance.
-            hidden: Temporary screen compatibility adapter. CONTENT hidden
-                selects management mode; otherwise it selects Read.
             header: Optional factory for the chrome above the horizontal body.
-            collapsed_suffixes: Temporary no-op compatibility argument.
-            read_mode: Explicit mode. When omitted, ``hidden`` selects it.
+            read_mode: Whether the permanent Reader view is active.
         """
-        del collapsed_suffixes
         super().__init__(**kwargs)
         self.add_class("watchlists-workbench")
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
         self._header = header
-        self.read_mode = (
-            Region.CONTENT not in hidden if read_mode is None else read_mode
-        )
+        self.read_mode = read_mode
         self.set_class(self.read_mode, "watchlists-read-mode")
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
         self._sync_expanded_side_pane_class(layout=layout)
@@ -193,6 +195,13 @@ class WatchlistsWorkbench(Vertical):
             )
             return
 
+        restore_focus = {
+            region
+            for region in prepared
+            if self.query_one(
+                f"#wl-grip-{region.value}", WatchlistsPaneGrip
+            ).has_focus
+        }
         try:
             for region, node in prepared.items():
                 grip = self.query_one(
@@ -219,12 +228,22 @@ class WatchlistsWorkbench(Vertical):
             if not expanded:
                 mounted = self._mounted_region_body(region)
                 if mounted is not None:
+                    grip = self.query_one(
+                        f"#wl-grip-{region.value}", WatchlistsPaneGrip
+                    )
+                    if self._contains_focus(mounted):
+                        grip.focus()
                     await mounted.remove()
             grip = self.query_one(
                 f"#wl-grip-{region.value}", WatchlistsPaneGrip
             )
             grip.expanded = expanded
+        for region in restore_focus:
+            mounted = self._mounted_region_body(region)
+            if mounted is not None:
+                mounted.focus()
         self._sync_expanded_side_pane_class(layout=layout)
+        self.post_message(RegionLayoutApplied(previous=previous, layout=layout))
 
     @property
     def _grip_regions(self) -> tuple[Region, ...]:
@@ -263,23 +282,12 @@ class WatchlistsWorkbench(Vertical):
         self,
         *,
         layout: RegionLayout,
-        read_mode: bool | None = None,
-        hidden: frozenset[Region] | None = None,
+        read_mode: bool,
         rebuild_regions: tuple[Region, ...] = (),
         rebuild_header: bool = False,
     ) -> None:
-        """Incrementally apply a Read/management section view.
-
-        ``hidden`` remains a temporary adapter for the live screen through
-        Task 6. Explicit ``read_mode`` wins when both are provided.
-        """
+        """Incrementally apply a Read/management section view."""
         next_read_mode = read_mode
-        if next_read_mode is None:
-            next_read_mode = (
-                self.read_mode
-                if hidden is None
-                else Region.CONTENT not in hidden
-            )
         if not self.is_mounted:
             self.read_mode = next_read_mode
             self.set_class(self.read_mode, "watchlists-read-mode")
@@ -343,8 +351,19 @@ class WatchlistsWorkbench(Vertical):
             if factory is not None:
                 prepared_content[region] = factory()
 
+        restore_focus_ids = {
+            node_id
+            for node_id in prepared_nodes
+            if node_id.startswith("wl-region-")
+            and self._grip_has_focus(
+                Region(node_id.removeprefix("wl-region-"))
+            )
+        }
         for child in list(body.children):
             if child.id not in desired_ids:
+                region = self._region_from_body_id(child.id or "")
+                if region is not None and self._contains_focus(child):
+                    self.query_one(f"#wl-grip-{region.value}").focus()
                 await child.remove()
 
         for index, node_id in enumerate(desired_ids):
@@ -354,6 +373,10 @@ class WatchlistsWorkbench(Vertical):
                     await body.mount(node)
                 else:
                     await body.mount(node, before=index)
+
+        for node_id in restore_focus_ids:
+            mounted = self.query_one(f"#{node_id}")
+            mounted.focus()
 
         for region, replacement in prepared_content.items():
             container = self._mounted_region_body(region)
@@ -447,6 +470,17 @@ class WatchlistsWorkbench(Vertical):
             await stale.remove()
         await self.mount(replacement, before=0)
 
-    def set_collapsed_suffixes(self, suffixes: Mapping[Region, str]) -> None:
-        """Compatibility no-op retained until the live screen stops calling it."""
-        del suffixes
+    def _contains_focus(self, widget: Widget) -> bool:
+        """Whether the current focus lives at or below ``widget``."""
+        focused = getattr(self.screen, "focused", None)
+        while focused is not None:
+            if focused is widget:
+                return True
+            focused = focused.parent
+        return False
+
+    def _grip_has_focus(self, region: Region) -> bool:
+        try:
+            return self.query_one(f"#wl-grip-{region.value}").has_focus
+        except NoMatches:
+            return False

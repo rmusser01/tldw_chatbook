@@ -81,14 +81,14 @@ def save_region_layout(layout: RegionLayout) -> bool:
     """Persist only the layout's preferred collapsible side panes.
 
     Args:
-        layout: Preferred layout to persist. Transitional solo state is
-            resolved before filtering.
+        layout: Preferred layout to persist.
 
     Returns:
         The configuration writer's Boolean result, or ``False`` if it raises.
     """
-    collapsed = layout.collapsed_for_persistence()
     values = [
-        region.value for region in COLLAPSIBLE_REGIONS if region in collapsed
+        region.value
+        for region in COLLAPSIBLE_REGIONS
+        if region in layout.collapsed
     ]
     return _write_values(values)

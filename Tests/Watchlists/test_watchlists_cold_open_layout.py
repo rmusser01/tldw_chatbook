@@ -55,39 +55,33 @@ _LOAD_REGION_LAYOUT_TARGET = (
 )
 
 
-class _SwapCounter:
-    """Counts `WatchlistsWorkbench._swap_region_widget` calls while installed.
-
-    Wraps rather than replaces: the real swap still runs (call-through), so
-    this only observes -- it never changes what the screen actually renders.
-    """
+class _RegionBuildCounter:
+    """Count pane factory construction during the cold-open lifecycle."""
 
     def __init__(self) -> None:
         self.regions: list[Region] = []
-        self._original = WatchlistsWorkbench._swap_region_widget
+        self._original = WatchlistsWorkbench._region_body
 
-    def __enter__(self) -> "_SwapCounter":
+    def __enter__(self) -> "_RegionBuildCounter":
         counter = self
         original = self._original
 
-        async def _counting_swap(widget_self, region, parent, index):
+        def _counting_build(widget_self, region):
             counter.regions.append(region)
-            return await original(widget_self, region, parent, index)
+            return original(widget_self, region)
 
-        WatchlistsWorkbench._swap_region_widget = _counting_swap
+        WatchlistsWorkbench._region_body = _counting_build
         return self
 
     def __exit__(self, *exc_info) -> None:
-        WatchlistsWorkbench._swap_region_widget = self._original
+        WatchlistsWorkbench._region_body = self._original
 
 
 def _right_rail_is_collapsed(screen) -> bool:
-    header = screen.query("#wl-header-right_rail")
+    grip = screen.query_one("#wl-grip-right_rail")
     body = screen.query("#wl-region-right_rail")
-    assert bool(header) != bool(body), (
-        "RIGHT_RAIL must render as exactly one of its two forms, never both or neither"
-    )
-    return bool(header)
+    assert getattr(grip, "expanded") is bool(body)
+    return not bool(body)
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +132,10 @@ async def test_construction_seeds_region_layout_from_a_single_persisted_load(
         "anything else (a keypress, a later _schedule_layout_persist call) "
         "can race it"
     )
-    assert get_cli_setting("watchlists", "content_reader_migrated", False) is True, (
-        "the one-time migration write load_region_layout performs on a "
-        "never-saved config must have already landed on disk by the time "
-        "__init__ returns -- it is synchronous, on the UI thread, by design"
+    assert get_cli_setting("watchlists", "layout_version", None) == (
+        region_layout_store.LAYOUT_VERSION
     )
+    assert get_cli_setting("watchlists", "content_reader_migrated", None) is None
 
 
 async def test_construction_seeds_an_explicitly_saved_non_default_layout(monkeypatch):
@@ -188,7 +181,7 @@ async def test_cold_open_with_the_first_run_default_shows_the_collapsed_rail_wit
     )
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
-    with _SwapCounter() as swaps:
+    with _RegionBuildCounter() as builds:
         async with host.run_test(size=(180, 50)) as pilot:
             await pilot.pause(0.2)
             screen = host.screen_stack[-1]
@@ -202,10 +195,7 @@ async def test_cold_open_with_the_first_run_default_shows_the_collapsed_rail_wit
                 "_FIRST_RUN_DEFAULT"
             )
 
-    assert swaps.regions == [], (
-        "a normal cold open must perform zero _swap_region_widget calls; "
-        f"got {swaps.regions!r}"
-    )
+    assert Region.RIGHT_RAIL not in builds.regions
 
 
 async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
@@ -223,7 +213,7 @@ async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
     )
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
-    with _SwapCounter() as swaps:
+    with _RegionBuildCounter() as builds:
         async with host.run_test(size=(180, 50)) as pilot:
             await pilot.pause(0.2)
             screen = host.screen_stack[-1]
@@ -236,16 +226,13 @@ async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
                 "RIGHT_RAIL was not part of the user's saved collapse set "
                 "and must render expanded"
             )
-            assert screen.query("#wl-header-left_rail"), (
+            assert not screen.query_one("#wl-grip-left_rail").expanded, (
                 "LEFT_RAIL is the region the user actually collapsed and "
                 "must render collapsed on the first paint"
             )
             assert not screen.query("#wl-region-left_rail")
 
-    assert swaps.regions == [], (
-        "a deliberately-chosen non-default layout must still cold-open with "
-        f"zero swaps; got {swaps.regions!r}"
-    )
+    assert Region.LEFT_RAIL not in builds.regions
 
 
 async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_no_swap(
@@ -262,7 +249,7 @@ async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_
     )
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
-    with _SwapCounter() as swaps:
+    with _RegionBuildCounter() as builds:
         async with host.run_test(size=(180, 50)) as pilot:
             await pilot.pause(0.2)
             screen = host.screen_stack[-1]
@@ -276,9 +263,7 @@ async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_
                 "already collapsed"
             )
 
-    assert swaps.regions == [], (
-        f"a real fresh-config cold open must perform zero swaps; got {swaps.regions!r}"
-    )
+    assert Region.RIGHT_RAIL not in builds.regions
 
 
 # ---------------------------------------------------------------------------

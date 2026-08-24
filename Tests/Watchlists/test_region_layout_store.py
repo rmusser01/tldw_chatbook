@@ -165,7 +165,7 @@ def test_save_filters_to_side_panes_and_returns_writer_result(monkeypatch):
     monkeypatch.setattr(region_layout_store, "save_settings_to_cli_config", writer)
     layout = RegionLayout(
         collapsed=frozenset({Region.CONTENT, Region.LEFT_RAIL, Region.RIGHT_RAIL})
-    ).solo(Region.CONTENT)
+    )
 
     assert region_layout_store.save_region_layout(layout) is False
     writer.assert_called_once_with(

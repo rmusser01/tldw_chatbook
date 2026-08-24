@@ -165,10 +165,10 @@ def test_sub_sixty_widths_collapse_all_mounted_side_panes_without_raising(
     assert effective.collapsed == mounted
 
 
-def test_resolver_discards_legacy_solo_and_reader_collapse_state():
-    preferred = RegionLayout().toggle(Region.LEFT_RAIL).solo(Region.CONTENT)
+def test_resolver_discards_a_retired_reader_collapse_value():
+    preferred = RegionLayout(
+        collapsed=frozenset({Region.LEFT_RAIL, Region.CONTENT})
+    )
     effective = resolve(preferred, 145)
     assert effective.collapsed == frozenset({Region.LEFT_RAIL})
-    assert effective.solo_region is None
-    assert effective._pre_solo is None
     assert not effective.is_collapsed(Region.CONTENT)
