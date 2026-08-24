@@ -37,13 +37,16 @@ problem is not that the suite is bad; it is that nothing has been reading it.
   15:02:45→17:03:16, 12:22:35→14:23:03, 11:25:48→13:26:22. That is
   `timeout-minutes: 120` expiring, which GitHub surfaces as `cancelled`, not `failure`.
   It reads like supersession and is not.
-- **The same work takes 30.8 minutes here.** A 4x-slower runner does not explain a >4x
-  overrun with no completion, so the CI leg is very likely *hanging* rather than merely
-  running slowly — consistent with the two known mechanisms: a hung test under
-  `timeout_method="thread"` taking the whole process (see `lessons-testing-evidence.md`),
-  and the xdist `INTERNALERROR` in TASK-14876. **Sharding alone may therefore not be
-  sufficient**; the hang must be located. Chunking by directory, as this baseline does,
-  isolates the blast radius and is why it completed.
+- **It is slow, not hung** — corrected from this document's first draft, which guessed a
+  hang because 30.8 minutes locally seemed too far from >120 in CI. The job's own log
+  settles it (run 32647831275, ubuntu leg): pytest starts emitting at `15:44:55` and is
+  **still printing progress steadily, with no stall,** when the cap kills it at `17:39`,
+  having reached **60%**. Steady progress at the kill is what distinguishes the two, and
+  they have different fixes. Extrapolated, the suite needs **~190 minutes** on a 4-vCPU
+  runner — public repos get 4, so `-n auto` is 4 workers against 8 faster cores locally,
+  which accounts for the gap without a hang. Sharding is therefore the right fix, and
+  TASK-21411 applies it. The guess was cheap to make and would have been expensive to act
+  on: it pointed at hunting a hang that does not exist.
 - `test-summary` reported **`success` while all 12 UI shards were red**: it declares
   `needs:` and `if: always()` but never inspects the needed jobs' conclusions.
 - Zero successful `test.yml` runs in the last 400. 173 cancelled; of the 12 that
