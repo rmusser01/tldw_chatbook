@@ -1,3 +1,4 @@
+import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -481,6 +482,7 @@ async def _mounted_production_writing_window(scope=None):
     app = _build_test_app()
     app.writing_scope_service = scope or FakeWritingScopeService()
     screen = WritingScreen(app)
+
     def setting_without_splash(section, key=None, default=None):
         if section == "splash_screen" and key == "enabled":
             return False
@@ -1058,3 +1060,137 @@ async def test_mounted_outline_tree_renders_and_selects_nodes():
     assert "Opening Scene" in str(detail_title.render())
     assert detail_editor.text == "Draft A"
     assert detail_editor.read_only is False
+
+
+# --- TASK-21125: the controller never calls a sync backend on the loop -----
+
+
+@pytest.mark.asyncio
+async def test_controller_runs_sync_service_calls_off_the_event_loop():
+    loop_thread = threading.current_thread().name
+    observed: list[str] = []
+
+    class _SyncScopeService:
+        def list_projects(self, *, mode=None, **_kwargs):
+            observed.append(threading.current_thread().name)
+            return [{"id": "local-project", "title": "Novel"}]
+
+        def get_project(self, entity_id, *, mode=None, include_deleted=False):
+            observed.append(threading.current_thread().name)
+            return {"id": entity_id, "title": "Novel", "version": 1}
+
+        def update_project(self, entity_id, payload, expected_version, *, mode=None):
+            observed.append(threading.current_thread().name)
+            return {"id": entity_id, **dict(payload), "version": 2}
+
+    controller = WritingController(_SyncScopeService())
+
+    await controller.load_projects("local")
+    await controller.load_entity_detail("local", "project", "local-project")
+    await controller.autosave_current(
+        "local", "project", "local-project", {"title": "Novel"}, 1
+    )
+
+    assert len(observed) == 3
+    assert loop_thread not in observed
+
+
+@pytest.mark.asyncio
+async def test_controller_awaits_async_service_calls_without_a_thread_hop():
+    loop_thread = threading.current_thread().name
+    observed: list[str] = []
+
+    class _AsyncScopeService:
+        async def list_projects(self, *, mode=None, **_kwargs):
+            observed.append(threading.current_thread().name)
+            return []
+
+    controller = WritingController(_AsyncScopeService())
+
+    await controller.load_projects("local")
+
+    assert observed == [loop_thread]
+
+
+# --- TASK-21125: shutdown seam and first-use error surface -----------------
+
+
+@pytest.mark.unit
+def test_app_unmount_closes_the_local_writing_service_by_peeking_the_slot():
+    """Shutdown releases held connections without constructing a service."""
+    import inspect
+    import types
+
+    from tldw_chatbook.app import TldwCli
+
+    unmount = inspect.getsource(TldwCli.on_unmount)
+    assert "_close_local_writing_service" in unmount, unmount
+
+    closer = inspect.getsource(TldwCli._close_local_writing_service)
+    assert 'getattr(self, "local_writing_service", None)' in closer, closer
+
+    app = object.__new__(TldwCli)
+    logged = []
+    app.loguru_logger = types.SimpleNamespace(error=logged.append)
+
+    # Never wired: nothing to close, and nothing gets constructed.
+    app._close_local_writing_service()
+    assert not hasattr(app, "local_writing_service")
+
+    # Wiring failed (the except branch in _wire_writing_services).
+    app.local_writing_service = None
+    app._close_local_writing_service()
+
+    closed = []
+    app.local_writing_service = types.SimpleNamespace(close=lambda: closed.append(True))
+    app._close_local_writing_service()
+    assert closed == [True]
+    assert logged == []
+
+    def _boom():
+        raise RuntimeError("close failed")
+
+    app.local_writing_service = types.SimpleNamespace(close=_boom)
+    app._close_local_writing_service()
+    assert len(logged) == 1
+    assert "RuntimeError" in logged[0]
+    assert "close failed" not in logged[0]
+
+
+@pytest.mark.asyncio
+async def test_unopenable_writing_database_degrades_to_a_status_message(tmp_path):
+    """A broken writing DB must not crash compose/mount (TASK-21105 caution).
+
+    Holding the connection changes only WHERE the connection is cached, not
+    when it is opened: the first failure still surfaces inside the operation
+    the user triggered, where WritingWindow already turns it into a status
+    message.
+    """
+    from tldw_chatbook.Writing_Interop.local_writing_service import (
+        LocalWritingService,
+    )
+    from tldw_chatbook.Writing_Interop.writing_scope_service import (
+        WritingScopeService,
+    )
+
+    db_path = tmp_path / "writing.db"
+    db_path.write_bytes(b"this is not a sqlite database" * 64)
+    db_path.chmod(0o600)
+
+    service = LocalWritingService(db_path)
+    scope = WritingScopeService(local_service=service, server_service=None)
+    screen = WritingScreen(SimpleNamespace(writing_scope_service=scope))
+
+    # Construction and compose must stay clean of the failure.
+    widgets = list(screen.compose_content())
+    window = widgets[1]
+
+    try:
+        projects = await window.load_projects("local")
+
+        assert projects == []
+        assert window.status_message
+        # Still degrading (not latched into a crash) on the second attempt.
+        assert await window.load_projects("local") == []
+    finally:
+        service.close()

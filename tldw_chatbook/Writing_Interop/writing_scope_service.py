@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import inspect
 from types import SimpleNamespace
 from enum import Enum
@@ -38,6 +40,45 @@ class WritingBackend(str, Enum):
     SERVER = "server"
 
 
+def is_async_callable(candidate: Any) -> bool:
+    """True when calling ``candidate`` returns an awaitable by contract."""
+    if inspect.iscoroutinefunction(candidate):
+        return True
+    call = getattr(candidate, "__call__", None)
+    return call is not None and inspect.iscoroutinefunction(call)
+
+
+class _ThreadOffloadedBackend:
+    """Runs a synchronous writing backend's calls on a worker thread.
+
+    TASK-21125: the local backend is plain blocking SQLite, and every scope
+    method invoked it inline -- so an outline click or an autosave opened,
+    queried and committed on the Textual event loop. Wrapping the backend here
+    (rather than at each of the ~70 call sites) keeps every scope method's
+    ``_maybe_await`` seam working unchanged: the wrapper returns the coroutine
+    that ``asyncio.to_thread`` produces.
+
+    Backends that are already asynchronous pass straight through, so the server
+    backend never pays a thread hop.
+    """
+
+    __slots__ = ("_backend",)
+
+    def __init__(self, backend: Any) -> None:
+        self._backend = backend
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._backend, name)
+        if not callable(attribute) or is_async_callable(attribute):
+            return attribute
+
+        @functools.wraps(attribute)
+        def _offloaded(*args: Any, **kwargs: Any) -> Any:
+            return asyncio.to_thread(attribute, *args, **kwargs)
+
+        return _offloaded
+
+
 class WritingScopeService:
     """Route writing operations to local or server backends with policy enforcement."""
 
@@ -59,13 +100,19 @@ class WritingScopeService:
             raise ValueError(f"Invalid writing backend: {mode}") from exc
 
     def _service_for_mode(self, mode: WritingBackend) -> Any:
+        """Return the backend for ``mode``, offloading synchronous calls.
+
+        ``self.local_service`` / ``self.server_service`` keep their identity --
+        callers (and the packaging wiring test) still see the objects that were
+        passed in; only the dispatch path is wrapped (TASK-21125).
+        """
         if mode == WritingBackend.LOCAL:
             if self.local_service is None:
                 raise ValueError("Local writing backend is unavailable.")
-            return self.local_service
+            return _ThreadOffloadedBackend(self.local_service)
         if self.server_service is None:
             raise ValueError("Server writing backend is unavailable.")
-        return self.server_service
+        return _ThreadOffloadedBackend(self.server_service)
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):

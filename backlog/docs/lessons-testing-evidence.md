@@ -7720,3 +7720,51 @@ began discriminating once every writer parked on a barrier inside the version ch
 then the mutant failed 5/5. Before trusting either kind of assertion, **run it against
 a deliberately broken implementation**; one that still passes is measuring the double,
 not the subject.
+## A `_maybe_await(service.call(...))` seam cannot be fixed by wrapping the VALUE — and the layer you were told to fix may not be the layer that blocks (TASK-21125, 2026-08-23)
+
+**What happened.** The finding said the Writing screen "runs all SQLite on the
+event loop" and the fix was "route the controller calls through
+`asyncio.to_thread`". `WritingController` really is where the calls start, and
+every one of them read
+`await self._maybe_await(service.method(...))`. Two things make that shape a
+trap:
+
+- **The value is already computed.** `_maybe_await` receives a *result*, not a
+  callable, so the synchronous work happened before the `await`. Anything you
+  wrap around `_maybe_await` offloads nothing. (Findings 21126 and 21127 name
+  the same seam in two other services — the pattern is repo-wide.)
+- **The controller's callee was async, so offloading THERE would have moved
+  zero work.** `WritingScopeService`'s ~70 methods are all `async def`; the
+  controller awaits them on the loop and the blocking SQLite call happens one
+  level down, inside the scope service. A controller-level `to_thread` would
+  have passed a thread-assert against a *synchronous* test fake and still left
+  the shipped app opening 180 connections on the loop.
+
+The fix that actually worked was to wrap the *backend object* at the scope
+service's single `_service_for_mode` dispatch point with a proxy whose
+`__getattr__` returns `asyncio.to_thread(bound_method, ...)` for non-coroutine
+callables (async backends pass straight through). One edit covered ~70 call
+sites, every `_maybe_await` kept working unchanged, and `scope.local_service`
+kept its identity — which a packaging test asserts.
+
+**What to do.**
+
+- Before writing a `to_thread`, follow the call one layer further and ask *which
+  frame is actually synchronous*. An `async def` wrapper around a blocking call
+  hides the blocking from the caller, not from the loop.
+- Prove it with a connection/statement counter that records
+  `threading.current_thread().name`, driven through the REAL object graph
+  (controller → scope service → real `LocalWritingService` on a tmp file), not
+  through the fake the UI tests use. Before: 180 opens, all on `MainThread`.
+  After: 0 opens and every statement on `asyncio_0`.
+- When a seam takes a value, change it to take the callable
+  (`_call(method, *args)`), or wrap the object. Do not wrap the seam.
+
+**Adjacent finding worth knowing.** `WritingController` calls
+`get_project_structure`, `autosave_scene`, `search_project`, `assign_chapter`,
+`move_scene` and `restore_version_to_working_state` — **none of which exist on
+`WritingScopeService` or `LocalWritingService`**. Those paths only work against
+the `FakeWritingScopeService` in `Tests/UI/test_writing_screen.py`, so the
+mounted-screen tests are green over an API the shipped app does not implement.
+A green mounted-app test proves the controller talks to *a* service correctly;
+it does not prove that service is the one the app wires.

@@ -41,7 +41,9 @@ def _writing_owner(path: Path) -> tuple[object, Callable[[], None]]:
     # under test now apply at that moment.
     service = local_writing_service.LocalWritingService(path)
     service.list_projects()
-    return service, lambda: None
+    # TASK-21125: the connection opened above is now HELD, so the owner has a
+    # real closer to hand back.
+    return service, service.close
 
 
 def _research_owner(path: Path) -> tuple[object, Callable[[], None]]:

@@ -1,5 +1,9 @@
+import threading
+
 import pytest
 
+from tldw_chatbook.Writing_Interop import local_writing_service
+from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 from tldw_chatbook.Writing_Interop.writing_scope_service import WritingScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -797,3 +801,72 @@ def test_writing_scope_service_reports_known_unsupported_server_capabilities():
         "writing.scenes.create.server",
         "writing.scenes.list.server",
     ]
+
+
+# --- TASK-21125: the local backend never runs SQLite on the event loop -----
+
+
+@pytest.mark.asyncio
+async def test_writing_scope_service_runs_the_local_backend_off_the_event_loop(
+    tmp_path, monkeypatch
+):
+    executed_on: set[str] = set()
+    opened_on: list[str] = []
+    real_connect = local_writing_service.connect_private_sqlite
+
+    def _tracking_connect(*args, **kwargs):
+        opened_on.append(threading.current_thread().name)
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(
+            lambda _statement: executed_on.add(threading.current_thread().name)
+        )
+        return conn
+
+    monkeypatch.setattr(
+        local_writing_service, "connect_private_sqlite", _tracking_connect
+    )
+    service = LocalWritingService(tmp_path / "writing.db")
+    scope = WritingScopeService(local_service=service, server_service=None)
+    loop_thread = threading.current_thread().name
+
+    try:
+        project = await scope.create_project(mode="local", title="Novel")
+        await scope.get_project(mode="local", project_id=project["id"])
+        await scope.get_structure(mode="local", project_id=project["id"])
+        await scope.update_project(
+            mode="local",
+            project_id=project["id"],
+            expected_version=None,
+            synopsis="autosaved",
+        )
+    finally:
+        service.close()
+
+    # Identity of the wired backend is preserved (packaging contract).
+    assert scope.local_service is service
+    assert opened_on, "no connection was opened"
+    assert loop_thread not in opened_on
+    assert executed_on, "no statement was traced"
+    assert loop_thread not in executed_on
+
+
+@pytest.mark.asyncio
+async def test_writing_scope_service_awaits_async_backends_without_a_thread_hop():
+    calls: list[str] = []
+    loop_thread = threading.current_thread().name
+
+    class _AsyncBackend(FakeWritingService):
+        async def list_projects(self, *, limit=100, offset=0, status=None):
+            calls.append(threading.current_thread().name)
+            return await super().list_projects(
+                limit=limit, offset=offset, status=status
+            )
+
+    scope = WritingScopeService(
+        local_service=_AsyncBackend("local"),
+        server_service=_AsyncBackend("server"),
+    )
+
+    await scope.list_projects(mode="server")
+
+    assert calls == [loop_thread]
