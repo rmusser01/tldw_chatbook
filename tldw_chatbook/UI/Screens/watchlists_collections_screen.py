@@ -1334,13 +1334,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the tree is its own only error surface.
         """
         if self.active_section == "items" and self.runtime_backend != "local":
-            self._tree_watchlists = []
-            self._tree_counts = {}
-            self._tree_source_counts = {}
-            self._breadcrumb_labels = self._resolve_breadcrumb_labels(
-                self.selected_scope
-            )
-            self._apply_tree_data_to_live_surfaces()
+            self._items_page_loading = False
+            self._push_items_pager_state()
             return
 
         notify = getattr(self.app_instance, "notify", None)
@@ -2423,6 +2418,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_load_generation += 1
         self._items_inflight_page_load = None
         self._push_items_pager_state()
+
+    def _enter_server_read_recovery(self) -> None:
+        """Clear local Read state before presenting the Server recovery UI."""
+        self._reset_items_paging_for_context(loading=False)
+        self._items_status_filter = "all"
+        self._items_search_query = ""
+        self._items_committed_page_key = None
+        self._selected_content_page_key = None
+        self._loaded_items = []
+        self._selected_content_item = None
+        # Watchlist/source rows are management data shared with the other
+        # tabs. Only their local item-count overlays belong to Read.
+        self._tree_counts = {}
+        self._tree_source_counts = {}
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            pass
+        else:
+            pane.items = []
+            pane.selected_item = None
+            pane.status_filter = "all"
+            pane.search_query = ""
+            self._push_items_pager_state()
+        self._request_surface_refresh(self._SURFACE_RAIL, self._SURFACE_READER)
 
     def _build_content_pane(self) -> Widget:
         """Build the CONTENT-region content: the reader for the last
@@ -4601,6 +4621,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
         if self.is_mounted:
+            if self.active_section == "items" and self.runtime_backend != "local":
+                self._enter_server_read_recovery()
             token = self._next_layout_request_token()
             section = self.active_section
             detail_builder = self._build_detail_pane
@@ -4691,25 +4713,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         read_is_active = self.active_section == "items"
         local_read_is_active = read_is_active and self.runtime_backend == "local"
-        self._reset_items_paging_for_context(loading=local_read_is_active)
         if read_is_active:
-            self._load_tree_data()
             if local_read_is_active:
+                self._reset_items_paging_for_context(loading=True)
+                self._load_tree_data()
                 self.run_worker(self._load_items(), exclusive=True, group="wc_items")
             else:
-                self._request_surface_refresh(self._SURFACE_READER)
-                self._loaded_items = []
-                self._selected_content_item = None
-                self._selected_content_page_key = None
-                try:
-                    pane = self.query_one(
-                        "#watchlists-items-pane", ArticleListPane
-                    )
-                except NoMatches:
-                    pass
-                else:
-                    pane.items = []
-                    pane.selected_item = None
+                self._enter_server_read_recovery()
+        else:
+            # Paging belongs to a backend-specific Read query context even
+            # while another management tab is visible. Invalidate it without
+            # loading the hidden Read surface.
+            self._reset_items_paging_for_context(loading=False)
         try:
             label = self.query_one("#watchlists-backend-label", Static)
             label_text = self._backend_label_text()
@@ -4880,7 +4895,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_switch_to_local(self, event: Button.Pressed) -> None:
         """Recover Read through the same selector path as a manual change."""
         event.stop()
-        self.query_one("#watchlists-backend-select", PruneSafeSelect).value = "local"
+        selector = self.query_one("#watchlists-backend-select", PruneSafeSelect)
+        if self.runtime_backend == "local":
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+        else:
+            selector.value = "local"
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
@@ -9552,6 +9571,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         explicit_page_change: bool = False,
     ) -> bool:
         if self.runtime_backend != "local":
+            self._items_page_loading = False
+            self._push_items_pager_state()
             return False
         target = max(
             0,
@@ -9741,6 +9762,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(ItemSelected)
     async def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
+        if self.runtime_backend != "local":
+            return
         async with self._items_page_presentation_lock:
             selection_page_key = self._items_committed_page_key
         # TASK-15464: fetch the DETAIL body BEFORE any of the selection
@@ -10328,6 +10351,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         trigger a spurious reload when the pane first posts it.
         """
         event.stop()
+        if self.runtime_backend != "local":
+            self._items_page_loading = False
+            self._push_items_pager_state()
+            return
         incoming = _normalize_items_status_filter(event.status_filter)
         status_changed = incoming != _normalize_items_status_filter(
             self._items_status_filter
