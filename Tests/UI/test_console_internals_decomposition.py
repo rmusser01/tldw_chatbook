@@ -2943,16 +2943,14 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-artifacts-heading")
+        console.query_one("#console-inspector-more-toggle", Button).press()
+        await pilot.pause()
 
-        assert (
-            getattr(
-                console.query_one(
-                    "#console-inspector-run-status-summary", Static
-                ).render(),
-                "plain",
-                "",
-            )
-            == "Status: Ready"
+        assert not list(console.query("#console-inspector-run-status-summary"))
+        assert "Run recipe:" in getattr(
+            console.query_one("#console-inspector-run-recipe", Static).render(),
+            "plain",
+            "",
         )
         assert not list(console.query("#console-run-inspector-title"))
         assert (

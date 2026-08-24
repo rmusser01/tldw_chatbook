@@ -343,14 +343,7 @@ async def test_resilient_collision_projection_keeps_first_instance_consistently(
         assert str(provider.renderable) == "Provider: first provider"
         assert len(app.query("#console-inspector-save-chatbook")) == 1
         assert len(app.query("#console-inspector-dictionaries-row-0")) == 1
-        assert (
-            str(
-                app.query_one(
-                    "#console-inspector-run-status-summary", Static
-                ).renderable
-            )
-            == "Status: Inspector data incomplete"
-        )
+        assert not list(app.query("#console-inspector-run-status-summary"))
         assert diagnostics == [
             (
                 "Inspector ownership incomplete: {}",
@@ -432,10 +425,7 @@ async def test_each_run_group_has_external_heading_and_one_bounded_body():
     async with InspectorHarness(state).run_test(size=(100, 60)) as pilot:
         await pilot.pause()
         inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
-        assert (
-            inspector.query_one("#console-inspector-run-status-summary").parent
-            is inspector
-        )
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
 
         expected_sections = (
             *(owner for owner, _heading_id, _labels in _ROW_GROUPS),
@@ -463,6 +453,25 @@ async def test_each_run_group_has_external_heading_and_one_bounded_body():
                     continue
                 row_id = _ownership_module().ROW_IDS[label]
                 assert body.query_one(f"#{row_id}")
+
+
+@pytest.mark.asyncio
+async def test_pinned_run_authority_removes_only_the_duplicate_status_summary():
+    state = _base_state(
+        rows=_base_state().rows
+        + (
+            ConsoleDisplayRow("Recovery action", "Reconnect provider"),
+            ConsoleDisplayRow("Next action", "Open Settings"),
+        )
+    )
+
+    async with InspectorHarness(state).run_test(size=(80, 32)) as pilot:
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
+        assert inspector.query_one("#console-inspector-run-recipe", Static)
+        assert inspector.query_one("#console-inspector-recovery-action", Static)
+        assert inspector.query_one("#console-inspector-next-action", Static)
 
 
 @pytest.mark.asyncio
@@ -527,10 +536,7 @@ async def test_resilient_ownership_omits_unknowns_deduplicates_safe_diagnostic_a
     async with app.run_test(size=(80, 32)) as pilot:
         inspector = app.query_one("#inspector", ConsoleRunInspector)
         provider_before = inspector.query_one("#console-inspector-provider", Static)
-        summary_before = inspector.query_one(
-            "#console-inspector-run-status-summary", Static
-        )
-        assert str(summary_before.renderable) == "Status: Inspector data incomplete"
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
         assert not app.query("#console-inspector-unknown-action")
         assert not [
             widget
@@ -590,12 +596,6 @@ async def test_resilient_ownership_omits_unknowns_deduplicates_safe_diagnostic_a
         )
         await pilot.pause()
         assert inspector.recompose_count == 0
-        assert (
-            inspector.query_one("#console-inspector-run-status-summary", Static)
-            is summary_before
-        )
-        assert str(summary_before.renderable) == "Status: Ready"
-
         inspector.sync_state(
             _base_state(
                 rows=(
@@ -644,16 +644,11 @@ async def test_inspector_row_text_change_updates_rows_in_place():
 
 
 @pytest.mark.asyncio
-async def test_inspector_row_status_change_swaps_class_and_summary_in_place():
+async def test_inspector_row_status_change_swaps_class_in_place():
     app = InspectorHarness(_base_state())
 
     async with app.run_test(size=(80, 32)) as pilot:
         inspector = app.query_one("#inspector", ConsoleRunInspector)
-        summary_before = inspector.query_one(
-            "#console-inspector-run-status-summary", Static
-        )
-        assert str(summary_before.renderable) == "Status: Ready"
-
         new_state = _base_state(
             rows=(
                 ConsoleDisplayRow("Run recipe", "Chat with provider"),
@@ -674,11 +669,7 @@ async def test_inspector_row_status_change_swaps_class_and_summary_in_place():
         assert provider_row.has_class("console-inspector-row-blocked")
         assert not provider_row.has_class("console-inspector-row-ready")
         assert str(provider_row.renderable) == "Provider: Missing API key - Add a key"
-        summary_after = inspector.query_one(
-            "#console-inspector-run-status-summary", Static
-        )
-        assert summary_after is summary_before
-        assert str(summary_after.renderable) == "Status: Blocked"
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
 
 
 @pytest.mark.asyncio

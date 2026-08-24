@@ -17344,11 +17344,12 @@ class ChatScreen(BaseAppScreen):
         inspector_state = self._build_console_inspector_state(
             self._pending_console_launch_context
         )
+        if inspector is not None:
+            # Strict ownership validates the complete snapshot before the
+            # resilient pinned projection publishes any part of it.
+            inspector.sync_state(inspector_state)
         if authority_summary is not None:
             authority_summary.sync_state(inspector_state)
-        if inspector is not None:
-            # The child owns all group-body and rail invalidation.
-            inspector.sync_state(inspector_state)
         # TASK-18060 Task 5: same in-place sync shape as the run inspector
         # immediately above -- reads only the cached summary, never the
         # DB/git (the guard-gated recompute lives in

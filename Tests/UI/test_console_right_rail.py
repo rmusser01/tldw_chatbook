@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
+    ConsoleRetrievalScopeState,
 )
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
@@ -57,6 +58,7 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
     ConsoleSendAuthoritySummary,
+    project_console_send_authority,
 )
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
@@ -129,7 +131,6 @@ _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-staged-context-tray", "Sources"),
     ("console-retrieval-scope-row", "Scope"),
     ("console-changed-files-section", "Changed Files"),
-    ("console-inspector-run-status-summary", "Run status"),
     ("console-inspector-run-heading", "Run"),
     ("console-inspector-source-readiness-heading", "Source Readiness"),
     ("console-inspector-tools-heading", "Tools"),
@@ -160,7 +161,7 @@ def _expected_run_inspector_child_ids(state) -> tuple[str, ...]:
     projected = ownership.classify_inspector_content(
         state, ownership.InspectorOwnershipPolicy.STRICT
     )
-    child_ids = ["console-inspector-run-status-summary"]
+    child_ids = []
 
     for owner, heading_id, _labels in ownership.ROW_GROUPS:
         rows = projected.rows_for(owner)
@@ -225,7 +226,6 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"
     )
     boundary_ids = {
-        "console-inspector-run-status-summary",
         "console-inspector-dictionaries-heading",
         "console-inspector-worldbooks-heading",
         *(heading_id for _owner, heading_id, _labels in ownership.ROW_GROUPS),
@@ -252,7 +252,6 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Sources",
         "Scope",
         "Changed Files",
-        "Run status",
         "Run",
         "Source Readiness",
         "Tools",
@@ -267,7 +266,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:6]) | {
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:5]) | {
         "console-settings-summary": "Session Settings",
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
@@ -275,7 +274,6 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "console-staged-context-tray": "Sources",
         "console-retrieval-scope-row": "Scope",
         "console-changed-files-section": "Changed Files",
-        "console-inspector-run-status-summary": "Run status",
         "console-settings-summary": "Session Settings",
         "console-pending-launch-card": "Live Work",
         "console-live-work-source-readiness": "Live Work",
@@ -380,7 +378,6 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
         compact_ids = {
             "console-project-instruction-status",
             "console-retrieval-scope-row",
-            "console-inspector-run-status-summary",
         }
         for compact_id in compact_ids:
             compact = rail.query_one(f"#{compact_id}")
@@ -922,6 +919,61 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
 
 
 @pytest.mark.asyncio
+async def test_effective_empty_scope_survives_snapshot_projection_as_no_sources(
+    monkeypatch,
+) -> None:
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        monkeypatch.setattr(
+            screen._retrieval,
+            "_build_console_retrieval_scope_state",
+            lambda: ConsoleRetrievalScopeState.empty(cause="no-workspace-overlap"),
+        )
+
+        snapshot = screen._build_console_inspector_state(
+            screen._pending_console_launch_context
+        )
+
+        assert snapshot.scope_item_count == 0
+        assert project_console_send_authority(snapshot).scope == "No sources"
+
+
+@pytest.mark.asyncio
+async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snapshot(
+    monkeypatch,
+) -> None:
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        inspector.ownership_policy = ownership.InspectorOwnershipPolicy.STRICT
+        prior = summary.last_state
+        rejected = ConsoleInspectorState(
+            rows=(ConsoleDisplayRow("Unknown changed row", "must not publish"),)
+        )
+        monkeypatch.setattr(
+            screen,
+            "_build_console_inspector_state",
+            lambda _launch: rejected,
+        )
+
+        with pytest.raises(ownership.UnownedInspectorContentError):
+            screen._sync_console_control_bar()
+
+        assert summary.last_state is prior
+
+
+@pytest.mark.asyncio
 async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -934,7 +986,7 @@ async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
         expected = summary.contextual_help_rows()
         summary.focus()
         await pilot.pause()
-        await screen.action_show_workbench_help()
+        await pilot.press("f1")
         await pilot.pause()
 
         panel = pilot.app.screen
@@ -1033,6 +1085,40 @@ async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
             "console-native-transcript",
             "console-native-composer",
         }
+
+
+@pytest.mark.asyncio
+async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        toggle = inspector.query_one("#console-inspector-more-toggle", Button)
+        context_focus = screen.query_one("#console-context-rail-collapse", Button)
+        toggle.focus()
+        await pilot.pause()
+        assert pilot.app.focused is toggle
+
+        rows = tuple(
+            row
+            for row in inspector.state.rows
+            if row.label not in {"Tools", "Approvals", "Artifacts"}
+        ) + (
+            ConsoleDisplayRow("Tools", "1 ready"),
+            ConsoleDisplayRow("Approvals", "1 pending", status="blocked"),
+            ConsoleDisplayRow("Artifacts", "Chatbook available"),
+        )
+        inspector.sync_state(replace(inspector.state, rows=rows))
+        context_focus.focus()
+        for _ in range(4):
+            await pilot.pause()
+
+        assert not list(inspector.query("#console-inspector-more-toggle"))
+        assert pilot.app.focused is context_focus
 
 
 @pytest.mark.asyncio

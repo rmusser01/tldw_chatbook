@@ -466,15 +466,6 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             True when all changed rows were updated in place; False when a
             target widget was missing (caller falls back to recompose).
         """
-        new_summary = self._status_summary()
-        if new_summary != self._status_summary(previous, previous_ownership):
-            try:
-                summary = self.query_one(
-                    "#console-inspector-run-status-summary", Static
-                )
-            except (NoMatches, QueryError):
-                return False
-            summary.update(new_summary)
         old_entries = self._rendered_row_entries(previous, previous_ownership)
         for (widget_id, text, status), (_old_id, old_text, old_status) in zip(
             self._rendered_row_entries(self.state, self._ownership), old_entries
@@ -596,41 +587,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         if self._on_reconcile is not None:
             self._on_reconcile()
 
-    def _status_summary(
-        self,
-        state: ConsoleInspectorState | None = None,
-        ownership: InspectorOwnedContent | None = None,
-    ) -> str:
-        """Return the primary run-inspector state in one scannable row.
-
-        Args:
-            state: Snapshot to summarize; defaults to the current state.
-        """
-        owned = ownership or self._ownership
-        if owned.incomplete:
-            return "Status: Inspector data incomplete"
-        rows = {entry.row.label: entry.row for entry in owned.rows}
-        provider = rows.get("Provider")
-        approvals = rows.get("Approvals")
-        rag_source = rows.get("Sources") or rows.get("RAG/source")
-        if provider is not None and provider.status == "blocked":
-            return "Status: Blocked"
-        if approvals is not None and approvals.status == "blocked":
-            return "Status: Needs approval"
-        if rag_source is not None and rag_source.status == "blocked":
-            return "Status: Source blocked"
-        # TASK-347: a live generation must not read "Ready" — but a mid-run
-        # block / pending approval above is still the more important signal.
-        if getattr(state or self.state, "run_active", False):
-            return "Status: Generating…"
-        return "Status: Ready"
-
     def compose(self) -> ComposeResult:
-        yield Static(
-            self._status_summary(),
-            id="console-inspector-run-status-summary",
-            classes="console-inspector-status-summary",
-        )
         promoted, more = self._group_projection(self._ownership)
         for owner, _heading_id, _labels in _ROW_GROUPS:
             if owner in _CONDITIONAL_OWNERS:

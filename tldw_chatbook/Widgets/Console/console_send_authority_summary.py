@@ -65,7 +65,9 @@ def project_console_send_authority(
         scope_parts.append("One-shot prefill")
     elif rows.get("Prefill (pinned)") is not None:
         scope_parts.append("Pinned prefill")
-    if state.scope_item_count:
+    if state.scope_item_count == 0:
+        scope_parts.append("No sources")
+    elif state.scope_item_count is not None:
         scope_parts.append(f"narrowed to {state.scope_item_count} items")
 
     provider = rows.get("Provider")

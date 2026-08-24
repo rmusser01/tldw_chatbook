@@ -663,20 +663,21 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
         inspector = console.query_one("#console-run-inspector-state")
         ordered_ids = _children_in_display_order(inspector)
 
-        status_index = ordered_ids.index("console-inspector-run-status-summary")
+        run_recipe_index = ordered_ids.index("console-inspector-run-recipe")
         approval_action_index = ordered_ids.index("console-inspector-review-approval")
         save_action_index = ordered_ids.index("console-inspector-save-chatbook")
         first_secondary_heading_index = ordered_ids.index(
             "console-inspector-selected-conversation-heading"
         )
 
-        assert status_index < approval_action_index < first_secondary_heading_index
+        assert run_recipe_index < approval_action_index < first_secondary_heading_index
         # TASK-1843 removed `console-inspector-review-tool-call`: it gated on
         # a counter nothing ever assigned, so it was permanently disabled
         # while permanently claiming a reason, and its handler was a notify()
         # stub. It must stay gone rather than be re-added as a stub.
         assert "console-inspector-review-tool-call" not in ordered_ids
-        assert status_index < save_action_index < first_secondary_heading_index
+        assert run_recipe_index < save_action_index < first_secondary_heading_index
+        assert "console-inspector-run-status-summary" not in ordered_ids
         assert console.query_one("#console-inspector-review-approval").disabled is False
         assert console.query_one("#console-inspector-save-chatbook").disabled is False
 

@@ -238,6 +238,8 @@ class ConsoleRetrievalController:
     def _console_retrieval_scope_run_recipe_count(self) -> int | None:
         """Return the effective scoped-item count, or ``None`` when unscoped."""
         state = self._build_console_retrieval_scope_state()
+        if state.is_empty:
+            return 0
         return state.item_count if state.is_scoped else None
 
     async def _resolve_console_effective_scope_state(

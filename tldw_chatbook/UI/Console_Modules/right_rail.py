@@ -920,6 +920,13 @@ class ConsoleInspectorRail(Vertical):
     def _recover_keyed_boundary_focus(self, section_id: str | None) -> None:
         """Focus a captured boundary after Textual commits recompose fallback."""
 
+        focused = self.app.focused
+        if (
+            isinstance(focused, Widget)
+            and self._is_enabled_focus_target(focused)
+            and not self.inspector_active(focused)
+        ):
+            return
         self._recover_focus_incident(
             section_id or "",
             _FocusRecoveryIncident(target_id=None, target_index=None),

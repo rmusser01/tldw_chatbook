@@ -625,15 +625,8 @@ async def test_navigation_from_scope_uses_first_following_boundary():
             description="Scope navigating exactly to outer body for inert Run",
         )
 
-        run_status = rail.query_one("#console-inspector-run-status-summary")
-        run_status.can_focus = True
-        run_status.focus()
-        await pilot.press("p")
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: pilot.app.focused is sources.viewport,
-            description="run-status compact row navigating backward",
-        )
+        assert not list(rail.query("#console-inspector-run-status-summary"))
+        assert rail.query_one("#console-inspector-run-recipe")
 
 
 @pytest.mark.asyncio

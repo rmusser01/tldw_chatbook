@@ -254,7 +254,6 @@ async def test_unicode_tooltips_and_context_help_only_expose_complete_values() -
 
         await pilot.resize_terminal(160, 12)
         await pilot.pause()
-        summary.recompute_tooltips()
         assert where.tooltip is None
         assert scope.tooltip is None
 
