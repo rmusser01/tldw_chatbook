@@ -563,6 +563,52 @@ class _CommitThenPauseOverlayStore:
         return saved
 
 
+class _BlockBeforeCommitOverlayStore:
+    """Pause the first real save before its compare-and-replace begins."""
+
+    def __init__(self, path: Path, local_ref: QualifiedWorkspaceRef) -> None:
+        self._store = ResearchPresentationOverlayStore(path)
+        self._local_ref = local_ref
+        self._lock = threading.Lock()
+        self._first_save = True
+        self._load_counts: dict[QualifiedWorkspaceRef, int] = {}
+        self.first_save_started = threading.Event()
+        self.release_first_save = threading.Event()
+        self.returned_local_loaded = threading.Event()
+
+    def load(self, ref: QualifiedWorkspaceRef):
+        overlay = self._store.load(ref)
+        with self._lock:
+            count = self._load_counts.get(ref, 0) + 1
+            self._load_counts[ref] = count
+        if ref == self._local_ref and count >= 2:
+            self.returned_local_loaded.set()
+        return overlay
+
+    def save(
+        self,
+        ref: QualifiedWorkspaceRef,
+        preferences: ResearchPanePreferences,
+        *,
+        expected_revision: int,
+    ):
+        with self._lock:
+            block = self._first_save
+            self._first_save = False
+        if block:
+            self.first_save_started.set()
+            assert self.release_first_save.wait(2)
+        return self._store.save(
+            ref,
+            preferences,
+            expected_revision=expected_revision,
+        )
+
+    def load_count(self, ref: QualifiedWorkspaceRef) -> int:
+        with self._lock:
+            return self._load_counts.get(ref, 0)
+
+
 @pytest.mark.asyncio
 async def test_rapid_medium_companion_saves_follow_committed_revision_order(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -686,6 +732,97 @@ async def test_queued_overlay_save_recaptures_owner_after_authority_switch(
         assert server_saved.revision == 1
         assert server_saved.preferences == ResearchPanePreferences()
         assert screen._overlay_revision == 1
+
+
+@pytest.mark.asyncio
+async def test_local_aba_reconciles_own_precommit_save_before_final_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stale owner commit remains trustworthy revision evidence for its ref."""
+    import tldw_chatbook.app as app_module
+
+    local_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local-research")
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    store = _BlockBeforeCommitOverlayStore(
+        tmp_path / "precommit-aba-overlay.json", local_ref
+    )
+    screen.overlay_store = store
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        screen,
+        "notify",
+        lambda message, **kwargs: (
+            warnings.append(str(message))
+            if kwargs.get("severity") == "warning"
+            else None
+        ),
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if screen._overlay_ref == local_ref and store.load_count(local_ref) == 1:
+                break
+        assert screen._overlay_ref == local_ref
+
+        screen.query_one("#research-pane-mode-studio", Button).press()
+        assert await asyncio.to_thread(store.first_save_started.wait, 1)
+
+        screen.query_one("#research-data-source-server", Button).press()
+        server_ref = None
+        for _ in range(100):
+            await pilot.pause(0.02)
+            candidate = screen._overlay_ref
+            if (
+                candidate is not None
+                and candidate.data_source is WorkspaceDataSource.SERVER
+                and store.load_count(candidate) == 1
+            ):
+                server_ref = candidate
+                break
+        assert server_ref is not None
+
+        screen.query_one("#research-data-source-local", Button).press()
+        assert await asyncio.to_thread(store.returned_local_loaded.wait, 1)
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if screen._overlay_ref == local_ref and screen._overlay_revision == 0:
+                break
+        assert store.load(local_ref) is None
+        assert screen.pane_preferences == ResearchPanePreferences()
+
+        screen.query_one("#research-pane-mode-studio", Button).press()
+        await pilot.pause()
+        screen.query_one("#research-pane-mode-sources", Button).press()
+        await pilot.pause()
+        assert screen.pane_preferences.preferred_companion == "sources"
+
+        store.release_first_save.set()
+        saved = None
+        for _ in range(100):
+            await pilot.pause(0.02)
+            saved = store.load(local_ref)
+            if (
+                saved is not None
+                and saved.revision == 2
+                and saved.preferences.preferred_companion == "sources"
+            ):
+                break
+
+        assert saved is not None
+        assert saved.revision == 2
+        assert saved.preferences == screen.pane_preferences
+        assert screen._overlay_revision == 2
+        assert warnings == []
 
 
 @pytest.mark.asyncio

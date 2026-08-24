@@ -68,6 +68,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_save_lock = asyncio.Lock()
         self._overlay_save_requested = False
         self._overlay_save_running = False
+        self._overlay_committed_revisions: dict[QualifiedWorkspaceRef, int] = {}
 
     def save_state(self) -> dict[str, object]:
         """Save Phase-1 authority, workspace intent, and responsive view state."""
@@ -435,7 +436,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         owner_generation = self._overlay_owner_generation
         preferences = self.pane_preferences
-        expected_revision = self._overlay_revision
+        expected_revision = max(
+            self._overlay_revision,
+            self._overlay_committed_revisions.get(ref, 0),
+        )
         try:
             saved = await asyncio.to_thread(
                 store.save,
@@ -449,6 +453,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 severity="warning",
             )
             return
+        self._overlay_committed_revisions[ref] = max(
+            saved.revision,
+            self._overlay_committed_revisions.get(ref, 0),
+        )
         if (
             ref == self._overlay_ref
             and owner_generation == self._overlay_owner_generation

@@ -119,3 +119,27 @@ inverse guards passed, and CSS reproduction, Ruff, format, compile, diff,
 detector, and affected rendered geometry checks passed. ADR-078 remains the
 governing decision, no new ADR was required, known unrelated Library failures
 remain out of scope, and full pytest was not run.
+
+### Fix Round 3
+
+Added qualified-ref revision reconciliation for the Local → Server → same Local
+pre-commit ABA. Every successful screen-owned overlay save records only its
+monotonic revision by qualified ref, even when its owner generation is stale.
+Queued serialized saves use the maximum of the current overlay revision and
+that screen-owned evidence. Stale owners still cannot update current UI,
+preferences, or `_overlay_revision`; external optimistic conflicts still fail
+closed without blind retry. The ledger contains only refs successfully saved by
+this screen and remains bounded by the overlay store's record limit.
+
+The production Workspace → Runs → Workspace test now uses an available Server
+service and a seeded Server overlay under `tmp_path`. It waits for successful
+`Server catalog ready` state and overlay revision 1 before asserting the
+qualified Server ref, selector, active pane/preferences, visible arrangement,
+status, and independent Runs state.
+
+Fix Round 3 verification passed `321 passed` with only the accepted
+`RequestsDependencyWarning`; the amended slice passed `126 passed`, all six
+inverse guards passed, and CSS reproduction, Ruff, format, compile, diff,
+detector, conflict/stale-load guards, and affected rendered geometry checks
+passed. ADR-078 remains the governing decision, no new ADR was required, known
+unrelated Library failures remain out of scope, and full pytest was not run.

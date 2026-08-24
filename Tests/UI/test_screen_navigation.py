@@ -3819,34 +3819,69 @@ def test_primary_routed_screens_use_base_app_screen():
 
 
 @pytest.mark.asyncio
-async def test_research_workspace_runs_round_trip_restores_independent_context():
+async def test_research_workspace_runs_round_trip_restores_independent_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
     """The real navigation snapshot must not reset Workspace to Local."""
     from tldw_chatbook.Research_Workspace import (
-        QualifiedWorkspaceRef,
         ResearchPanePreferences,
         WorkspaceDataSource,
     )
 
+    import tldw_chatbook.app as app_module
+
+    class _AvailableServerWorkspaceService:
+        async def list_workspaces(self):
+            return [
+                {
+                    "id": "server-intent",
+                    "name": "Server research notebook",
+                    "archived": False,
+                    "version": 3,
+                }
+            ]
+
+    server_context = SimpleNamespace(
+        active_server_id="server-profile-a",
+        auth_token="round-trip-test-token",
+        credential_source="round-trip-test",
+        capabilities={
+            "server_configured": True,
+            "reachability": "reachable",
+            "auth_state": "authenticated",
+            "revision": "round-trip-context-1",
+        },
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
     app = _build_test_app()
+    app.server_notes_workspace_service = _AvailableServerWorkspaceService()
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: server_context
+    )
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
         await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
         first_workspace = app.screen
-        server_ref = QualifiedWorkspaceRef(
-            WorkspaceDataSource.SERVER,
-            "server-intent",
-            server_profile_id="server-profile-a",
-            principal_id="principal-a",
+        server_adapter = first_workspace.controller.port_for_data_source(
+            WorkspaceDataSource.SERVER
         )
-        first_workspace.controller.select_data_source(WorkspaceDataSource.SERVER)
-        first_workspace.controller.select_workspace(server_ref)
-        first_workspace.active_pane = "studio"
-        first_workspace.pane_preferences = ResearchPanePreferences(
+        server_ref = (await server_adapter.list_workspaces())[0].ref
+        server_preferences = ResearchPanePreferences(
             sources_open=False,
             studio_open=True,
             preferred_companion="studio",
         )
+        first_workspace.overlay_store.save(
+            server_ref,
+            server_preferences,
+            expected_revision=0,
+            timestamp="2026-08-24T00:00:00Z",
+        )
+        first_workspace.controller.select_data_source(WorkspaceDataSource.SERVER)
+        first_workspace.controller.select_workspace(server_ref)
+        first_workspace.active_pane = "studio"
+        first_workspace.pane_preferences = server_preferences
 
         await app.handle_screen_navigation(NavigateToScreen("research"))
         assert type(app.screen).__name__ == "ResearchScreen"
@@ -3870,7 +3905,11 @@ async def test_research_workspace_runs_round_trip_restores_independent_context()
             if (
                 state is not None
                 and state.data_source is WorkspaceDataSource.SERVER
-                and "Server selected"
+                and state.recovery is None
+                and restored.controller.selected_ref == server_ref
+                and restored._overlay_revision == 1
+                and restored.pane_preferences == server_preferences
+                and "Server catalog ready"
                 in str(restored.query_one("#research-workspace-status").render())
             ):
                 break
@@ -3879,11 +3918,8 @@ async def test_research_workspace_runs_round_trip_restores_independent_context()
         assert restored.controller.selected_data_source is WorkspaceDataSource.SERVER
         assert restored.controller.selected_ref == server_ref
         assert restored.active_pane == "studio"
-        assert restored.pane_preferences == ResearchPanePreferences(
-            sources_open=False,
-            studio_open=True,
-            preferred_companion="studio",
-        )
+        assert restored._overlay_revision == 1
+        assert restored.pane_preferences == server_preferences
         assert restored.query_one("#research-data-source-server").has_class(
             "is-active"
         )
@@ -3892,7 +3928,7 @@ async def test_research_workspace_runs_round_trip_restores_independent_context()
         assert restored.query_one("#research-studio-pane").display
         assert restored._pane_layout is not None
         assert restored._pane_layout.visible_panes == ("chat", "studio")
-        assert "Server selected" in str(
+        assert "Server catalog ready" in str(
             restored.query_one("#research-workspace-status").render()
         )
         assert runs_state == app.screen_state_store.restore(
