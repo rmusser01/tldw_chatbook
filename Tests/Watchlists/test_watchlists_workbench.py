@@ -110,12 +110,19 @@ def test_region_titles_cover_exactly_the_live_regions() -> None:
     assert set(REGION_TITLES) == set(Region)
 
 
+@pytest.mark.parametrize(
+    ("width", "centre_width"),
+    [(161, 44), (206, 89), (220, 103), (224, 107)],
+)
 @pytest.mark.asyncio
-async def test_real_bundle_keeps_approved_wide_targets_and_minimums() -> None:
-    app = _BoundaryGeometryApp(220, read_mode=True)
+async def test_read_real_bundle_fills_wide_body_exactly(
+    width: int, centre_width: int
+) -> None:
+    app = _BoundaryGeometryApp(width, read_mode=True)
 
-    async with app.run_test(size=(220, 24)) as pilot:
+    async with app.run_test(size=(width, 24)) as pilot:
         await pilot.pause()
+        assert app.layout.collapsed == frozenset()
         expected = {
             ".watchlists-region-left_rail": (28, 24),
             ".watchlists-read-mode .watchlists-region-items": (40, 32),
@@ -128,6 +135,17 @@ async def test_real_bundle_keeps_approved_wide_targets_and_minimums() -> None:
             assert pane.styles.max_width is not None
             assert pane.styles.max_width.value == target
             assert pane.region.width == target
+        _assert_real_bundle_geometry(
+            app,
+            width=width,
+            read_mode=True,
+            expected_widths={
+                "wl-region-left_rail": 28,
+                "wl-region-items": 40,
+                "wl-region-content": centre_width,
+                "wl-region-right_rail": 34,
+            },
+        )
 
 
 def _assert_real_bundle_geometry(
@@ -148,7 +166,8 @@ def _assert_real_bundle_geometry(
     assert body.region.width == workbench.content_region.width == width
     assert body.region.height == workbench.content_region.height
     assert body.max_scroll_x == 0
-    assert body.virtual_size.width <= body.content_region.width
+    assert body.virtual_size.width == body.content_region.width
+    assert children[-1].region.right == body.content_region.right
     assert all(body.content_region.contains_region(child.region) for child in children)
     assert all(
         left.region.right <= right.region.x
@@ -163,7 +182,20 @@ def _assert_real_bundle_geometry(
     centre_id = "wl-region-content" if read_mode else "wl-region-items"
     centre = app.query_one(f"#{centre_id}")
     assert centre.styles.min_width is not None
-    assert centre.styles.min_width.value == 0
+    side_regions = (
+        (Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL)
+        if read_mode
+        else (Region.LEFT_RAIL, Region.RIGHT_RAIL)
+    )
+    has_expanded_side_pane = any(
+        not app.layout.is_collapsed(region) for region in side_regions
+    )
+    assert workbench.has_class("watchlists-has-expanded-side-pane") is (
+        has_expanded_side_pane
+    )
+    assert centre.styles.min_width.value == (
+        44 if has_expanded_side_pane else 0
+    )
     assert centre.region.width == body.content_region.width - sum(
         child.region.width for child in children if child is not centre
     )
@@ -434,7 +466,11 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
     class _App(App[None]):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
-                RegionLayout(collapsed=frozenset({Region.LEFT_RAIL})),
+                RegionLayout(
+                    collapsed=frozenset(
+                        {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
+                    )
+                ),
                 content={Region.LEFT_RAIL: rail_factory},
                 read_mode=True,
                 id="wl-workbench",
@@ -445,8 +481,12 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
         workbench = app.query_one(WatchlistsWorkbench)
         grip = app.query_one("#wl-grip-left_rail", WatchlistsPaneGrip)
         reader = app.query_one("#wl-region-content")
+        assert not workbench.has_class("watchlists-has-expanded-side-pane")
 
-        workbench.region_layout = RegionLayout()
+        expanded_left = RegionLayout(
+            collapsed=frozenset({Region.ITEMS, Region.RIGHT_RAIL})
+        )
+        workbench.region_layout = expanded_left
         await pilot.pause()
 
         assert workbench.region_layout.is_collapsed(Region.LEFT_RAIL)
@@ -454,13 +494,15 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
         assert grip.expanded is False
         assert not app.query("#wl-region-left_rail")
         assert app.query_one("#wl-region-content") is reader
+        assert not workbench.has_class("watchlists-has-expanded-side-pane")
         assert app.is_running
 
         fail_rail = False
-        workbench.region_layout = RegionLayout()
+        workbench.region_layout = expanded_left
         await pilot.pause()
         assert app.query("#wl-region-left_rail")
         assert grip.expanded is True
+        assert workbench.has_class("watchlists-has-expanded-side-pane")
 
 
 @pytest.mark.asyncio
@@ -719,22 +761,28 @@ async def test_mode_switch_factory_failure_preserves_previous_read_view() -> Non
 
 @pytest.mark.asyncio
 async def test_read_mode_class_tracks_incremental_mode_switches() -> None:
-    app = _WorkbenchApp(RegionLayout(), read_mode=True)
+    rails_collapsed = RegionLayout(
+        collapsed=frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL})
+    )
+    app = _WorkbenchApp(rails_collapsed, read_mode=True)
     async with app.run_test():
         workbench = app.query_one(WatchlistsWorkbench)
         assert workbench.has_class("watchlists-read-mode")
+        assert workbench.has_class("watchlists-has-expanded-side-pane")
 
         await workbench.apply_section_view(
             read_mode=False,
-            layout=RegionLayout(),
+            layout=rails_collapsed,
         )
         assert not workbench.has_class("watchlists-read-mode")
+        assert not workbench.has_class("watchlists-has-expanded-side-pane")
 
         await workbench.apply_section_view(
             hidden=frozenset(),
-            layout=RegionLayout(),
+            layout=rails_collapsed,
         )
         assert workbench.has_class("watchlists-read-mode")
+        assert workbench.has_class("watchlists-has-expanded-side-pane")
 
 
 def _article(item_id: int) -> dict:

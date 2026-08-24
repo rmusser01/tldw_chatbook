@@ -44,6 +44,7 @@ _MANAGEMENT_GRIP_REGIONS: tuple[Region, ...] = (
     Region.LEFT_RAIL,
     Region.RIGHT_RAIL,
 )
+_EXPANDED_SIDE_PANE_CLASS = "watchlists-has-expanded-side-pane"
 
 
 class RegionLayoutApplyFailed(Message):
@@ -104,6 +105,7 @@ class WatchlistsWorkbench(Vertical):
         )
         self.set_class(self.read_mode, "watchlists-read-mode")
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+        self._sync_expanded_side_pane_class(layout=layout)
 
     def compose(self) -> ComposeResult:
         """Mount the header first and the horizontal workbench body second."""
@@ -184,6 +186,7 @@ class WatchlistsWorkbench(Vertical):
                     prepared[region] = self._region_body(region)
         except Exception:
             self.set_reactive(WatchlistsWorkbench.region_layout, previous)
+            self._sync_expanded_side_pane_class(layout=previous)
             logger.exception("Watchlists pane expansion factory failed")
             self.post_message(
                 RegionLayoutApplyFailed(attempted=layout, fallback=previous)
@@ -204,6 +207,7 @@ class WatchlistsWorkbench(Vertical):
                 if node.is_mounted:
                     await node.remove()
             self.set_reactive(WatchlistsWorkbench.region_layout, previous)
+            self._sync_expanded_side_pane_class(layout=previous)
             logger.exception("Watchlists pane expansion mount failed")
             self.post_message(
                 RegionLayoutApplyFailed(attempted=layout, fallback=previous)
@@ -220,10 +224,28 @@ class WatchlistsWorkbench(Vertical):
                 f"#wl-grip-{region.value}", WatchlistsPaneGrip
             )
             grip.expanded = expanded
+        self._sync_expanded_side_pane_class(layout=layout)
 
     @property
     def _grip_regions(self) -> tuple[Region, ...]:
         return _READ_GRIP_REGIONS if self.read_mode else _MANAGEMENT_GRIP_REGIONS
+
+    def _sync_expanded_side_pane_class(
+        self,
+        *,
+        read_mode: bool | None = None,
+        layout: RegionLayout | None = None,
+    ) -> None:
+        """Expose whether the effective mode has an expanded side body."""
+        read_mode = self.read_mode if read_mode is None else read_mode
+        layout = self.region_layout if layout is None else layout
+        side_regions = (
+            _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
+        )
+        self.set_class(
+            any(not layout.is_collapsed(region) for region in side_regions),
+            _EXPANDED_SIDE_PANE_CLASS,
+        )
 
     def _body(self) -> Horizontal | None:
         try:
@@ -262,6 +284,9 @@ class WatchlistsWorkbench(Vertical):
             self.read_mode = next_read_mode
             self.set_class(self.read_mode, "watchlists-read-mode")
             self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+            self._sync_expanded_side_pane_class(
+                read_mode=next_read_mode, layout=layout
+            )
             return
 
         replacement_header = (
@@ -280,6 +305,9 @@ class WatchlistsWorkbench(Vertical):
             self.read_mode = next_read_mode
             self.set_class(self.read_mode, "watchlists-read-mode")
             self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+            self._sync_expanded_side_pane_class(
+                read_mode=next_read_mode, layout=layout
+            )
 
     async def _reconcile_body(
         self,
