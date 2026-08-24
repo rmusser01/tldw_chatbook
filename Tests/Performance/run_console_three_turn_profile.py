@@ -6351,6 +6351,16 @@ async def run_mounted_sample(
             await asyncio.wait_for(third_assistant_terminal.wait(), timeout=180.0)
             await wait_until(lambda: observation.snapshot()["provider_call_count"] >= 5)
             await wait_review_idle(console)
+            expected_queue_counts = expected_mounted_queue_counts(
+                adapter.revision_kind
+            )
+            await wait_until(
+                lambda: all(
+                    observation.snapshot()[name] == expected
+                    for name, expected in expected_queue_counts.items()
+                ),
+                timeout=30.0,
+            )
             await pilot.pause(0.05)
 
             snapshot = observation.snapshot()
@@ -6388,9 +6398,6 @@ async def run_mounted_sample(
         assert observation is not None
         snapshot = observation.snapshot()
         provider_calls = snapshot["provider_calls"]
-        expected_queue_counts = expected_mounted_queue_counts(
-            adapter.revision_kind
-        )
         if any(
             snapshot[name] != expected
             for name, expected in expected_queue_counts.items()
