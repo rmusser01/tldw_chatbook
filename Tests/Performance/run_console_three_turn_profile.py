@@ -5710,6 +5710,23 @@ async def run_scripted_mounted_sample(
     }
 
 
+def mounted_sample_mutation_path(
+    *,
+    revision_kind: str,
+    workspace_root: Path,
+    console_runtime: Any,
+    session_id: str,
+) -> Path:
+    """Return the filesystem root owned by the target revision's local tools."""
+    if revision_kind == "legacy":
+        root = workspace_root
+    elif revision_kind == "candidate":
+        root = Path(console_runtime.scratch_spaces.snapshot(session_id).root)
+    else:
+        raise RuntimeError(f"unknown_target_revision_kind:{revision_kind}")
+    return root / "measured/turn-two.txt"
+
+
 class _MountedObservation:
     """Thread-safe, body-free observations for one mounted real-provider sample."""
 
@@ -6113,6 +6130,7 @@ async def run_mounted_sample(
     observation: _MountedObservation | None = None
     store: Any | None = None
     active_session_id: str | None = None
+    mutation_success = False
     try:
         runtime = prepare_workspace_runtime(root, arm=arm)
         corpus = generate_corpus(runtime.workspace_root)
@@ -6265,6 +6283,14 @@ async def run_mounted_sample(
             )
             if session.workspace_id != runtime.workspace_id:
                 raise RuntimeError("mounted_sample_workspace_mismatch")
+            console_runtime = console._console_runtime()
+            mutation_path = mounted_sample_mutation_path(
+                revision_kind=adapter.revision_kind,
+                workspace_root=runtime.workspace_root,
+                console_runtime=console_runtime,
+                session_id=active_session_id,
+            )
+            mutation_path.parent.mkdir(exist_ok=True)
             store.set_session_project_instruction_state(
                 active_session_id,
                 ProjectInstructionControlState.legacy_disabled(),
@@ -6329,19 +6355,18 @@ async def run_mounted_sample(
                 active_session_id
             )
             prompt_loss_count = abs(3 - user_count) + queue_snapshot.total_count
-            console_runtime = console._console_runtime()
+            mutation_success = (
+                mutation_path.is_file()
+                and mutation_path.read_bytes() == FIXED_MUTATION
+            )
+            if not mutation_success:
+                raise RuntimeError("benchmark_mutation_contract_failed")
             await await_owned_cleanup(console_runtime.dispose())
             console_runtime = None
             mounted_contract_complete = True
 
         heartbeat_stop.set()
         await heartbeat_task
-        mutation_path = runtime.workspace_root / "measured" / "turn-two.txt"
-        mutation_success = (
-            mutation_path.is_file() and mutation_path.read_bytes() == FIXED_MUTATION
-        )
-        if not mutation_success:
-            raise RuntimeError("benchmark_mutation_contract_failed")
         assert observation is not None
         snapshot = observation.snapshot()
         provider_calls = snapshot["provider_calls"]

@@ -11657,3 +11657,27 @@ async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     assert result["third_provider_started_ns"] is not None
     assert result["terminal_third_assistant"] == "turn-three-complete"
     assert result["mutation_verified"] is True
+
+
+def test_mounted_sample_mutation_path_tracks_revision_authority(tmp_path: Path):
+    scratch_root = tmp_path / "private-scratch"
+
+    class ScratchSpaces:
+        def snapshot(self, session_id: str) -> SimpleNamespace:
+            assert session_id == "session-a"
+            return SimpleNamespace(root=scratch_root)
+
+    console_runtime = SimpleNamespace(scratch_spaces=ScratchSpaces())
+
+    assert profile.mounted_sample_mutation_path(
+        revision_kind="legacy",
+        workspace_root=tmp_path / "workspace",
+        console_runtime=console_runtime,
+        session_id="session-a",
+    ) == tmp_path / "workspace/measured/turn-two.txt"
+    assert profile.mounted_sample_mutation_path(
+        revision_kind="candidate",
+        workspace_root=tmp_path / "workspace",
+        console_runtime=console_runtime,
+        session_id="session-a",
+    ) == scratch_root / "measured/turn-two.txt"
