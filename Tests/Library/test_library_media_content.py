@@ -295,3 +295,84 @@ async def test_active_query_sync_mounts_controls_and_markdown_placeholder() -> N
         assert active_input.placeholder == "Search content (raw text)…"
         assert app.query_one("#library-media-content-search-prev", Button)
         assert app.query_one("#library-media-content-search-next", Button)
+
+
+# ---------------------------------------------------------------------------
+# TASK-21134: a search refresh restyles, it does not resize
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
+    """``sync_search`` restyles the SAME characters, so no layout is needed.
+
+    ``build_raw_content_renderable`` only moves highlight spans around: it
+    never adds, removes or rewraps a line, so the Static's size cannot change
+    between match-nav clicks. The layout pass ``Static.update()`` arms by
+    default cost a measured 84.9 -> 57.7 ms of CPU per click on a 100 KB
+    document at 120x40 (10 Layout messages per 10 clicks -> 0).
+    """
+    body = LibraryMediaContentBody(
+        content="alpha needle\nbeta\ngamma needle\n",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="body",
+    )
+    app = BodyHarness(body)
+
+    async with app.run_test(size=(60, 12)):
+        raw_widget = body._raw_widget
+        assert raw_widget is not None
+
+        seen: list[bool] = []
+        real_update = Static.update
+
+        def recording_update(self, content="", *, layout: bool = True) -> None:
+            if self is raw_widget:
+                seen.append(layout)
+            real_update(self, content, layout=layout)
+
+        monkeypatch.setattr(Static, "update", recording_update)
+
+        body.sync_search("needle", 0)
+        body.sync_search("needle", 1)
+
+        assert seen == [False, False], f"search refresh armed a layout pass: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_search_refresh_still_repaints_the_active_match() -> None:
+    """Skipping layout must not skip the repaint the highlight depends on."""
+    body = LibraryMediaContentBody(
+        content="alpha needle\nbeta\ngamma needle\n",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="body",
+    )
+    app = BodyHarness(body)
+
+    async with app.run_test(size=(60, 12)):
+        raw_widget = body._raw_widget
+        assert raw_widget is not None
+
+        body.sync_search("needle", 0)
+        first = raw_widget.renderable
+        assert isinstance(first, Text)
+        first_active = [
+            span for span in first.spans if "bold" in str(span.style)
+        ]
+
+        body.sync_search("needle", 1)
+        second = raw_widget.renderable
+        assert isinstance(second, Text)
+        second_active = [
+            span for span in second.spans if "bold" in str(span.style)
+        ]
+
+        assert first.plain == second.plain  # same characters: no relayout owed
+        assert first_active and second_active
+        assert first_active[0].start != second_active[0].start
