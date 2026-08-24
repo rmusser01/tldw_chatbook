@@ -1792,6 +1792,17 @@ def _load_settings_uncached(
             f"Darwin platform-preferred STT provider resolved to: {default_stt_provider}"
         )
 
+    # Lazy import avoids pulling the Library package through config's module
+    # initialization path while still sharing the canonical normalization.
+    from tldw_chatbook.Library.library_media_reader_state import (
+        normalize_media_reader_preferences,
+    )
+
+    media_reader_preferences = normalize_media_reader_preferences(
+        library_section.get("media_reader", {})
+        if isinstance(library_section.get("media_reader"), Mapping)
+        else {}
+    )
     config_dict = {
         # General App
         "APP_MODE_STR": single_user_mode_str,
@@ -2776,6 +2787,7 @@ def _load_settings_uncached(
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
         "library": {
+            **copy.deepcopy(library_section),
             "ingest_directory_scan_limit": coerce_int_setting(
                 library_section.get("ingest_directory_scan_limit", 1000),
                 1000,
@@ -2790,6 +2802,13 @@ def _load_settings_uncached(
             "ingest_options": library_section.get("ingest_options", {})
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
+            "media_reader": {
+                "library_open": media_reader_preferences.library_open,
+                "items_open": media_reader_preferences.items_open,
+                "custom_widths_enabled": media_reader_preferences.custom_widths_enabled,
+                "library_width": media_reader_preferences.library_width,
+                "items_width": media_reader_preferences.items_width,
+            },
         },
         "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
         "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
@@ -3167,6 +3186,16 @@ ingest_url_preflight_probe = false
 # Max concurrent heavy (audio/video transcription) parses; document parses fan
 # out past this cap to fill the remaining pool workers. Default: 1.
 # ingest_heavy_lane_max_workers = 1
+
+[library.media_reader]
+# Preferred manual pane state. Responsive collapse is session-only and never
+# overwrites these values.
+library_open = true
+items_open = true
+# Fixed targets (28/40) are the default. Enable custom widths explicitly.
+custom_widths_enabled = false
+library_width = 28
+items_width = 40
 
 # Per-type ingestion options are persisted here by the Library ingest canvas.
 [library.ingest_options]

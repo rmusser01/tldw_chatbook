@@ -171,6 +171,15 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
             "ascii_glyphs": False,
             "console_transcript_style": "role_accents",
         },
+        "library": {
+            "media_reader": {
+                "library_open": True,
+                "items_open": True,
+                "custom_widths_enabled": False,
+                "library_width": 28,
+                "items_width": 40,
+            }
+        },
     }
 
 
@@ -224,3 +233,98 @@ def test_load_appearance_defaults_ascii_glyphs_defaults_off_and_coerces():
         ).ascii_glyphs
         is False
     )
+
+
+def test_load_appearance_defaults_reads_normalized_media_reader_preferences():
+    defaults = load_appearance_defaults(
+        {
+            "library": {
+                "media_reader": {
+                    "library_open": "false",
+                    "items_open": True,
+                    "custom_widths_enabled": "yes",
+                    "library_width": "36",
+                    "items_width": 54,
+                }
+            }
+        }
+    )
+
+    assert defaults.library_media_library_open is False
+    assert defaults.library_media_items_open is True
+    assert defaults.library_media_custom_widths_enabled is True
+    assert defaults.library_media_library_width == 36
+    assert defaults.library_media_items_width == 54
+
+
+def test_load_appearance_defaults_normalizes_malformed_media_reader_values():
+    defaults = load_appearance_defaults(
+        {
+            "library": {
+                "media_reader": {
+                    "library_open": object(),
+                    "items_open": "not-bool",
+                    "custom_widths_enabled": True,
+                    "library_width": -500,
+                    "items_width": 500,
+                }
+            }
+        }
+    )
+
+    assert defaults.library_media_library_open is True
+    assert defaults.library_media_items_open is True
+    assert defaults.library_media_custom_widths_enabled is True
+    assert defaults.library_media_library_width == 24
+    assert defaults.library_media_items_width == 72
+
+
+def test_validate_appearance_defaults_rejects_media_reader_types_and_widths():
+    invalid_values = (
+        ({"library_media_library_open": "yes"}, "Library pane"),
+        ({"library_media_items_open": 1}, "Items pane"),
+        ({"library_media_custom_widths_enabled": "yes"}, "Custom widths"),
+        ({"library_media_library_width": 23}, "Library width"),
+        ({"library_media_library_width": 49}, "Library width"),
+        ({"library_media_items_width": 31}, "Items width"),
+        ({"library_media_items_width": 73}, "Items width"),
+    )
+
+    for overrides, expected_message in invalid_values:
+        values = SettingsAppearanceDefaults(
+            **{**SettingsAppearanceDefaults().__dict__, **overrides}
+        )
+        result = validate_appearance_defaults(values)
+
+        assert result.valid is False
+        assert expected_message in result.message
+
+
+def test_build_appearance_save_sections_deep_merges_library_media_reader():
+    sections = build_appearance_save_sections(
+        {
+            "library": {
+                "search": {"history": ["alpha"]},
+                "media_reader": {"future_key": "preserved"},
+            }
+        },
+        SettingsAppearanceDefaults(
+            library_media_library_open=False,
+            library_media_items_open=True,
+            library_media_custom_widths_enabled=True,
+            library_media_library_width=32,
+            library_media_items_width=56,
+        ),
+    )
+
+    assert sections["library"] == {
+        "search": {"history": ["alpha"]},
+        "media_reader": {
+            "future_key": "preserved",
+            "library_open": False,
+            "items_open": True,
+            "custom_widths_enabled": True,
+            "library_width": 32,
+            "items_width": 56,
+        },
+    }

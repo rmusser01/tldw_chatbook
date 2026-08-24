@@ -166,6 +166,7 @@ from ...Library.library_media_reader_state import (
     begin_selection,
     enter_external_detail,
     leave_external_detail,
+    normalize_media_reader_preferences,
     resolve_media_reader_layout,
     set_mode,
     set_more_open,
@@ -3151,7 +3152,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_unfiltered_selected_id = ""
         self._library_media_filter_restore_id = ""
         self._library_media_filter_select_first = False
-        self._library_media_reader_preferences = MediaReaderLayoutPreferences()
+        self._library_media_reader_preferences = (
+            self._load_library_media_reader_preferences()
+        )
+        self._library_media_reader_persistence_locks = {
+            "library": asyncio.Lock(),
+            "items": asyncio.Lock(),
+        }
+        self._library_media_layout_refresh_generation = int(
+            getattr(app_instance, "_library_media_layout_refresh_generation", 0) or 0
+        )
         self._library_media_reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._library_media_reader_preferences)
         )
@@ -5237,6 +5247,93 @@ class LibraryScreen(BaseAppScreen):
                 *hidden_focus_target,
             )
 
+    def _load_library_media_reader_preferences(
+        self,
+    ) -> MediaReaderLayoutPreferences:
+        """Read normalized persisted Media reader layout preferences."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        raw: Mapping[str, Any] = {}
+        if isinstance(app_config, Mapping):
+            library_config = app_config.get("library")
+            if isinstance(library_config, Mapping):
+                candidate = library_config.get("media_reader")
+                if isinstance(candidate, Mapping):
+                    raw = candidate
+        return normalize_media_reader_preferences(raw)
+
+    def _mirror_library_media_reader_preference(
+        self,
+        key: Literal["library_open", "items_open"],
+        value: bool,
+    ) -> None:
+        """Mirror an optimistic manual pane choice into the live app config."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        library_config = app_config.get("library")
+        if not isinstance(library_config, dict):
+            library_config = {}
+            app_config["library"] = library_config
+        media_reader = library_config.get("media_reader")
+        if not isinstance(media_reader, dict):
+            media_reader = {}
+            library_config["media_reader"] = media_reader
+        media_reader[key] = value
+
+    async def _persist_library_media_reader_preference(
+        self,
+        pane: Literal["library", "items"],
+        value: bool,
+        previous_value: bool,
+    ) -> None:
+        """Persist one manual grip choice and restore it if the write fails."""
+        key: Literal["library_open", "items_open"] = (
+            "library_open" if pane == "library" else "items_open"
+        )
+        async with self._library_media_reader_persistence_locks[pane]:
+            # If another press superseded this value before its write began,
+            # only the newer preference needs to reach disk.
+            if getattr(self._library_media_reader_preferences, key) != value:
+                return
+            try:
+                persisted = await asyncio.to_thread(
+                    save_setting_to_cli_config,
+                    "library.media_reader",
+                    key,
+                    value,
+                )
+            except Exception:
+                persisted = False
+        if persisted is True:
+            return
+
+        # A newer press may already have replaced this attempted value. Do
+        # not let an older failed write roll that newer preference back.
+        if getattr(self._library_media_reader_preferences, key) != value:
+            return
+        self._library_media_reader_preferences = dataclasses.replace(
+            self._library_media_reader_preferences,
+            **{key: previous_value},
+        )
+        self._mirror_library_media_reader_preference(key, previous_value)
+        self._sync_library_media_reader_layout_from_shell()
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "Library Media layout could not be saved; the previous pane choice was restored.",
+                severity="warning",
+            )
+
+    def request_library_media_layout_refresh(self, generation: int) -> None:
+        """Apply a newer Settings save to the mounted shell without reloading data."""
+        if generation <= self._library_media_layout_refresh_generation:
+            return
+        self._library_media_layout_refresh_generation = generation
+        self._library_media_reader_preferences = (
+            self._load_library_media_reader_preferences()
+        )
+        self._sync_library_media_reader_layout_from_shell()
+
     def _focus_library_media_grip_if_current(
         self,
         generation: int,
@@ -5257,18 +5354,31 @@ class LibraryScreen(BaseAppScreen):
     def _toggle_library_media_reader_pane(
         self, event: PaneToggleRequested
     ) -> None:
-        """Apply one session-only preferred pane choice and explicit priority."""
+        """Apply and persist one manual preferred pane choice."""
         event.stop()
         layout = self._library_media_reader_layout
         opening = not (
             layout.library_open if event.pane == "library" else layout.items_open
         )
+        key: Literal["library_open", "items_open"] = (
+            "library_open" if event.pane == "library" else "items_open"
+        )
+        previous_value = getattr(self._library_media_reader_preferences, key)
         self._library_media_reader_preferences = dataclasses.replace(
             self._library_media_reader_preferences,
-            **{f"{event.pane}_open": opening},
+            **{key: opening},
         )
+        self._mirror_library_media_reader_preference(key, opening)
         self._sync_library_media_reader_layout_from_shell(
             event.pane if opening else None
+        )
+        self.run_worker(
+            self._persist_library_media_reader_preference(
+                event.pane,
+                opening,
+                previous_value,
+            ),
+            group=f"library_media_reader_{event.pane}_persistence",
         )
 
     @on(MediaShellResized)
@@ -8943,6 +9053,14 @@ class LibraryScreen(BaseAppScreen):
             return
         viewer = self._mounted_library_media_viewer()
         if viewer is not None and self._sync_library_media_viewer_state(viewer):
+            try:
+                canvas = self.query_one(
+                    "#library-media-canvas", LibraryMediaCanvas
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                canvas.apply_reader_state(self._build_library_media_state())
             return
         self.refresh(recompose=True)
 

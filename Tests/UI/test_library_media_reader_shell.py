@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
@@ -26,6 +28,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
 from tldw_chatbook.Library.library_media_viewer_state import (
     build_library_media_viewer_state,
 )
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import (
     LibraryMediaCanvas,
@@ -154,6 +157,44 @@ async def test_reader_is_never_a_collapse_target():
             "library",
             "items",
         }
+
+
+@pytest.mark.asyncio
+async def test_compact_reader_keeps_every_toolbar_action_inside_reader():
+    host = LibraryProductionCSSHarness(_build_media_test_app())
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        shell.items.query_one("#library-media-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.pending_request is None
+            and screen._library_media_reader_session.loaded_id is not None,
+            message="Compact Reader detail never settled.",
+        )
+        await pilot.pause()
+
+        reader = shell.reader
+        loaded_row = shell.items.query_one("#library-media-row-0", Button)
+        assert "Loaded in Reader" in str(loaded_row.label)
+        assert "loading preview" not in str(loaded_row.label)
+        for selector in (
+            "#library-media-reader-find",
+            "#library-media-read-later",
+            "#library-media-use-in-chat",
+            "#library-media-reader-more",
+            "#library-media-reader-select-read",
+            "#library-media-reader-select-analysis",
+            "#library-media-reader-select-highlights",
+            "#library-media-reader-select-info",
+        ):
+            action = reader.query_one(selector, Button)
+            assert action.region.width > 0
+            assert reader.content_region.contains_region(action.region), (
+                selector,
+                action.region,
+                reader.content_region,
+            )
 
 
 @pytest.mark.asyncio
@@ -301,3 +342,163 @@ async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns()
         assert sum(
             grip.region.width for grip in shell.query(".library-media-pane-grip")
         ) == 10
+
+
+@pytest.mark.asyncio
+async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    app.app_config["library"] = {
+        "media_reader": {
+            "library_open": False,
+            "items_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 28,
+            "items_width": 40,
+        }
+    }
+    writes = []
+
+    def save_setting(section, key, value):
+        writes.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        assert shell.effective_layout.library_open is False
+
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(writes),
+            message="Manual pane preference was not persisted.",
+        )
+        assert writes == [("library.media_reader", "library_open", True)]
+        assert app.app_config["library"]["media_reader"]["library_open"] is True
+
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+        assert len(writes) == 1
+
+    next_screen = LibraryScreen(app)
+    assert next_screen._library_media_reader_preferences.library_open is True
+
+
+@pytest.mark.asyncio
+async def test_failed_manual_grip_persistence_restores_previous_preference(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    app.app_config["library"] = {
+        "media_reader": {"library_open": False, "items_open": True}
+    }
+    notices = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append((message, kwargs)),
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(notices),
+            message="Failed pane persistence did not report or restore.",
+        )
+
+        assert screen._library_media_reader_preferences.library_open is False
+        assert app.app_config["library"]["media_reader"]["library_open"] is False
+        assert shell.effective_layout.library_open is False
+        assert notices[-1][1]["severity"] == "warning"
+
+
+@pytest.mark.asyncio
+async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
+    app = _build_media_test_app()
+    app.app_config["library"] = {
+        "media_reader": {"library_open": False, "items_open": True}
+    }
+    writes = []
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    def save_setting(section, key, value):
+        writes.append((section, key, value))
+        if len(writes) == 1:
+            first_started.set()
+            release_first.wait(timeout=3)
+        return True
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        _, shell = await _open_media_shell(host, pilot)
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            first_started.is_set,
+            message="First pane preference write never started.",
+        )
+        shell.library_grip.press()
+        release_first.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(writes) == 2,
+            message="Newer pane preference was not serialized after the first.",
+        )
+
+        assert writes == [
+            ("library.media_reader", "library_open", True),
+            ("library.media_reader", "library_open", False),
+        ]
+        assert app.app_config["library"]["media_reader"]["library_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_re_resolves_mounted_shell_without_media_reads():
+    app = _build_media_test_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        service = app.media_reading_scope_service
+        reads = (len(service.search_calls), len(service.detail_calls))
+        app.app_config.setdefault("library", {})["media_reader"] = {
+            "library_open": False,
+            "items_open": False,
+            "custom_widths_enabled": True,
+            "library_width": 36,
+            "items_width": 56,
+        }
+
+        screen.request_library_media_layout_refresh(1)
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-reader-shell") is shell
+        assert screen._library_media_reader_preferences == MediaReaderLayoutPreferences(
+            library_open=False,
+            items_open=False,
+            custom_widths_enabled=True,
+            library_width=36,
+            items_width=56,
+        )
+        assert not shell.effective_layout.library_open
+        assert not shell.effective_layout.items_open
+        assert (len(service.search_calls), len(service.detail_calls)) == reads

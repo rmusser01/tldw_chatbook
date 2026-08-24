@@ -1133,6 +1133,19 @@ ConsoleRunLogModal {
     color: $ds-action-focus;
 }
 
+/* Reader toolbars can be as narrow as 50 columns while Items remains open.
+   Textual Button's default 16-column minimum pushed More and Info beyond the
+   painted Reader at that width even though both widgets stayed mounted. Keep
+   these two compact, label-sized rows fully reachable without changing their
+   text or focus geometry. */
+#library-media-reader-primary-toolbar > Button,
+#library-media-reader-mode-toolbar > Button {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+}
+
 #library-hub-attention {
     width: 100%;
     min-width: 0;
