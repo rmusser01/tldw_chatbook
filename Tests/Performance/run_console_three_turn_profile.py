@@ -606,14 +606,24 @@ def _register_receipt_identity(
     ]
     if conflicts:
         raise RuntimeError("review_receipt_changed")
-    marker_parent = (
-        registry / Path(location.relative_path).parent
+    marker_relative = (
+        Path(location.relative_path).parent
         if normalized or location.correction_id is not None
-        else registry
+        else Path()
     )
     try:
-        marker_parent.mkdir(parents=True, exist_ok=True)
-        _reject_lexical_symlinks(marker_parent, "review_receipt_registry_invalid")
+        marker_parent = registry
+        for component in marker_relative.parts:
+            child = marker_parent / component
+            try:
+                child.mkdir()
+            except FileExistsError:
+                pass
+            _reject_lexical_symlinks(child, "review_receipt_registry_invalid")
+            if child.is_symlink() or not child.is_dir():
+                raise RuntimeError("review_receipt_registry_invalid")
+            _fsync_directory(marker_parent)
+            marker_parent = child
     except OSError as exc:
         raise RuntimeError("review_receipt_registry_durability_failed") from exc
     prefix = f"{receipt_path.name}--"
@@ -653,6 +663,9 @@ def _register_receipt_durably(
     try:
         _fsync_regular_file(receipt_path)
         _fsync_directory(receipt_path.parent)
+        location = _validate_receipt_location(attempt_root, receipt_path)
+        if location.correction_id is not None:
+            _fsync_directory(location.artifact_root)
     except OSError as exc:
         raise RuntimeError("review_receipt_durability_failed") from exc
     if _sha256_review_file(receipt_path) != receipt_sha256:
@@ -684,28 +697,17 @@ def _reopen_review_receipt_locked(
     if receipt["decision"] != "changes_required":
         raise RuntimeError("review_reopen_receipt_decision_invalid")
     lineage = attempt_lineage(campaign_root / "attempts.jsonl")
-    if (
-        lineage
-        and lineage[-1].get("state") == "changes_required"
-        and lineage[-1].get("correction_id") is not None
-    ):
-        raise RuntimeError("review_attempt_already_reopened")
+    if not lineage or lineage[-1].get("attempt_id") != attempt_id:
+        raise RuntimeError("review_attempt_state_invalid")
+    current = lineage[-1]
+    if current.get("state") not in {"complete_pending_review", "changes_required"}:
+        raise RuntimeError("review_attempt_state_invalid")
     registered = _registered_review_receipts(attempt_root)
     approved = [record for record in registered if record[2]["decision"] == "approved"]
     if not approved:
         raise RuntimeError("review_reopen_prior_approval_required")
-    maximum_number = max(_receipt_number(record[0]) for record in registered)
-    if location.number <= maximum_number:
-        raise RuntimeError("review_reopen_receipt_order_invalid")
-    if len(approved) != 1 or registered[-1] != approved[0]:
+    if len(approved) != 1:
         raise RuntimeError("review_reopen_prior_approval_required")
-    if (
-        not lineage
-        or lineage[-1]["attempt_id"] != attempt_id
-        or lineage[-1]["state"] != "complete_pending_review"
-    ):
-        raise RuntimeError("review_attempt_state_invalid")
-    current = lineage[-1]
     hashes = canonical_artifact_hashes(attempt_root)
     digest = canonical_artifact_digest(attempt_root)
     prior = approved[0][2]
@@ -720,20 +722,38 @@ def _reopen_review_receipt_locked(
     ):
         raise RuntimeError("review_receipt_binding_mismatch")
     receipt_sha256 = _sha256_review_file(receipt_path)
+    current_identity = any(
+        relative == location.relative_path and identity == receipt_sha256
+        for relative, identity, _registered in registered
+    )
+    changes_event = {
+        "attempt_id": attempt_id,
+        "state": "changes_required",
+        "verdict": current["verdict"],
+        "raw_sha256": current["raw_sha256"],
+        "reason_category": "manifest",
+        "correction_id": correction_id,
+    }
+    if current_identity:
+        if registered[-1][:2] != (location.relative_path, receipt_sha256):
+            raise RuntimeError("review_receipt_order_invalid")
+        if current == changes_event:
+            return receipt
+        if current["state"] != "complete_pending_review":
+            raise RuntimeError("review_attempt_already_reopened")
+        append_attempt_state(campaign_root / "attempts.jsonl", changes_event)
+        return receipt
+    maximum_number = max(_receipt_number(record[0]) for record in registered)
+    if location.number <= maximum_number:
+        raise RuntimeError("review_reopen_receipt_order_invalid")
+    if registered[-1] != approved[0]:
+        raise RuntimeError("review_reopen_prior_approval_required")
+    if current["state"] != "complete_pending_review":
+        raise RuntimeError("review_attempt_already_reopened")
     _register_receipt_durably(
         attempt_root, receipt_path, receipt_sha256, normalized=True
     )
-    append_attempt_state(
-        campaign_root / "attempts.jsonl",
-        {
-            "attempt_id": attempt_id,
-            "state": "changes_required",
-            "verdict": current["verdict"],
-            "raw_sha256": current["raw_sha256"],
-            "reason_category": "manifest",
-            "correction_id": correction_id,
-        },
-    )
+    append_attempt_state(campaign_root / "attempts.jsonl", changes_event)
     return receipt
 
 
@@ -782,16 +802,24 @@ def prepare_manifest_correction(
     attempt_id: str,
     *,
     correction_id: str,
-    implementation_base_revision: str,
+    repository_root: Path | None = None,
+    run_command: Any = subprocess.run,
 ) -> Path:
     """Create one versioned same-raw correction without changing reviewed bytes."""
+    if not isinstance(correction_id, str) or not _CORRECTION_ID.fullmatch(
+        correction_id
+    ):
+        raise RuntimeError("review_correction_identity_invalid")
+    authority_root = (
+        Path(__file__).resolve().parents[2]
+        if repository_root is None
+        else repository_root
+    )
+    implementation_base_revision = resolve_implementation_base_revision(
+        authority_root, run_command=run_command
+    )
+
     def prepare() -> Path:
-        if not isinstance(correction_id, str) or not _CORRECTION_ID.fullmatch(
-            correction_id
-        ):
-            raise RuntimeError("review_correction_identity_invalid")
-        if implementation_base_revision != IMPLEMENTATION_BASE_SHA:
-            raise RuntimeError("implementation_base_revision_mismatch")
         attempt_root = _review_attempt_root(campaign_root, attempt_id)
         lineage = attempt_lineage(campaign_root / "attempts.jsonl")
         if (
@@ -916,7 +944,17 @@ def _register_correction_review_locked(
         for relative, digest, _registered in registered
     )
     if current_identity:
-        if current["state"] != "complete_pending_review":
+        if (
+            current["state"] == "changes_required"
+            and current.get("correction_id") == location.correction_id
+        ):
+            complete_attempt_measurement(
+                campaign_root / "attempts.jsonl",
+                attempt_id,
+                verdict=current["verdict"],
+                raw_sha256=current["raw_sha256"],
+            )
+        elif current["state"] != "complete_pending_review":
             raise RuntimeError("review_correction_state_invalid")
         return receipt
     if (
@@ -4800,6 +4838,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             "digest",
             "register-review",
             "reopen-review",
+            "prepare-correction",
             "promote",
         ),
         default="acquire",
@@ -4847,8 +4886,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parsed.review_receipt is None
         ):
             parser.error("review action requires --review-receipt")
-        if parsed.campaign_action == "reopen-review" and not parsed.correction_id:
-            parser.error("reopen-review requires --correction-id")
+        if parsed.campaign_action in {"reopen-review", "prepare-correction"} and not (
+            parsed.correction_id
+        ):
+            parser.error(f"{parsed.campaign_action} requires --correction-id")
         if parsed.campaign_action == "promote" and parsed.destination is None:
             parser.error("promote requires --destination")
     return parsed
@@ -8477,6 +8518,23 @@ def run_campaign_maintenance_action(args: argparse.Namespace) -> int:
                 "correction_id": args.correction_id,
                 "artifact_set_sha256": receipt["artifact_set_sha256"],
                 "decision": receipt["decision"],
+            },
+        )
+        return 0
+    if args.campaign_action == "prepare-correction":
+        correction_root = prepare_manifest_correction(
+            args.campaign_root,
+            args.attempt_id,
+            correction_id=args.correction_id,
+        )
+        digest = canonical_artifact_digest(correction_root)
+        write_boundary_event(
+            sys.stdout,
+            {
+                "event": "correction_prepared",
+                "attempt_id": args.attempt_id,
+                "correction_id": args.correction_id,
+                "artifact_set_sha256": digest,
             },
         )
         return 0

@@ -4363,6 +4363,15 @@ def test_real_confirmatory_child_command_reaches_child_mode_after_parse(
             ],
         ),
         (
+            "prepare-correction",
+            [
+                "--attempt-id",
+                "attempt-0001",
+                "--correction-id",
+                "correction-001",
+            ],
+        ),
+        (
             "promote",
             [
                 "--attempt-id",
@@ -4437,6 +4446,52 @@ def test_reopen_review_cli_dispatches_without_provider_contact(
         "correction_id": "correction-001",
         "decision": "changes_required",
         "event": "review_reopened",
+    }
+
+
+def test_prepare_correction_cli_dispatches_without_provider_contact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    campaign = tmp_path / "campaign"
+    correction = campaign / "attempts/attempt-0001/corrections/correction-001"
+    observed: list[tuple[Path, str, str]] = []
+    monkeypatch.setattr(
+        profile,
+        "prepare_manifest_correction",
+        lambda root, attempt, *, correction_id: observed.append(
+            (root, attempt, correction_id)
+        )
+        or correction,
+    )
+    monkeypatch.setattr(
+        profile,
+        "canonical_artifact_digest",
+        lambda root: "a" * 64 if root == correction else pytest.fail("wrong root"),
+    )
+    monkeypatch.setattr(
+        profile,
+        "preflight_provider",
+        lambda *_args: pytest.fail("maintenance action contacted provider"),
+    )
+
+    assert profile.main(
+        [
+            "--campaign-action",
+            "prepare-correction",
+            "--campaign-root",
+            str(campaign),
+            "--attempt-id",
+            "attempt-0001",
+            "--correction-id",
+            "correction-001",
+        ]
+    ) == 0
+    assert observed == [(campaign, "attempt-0001", "correction-001")]
+    assert json.loads(capsys.readouterr().out) == {
+        "artifact_set_sha256": "a" * 64,
+        "attempt_id": "attempt-0001",
+        "correction_id": "correction-001",
+        "event": "correction_prepared",
     }
 
 
@@ -4657,6 +4712,23 @@ def _reopen_approved_attempt(
     return campaign, attempt, approved, digest, raw_sha256
 
 
+def _prepare_manifest_correction(campaign: Path) -> Path:
+    def resolve_fixed_ref(_command, **_kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"{profile.IMPLEMENTATION_BASE_SHA}\n",
+            stderr="",
+        )
+
+    return profile.prepare_manifest_correction(
+        campaign,
+        "attempt-0001",
+        correction_id="correction-001",
+        repository_root=campaign,
+        run_command=resolve_fixed_ref,
+    )
+
+
 def test_implementation_base_revision_resolves_only_the_fixed_ref(
     tmp_path: Path,
 ) -> None:
@@ -4700,6 +4772,45 @@ def test_implementation_base_revision_fails_closed_on_missing_or_drifted_ref(
         profile.resolve_implementation_base_revision(tmp_path, run_command=run)
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "code"),
+    (
+        (1, "", "implementation_base_revision_failed"),
+        (0, "f" * 40, "implementation_base_revision_mismatch"),
+    ),
+)
+def test_manifest_correction_resolves_fixed_ref_before_creating_stage(
+    tmp_path: Path, returncode: int, stdout: str, code: str
+) -> None:
+    campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
+        profile.prepare_manifest_correction(
+            campaign,
+            "attempt-0001",
+            correction_id="correction-001",
+            repository_root=tmp_path,
+            run_command=run,
+        )
+
+    assert commands == [
+        [
+            "git",
+            "rev-parse",
+            "--verify",
+            "refs/benchmarks/task-20010-implementation-base^{commit}",
+        ]
+    ]
+    assert not (attempt / "corrections").exists()
+
+
 def test_reopen_review_registers_later_rejection_and_correction_identity(
     tmp_path: Path,
 ) -> None:
@@ -4739,6 +4850,63 @@ def test_reopen_review_registers_later_rejection_and_correction_identity(
     assert approved.read_bytes() == (attempt / "reviews" / "review-001.json").read_bytes()
 
 
+@pytest.mark.parametrize("append_committed", (False, True))
+def test_reopen_review_reconciles_marker_to_lineage_crash_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    append_committed: bool,
+) -> None:
+    campaign, attempt, _approved, digest, _raw_sha256 = _approve_review_attempt(
+        tmp_path
+    )
+    rejected = _write_review_receipt(
+        attempt,
+        digest,
+        decision="changes_required",
+        filename="review-002.json",
+        findings=[
+            {"severity": "important", "code": "implementation_base_revision_missing"}
+        ],
+    )
+    real_append = profile.append_attempt_state
+
+    def fail_transition(ledger: Path, event: dict[str, object]) -> None:
+        if event["state"] == "changes_required":
+            if append_committed:
+                real_append(ledger, event)
+            raise OSError("injected reopen lineage failure")
+        real_append(ledger, event)
+
+    monkeypatch.setattr(profile, "append_attempt_state", fail_transition)
+    with pytest.raises(OSError, match="injected reopen lineage failure"):
+        profile.reopen_review_receipt(
+            campaign,
+            "attempt-0001",
+            rejected,
+            correction_id="correction-001",
+        )
+
+    marker = (
+        attempt
+        / "reviews/.registered/reviews"
+        / f"review-002.json--{hashlib.sha256(rejected.read_bytes()).hexdigest()}"
+    )
+    assert marker.is_file()
+    monkeypatch.setattr(profile, "append_attempt_state", real_append)
+    assert profile.reopen_review_receipt(
+        campaign,
+        "attempt-0001",
+        rejected,
+        correction_id="correction-001",
+    )["decision"] == "changes_required"
+    states = profile.attempt_lineage(campaign / "attempts.jsonl")
+    assert [event["state"] for event in states] == [
+        "running",
+        "complete_pending_review",
+        "changes_required",
+    ]
+
+
 @pytest.mark.parametrize(
     ("problem", "code"),
     (
@@ -4750,7 +4918,6 @@ def test_reopen_review_registers_later_rejection_and_correction_identity(
         ("verdict", "review_receipt_binding_mismatch"),
         ("attempt", "review_receipt_binding_mismatch"),
         ("foreign", "review_receipt_location_invalid"),
-        ("repeated", "review_attempt_already_reopened"),
     ),
 )
 def test_reopen_review_rejects_ambiguous_or_unbound_transition(
@@ -4791,14 +4958,6 @@ def test_reopen_review_rejects_ambiguous_or_unbound_transition(
         foreign = tmp_path / "review-002.json"
         foreign.write_bytes(rejected.read_bytes())
         rejected = foreign
-    if problem == "repeated":
-        profile.reopen_review_receipt(
-            campaign,
-            "attempt-0001",
-            rejected,
-            correction_id="correction-001",
-        )
-
     with pytest.raises(RuntimeError, match=f"^{code}$"):
         profile.reopen_review_receipt(
             campaign,
@@ -4819,12 +4978,7 @@ def test_manifest_correction_rejects_any_change_to_original_approved_files(
     path.write_bytes(path.read_bytes() + b"changed")
 
     with pytest.raises(RuntimeError, match="^review_correction_original_changed$"):
-        profile.prepare_manifest_correction(
-            campaign,
-            "attempt-0001",
-            correction_id="correction-001",
-            implementation_base_revision=profile.IMPLEMENTATION_BASE_SHA,
-        )
+        _prepare_manifest_correction(campaign)
 
     assert not (attempt / "corrections" / "correction-001").exists()
     assert not (attempt / "corrections" / ".correction-001-stage").exists()
@@ -4928,12 +5082,7 @@ def test_manifest_correction_rename_failure_leaves_no_partial_root(
     )
 
     with pytest.raises(RuntimeError, match="^injected_correction_rename_failure$"):
-        profile.prepare_manifest_correction(
-            campaign,
-            "attempt-0001",
-            correction_id="correction-001",
-            implementation_base_revision=profile.IMPLEMENTATION_BASE_SHA,
-        )
+        _prepare_manifest_correction(campaign)
 
     assert not (attempt / "corrections" / "correction-001").exists()
     assert not (attempt / "corrections" / ".correction-001-stage").exists()
@@ -4958,12 +5107,7 @@ def test_registered_correction_rejects_later_artifact_changes(
     campaign, _attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
     )
-    correction = profile.prepare_manifest_correction(
-        campaign,
-        "attempt-0001",
-        correction_id="correction-001",
-        implementation_base_revision=profile.IMPLEMENTATION_BASE_SHA,
-    )
+    correction = _prepare_manifest_correction(campaign)
     receipt = _write_review_receipt(
         correction,
         profile.canonical_artifact_digest(correction),
@@ -4983,12 +5127,7 @@ def test_correction_approval_requires_a_still_later_review_number(
     campaign, _attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
     )
-    correction = profile.prepare_manifest_correction(
-        campaign,
-        "attempt-0001",
-        correction_id="correction-001",
-        implementation_base_revision=profile.IMPLEMENTATION_BASE_SHA,
-    )
+    correction = _prepare_manifest_correction(campaign)
     stale = _write_review_receipt(
         correction,
         profile.canonical_artifact_digest(correction),
@@ -5016,12 +5155,7 @@ def test_manifest_correction_post_rename_failure_retains_only_complete_root(
     monkeypatch.setattr(profile, "_fsync_directory", fail_after_rename)
 
     with pytest.raises(OSError, match="injected_post_rename_fsync_failure"):
-        profile.prepare_manifest_correction(
-            campaign,
-            "attempt-0001",
-            correction_id="correction-001",
-            implementation_base_revision=profile.IMPLEMENTATION_BASE_SHA,
-        )
+        _prepare_manifest_correction(campaign)
 
     correction = corrections / "correction-001"
     assert correction.is_dir()
@@ -5053,12 +5187,7 @@ def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
         correction_id="correction-001",
     )
 
-    correction = profile.prepare_manifest_correction(
-        campaign,
-        "attempt-0001",
-        correction_id="correction-001",
-        implementation_base_revision="77c5e9f487af79391a479deb85e712163bfed909",
-    )
+    correction = _prepare_manifest_correction(campaign)
 
     assert correction == attempt / "corrections" / "correction-001"
     assert all(
@@ -5112,6 +5241,145 @@ def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
     assert (destination / "real-provider-three-turn.raw.jsonl").read_bytes() == (
         original["real-provider-three-turn.raw.jsonl"]
     )
+
+
+@pytest.mark.parametrize("append_committed", (False, True))
+def test_correction_approval_reconciles_marker_to_lineage_crash_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    append_committed: bool,
+) -> None:
+    campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    correction = _prepare_manifest_correction(campaign)
+    receipt = _write_review_receipt(
+        correction,
+        profile.canonical_artifact_digest(correction),
+        filename="review-003.json",
+    )
+    real_complete = profile.complete_attempt_measurement
+
+    def fail_transition(*args, **kwargs):
+        if append_committed:
+            real_complete(*args, **kwargs)
+        raise OSError("injected approval lineage failure")
+
+    monkeypatch.setattr(profile, "complete_attempt_measurement", fail_transition)
+    with pytest.raises(OSError, match="injected approval lineage failure"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    marker = (
+        attempt
+        / "reviews/.registered/corrections/correction-001/reviews"
+        / f"review-003.json--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    )
+    assert marker.is_file()
+    monkeypatch.setattr(profile, "complete_attempt_measurement", real_complete)
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == "approved"
+    states = profile.attempt_lineage(campaign / "attempts.jsonl")
+    assert [event["state"] for event in states] == [
+        "running",
+        "complete_pending_review",
+        "changes_required",
+        "complete_pending_review",
+    ]
+
+
+def test_correction_receipt_and_registry_namespaces_fsync_every_parent_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    correction = _prepare_manifest_correction(campaign)
+    receipt = _write_review_receipt(
+        correction,
+        profile.canonical_artifact_digest(correction),
+        filename="review-003.json",
+    )
+    registry = attempt / "reviews/.registered"
+    correction_registry = registry / "corrections"
+    identity_registry = correction_registry / "correction-001"
+    marker_registry = identity_registry / "reviews"
+    watched = [
+        correction / "reviews",
+        correction,
+        registry,
+        correction_registry,
+        identity_registry,
+        marker_registry,
+    ]
+    events: list[Path] = []
+    real_fsync = profile._fsync_directory
+
+    def record(path: Path) -> None:
+        if path in watched:
+            events.append(path)
+        real_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", record)
+    profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert events == watched
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    (
+        ("correction", "review_receipt_durability_failed"),
+        ("registry", "review_receipt_registry_durability_failed"),
+        ("corrections", "review_receipt_registry_durability_failed"),
+        ("identity", "review_receipt_registry_durability_failed"),
+    ),
+)
+def test_correction_namespace_fsync_failure_is_stable_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    code: str,
+) -> None:
+    campaign, attempt, approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    correction = _prepare_manifest_correction(campaign)
+    receipt = _write_review_receipt(
+        correction,
+        profile.canonical_artifact_digest(correction),
+        filename="review-003.json",
+    )
+    registry = attempt / "reviews/.registered"
+    failure_path = {
+        "correction": correction,
+        "registry": registry,
+        "corrections": registry / "corrections",
+        "identity": registry / "corrections/correction-001",
+    }[failure]
+    marker = (
+        registry
+        / "corrections/correction-001/reviews"
+        / f"review-003.json--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    )
+    real_fsync = profile._fsync_directory
+
+    def fail(path: Path) -> None:
+        if path == failure_path:
+            raise OSError(f"injected {failure} fsync failure")
+        real_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", fail)
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert not marker.exists()
+    assert approved.is_file()
+    assert correction.is_dir()
+    monkeypatch.setattr(profile, "_fsync_directory", real_fsync)
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == "approved"
 
 
 def test_correction_approval_rejects_wrong_root_or_unchanged_digest(

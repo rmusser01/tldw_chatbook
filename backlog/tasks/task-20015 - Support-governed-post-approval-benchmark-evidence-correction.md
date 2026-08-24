@@ -60,19 +60,32 @@ original five artifacts and earlier receipts, changes only the manifest's
 implementation-base field, and accepts only a still-later approval whose
 confined path determines the correction root.
 
+The provider-free `prepare-correction` action resolves and verifies the fixed
+implementation-base ref itself before it can create a correction namespace;
+callers cannot supply an unverified revision. Reopen and correction-approval
+retries now reconcile the durable receipt marker with a missing append-only
+lineage transition after either a pre-commit or post-commit failure, while
+remaining idempotent after the transition commits.
+
 Registry markers now bind normalized receipt path plus receipt hash and reject
 duplicate numeric review identities. The correction path rejects symlinks,
 lexical traversal, stale review numbers, implementation-ref drift, mutation of
 any original or corrected artifact, and partial pre-rename creation. A failure
 after the atomic rename retains one complete correction root and no stage.
+Nested receipt-registry namespaces are created one component at a time without
+following symlinks, and every new parent link is fsynced from the durable
+registry root. Correction receipt publication also fsyncs its `reviews` child
+link through the correction root before publishing the registry identity.
 Promotion reuses the existing durable atomic no-replace publisher with the
 source root derived solely from the approving receipt location. The pytest
 cleanup fixture recursively unseals nested published/correction directories.
 
 Verification completed for the implementation:
 
-- correction/review regression shard: 61 passed;
-- complete performance harness: 630 passed, 2 dependency warnings in 107.25s;
+- review-finding RED shard: 12 expected failures;
+- review-finding GREEN shard: 12 passed;
+- correction/review regression shard: 87 passed;
+- complete performance harness: 642 passed, 2 dependency warnings in 126.62s;
 - Ruff, `py_compile`, and `git diff --check`: passed.
 
 Modified files are the benchmark runner, its focused harness tests, and this
