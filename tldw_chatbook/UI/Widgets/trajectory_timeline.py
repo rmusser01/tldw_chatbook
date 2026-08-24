@@ -411,6 +411,9 @@ class TrajectoryTimeline(Widget):
         self._range_anchor: str | None = None
         self._drag_x: int | None = None
         self._drag_moved = False
+        #: TASK-21134: set while a mid-drag brush emission is coalescing.
+        #: See ``_set_brush``.
+        self._brush_emit_pending = False
 
     # -- state --------------------------------------------------------------
 
@@ -654,8 +657,38 @@ class TrajectoryTimeline(Widget):
             return
         self._brush = brush
         self.refresh()
-        if emit:
-            self.post_message(self.TrajectoryBrushChanged(brush))
+        if not emit:
+            return
+        if self._drag_x is not None:
+            # TASK-21134: mid-drag, coalesce to at most one emission per
+            # repaint. The visual brush above still follows the mouse on every
+            # move; what is throttled is the message, and the host rebuilds its
+            # whole ledger DataTable for each one. Measured on a burst-
+            # delivered 70-column drag (a real terminal delivers moves faster
+            # than Textual repaints): 69 full ledger rebuilds for one gesture,
+            # at 5.93 ms each on a 600-row ledger -- ~0.4 s of synchronous
+            # event-loop work while the user is still holding the button down.
+            # ``on_mouse_up`` always emits the final range, so the ledger can
+            # never end a gesture showing a range the strip is not painting.
+            self._schedule_brush_emit()
+            return
+        self.post_message(self.TrajectoryBrushChanged(brush))
+
+    def _schedule_brush_emit(self) -> None:
+        """Queue one coalesced mid-drag brush emission."""
+        if self._brush_emit_pending:
+            return
+        self._brush_emit_pending = True
+        self.call_after_refresh(self._flush_brush_emit)
+
+    def _flush_brush_emit(self) -> None:
+        """Emit the brush the drag has reached, if one is still pending."""
+        if not self._brush_emit_pending:
+            return
+        self._brush_emit_pending = False
+        if not self.is_mounted:
+            return
+        self.post_message(self.TrajectoryBrushChanged(self._brush))
 
     def clear_range(self, *, emit: bool = True) -> bool:
         """Clear an active brush/keyboard anchor; return whether state changed."""
@@ -751,7 +784,18 @@ class TrajectoryTimeline(Widget):
             else:
                 self.clear_range()
         else:
+            # TASK-21134: ``_drag_x`` is already None above, so this final
+            # ``brush_columns`` emits synchronously -- but only if it actually
+            # moves the range. When the gesture ends on the same column the
+            # last coalesced move reached, it does not, so the pending emission
+            # is issued here instead of a repaint later. Exactly one message
+            # either way, and the ledger always ends the gesture on the range
+            # the strip is painting.
+            self._brush_emit_pending = False
+            settled = self._brush
             self.brush_columns(start_x, event.x)
+            if self._brush == settled:
+                self.post_message(self.TrajectoryBrushChanged(self._brush))
 
     def on_mouse_scroll_up(self, event: MouseEvent) -> None:
         width = self._plot_width()
