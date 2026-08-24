@@ -87,9 +87,10 @@ fallback.
 
 A regression test will arrange an existing staging candidate and make the
 private-path classifier return an unverified-but-usable result. Constructing the
-service must succeed, return no cleanup count when explicitly swept, and leave
-the candidate untouched. The test should fail against the current implementation
-with `actor_pack_import_cleanup_denied`.
+service must succeed, an explicit sweep must return `0`, and the candidate must
+remain untouched. Spies must also prove that `os.scandir()` and candidate
+authority helpers are never called on this branch. The test should fail against
+the current implementation with `actor_pack_import_cleanup_denied`.
 
 The existing authenticated startup-sweep test remains the supported-platform
 regression and must continue to pass. Focused Actor Pack import tests and static
