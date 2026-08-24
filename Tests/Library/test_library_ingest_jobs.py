@@ -121,6 +121,56 @@ def test_find_active_source_matches_deduplicates_candidate_keys(tmp_path):
     assert [item.job_id for item in matches] == [job.job_id]
 
 
+def test_dispatch_hold_excludes_queue_until_persistence_first_release(tmp_path):
+    """The runner must not claim a Research job before its durable link exists."""
+
+    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+    store = LibraryIngestJobsDB(tmp_path / "held.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(store)
+    held = registry.submit(
+        source_path="/managed/paste.txt",
+        research_source_operation_id="operation-held",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    ordinary = registry.submit(source_path="/ordinary.txt", require_persisted=True)
+    observed: list[tuple[bool, bool]] = []
+    registry.add_listener(
+        lambda: observed.append(
+            (
+                bool(store.all_jobs()[0]["dispatch_held"]),
+                bool(registry.get_job(held.job_id).dispatch_held),
+            )
+        )
+    )
+
+    assert registry.next_queued().job_id == ordinary.job_id
+    released = registry.release_dispatch_hold(held.job_id, require_persisted=True)
+
+    assert released is not None and released.dispatch_held is False
+    assert observed == [(False, False)]
+    assert registry.next_queued().job_id == held.job_id
+    store.close()
+
+
+def test_dispatch_held_requeue_requires_store_before_mutation() -> None:
+    registry = LibraryIngestJobRegistry()
+    failed = registry.submit(
+        source_path="/managed/retry.txt",
+        research_source_operation_id="operation-retry-held",
+    )
+    registry.mark_failed(failed.job_id, error="retry")
+
+    with pytest.raises(RuntimeError, match="persistence store"):
+        registry.requeue(failed.job_id, dispatch_held=True)
+
+    current = registry.get_job(failed.job_id)
+    assert current is not None and not current.superseded
+    assert len(registry.jobs()) == 1
+
+
 def test_active_consent_scope_is_order_stable_and_candidate_mutation_sensitive(
     tmp_path,
 ):
@@ -738,9 +788,7 @@ def test_completion_listener_observes_settled_research_job() -> None:
     registry.add_listener(observe)
     registry.mark_done(job.job_id, media_id=41)
 
-    assert observations == [
-        (IngestJobState.DONE, 41, "research-op-listener")
-    ]
+    assert observations == [(IngestJobState.DONE, 41, "research-op-listener")]
 
 
 def test_listener_exception_is_swallowed_and_other_listeners_still_run() -> None:
@@ -1268,9 +1316,7 @@ def test_terminal_listener_still_fires_when_best_effort_store_fails():
     registry.attach_store(_Boom())
     job = registry.submit(source_path="/source.txt")
     observed = []
-    registry.add_listener(
-        lambda: observed.append(registry.get_job(job.job_id).state)
-    )
+    registry.add_listener(lambda: observed.append(registry.get_job(job.job_id).state))
 
     settled = registry.mark_failed(job.job_id, error="safe failure")
 
@@ -1438,6 +1484,25 @@ def test_plan_restore_cap_one_prunes_to_newest():
     assert [j.job_id for j in plan.jobs] == ["ingest-job-2"]
     assert plan.delete_ids == ["ingest-job-1"]
     assert plan.next_id == 3
+
+
+def test_plan_restore_never_prunes_a_durable_dispatch_hold():
+    """History caps cannot delete an undispatched two-owner transaction."""
+
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+
+    rows = _done_rows(3)
+    rows[0].update(
+        state="queued",
+        research_source_operation_id="operation-held-oldest",
+        dispatch_held=1,
+    )
+
+    plan = plan_restore(rows, max_persisted=2, now_iso="2026-08-24T10:00:00+00:00")
+
+    assert [job.job_id for job in plan.jobs] == ["ingest-job-1", "ingest-job-3"]
+    assert plan.jobs[0].dispatch_held is True
+    assert plan.delete_ids == ["ingest-job-2"]
 
 
 # --- Library ingestion improvements: options / progress / error detail ---

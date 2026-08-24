@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-23
-- **Last amended:** 2026-08-23 (unsent draft recovery and extended-output owners)
+- **Last amended:** 2026-08-24 (durable Research ingest dispatch eligibility)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
 - **Amends:** ADR-015 (shell destination taxonomy); ADR-028 (adds Research
@@ -118,6 +118,19 @@ Server uses a server Media item plus a server workspace-source row. The
 qualified association intent is durable across navigation and restart. It may
 never attach to the other authority or to the workspace visible when a late
 completion happens to arrive.
+
+The Library ingest-job store's schema v7 persists a `dispatch_held` eligibility
+barrier for this two-owner transaction. Research preparation writes a held,
+qualified queue row before returning; ordinary Library submissions remain
+unheld. Queue selectors, runner top-up, and restart restore cannot dispatch or
+prune a held row. Only after the matching source operation durably records its
+exact ingest job in the catalog `in_progress` stage may the app durably release
+the hold and dispatch through the selected Local or Server owner. Startup reads
+one bounded page of held rows and reconciles each independently. Ambiguous or
+transient operation-store answers retain both the hold and managed paste
+staging; missing, terminal, or authority-incompatible receipts settle the job
+durably before staging cleanup. This is an implementation of the existing
+qualified-intent owner decision, not a new content owner or sync boundary.
 
 A name-derived workspace keyword may be projected for search/display parity,
 but it is not the association or authority boundary: names and tags are

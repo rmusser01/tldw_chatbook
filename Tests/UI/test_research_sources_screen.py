@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App
@@ -61,6 +62,9 @@ class _RecordingOperationStore:
         self.trace.append(("create", operation.operation_id, operation.workspace_id))
         self.operations[operation.operation_id] = operation
         return operation
+
+    def get(self, operation_id):
+        return self.operations.get(operation_id)
 
     def advance_stage(self, operation_id, *, status, ingest_job_id="", **kwargs):
         self.trace.append(("advance", operation_id, status.value, ingest_job_id))
@@ -429,6 +433,70 @@ async def test_remove_association_requires_confirmation_and_escape_is_non_mutati
 
 
 @pytest.mark.asyncio
+async def test_filtered_preview_targets_the_one_displayed_selected_association(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Global desired selection cannot disable or retarget filtered preview."""
+
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-preview")
+    available = ResearchCapability(True, "available", "Available.", "local")
+
+    class Port:
+        async def list_workspaces(self, *, include_archived=False):
+            return (ResearchWorkspaceSummary(ref, "Workspace"),)
+
+        async def capabilities(self, owner_ref):
+            return {
+                "attach_existing": available,
+                "set_selected_scope": available,
+                "preview_source": available,
+                "remove_source": available,
+            }
+
+        async def list_sources(self, owner_ref, *, limit=100, offset=0):
+            return ResearchSourcePage(
+                items=tuple(
+                    ResearchSourceSummary(
+                        ref=ref,
+                        source_id=f"membership-{name.casefold()}",
+                        catalog_item_id=str(index),
+                        title=f"{name} evidence",
+                        source_type="text",
+                        selected=True,
+                    )
+                    for index, name in ((1, "Alpha"), (2, "Beta"))
+                ),
+                limit=limit,
+                offset=offset,
+                total=2,
+                desired_source_ids=("1", "2"),
+            )
+
+        async def get_readiness(self, owner_ref, *, source_ids=()):
+            return ()
+
+    screen = ResearchWorkspaceScreen(
+        SimpleNamespace(),
+        controller=ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()}),
+    )
+    show = AsyncMock()
+    monkeypatch.setattr(screen, "_show_source_inspector", show)
+    app = _MountedScreenApp(screen)
+
+    async with app.run_test(size=(120, 34)) as pilot:
+        await pilot.pause(0.1)
+        screen.query_one("#research-source-search", Input).value = "alpha"
+        await pilot.pause()
+        preview = screen.query_one("#research-source-preview-selected", Button)
+        assert not preview.disabled
+
+        preview.press()
+        await pilot.pause()
+
+    show.assert_awaited_once_with("membership-alpha", load_preview=True)
+
+
+@pytest.mark.asyncio
 async def test_intake_capability_denial_happens_before_operation_or_catalog_write() -> (
     None
 ):
@@ -603,7 +671,7 @@ async def test_url_intake_persists_one_qualified_operation_before_each_submit() 
 
 
 @pytest.mark.asyncio
-async def test_link_failure_cancels_undispatched_job_and_cleans_managed_paste() -> None:
+async def test_transient_link_failure_retains_held_job_and_managed_paste() -> None:
     trace: list[tuple[object, ...]] = []
 
     class FailingLinkStore(_RecordingOperationStore):
@@ -668,9 +736,214 @@ async def test_link_failure_cancels_undispatched_job_and_cleans_managed_paste() 
         "stage",
         "prepare",
         "link-failed",
-        "cancel",
-        "delete",
     ]
+    assert not any(item[0] == "dispatch" for item in trace)
+    assert not any(item[0] == "cancel" for item in trace)
+    assert not any(item[0] == "delete" for item in trace)
+
+
+@pytest.mark.asyncio
+async def test_link_exception_after_exact_commit_releases_and_dispatches() -> None:
+    """An ambiguous write answer converges from the durable operation receipt."""
+
+    trace: list[tuple[object, ...]] = []
+
+    class CommittedThenRaisedStore(_RecordingOperationStore):
+        def advance_stage(self, operation_id, *, status, ingest_job_id="", **kwargs):
+            result = super().advance_stage(
+                operation_id,
+                status=status,
+                ingest_job_id=ingest_job_id,
+                **kwargs,
+            )
+            if status is SourceOperationStatus.IN_PROGRESS:
+                raise OSError("commit answer lost")
+            return result
+
+    class IntakeApp:
+        def prepare_research_source_ingest_job(self, **kwargs):
+            trace.append(("prepare", kwargs["research_source_operation_id"]))
+            return SimpleNamespace(job_id="job-prepared")
+
+        def _cancel_research_source_prepared_job(self, job_id):
+            trace.append(("cancel", job_id))
+
+        def _dispatch_research_source_catalog_job(self, job_id):
+            trace.append(("dispatch", job_id))
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", "local"
+                )
+            }
+
+    store = CommittedThenRaisedStore(trace)
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        IntakeApp(),
+        controller=controller,
+        operation_store=store,
+        operation_id_factory=lambda: "operation-commit-answer-lost",
+        now_factory=lambda: "2026-08-24T10:00:00Z",
+    )
+
+    await screen._submit_intake_request(
+        ref,
+        ResearchSourceIntakeRequest("url", ("https://example.invalid/paper",)),
+    )
+
+    assert any(item[0] == "dispatch" for item in trace)
+    assert not any(item[0] == "cancel" for item in trace)
+
+
+@pytest.mark.asyncio
+async def test_incompatible_link_keeps_paste_when_durable_cancel_fails() -> None:
+    """Cleanup cannot outrun a cancellation write that did not commit."""
+
+    trace: list[tuple[object, ...]] = []
+
+    class IncompatibleStore(_RecordingOperationStore):
+        def advance_stage(self, operation_id, *, status, ingest_job_id="", **kwargs):
+            if status is SourceOperationStatus.IN_PROGRESS:
+                operation = self.operations[operation_id]
+                self.operations[operation_id] = replace(
+                    operation,
+                    catalog_status=SourceOperationStatus.IN_PROGRESS,
+                    ingest_job_id="job-other",
+                    revision=operation.revision + 1,
+                )
+                raise OSError("conflicting writer won")
+            return super().advance_stage(
+                operation_id,
+                status=status,
+                ingest_job_id=ingest_job_id,
+                **kwargs,
+            )
+
+    class Staging:
+        def stage(self, operation_id, *, title, body):
+            trace.append(("stage", operation_id))
+            return f"/private/staging/{operation_id}.txt"
+
+        def delete(self, operation_id):
+            trace.append(("delete", operation_id))
+            return True
+
+    class IntakeApp:
+        def prepare_research_source_ingest_job(self, **kwargs):
+            return SimpleNamespace(job_id="job-prepared")
+
+        def _cancel_research_source_prepared_job(self, job_id):
+            trace.append(("cancel", job_id))
+            raise OSError("job store unavailable")
+
+        def _dispatch_research_source_catalog_job(self, job_id):
+            trace.append(("dispatch", job_id))
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", "local"
+                )
+            }
+
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        IntakeApp(),
+        controller=controller,
+        operation_store=IncompatibleStore(trace),
+        paste_staging_store=Staging(),
+        operation_id_factory=lambda: "operation-incompatible",
+        now_factory=lambda: "2026-08-24T10:00:00Z",
+    )
+
+    await screen._submit_intake_request(
+        ref,
+        ResearchSourceIntakeRequest("paste", ("PRIVATE BODY",), title="Paste"),
+    )
+
+    assert any(item[0] == "cancel" for item in trace)
+    assert not any(item[0] == "delete" for item in trace)
+    assert not any(item[0] == "dispatch" for item in trace)
+
+
+@pytest.mark.asyncio
+async def test_incompatible_link_cleans_paste_after_durable_cancel() -> None:
+    """An incompatible receipt is cleaned only after terminal persistence."""
+
+    trace: list[tuple[object, ...]] = []
+
+    class IncompatibleStore(_RecordingOperationStore):
+        def advance_stage(self, operation_id, *, status, ingest_job_id="", **kwargs):
+            if status is SourceOperationStatus.IN_PROGRESS:
+                current = self.operations[operation_id]
+                self.operations[operation_id] = replace(
+                    current,
+                    catalog_status=SourceOperationStatus.IN_PROGRESS,
+                    ingest_job_id="job-other",
+                    revision=current.revision + 1,
+                )
+                raise OSError("conflicting writer won")
+            return super().advance_stage(
+                operation_id,
+                status=status,
+                ingest_job_id=ingest_job_id,
+                **kwargs,
+            )
+
+    class Staging:
+        def stage(self, operation_id, *, title, body):
+            trace.append(("stage", operation_id))
+            return f"/private/staging/{operation_id}.txt"
+
+        def delete(self, operation_id):
+            trace.append(("delete", operation_id))
+            return True
+
+    class IntakeApp:
+        def prepare_research_source_ingest_job(self, **kwargs):
+            return SimpleNamespace(job_id="job-prepared")
+
+        def _cancel_research_source_prepared_job(self, job_id):
+            trace.append(("cancel", job_id))
+            return SimpleNamespace(state=IngestJobState.CANCELLED)
+
+        def _dispatch_research_source_catalog_job(self, job_id):
+            trace.append(("dispatch", job_id))
+
+    class Port:
+        async def capabilities(self, ref):
+            return {
+                "attach_existing": ResearchCapability(
+                    True, "available", "Available.", "local"
+                )
+            }
+
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()})
+    controller.select_workspace(ref)
+    screen = ResearchWorkspaceScreen(
+        IntakeApp(),
+        controller=controller,
+        operation_store=IncompatibleStore(trace),
+        paste_staging_store=Staging(),
+        operation_id_factory=lambda: "operation-incompatible-cancelled",
+        now_factory=lambda: "2026-08-24T10:00:00Z",
+    )
+
+    await screen._submit_intake_request(
+        ref,
+        ResearchSourceIntakeRequest("paste", ("PRIVATE BODY",), title="Paste"),
+    )
+
+    assert [item[0] for item in trace][-2:] == ["cancel", "delete"]
     assert not any(item[0] == "dispatch" for item in trace)
 
 

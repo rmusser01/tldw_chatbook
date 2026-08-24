@@ -557,6 +557,8 @@ def test_server_research_catalog_retry_requeues_before_server_dispatch(
     tmp_path: Path,
 ) -> None:
     app = _IngestRunnerHarness(_make_db(tmp_path))
+    ingest_store = LibraryIngestJobsDB(tmp_path / "retry-ingest.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
     source = _write_text_file(tmp_path, "remote-retry.pdf", "PDF fixture")
     failed = app.library_ingest_jobs.submit(
         source_path=str(source),
@@ -576,6 +578,7 @@ def test_server_research_catalog_retry_requeues_before_server_dispatch(
     assert retried.research_source_operation_id == "research-op-server-retry"
     assert app._pool_create_count == 0
     send.assert_called_once()
+    ingest_store.close()
 
 
 @pytest.mark.asyncio

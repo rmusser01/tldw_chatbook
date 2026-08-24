@@ -11,6 +11,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJobRegistry,
     _job_from_row,
+    plan_restore,
 )
 from tldw_chatbook.Research_Workspace.source_operations import (
     SourceOperationValidationError,
@@ -53,6 +54,15 @@ CREATE TABLE ingest_jobs (
     retry_source_failure_provenance_json TEXT DEFAULT NULL
 );
 """
+
+_GENUINE_V6_SCHEMA = _GENUINE_V5_SCHEMA.replace(
+    "INSERT INTO schema_version (version) VALUES (5);",
+    "INSERT INTO schema_version (version) VALUES (6);",
+).replace(
+    "    retry_source_failure_provenance_json TEXT DEFAULT NULL\n);",
+    "    retry_source_failure_provenance_json TEXT DEFAULT NULL,\n"
+    "    research_source_operation_id TEXT DEFAULT NULL\n);",
+)
 
 
 def _db(tmp_path):
@@ -410,6 +420,129 @@ def test_fresh_v6_schema_has_nullable_research_operation_link(tmp_path):
     db.close()
 
 
+def test_fresh_v7_schema_has_validated_dispatch_hold(tmp_path):
+    """Durable eligibility cannot be represented by a permissive/free-text flag."""
+
+    db = _db(tmp_path)
+    columns = {
+        row["name"]: row
+        for row in db._get_connection().execute("PRAGMA table_info(ingest_jobs)")
+    }
+
+    assert columns["dispatch_held"]["notnull"] == 1
+    assert columns["dispatch_held"]["dflt_value"] == "0"
+    assert (
+        db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
+        == 7
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db._get_connection().execute(
+            "INSERT INTO ingest_jobs (seq, job_id, source_path, state, dispatch_held) "
+            "VALUES (99, 'ingest-job-99', '/private/source', 'queued', 2)"
+        )
+    db.close()
+
+
+def test_genuine_v6_migration_preserves_full_row_and_defaults_unheld(tmp_path):
+    """A complete historical v6 row survives the v7 eligibility migration."""
+
+    path = tmp_path / "historical-v6.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(_GENUINE_V6_SCHEMA)
+    connection.execute(
+        """
+        INSERT INTO ingest_jobs
+          (seq, job_id, source_path, title, state, origin,
+           research_source_operation_id, ingest_options, progress)
+        VALUES (7, 'ingest-job-7', '/kept.pdf', 'Kept', 'queued', 'server',
+                'operation-kept', '{"pdf": {"ocr": true}}',
+                '{"message": "waiting"}')
+        """
+    )
+    connection.commit()
+    connection.row_factory = sqlite3.Row
+    before = dict(connection.execute("SELECT * FROM ingest_jobs").fetchone())
+    connection.close()
+
+    db = LibraryIngestJobsDB(path)
+    row = db.all_jobs()[0]
+
+    assert set(row) == {*before, "dispatch_held"}
+    assert {key: row[key] for key in before} == before
+    assert row["dispatch_held"] == 0
+    assert (
+        db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
+        == 7
+    )
+    db.close()
+
+
+def test_v6_to_v7_migration_rolls_back_column_when_version_write_fails(tmp_path):
+    """The schema column and version advance are one transaction."""
+
+    path = tmp_path / "blocked-v6.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(_GENUINE_V6_SCHEMA)
+    connection.executescript(
+        """
+        CREATE TRIGGER block_schema_version_delete
+        BEFORE DELETE ON schema_version
+        BEGIN
+            SELECT RAISE(ABORT, 'blocked version write');
+        END;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(sqlite3.IntegrityError, match="blocked version write"):
+        LibraryIngestJobsDB(path)
+
+    inspected = sqlite3.connect(path)
+    try:
+        assert (
+            inspected.execute("SELECT version FROM schema_version").fetchone()[0] == 6
+        )
+        assert "dispatch_held" not in {
+            row[1] for row in inspected.execute("PRAGMA table_info(ingest_jobs)")
+        }
+    finally:
+        inspected.close()
+
+
+def test_held_round_trip_bounded_listing_and_restart_restore(tmp_path):
+    """Only held jobs enter bounded recovery and held QUEUED survives restart."""
+
+    db = _db(tmp_path)
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(db)
+    ordinary = registry.submit(source_path="/ordinary.txt", require_persisted=True)
+    held = tuple(
+        registry.submit(
+            source_path=f"/managed/{index}.txt",
+            research_source_operation_id=f"operation-held-{index}",
+            dispatch_held=True,
+            require_persisted=True,
+        )
+        for index in range(3)
+    )
+
+    rows = db.list_dispatch_held(limit=2)
+    assert [row["job_id"] for row in rows] == [held[0].job_id, held[1].job_id]
+    assert ordinary.job_id not in {row["job_id"] for row in rows}
+    assert all(row["dispatch_held"] == 1 for row in rows)
+
+    plan = plan_restore(
+        db.all_jobs(), max_persisted=100, now_iso="2026-08-24T10:30:00+00:00"
+    )
+    restored = {job.job_id: job for job in plan.jobs}
+    assert restored[ordinary.job_id].state is IngestJobState.FAILED
+    assert restored[held[0].job_id].state is IngestJobState.QUEUED
+    assert restored[held[0].job_id].dispatch_held is True
+    assert held[0].job_id not in {job.job_id for job in plan.upsert}
+    db.close()
+
+
 def test_genuine_v5_migration_preserves_row_and_adds_nullable_operation_link(
     tmp_path,
 ):
@@ -475,14 +608,16 @@ def test_genuine_v5_migration_preserves_row_and_adds_nullable_operation_link(
         db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
         == db._CURRENT_SCHEMA_VERSION
     )
-    assert set(row) == {*before, "research_source_operation_id"}
+    assert set(row) == {*before, "research_source_operation_id", "dispatch_held"}
     assert {key: row[key] for key in before} == before
     assert row["research_source_operation_id"] is None
+    assert row["dispatch_held"] == 0
     db.close()
 
     reopened = LibraryIngestJobsDB(path)
     reopened_row = reopened.all_jobs()[0]
     assert reopened_row["research_source_operation_id"] is None
+    assert reopened_row["dispatch_held"] == 0
     assert reopened_row["job_id"] == "ingest-job-7"
     reopened.close()
 

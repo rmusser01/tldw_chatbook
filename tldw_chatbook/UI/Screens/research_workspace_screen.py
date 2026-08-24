@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.widgets import Button, Static
 
+from ...Library.library_ingest_jobs import IngestJobState
 from ...Research_Workspace import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
@@ -547,7 +548,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
         if self.is_mounted:
             self.query_one("#research-source-recovery", Static).update(message)
-        self.notify(message, severity="warning")
+            self.notify(message, severity="warning")
 
     async def _refresh_source_workbench(self) -> None:
         capture = self.controller.capture_request()
@@ -1330,14 +1331,86 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 )
             except Exception:
                 try:
-                    self.app_instance._cancel_research_source_prepared_job(job.job_id)
-                finally:
-                    if staged_paste:
-                        await asyncio.to_thread(
-                            self.paste_staging_store.delete,
+                    recovered = await asyncio.to_thread(
+                        self.operation_store.get, operation_id
+                    )
+                except Exception:
+                    self._show_source_action_recovery(
+                        "Source intake is pending durable recovery; the staged "
+                        "source was retained."
+                    )
+                    continue
+                exact_authority = recovered is not None and (
+                    recovered.data_source,
+                    recovered.workspace_id,
+                    recovered.server_profile_id,
+                    recovered.principal_id,
+                ) == (
+                    ref.data_source,
+                    ref.workspace_id,
+                    ref.server_profile_id,
+                    ref.principal_id,
+                )
+                if (
+                    exact_authority
+                    and recovered.catalog_status is SourceOperationStatus.IN_PROGRESS
+                    and recovered.ingest_job_id == job.job_id
+                ):
+                    operation = recovered
+                elif (
+                    exact_authority
+                    and recovered.catalog_status is SourceOperationStatus.PENDING
+                    and not recovered.ingest_job_id
+                ):
+                    self._show_source_action_recovery(
+                        "Source intake is pending durable recovery; the staged "
+                        "source was retained."
+                    )
+                    continue
+                else:
+                    try:
+                        cancelled = (
+                            self.app_instance._cancel_research_source_prepared_job(
+                                job.job_id
+                            )
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Prepared Research source cancellation could not be "
+                            "persisted (job_id={}, operation_id={}); staging retained",
+                            job.job_id,
                             operation_id,
                         )
-                continue
+                        self._show_source_action_recovery(
+                            "Source intake is pending durable recovery; the staged "
+                            "source was retained."
+                        )
+                        continue
+                    if cancelled.state not in {
+                        IngestJobState.CANCELLED,
+                        IngestJobState.FAILED,
+                        IngestJobState.DONE,
+                        IngestJobState.SKIPPED,
+                    }:
+                        self._show_source_action_recovery(
+                            "Source intake is pending durable recovery; the staged "
+                            "source was retained."
+                        )
+                        continue
+                    if staged_paste:
+                        try:
+                            await asyncio.to_thread(
+                                self.paste_staging_store.delete,
+                                operation_id,
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "Terminal Research source staging cleanup failed "
+                                "(job_id={}, operation_id={})",
+                                job.job_id,
+                                operation_id,
+                            )
+                    continue
             try:
                 self.app_instance._dispatch_research_source_catalog_job(job.job_id)
             except Exception:

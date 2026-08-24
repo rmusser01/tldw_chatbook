@@ -133,7 +133,15 @@ class ResearchPasteStagingStore:
                 except Exception:
                     retained += 1
                     continue
-                should_delete = operation is None
+                held_job_exists = False
+                if operation is None and job_registry is not None:
+                    held_job_exists = any(
+                        job.research_source_operation_id == operation_id
+                        and str(getattr(job.state, "value", "")) == "queued"
+                        and bool(getattr(job, "dispatch_held", False))
+                        for job in job_registry.jobs()
+                    )
+                should_delete = operation is None and not held_job_exists
                 if operation is not None:
                     should_delete = (
                         operation.catalog_status is SourceOperationStatus.SUCCEEDED

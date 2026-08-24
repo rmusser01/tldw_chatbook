@@ -1,5 +1,56 @@
 # Task 4 review package — Research Sources workbench
 
+Fix-round-3 review base:
+
+`119c55b624f8918840fe9587ae52adfbbdede4a2`
+
+The controller-owned dirty TASK-21508 file remains excluded from the
+implementation and commit.
+
+## Fix-round-3 review order
+
+1. `Library_Ingest_Jobs_DB.py` and `library_ingest_jobs.py`: genuine v6→v7
+   migration, explicit held-column round trip, queue exclusion, one-way durable
+   release, held retry durability, and restart-cap protection.
+2. `app.py` and `paste_staging.py`: bounded startup held reconciliation,
+   per-row transient isolation, exact operation/job link recovery, durable
+   settlement-before-cleanup, and the concurrent startup-sweep hold guard.
+3. Research screen intake: ambiguous link-write reread, pending recovery without
+   `finally` cleanup, incompatible cancellation failure/success, and dispatch
+   only after durable release.
+4. Sources region and mounted screen tests: exactly one displayed selected
+   association owns Preview across search/type/status/date/folder filters and
+   emits the exact stable association ID.
+5. Migration/history/rollback, Local+Server, runner, UI, CSS/static, privacy,
+   inverse, and detector gates; ADR-078 and Task 4 report evidence.
+
+### Fix-round-3 high-risk invariants
+
+- A crash after job preparation but before operation linking leaves a durable
+  queue row that no queue selector or startup runner can dispatch.
+- The hold is released on disk only after the exact operation is durably linked
+  to that job; an ambiguous write answer is resolved by rereading the receipt.
+- A transient or failed cancellation never deletes managed paste staging.
+  Startup sweep cannot classify a missing operation as orphaned while a held
+  queued job still owns it.
+- Local and Server authority remain explicit. An origin mismatch settles the
+  held job and never dispatches through the other owner.
+- Global desired-selection count neither disables nor retargets a Preview of
+  the one displayed selected association.
+- Classification diagnostics cannot reveal managed staging paths or source
+  representations.
+
+### Fix-round-3 verification snapshot
+
+- Final focused review/inverse matrix: **23 passed**.
+- DB/registry **128 passed**; App **146 passed**; Runner **145 passed, 1
+  Windows-only skipped**; Research Workspace package **257 passed**.
+- Task UI and 15 geometry cases **97 passed**; CSS gates **32 passed**.
+- Scoped Ruff lint/format, changed-production compilation, whitespace,
+  privacy/ASCII scans, and one-shot Impeccable detector (`[]`) pass.
+- Only the accepted Requests dependency warning and pre-existing third-party
+  SWIG deprecations remain. Full pytest was not run by repository policy.
+
 Fix-round-2 review base:
 
 `2bcf9c46c70bbd137543bd8f29ec06e8cb4313df`

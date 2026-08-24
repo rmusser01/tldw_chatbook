@@ -12,9 +12,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from loguru import logger
 from textual.app import App
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
     ActiveIngestConsentScope,
@@ -25,6 +27,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
     LibraryIngestJobRegistry,
     build_active_ingest_consent_scope,
+    plan_restore,
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -34,6 +37,10 @@ from tldw_chatbook.Research_Workspace.source_operations import (
     ResearchSourceOperation,
     SourceOperationStatus,
 )
+from tldw_chatbook.Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+)
+from tldw_chatbook.Research_Workspace.paste_staging import ResearchPasteStagingStore
 from tldw_chatbook.runtime_policy.server_event_scope import (
     event_principal_id_from_active_context,
 )
@@ -196,10 +203,297 @@ def test_research_prepare_persists_exact_authority_without_dispatch(
     assert job.state is IngestJobState.QUEUED
     assert job.origin == origin
     assert job.research_source_operation_id == operation.operation_id
+    assert job.dispatch_held is True
     assert ingest_store.all_jobs()[0]["state"] == "queued"
+    assert ingest_store.all_jobs()[0]["dispatch_held"] == 1
     top_up.assert_not_called()
     remote_send.assert_not_called()
     ingest_store.close()
+
+
+def test_ordinary_submission_is_never_dispatch_held(tmp_path: Path) -> None:
+    """The eligibility barrier is opt-in for Research preparation only."""
+
+    app = _minimal_app(media_db="present")
+    store = LibraryIngestJobsDB(tmp_path / "ordinary.sqlite")
+    app.library_ingest_jobs.attach_store(store)
+
+    job = app.submit_library_ingest_job(source_path=str(tmp_path / "ordinary.txt"))
+
+    assert job.dispatch_held is False
+    assert store.all_jobs()[0]["dispatch_held"] == 0
+    store.close()
+
+
+def _pending_source_operation(
+    operation_id: str, *, origin: str
+) -> ResearchSourceOperation:
+    return ResearchSourceOperation(
+        operation_id=operation_id,
+        idempotency_key=f"idempotency-{operation_id}",
+        data_source=(
+            WorkspaceDataSource.LOCAL
+            if origin == "local"
+            else WorkspaceDataSource.SERVER
+        ),
+        server_profile_id="profile" if origin == "server" else "",
+        principal_id="principal" if origin == "server" else "",
+        workspace_id=f"workspace-{origin}",
+        canonical_item_type=(
+            CanonicalItemType.LOCAL_LIBRARY
+            if origin == "local"
+            else CanonicalItemType.SERVER_MEDIA
+        ),
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_pending_held_job_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    """A crash between prepare and link resumes from both durable owners."""
+
+    jobs_path = tmp_path / "jobs.sqlite"
+    ingest_store = LibraryIngestJobsDB(jobs_path)
+    original = LibraryIngestJobRegistry()
+    original.attach_store(ingest_store)
+    held = original.submit(
+        source_path=str(tmp_path / "managed.txt"),
+        origin="local",
+        research_source_operation_id="operation-restart",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    operation_store = ResearchSourceOperationStore(workspace_db)
+    operation_store.create(
+        _pending_source_operation("operation-restart", origin="local")
+    )
+    staging = ResearchPasteStagingStore(tmp_path / "staging")
+    staged_path = staging.stage(
+        "operation-restart", title="Paste", body="private staged body"
+    )
+
+    restored = LibraryIngestJobRegistry()
+    plan = plan_restore(
+        ingest_store.all_jobs(),
+        max_persisted=100,
+        now_iso="2026-08-24T10:01:00+00:00",
+    )
+    restored.restore(plan.jobs, plan.next_id)
+    restored.attach_store(ingest_store)
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = restored
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = operation_store
+    app.research_paste_staging_store = staging
+    dispatched: list[str] = []
+    app._dispatch_research_source_catalog_job = dispatched.append  # type: ignore[method-assign]
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    operation = operation_store.get("operation-restart")
+    assert operation is not None
+    assert operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+    assert operation.ingest_job_id == held.job_id
+    assert restored.get_job(held.job_id).dispatch_held is False
+    assert ingest_store.all_jobs()[0]["dispatch_held"] == 0
+    assert dispatched == [held.job_id]
+    assert staged_path.exists()
+    ingest_store.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_isolates_transient_row_and_releases_next(
+    tmp_path: Path,
+) -> None:
+    """One unreadable operation cannot strand a later held job in the page."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(ingest_store)
+    first = registry.submit(
+        source_path="/managed/first.txt",
+        origin="local",
+        research_source_operation_id="operation-transient",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    second = registry.submit(
+        source_path="/managed/second.txt",
+        origin="local",
+        research_source_operation_id="operation-releasable",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    real_store = ResearchSourceOperationStore(workspace_db)
+    real_store.create(_pending_source_operation("operation-releasable", origin="local"))
+
+    class OneTransientStore:
+        def get(self, operation_id):
+            if operation_id == "operation-transient":
+                raise OSError("private store unavailable")
+            return real_store.get(operation_id)
+
+        def advance_stage(self, *args, **kwargs):
+            return real_store.advance_stage(*args, **kwargs)
+
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = registry
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = OneTransientStore()
+    app.research_paste_staging_store = None
+    dispatched: list[str] = []
+    app._dispatch_research_source_catalog_job = dispatched.append  # type: ignore[method-assign]
+
+    await app._reconcile_research_source_held_jobs(limit=2)
+
+    assert registry.get_job(first.job_id).dispatch_held is True
+    assert registry.get_job(second.job_id).dispatch_held is False
+    assert dispatched == [second.job_id]
+    ingest_store.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_terminal_listener_schedules_exactly_once(
+    tmp_path: Path,
+) -> None:
+    """Release visibility plus immediate settlement cannot duplicate resume work."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(ingest_store)
+    held = registry.submit(
+        source_path="/managed/source.txt",
+        origin="local",
+        research_source_operation_id="operation-listener-once",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    operation_store = ResearchSourceOperationStore(workspace_db)
+    operation_store.create(
+        _pending_source_operation("operation-listener-once", origin="local")
+    )
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = registry
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = operation_store
+    app.research_paste_staging_store = None
+    app.research_source_association_scheduler = object()
+    app._research_source_terminal_jobs_scheduled = set()
+    app._research_source_restore_in_progress = False
+    groups: list[str] = []
+
+    def record_worker(awaitable, *, group: str) -> None:
+        groups.append(group)
+        awaitable.close()
+
+    app.run_worker = record_worker  # type: ignore[method-assign]
+    registry.add_listener(app._schedule_settled_research_source_operations)
+    app._dispatch_research_source_catalog_job = (  # type: ignore[method-assign]
+        lambda job_id: registry.mark_failed(job_id, error="Immediate owner failure")
+    )
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    assert groups == ["research_source_association"]
+    assert app._research_source_terminal_jobs_scheduled == {held.job_id}
+    ingest_store.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_incompatible_held_job_cleans_staging_only_after_durable_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed cancellation keeps both the eligibility hold and paste payload."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(ingest_store)
+    held = registry.submit(
+        source_path="/managed/paste.txt",
+        origin="server",
+        research_source_operation_id="operation-missing",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    staging = ResearchPasteStagingStore(tmp_path / "staging")
+    artifact = staging.stage("operation-missing", title="Paste", body="private")
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = registry
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = SimpleNamespace(
+        get=lambda _operation_id: None
+    )
+    app.research_paste_staging_store = staging
+    monkeypatch.setattr(
+        app,
+        "_cancel_research_source_prepared_job",
+        MagicMock(side_effect=OSError("cancel store unavailable")),
+    )
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    assert registry.get_job(held.job_id).state is IngestJobState.QUEUED
+    assert registry.get_job(held.job_id).dispatch_held is True
+    assert artifact.exists()
+
+    monkeypatch.setattr(
+        app,
+        "_cancel_research_source_prepared_job",
+        TldwCli._cancel_research_source_prepared_job.__get__(app, TldwCli),
+    )
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    assert registry.get_job(held.job_id).state is IngestJobState.CANCELLED
+    assert not artifact.exists()
+    ingest_store.close()
+
+
+def test_research_local_classification_warning_omits_managed_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unexpected classifier failure logs lineage, never a private staging path."""
+
+    app = _minimal_app(media_db="present")
+    managed_path = str(tmp_path / "research" / "paste" / "PRIVATE-name.txt")
+    monkeypatch.setattr(
+        app_module,
+        "classify_ingest_source",
+        MagicMock(side_effect=RuntimeError(f"classifier broke for {managed_path!r}")),
+    )
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        app._prepare_library_ingest_job_admitted(
+            source_path=managed_path,
+            ingest_options={},
+            title="Paste",
+            author="",
+            keywords=(),
+            perform_analysis=False,
+            chunk_enabled=False,
+            chunk_size=DEFAULT_CHUNK_SIZE,
+            batch_id=None,
+            backend="local",
+            research_source_operation_id="operation-private-log",
+            require_persisted=False,
+        )
+    finally:
+        logger.remove(sink)
+
+    rendered = "".join(messages)
+    assert managed_path not in rendered
+    assert "PRIVATE-name.txt" not in rendered
+    assert "operation-private-log" in rendered
 
 
 def test_dispatch_failure_settlement_does_not_renotify_an_already_terminal_job(

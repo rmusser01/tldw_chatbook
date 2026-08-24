@@ -641,13 +641,31 @@ async def test_visible_batch_selection_excludes_selected_rows_hidden_by_each_fil
         desired_source_ids=("1", "2"),
     )
     available = ResearchCapability(True, "available", "Available.", "local")
+    readiness = (
+        SourceReadiness(
+            ref=ref,
+            source_id="membership-alpha",
+            catalog_item_id="1",
+            state=SourceReadinessState.FTS_READY,
+            fts_ready=True,
+            vector_ready=False,
+        ),
+        SourceReadiness(
+            ref=ref,
+            source_id="membership-beta",
+            catalog_item_id="2",
+            state=SourceReadinessState.ATTACHED,
+            fts_ready=False,
+            vector_ready=False,
+        ),
+    )
 
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         region = app.query_one(ResearchSourcesRegion)
         region.sync_workspace(
             page,
-            readiness=(),
+            readiness=readiness,
             capabilities={
                 "preview_source": available,
                 "remove_source": available,
@@ -668,22 +686,42 @@ async def test_visible_batch_selection_excludes_selected_rows_hidden_by_each_fil
         region.query_one("#research-source-search", Input).value = "alpha"
         await pilot.pause()
         assert region.selected_source_ids() == ("membership-alpha",)
+        assert not region.query_one(
+            "#research-source-preview-selected", Button
+        ).disabled
 
         region.query_one("#research-source-search", Input).value = ""
         region.query_one("#research-source-filter-type", Select).value = "text"
         await pilot.pause()
         assert region.selected_source_ids() == ("membership-beta",)
+        assert not region.query_one(
+            "#research-source-preview-selected", Button
+        ).disabled
 
         region.query_one("#research-source-filter-type", Select).value = ""
+        region.query_one("#research-source-filter-status", Select).value = "ready"
+        await pilot.pause()
+        assert region.selected_source_ids() == ("membership-alpha",)
+        assert not region.query_one(
+            "#research-source-preview-selected", Button
+        ).disabled
+
+        region.query_one("#research-source-filter-status", Select).value = ""
         region.query_one("#research-source-filter-date", Select).value = "today"
         await pilot.pause()
         assert region.selected_source_ids() == ("membership-alpha",)
+        assert not region.query_one(
+            "#research-source-preview-selected", Button
+        ).disabled
 
         region.query_one("#research-source-filter-date", Select).value = ""
         region._focused_folder_id = "folder-alpha"
         region._render_page()
         await pilot.pause()
         assert region.selected_source_ids() == ("membership-alpha",)
+        assert not region.query_one(
+            "#research-source-preview-selected", Button
+        ).disabled
         assert "2 selected" in str(
             region.query_one("#research-source-selected-count", Static).render()
         )

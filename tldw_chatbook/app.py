@@ -440,7 +440,10 @@ from .Research_Workspace.source_association import (
 )
 from .Research_Workspace.source_operation_store import ResearchSourceOperationStore
 from .Research_Workspace.paste_staging import ResearchPasteStagingStore
-from .Research_Workspace.source_operations import SourceOperationStatus
+from .Research_Workspace.source_operations import (
+    SourceOperationStage,
+    SourceOperationStatus,
+)
 from .Research_Workspace.source_readiness import ResearchSourceReadinessCoordinator
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from .Scheduling.constants import (
@@ -2465,6 +2468,13 @@ class LibraryIngestQueueMixin:
             self._restore_ingest_jobs()
         finally:
             self._research_source_restore_in_progress = restore_was_in_progress
+        ingest_store = getattr(self, "_library_ingest_jobs_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if ingest_store is not None and operation_store is not None:
+            self.run_worker(
+                self._reconcile_research_source_held_jobs(),
+                group="research_source_held_startup",
+            )
         scheduler = getattr(self, "research_source_association_scheduler", None)
         if scheduler is not None:
             self.run_worker(
@@ -2472,7 +2482,6 @@ class LibraryIngestQueueMixin:
                 group="research_source_association_startup",
             )
         staging_store = getattr(self, "research_paste_staging_store", None)
-        operation_store = getattr(self, "research_source_operation_store", None)
         if staging_store is not None and operation_store is not None:
             self.run_worker(
                 self._sweep_research_paste_staging(),
@@ -2497,6 +2506,145 @@ class LibraryIngestQueueMixin:
             logger.opt(exception=True).warning(
                 "Research paste staging sweep failed; artifacts were retained"
             )
+
+    async def _reconcile_research_source_held_jobs(self, *, limit: int = 50) -> None:
+        """Boundedly link or cancel durable Research jobs left held at restart."""
+
+        ingest_store = getattr(self, "_library_ingest_jobs_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if ingest_store is None or operation_store is None:
+            return
+        try:
+            rows = await asyncio.to_thread(ingest_store.list_dispatch_held, limit=limit)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research source held-job startup scan failed; jobs remain held"
+            )
+            return
+        for row in rows:
+            job_id = str(row.get("job_id") or "")
+            operation_id = str(row.get("research_source_operation_id") or "")
+            job = self.library_ingest_jobs.get_job(job_id)
+            if (
+                job is None
+                or job.state is not IngestJobState.QUEUED
+                or not job.dispatch_held
+                or job.research_source_operation_id != operation_id
+            ):
+                continue
+            try:
+                operation = await asyncio.to_thread(operation_store.get, operation_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Research source held-job receipt read failed "
+                    "(job_id={}, operation_id={}); retained for recovery",
+                    job_id,
+                    operation_id,
+                )
+                continue
+
+            expected_origin = str(
+                getattr(getattr(operation, "data_source", None), "value", "")
+            )
+            compatible = operation is not None and expected_origin == job.origin
+            if (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.PENDING
+                and not operation.ingest_job_id
+            ):
+                try:
+                    operation = await asyncio.to_thread(
+                        operation_store.advance_stage,
+                        operation_id,
+                        stage=SourceOperationStage.CATALOG,
+                        status=SourceOperationStatus.IN_PROGRESS,
+                        expected_revision=operation.revision,
+                        ingest_job_id=job_id,
+                    )
+                except Exception:
+                    try:
+                        operation = await asyncio.to_thread(
+                            operation_store.get, operation_id
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Research source held-job link remains pending "
+                            "(job_id={}, operation_id={})",
+                            job_id,
+                            operation_id,
+                        )
+                        continue
+                    expected_origin = str(
+                        getattr(getattr(operation, "data_source", None), "value", "")
+                    )
+                    compatible = operation is not None and expected_origin == job.origin
+
+            linked = (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+                and operation.ingest_job_id == job_id
+            )
+            if linked:
+                try:
+                    released = self.library_ingest_jobs.release_dispatch_hold(
+                        job_id, require_persisted=True
+                    )
+                    if released is None:
+                        continue
+                    self._dispatch_research_source_catalog_job(job_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Research source held-job dispatch could not start "
+                        "(job_id={}, operation_id={})",
+                        job_id,
+                        operation_id,
+                    )
+                    try:
+                        self._fail_research_source_prepared_job(job_id)
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Research source held-job dispatch failure could not be persisted "
+                            "(job_id={}, operation_id={})",
+                            job_id,
+                            operation_id,
+                        )
+                continue
+
+            still_pending = (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.PENDING
+                and not operation.ingest_job_id
+            )
+            if still_pending:
+                continue
+            try:
+                cancelled = self._cancel_research_source_prepared_job(job_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Research source incompatible held-job cancellation failed "
+                    "(job_id={}, operation_id={}); staging retained",
+                    job_id,
+                    operation_id,
+                )
+                continue
+            if cancelled.state not in {
+                IngestJobState.CANCELLED,
+                IngestJobState.FAILED,
+                IngestJobState.DONE,
+                IngestJobState.SKIPPED,
+            }:
+                continue
+            staging_store = getattr(self, "research_paste_staging_store", None)
+            if staging_store is not None:
+                try:
+                    await asyncio.to_thread(staging_store.delete, operation_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Research source terminal held-job staging cleanup failed "
+                        "(job_id={}, operation_id={})",
+                        job_id,
+                        operation_id,
+                    )
 
     def _restore_ingest_jobs(self) -> None:
         """Start the one-time restore of persisted ingest job history.
@@ -2837,6 +2985,7 @@ class LibraryIngestQueueMixin:
         if _prepare_only:
             return self._prepare_library_ingest_job_admitted(
                 **admitted_kwargs,
+                dispatch_held=True,
                 require_persisted=True,
             )
         return self._submit_library_ingest_job_admitted(**admitted_kwargs)
@@ -2886,6 +3035,7 @@ class LibraryIngestQueueMixin:
         backend: str,
         research_source_operation_id: str | None,
         require_persisted: bool,
+        dispatch_held: bool = False,
     ) -> LibraryIngestJob:
         """Create one queued row without starting its Local or Server owner."""
 
@@ -2916,9 +3066,12 @@ class LibraryIngestQueueMixin:
             except FileIngestionError:
                 detected_type = ""
             except Exception:
-                logger.opt(exception=True).warning(
-                    f"classify_ingest_source failed unexpectedly for {source_path!r}; "
-                    "treating as light work (heavy-lane cap may not apply)."
+                logger.warning(
+                    "classify_ingest_source failed unexpectedly "
+                    "(operation_id={}, origin={}); treating as light work "
+                    "(heavy-lane cap may not apply).",
+                    research_source_operation_id or "none",
+                    backend,
                 )
         return self.library_ingest_jobs.submit(
             source_path=source_path,
@@ -2933,6 +3086,7 @@ class LibraryIngestQueueMixin:
             origin=backend,
             batch_id=batch_id,
             research_source_operation_id=research_source_operation_id,
+            dispatch_held=dispatch_held,
             require_persisted=require_persisted,
         )
 
@@ -3072,7 +3226,7 @@ class LibraryIngestQueueMixin:
         source = self.library_ingest_jobs.get_job(job_id)
         if source is None or source.origin not in {"local", "server"}:
             return None
-        return self.library_ingest_jobs.requeue(job_id)
+        return self.library_ingest_jobs.requeue(job_id, dispatch_held=True)
 
     def _cancel_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
         """Durably cancel an undispatched row whose operation link failed."""
@@ -3124,6 +3278,12 @@ class LibraryIngestQueueMixin:
         requeued = self.library_ingest_jobs.get_job(job_id)
         if requeued is None:
             raise ValueError("Replacement ingest job does not exist.")
+        if requeued.dispatch_held:
+            requeued = self.library_ingest_jobs.release_dispatch_hold(
+                job_id, require_persisted=True
+            )
+            if requeued is None:
+                raise ValueError("Prepared Research ingest job cannot be released.")
         if requeued.origin == "local":
             if self.media_db is None:
                 self.library_ingest_jobs.mark_failed(

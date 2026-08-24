@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import stat
 
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
 from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
 from tldw_chatbook.Research_Workspace.paste_staging import ResearchPasteStagingStore
 from tldw_chatbook.Research_Workspace.source_operations import (
@@ -100,3 +101,30 @@ def test_cancel_cleanup_deletes_only_the_bound_artifact(tmp_path) -> None:
 
     assert not bound.exists()
     assert user_upload.read_text(encoding="utf-8") == "user file"
+
+
+def test_startup_sweep_retains_missing_operation_with_durable_held_job(
+    tmp_path,
+) -> None:
+    """A concurrent sweep cannot outrun held-job reconciliation."""
+
+    store = ResearchPasteStagingStore(tmp_path / "paste-staging")
+    artifact = store.stage("operation-held", title="Paste", body="Private held body")
+    registry = LibraryIngestJobRegistry()
+    registry.submit(
+        source_path=str(artifact),
+        origin="local",
+        research_source_operation_id="operation-held",
+        dispatch_held=True,
+    )
+    missing_operation_store = type(
+        "MissingOperationStore",
+        (),
+        {"get": lambda _self, _operation_id: None},
+    )()
+
+    swept = store.sweep(missing_operation_store, job_registry=registry, limit=100)
+
+    assert swept.deleted == 0
+    assert swept.retained == 1
+    assert artifact.exists()

@@ -502,7 +502,6 @@ class ResearchSourcesRegion(VerticalScroll):
 
     def _sync_capabilities(self) -> None:
         page = self._page
-        desired_count = len(page.desired_source_ids) if page is not None else 0
         attach = self._capabilities.get("attach_existing")
         preview = self._capabilities.get("preview_source")
         remove = self._capabilities.get("remove_source")
@@ -543,10 +542,7 @@ class ResearchSourcesRegion(VerticalScroll):
             )
         )
         self.query_one("#research-source-preview-selected", Button).disabled = not (
-            desired_count == 1
-            and visible_selected_count == 1
-            and preview is not None
-            and preview.available
+            visible_selected_count == 1 and preview is not None and preview.available
         )
         self.query_one("#research-source-remove-selected", Button).disabled = not (
             visible_selected_count > 0 and remove is not None and remove.available

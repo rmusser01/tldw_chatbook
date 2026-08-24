@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete after review fix round 2. Research Workspace now has a compose-once, authority-explicit Sources
+Complete after review fix round 3. Research Workspace now has a compose-once, authority-explicit Sources
 workbench with durable intake receipts, paged sources, exact desired selection,
 readiness/status inspection, device-only folders/annotations, and honest owner
 capability gates. Quick Notes bodies and Task 5 ownership were not added.
@@ -216,3 +216,69 @@ the existing owner boundaries; no new ADR or storage owner was introduced.
 
 Full pytest was not run, per repository policy. TASK-21508 remains
 controller-owned and excluded from this fix commit.
+
+## Review fix round 3
+
+The latest crash-window, startup-recovery, filtered-preview, and privacy
+findings were reproduced before production edits. ADR-078 was amended rather
+than creating a duplicate ADR: schema v7's dispatch hold is the durable
+eligibility mechanism for ADR-078's already accepted qualified two-owner ingest
+transaction.
+
+- Library ingest-job schema v7 adds a constrained `dispatch_held` column with
+  atomic genuine-v6 migration and fresh-schema parity. Research preparation and
+  catalog retry persist held queue rows; ordinary intake remains unheld. Every
+  queue selector excludes held jobs, release is persistence-first and one-way,
+  and restore preserves and protects held rows from the history cap.
+- Startup scans one SQL-filtered bounded page of held queued Research jobs.
+  Matching pending receipts are CAS-linked to the exact job before release;
+  already-linked receipts release directly. Transient reads/writes isolate the
+  row and retain staging. Missing, terminal, origin-incompatible, or differently
+  linked receipts require durable job settlement before staging cleanup.
+- Runtime link exceptions reread the durable receipt. An ambiguous committed
+  link dispatches; an exact still-pending receipt remains visible for startup
+  recovery with its job held and paste retained. Incompatible receipts clean
+  only after confirmed terminal cancellation, and cancellation-store failure
+  retains the managed artifact.
+- The startup paste sweep now recognizes a missing operation with a durable held
+  job, closing the concurrent sweep/reconcile deletion window. Held Research
+  retries also require a persistence store before mutating registry history.
+- Batch Preview is enabled by exactly one displayed selected association,
+  independent of the global desired-selection count. Mounted search, type,
+  readiness status, date, and folder filters target the exact displayed
+  association.
+- Unexpected Local classification logs contain only operation/job context and
+  origin; managed paste paths and `source_path` representations are absent.
+
+### Fix-round-3 RED evidence
+
+- Initial focused review matrix: **17 expected failures** — DB/migration/restore
+  4, registry eligibility 1, app authority/startup/privacy 7, runtime link 3,
+  and filtered Preview 2.
+- Follow-up inverse guards independently reproduced the concurrent staging
+  sweep deletion and held-history pruning hazards before their production
+  repairs.
+
+### Fix-round-3 GREEN and closeout evidence
+
+- Final review/inverse matrix after all edits: **23 passed** with the accepted
+  environment Requests warning. It includes genuine v6 migration/history,
+  rollback, held selector/release/retry/pruning, Local+Server preparation,
+  restart and listener dedupe, transient/incompatible/cancellation cleanup,
+  concurrent staging sweep, mounted filtered Preview targeting, and exception-
+  text path privacy.
+- Complete ingest DB plus registry neighbors: **128 passed**. App submission
+  seam: **146 passed**. Complete Library runner neighbor: **145 passed, 1
+  Windows-only skipped**. Complete Research Workspace package: **257 passed**.
+- Task UI modal/inspector/receipt/Sources/app-wiring/screen/geometry split:
+  **97 passed**, including all 15 production geometry cases. CSS integrity,
+  bundle, class coverage, and staleness: **32 passed**.
+- Scoped Ruff lint passes. Eleven owned/heavily changed files are Ruff
+  format-clean; the large legacy app and runner retain their pre-existing
+  whole-file format/lint baseline outside the edited lines. Changed production
+  `py_compile`, `git diff --check`, privacy/ASCII scans, and the one-shot
+  Impeccable detector (`[]`) pass.
+- Warnings are the accepted environment `RequestsDependencyWarning` and the
+  App neighbor's pre-existing third-party SWIG deprecations. The full suite was
+  not run, per repository policy. TASK-21508 remains controller-owned and is
+  excluded from the fix commit.
