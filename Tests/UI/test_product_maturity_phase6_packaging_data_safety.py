@@ -139,7 +139,9 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
         "## Optional capabilities",
         "## Configuration and data",
         "~/.config/tldw_cli/config.toml",
-        "~/.local/share/tldw_cli/<user>/",
+        "~/.local/share/tldw_cli/",
+        "~/.local/share/tldw_cli/<profile>/",
+        "~/.local/share/tldw_cli/default_user/",
         "](Docs/User_Guide/index.md)",
         "](Docs/Development/release-recovery-setup.md)",
     ):

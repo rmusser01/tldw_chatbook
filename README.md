@@ -918,11 +918,20 @@ CI, and secret managers. Provider-specific names and precedence can change, so
 use the current Settings UI and maintained documentation instead of copying an
 unverified list of variables.
 
-On a typical Unix-like system, the default base directory for local data is:
+On a typical Unix-like system, the default base storage directory is:
 
 ```text
-~/.local/share/tldw_cli/<user>/
+~/.local/share/tldw_cli/
 ```
+
+The app stores each profile's data in a child directory:
+
+```text
+~/.local/share/tldw_cli/<profile>/
+```
+
+A fresh install uses `~/.local/share/tldw_cli/default_user/` until you change
+the profile name.
 
 User- or profile-specific databases, logs, generated files, caches, and other
 state live below that base. Exact paths may vary by platform, profile, and
