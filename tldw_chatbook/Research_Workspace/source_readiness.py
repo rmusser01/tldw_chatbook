@@ -12,6 +12,7 @@ from .contracts import (
     RetrievalMode,
     SourceReadiness,
     SourceReadinessState,
+    SourceIdentityMismatchError,
     WorkspaceDataSource,
 )
 from .source_operations import (
@@ -228,7 +229,7 @@ class ResearchSourceReadinessCoordinator:
                 ref, source_ids=(operation.workspace_source_id,)
             )
             if len(rows) != 1:
-                raise ValueError("readiness source count mismatch")
+                raise SourceIdentityMismatchError("readiness source count mismatch")
             readiness = rows[0]
             if (
                 readiness.ref != ref
@@ -238,7 +239,11 @@ class ResearchSourceReadinessCoordinator:
                     and readiness.catalog_item_id != operation.canonical_item_id
                 )
             ):
-                raise ValueError("readiness source identity mismatch")
+                raise SourceIdentityMismatchError(
+                    "readiness source identity mismatch"
+                )
+        except SourceIdentityMismatchError:
+            return operation
         except Exception:
             return await self._fail(
                 operation,

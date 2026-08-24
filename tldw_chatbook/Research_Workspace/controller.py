@@ -13,6 +13,7 @@ from .contracts import (
     ResearchCapability,
     ResearchSourcePreview,
     ResearchSourceSummary,
+    SourceSelectionResult,
     ResearchWorkspacePort,
     ResearchWorkspaceSummary,
     SourceReadiness,
@@ -355,24 +356,20 @@ class ResearchWorkspaceController:
 
         capture = self._capture_surface("selection")
         self._surface_generations["sources"] += 1
-        result = tuple(
-            await self._port_for(capture).set_selected_scope(
-                capture.context.ref, source_ids
-            )
+        result = await self._port_for(capture).set_selected_scope(
+            capture.context.ref, source_ids
         )
-        self._validate_result_refs(result, capture.context.ref)
-        reconciled_ids = self._selected_ids(result)
-        if frozenset(reconciled_ids) != frozenset(source_ids):
+        if not isinstance(result, SourceSelectionResult):
+            raise TypeError("Selection reconciliation returned an invalid result")
+        self._validate_result_refs((result, *result.sources), capture.context.ref)
+        if len(result.desired_source_ids) != len(source_ids) or frozenset(
+            result.desired_source_ids
+        ) != frozenset(source_ids):
             raise ValueError("Selection reconciliation did not match requested scope")
         if not self._is_current_surface(capture):
             return False
-        self.desired_source_ids = tuple(source_ids)
-        self.visible_source_page = BoundedPageResult(
-            items=result,
-            limit=100,
-            total=len(result),
-        )
-        for source in result:
+        self.desired_source_ids = result.desired_source_ids
+        for source in result.sources:
             self._canonical_sources[(source.ref, source.source_id)] = source
         return True
 

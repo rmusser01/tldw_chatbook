@@ -485,7 +485,7 @@ class _WorkspaceSourceIdsRequest(_WorkspaceSourceModel):
 
 class WorkspaceSourceSelectionRequest(_WorkspaceSourceIdsRequest):
     selected_ids: list[str] = Field(
-        default_factory=list, max_length=MAX_WORKSPACE_SOURCE_ROWS
+        default_factory=list, max_length=MAX_WORKSPACE_SOURCE_OWNER_ROWS
     )
 
     @field_validator("selected_ids", mode="before")

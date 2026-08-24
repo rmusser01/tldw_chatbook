@@ -253,6 +253,44 @@ async def test_local_selection_uses_canonical_media_ids_and_persists_empty(
 
 
 @pytest.mark.asyncio
+async def test_local_selection_reconciles_101_canonical_ids_without_page_one_loss(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    for media_id in range(1, 102):
+        registry.link_membership(
+            "workspace-1",
+            item_type="media",
+            item_id=str(media_id),
+            role="source",
+        )
+
+    class ManyMediaScope:
+        async def get_media_detail(self, **kwargs):
+            media_id = str(kwargs["media_id"])
+            return {
+                "source_id": media_id,
+                "title": f"Source {media_id}",
+                "media_type": "document",
+            }
+
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=ManyMediaScope()
+    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    requested = tuple(str(media_id) for media_id in range(1, 102))
+
+    result = await adapter.set_selected_scope(ref, requested)
+
+    assert result.ref == ref
+    assert result.desired_source_ids == requested
+    assert len(result.sources) <= 100
+    assert tuple(
+        item.source_id for item in registry.get_workspace_scope("workspace-1").items
+    ) == requested
+
+
+@pytest.mark.asyncio
 async def test_local_remove_unlinks_only_and_local_update_reorder_are_typed(
     tmp_path,
 ) -> None:
@@ -564,13 +602,114 @@ async def test_server_source_list_preserves_two_identity_spaces_and_refetch_vers
     assert page.items[0].source_id == "source-1"
     assert page.items[0].catalog_item_id == "31"
     assert page.items[0].workspace_source_version == 5
-    assert selected[0].workspace_source_version == 7
+    assert selected.sources[0].workspace_source_version == 7
     assert service.calls == [
         ("capabilities", "workspace-1"),
         ("list", "workspace-1"),
         ("capabilities", "workspace-1"),
         ("selection", "workspace-1", ["source-1"]),
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_selection_reconciles_101_owner_ids_with_a_bounded_row_subset() -> (
+    None
+):
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    service.rows = [
+        service.rows[0]
+        | {"id": f"source-{index}", "media_id": index + 1, "position": index}
+        for index in range(101)
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+    requested = tuple(f"source-{index}" for index in range(101))
+
+    result = await adapter.set_selected_scope(server_ref(provider), requested)
+
+    assert result.desired_source_ids == requested
+    assert len(result.sources) == 100
+    assert all(source.selected for source in result.sources)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["top", "row"])
+async def test_server_readiness_rejects_every_mismatched_workspace_identity(
+    mismatch,
+) -> None:
+    provider = ContextProvider()
+
+    class MismatchedStatusService(RecordingServerSourceService):
+        async def get_workspace_source_status(self, workspace_id):
+            payload = await super().get_workspace_source_status(workspace_id)
+            if mismatch == "top":
+                payload["workspace_id"] = "workspace-other"
+            else:
+                payload["sources"][0]["workspace_id"] = "workspace-other"
+            return payload
+
+    service = MismatchedStatusService()
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    with pytest.raises(ValueError, match="mismatched workspace"):
+        await adapter.get_readiness(server_ref(provider))
+
+    assert service.calls == [
+        ("capabilities", "workspace-1"),
+        ("status", "workspace-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_missing_media_preview_keeps_association_without_catalog_id() -> (
+    None
+):
+    provider = ContextProvider()
+
+    class MissingMediaPreviewService(RecordingServerSourceService):
+        async def preview_workspace_source(
+            self, workspace_id, source_id, *, max_chars, chunk_limit
+        ):
+            self.calls.append(("preview", workspace_id, source_id))
+            return {
+                "workspace_id": workspace_id,
+                "source_id": source_id,
+                "media_id": None,
+                "title": "Missing source",
+                "source_type": "document",
+                "url": None,
+                "state": "missing_media",
+                "status_reason": "media_id_missing",
+                "readiness": {
+                    "metadata_ready": False,
+                    "text_extracted": False,
+                    "fts_ready": False,
+                    "vector_ready": False,
+                    "citation_ready": False,
+                    "summary_ready": False,
+                    "tool_accessible": False,
+                },
+                "content_available": False,
+                "preview_mode": "missing_media",
+                "unavailable_reason": "media_id_missing",
+                "text_preview": None,
+                "text_total_chars": None,
+                "text_truncated": False,
+                "snippets": [],
+                "generated_at": "2026-08-24T00:00:00Z",
+            }
+
+    service = MissingMediaPreviewService()
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+    ref = server_ref(provider)
+
+    preview = await adapter.preview_source(ref, "source-1")
+
+    assert preview.ref == ref
+    assert preview.source_id == "source-1"
+    assert preview.catalog_item_id is None
+    assert preview.preview_mode == "missing_media"
+    assert preview.text == ""
 
 
 @pytest.mark.asyncio

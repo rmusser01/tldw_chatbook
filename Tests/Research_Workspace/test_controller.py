@@ -11,6 +11,7 @@ from tldw_chatbook.Research_Workspace.contracts import (
     ResearchSourcePreview,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    SourceSelectionResult,
     SourceReadiness,
     SourceReadinessState,
     WorkspaceDataSource,
@@ -259,6 +260,37 @@ async def test_old_readiness_and_preview_cannot_repaint_after_capability_change(
 
 
 @pytest.mark.asyncio
+async def test_missing_media_preview_is_cached_by_association_identity() -> None:
+    class PreviewPort:
+        async def preview_source(
+            self, ref, source_id, *, max_chars=3000, snippet_limit=3
+        ):
+            return ResearchSourcePreview(
+                ref=ref,
+                source_id=source_id,
+                catalog_item_id=None,
+                preview_mode="missing_media",
+            )
+
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-1",
+        server_profile_id="profile-1",
+    )
+    controller = ResearchWorkspaceController(
+        {WorkspaceDataSource.SERVER: PreviewPort()}
+    )
+    controller.select_workspace(ref, capability_revision="cap-1")
+
+    assert await controller.preview_selected_source("source-1") is True
+
+    assert controller.visible_preview.catalog_item_id is None
+    assert controller.canonical_source_preview(ref, "source-1") == (
+        controller.visible_preview
+    )
+
+
+@pytest.mark.asyncio
 async def test_selection_reconciliation_supersedes_older_source_refresh() -> None:
     port = DeferredSourcePort()
     controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
@@ -273,7 +305,13 @@ async def test_selection_reconciliation_supersedes_older_source_refresh() -> Non
     selected = local_source(
         ref, "membership-2", catalog_item_id="2", selected=True
     )
-    port.selection_results[0].set_result((selected,))
+    port.selection_results[0].set_result(
+        SourceSelectionResult(
+            ref=ref,
+            desired_source_ids=("2",),
+            sources=(selected,),
+        )
+    )
     assert await selection is True
     assert controller.desired_source_ids == ("2",)
 
@@ -284,8 +322,75 @@ async def test_selection_reconciliation_supersedes_older_source_refresh() -> Non
         BoundedPageResult(items=(stale,), limit=100, total=1)
     )
     assert await old_refresh is False
-    assert controller.visible_source_page.items == (selected,)
+    assert controller.visible_source_page is None
+    assert controller.canonical_source(ref, "membership-2") == selected
     assert controller.desired_source_ids == ("2",)
+
+
+@pytest.mark.asyncio
+async def test_selection_of_row_101_preserves_the_current_visible_page() -> None:
+    class ImmediatePort:
+        async def list_sources(self, ref, *, limit=100, offset=0):
+            first_page = tuple(
+                local_source(
+                    ref,
+                    f"membership-{index}",
+                    catalog_item_id=str(index),
+                    selected=False,
+                )
+                for index in range(1, 101)
+            )
+            return BoundedPageResult(
+                items=first_page,
+                limit=100,
+                total=101,
+                has_more=True,
+            )
+
+        async def set_selected_scope(self, ref, source_ids):
+            return SourceSelectionResult(
+                ref=ref,
+                desired_source_ids=("101",),
+                sources=(
+                    local_source(
+                        ref,
+                        "membership-101",
+                        catalog_item_id="101",
+                        selected=True,
+                    ),
+                ),
+            )
+
+    ref = local_ref("one")
+    controller = ResearchWorkspaceController(
+        {WorkspaceDataSource.LOCAL: ImmediatePort()}
+    )
+    controller.select_workspace(ref, capability_revision="cap-1")
+    assert await controller.refresh_selected_sources() is True
+    visible_before = controller.visible_source_page
+
+    assert await controller.set_selected_scope(("101",)) is True
+
+    assert controller.desired_source_ids == ("101",)
+    assert controller.visible_source_page is visible_before
+
+
+@pytest.mark.asyncio
+async def test_selection_reconciliation_rejects_duplicate_requested_identity() -> None:
+    class DuplicateAcceptingPort:
+        async def set_selected_scope(self, ref, source_ids):
+            return SourceSelectionResult(ref=ref, desired_source_ids=("1",))
+
+    ref = local_ref("one")
+    controller = ResearchWorkspaceController(
+        {WorkspaceDataSource.LOCAL: DuplicateAcceptingPort()}
+    )
+    controller.select_workspace(ref, capability_revision="cap-1")
+
+    with pytest.raises(ValueError, match="did not match"):
+        await controller.set_selected_scope(("1", "1"))
+
+    assert controller.desired_source_ids == ()
 
 
 @pytest.mark.asyncio
@@ -299,9 +404,13 @@ async def test_late_selection_result_does_not_bleed_into_new_workspace() -> None
     await asyncio.sleep(0)
     controller.select_workspace(local_ref("new"), capability_revision="cap-1")
     port.selection_results[0].set_result(
-        (
-            local_source(
-                old_ref, "membership-1", catalog_item_id="1", selected=True
+        SourceSelectionResult(
+            ref=old_ref,
+            desired_source_ids=("1",),
+            sources=(
+                local_source(
+                    old_ref, "membership-1", catalog_item_id="1", selected=True
+                ),
             ),
         )
     )

@@ -281,6 +281,33 @@ async def test_selection_put_validates_ok_then_returns_refetched_rows(
 
 
 @pytest.mark.asyncio
+async def test_selection_accepts_101_owner_ids_and_refetches_exact_rows(
+    monkeypatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    rows = [
+        source_row(
+            id=f"source-{index}",
+            media_id=index + 1,
+            position=index,
+            selected=True,
+        )
+        for index in range(101)
+    ]
+    request = AsyncMock(side_effect=[{"ok": True}, rows])
+    monkeypatch.setattr(client, "_request", request)
+    selected_ids = [row["id"] for row in rows]
+
+    result = await client.set_workspace_source_selection(
+        "workspace-1",
+        WorkspaceSourceSelectionRequest(selected_ids=selected_ids),
+    )
+
+    assert [row["id"] for row in result] == selected_ids
+    assert request.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_selection_ok_false_stops_before_refetch(monkeypatch) -> None:
     client = TLDWAPIClient("http://localhost:8000")
     request = AsyncMock(return_value={"ok": False})
@@ -409,6 +436,47 @@ async def test_status_accepts_more_than_one_public_page_and_missing_media_ids(
         )
         result = await client.get_workspace_source_status("workspace-1")
         assert result["sources"][0]["media_id"] == missing_id
+
+
+@pytest.mark.asyncio
+async def test_status_client_retains_top_level_and_row_workspace_identities(
+    monkeypatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    payload = status_payload()
+    payload["workspace_id"] = "workspace-top-other"
+    payload["sources"][0]["workspace_id"] = "workspace-row-other"
+    monkeypatch.setattr(client, "_request", AsyncMock(return_value=payload))
+
+    result = await client.get_workspace_source_status("workspace-1")
+
+    assert result["workspace_id"] == "workspace-top-other"
+    assert result["sources"][0]["workspace_id"] == "workspace-row-other"
+
+
+@pytest.mark.asyncio
+async def test_missing_media_preview_response_retains_null_catalog_identity(
+    monkeypatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    payload = preview_payload(
+        media_id=None,
+        state="missing_media",
+        status_reason="media_id_missing",
+        content_available=False,
+        preview_mode="missing_media",
+        unavailable_reason="media_id_missing",
+        text_preview=None,
+        text_total_chars=None,
+        snippets=[],
+    )
+    monkeypatch.setattr(client, "_request", AsyncMock(return_value=payload))
+
+    result = await client.get_workspace_source_preview("workspace-1", "source-1")
+
+    assert result["source_id"] == "source-1"
+    assert result["media_id"] is None
+    assert result["preview_mode"] == "missing_media"
 
 
 @pytest.mark.asyncio

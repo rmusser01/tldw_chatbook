@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Research_Workspace.local_adapter import (
     LocalResearchWorkspaceAdapter,
+)
+from tldw_chatbook.Research_Workspace.server_adapter import (
+    ServerResearchWorkspaceAdapter,
 )
 from tldw_chatbook.Research_Workspace.contracts import (
     QualifiedWorkspaceRef,
@@ -32,6 +37,9 @@ from tldw_chatbook.Research_Workspace.source_operations import (
     SourceOperationStatus,
 )
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from tldw_chatbook.runtime_policy.server_event_scope import (
+    event_principal_id_from_active_context,
+)
 
 
 REF = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
@@ -478,6 +486,116 @@ async def test_missing_server_media_keeps_association_identity_and_fails_unavail
     assert settled.readiness_status is SourceOperationStatus.FAILED
     assert settled.error_code == "source_unavailable"
     assert adapter.calls == [(server_ref, ("source-1",))]
+
+
+@pytest.mark.asyncio
+async def test_mismatched_server_readiness_leaves_receipt_pending_and_never_calls_local(
+    tmp_path,
+) -> None:
+    store = ResearchSourceOperationStore(WorkspaceDB(tmp_path / "workspace.sqlite"))
+    context = SimpleNamespace(
+        active_server_id="profile-1",
+        auth_token="test-token",
+        credential_source="test",
+        capabilities={
+            "server_configured": True,
+            "reachability": "reachable",
+            "auth_state": "authenticated",
+        },
+    )
+    principal_id = event_principal_id_from_active_context(context) or ""
+    operation = store.create(
+        ResearchSourceOperation(
+            operation_id="operation-server-mismatch",
+            idempotency_key="server:workspace-1:mismatch",
+            data_source=WorkspaceDataSource.SERVER,
+            workspace_id="workspace-1",
+            server_profile_id="profile-1",
+            principal_id=principal_id,
+            canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+            desired_selected=True,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        canonical_item_id="101",
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.ASSOCIATION,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        workspace_source_id="source-1",
+    )
+
+    class Provider:
+        def get_active_context(self):
+            return context
+
+    class MismatchedServerService:
+        async def get_workspace_capabilities(self, workspace_id):
+            return {
+                "workspace_id": workspace_id,
+                "access_level": "owner",
+                "allowed_actions": {
+                    "inspect_sources": {"allowed": True, "reason_code": None}
+                },
+            }
+
+        async def get_workspace_source_status(self, workspace_id):
+            return {
+                "workspace_id": "workspace-other",
+                "sources": [],
+                "summary": {},
+            }
+
+    class LocalSentinel:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_readiness(self, ref, *, source_ids=()):
+            self.calls += 1
+            raise AssertionError("Local readiness must not be consulted")
+
+    local = LocalSentinel()
+    server = ServerResearchWorkspaceAdapter(MismatchedServerService(), Provider())
+    coordinator = ResearchSourceReadinessCoordinator(
+        operation_store=store,
+        adapters={
+            WorkspaceDataSource.LOCAL: local,
+            WorkspaceDataSource.SERVER: server,
+        },
+    )
+
+    settled = await coordinator.resume(operation.operation_id)
+
+    assert settled == operation
+    assert store.get(operation.operation_id) == operation
+    assert local.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_nonidentity_readiness_refresh_failure_remains_terminal(tmp_path) -> None:
+    store = ResearchSourceOperationStore(WorkspaceDB(tmp_path / "workspace.sqlite"))
+    operation = _associated_operation(store)
+
+    class FailingAdapter:
+        async def get_readiness(self, ref, *, source_ids=()):
+            raise RuntimeError("readiness service offline")
+
+    settled = await ResearchSourceReadinessCoordinator(
+        operation_store=store,
+        adapters={WorkspaceDataSource.LOCAL: FailingAdapter()},
+    ).resume(operation.operation_id)
+
+    assert settled.readiness_status is SourceOperationStatus.FAILED
+    assert settled.error_code == "readiness_refresh_failed"
+    assert settled.revision == operation.revision + 2
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from .source_operations import ResearchSourceOperation
 
 
+MAX_RESEARCH_SELECTION_IDS = 10_100
+MAX_RESEARCH_SELECTION_ROWS = 100
+
+
 class WorkspaceDataSource(StrEnum):
     LOCAL = "local"
     SERVER = "server"
@@ -133,6 +137,10 @@ class CapabilityUnavailableError(RuntimeError):
     def __init__(self, capability: ResearchCapability) -> None:
         super().__init__(capability.user_message)
         self.capability = capability
+
+
+class SourceIdentityMismatchError(ValueError):
+    """Raised when an authority read returns a different source owner."""
 
 
 def require_capability(
@@ -350,7 +358,7 @@ class SourceReadiness:
 class ResearchSourcePreview:
     ref: QualifiedWorkspaceRef
     source_id: str
-    catalog_item_id: str
+    catalog_item_id: str | None
     preview_mode: str
     text: str = ""
     snippets: tuple[str, ...] = ()
@@ -359,14 +367,23 @@ class ResearchSourcePreview:
         object.__setattr__(
             self, "source_id", _required_text(self.source_id, "source_id")
         )
-        object.__setattr__(
-            self,
-            "catalog_item_id",
-            _required_text(self.catalog_item_id, "catalog_item_id"),
-        )
-        object.__setattr__(
-            self, "preview_mode", _required_text(self.preview_mode, "preview_mode")
-        )
+        preview_mode = _required_text(self.preview_mode, "preview_mode")
+        object.__setattr__(self, "preview_mode", preview_mode)
+        if self.catalog_item_id is None:
+            unavailable_server_preview = (
+                self.ref.data_source is WorkspaceDataSource.SERVER
+                and preview_mode in {"missing_media", "unavailable"}
+            )
+            if not unavailable_server_preview:
+                raise ValueError(
+                    "catalog_item_id may be null only for an unavailable Server preview"
+                )
+        else:
+            object.__setattr__(
+                self,
+                "catalog_item_id",
+                _required_text(self.catalog_item_id, "catalog_item_id"),
+            )
         object.__setattr__(self, "text", _optional_text(self.text, "text"))
         object.__setattr__(self, "snippets", tuple(self.snippets))
 
@@ -413,6 +430,58 @@ class BoundedPageResult(Generic[PageItem]):
             type(self.total) is not int or self.total < 0
         ):
             raise ValueError("total must be a non-negative integer or None")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSelectionResult:
+    """Exact owner selection plus an optional bounded row reconciliation."""
+
+    ref: QualifiedWorkspaceRef
+    desired_source_ids: tuple[str, ...]
+    sources: tuple[ResearchSourceSummary, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.desired_source_ids, tuple):
+            raise TypeError("desired_source_ids must be a tuple")
+        desired = tuple(
+            _required_text(source_id, "desired_source_ids")
+            for source_id in self.desired_source_ids
+        )
+        if any(
+            len(source_id) > 1024 or len(source_id.encode("utf-8")) > 4096
+            for source_id in desired
+        ):
+            raise ValueError(
+                "desired_source_ids contains an identity that is too long"
+            )
+        if len(desired) > MAX_RESEARCH_SELECTION_IDS:
+            raise ValueError("desired_source_ids exceeds the owner bound")
+        if len(desired) != len(set(desired)):
+            raise ValueError("desired_source_ids must be unique")
+        if not isinstance(self.sources, tuple):
+            raise TypeError("sources must be a tuple")
+        sources = tuple(self.sources)
+        if len(sources) > MAX_RESEARCH_SELECTION_ROWS:
+            raise ValueError("selection row reconciliation exceeds the page bound")
+        desired_set = set(desired)
+        reconciled_ids: list[str] = []
+        for source in sources:
+            if source.ref != self.ref:
+                raise ValueError("selection row has a mismatched workspace ref")
+            if not source.selected:
+                raise ValueError("selection reconciliation rows must be selected")
+            desired_id = (
+                source.catalog_item_id
+                if self.ref.data_source is WorkspaceDataSource.LOCAL
+                else source.source_id
+            )
+            if desired_id not in desired_set:
+                raise ValueError("selection row is outside the desired owner state")
+            reconciled_ids.append(desired_id)
+        if len(reconciled_ids) != len(set(reconciled_ids)):
+            raise ValueError("selection reconciliation rows must be unique")
+        object.__setattr__(self, "desired_source_ids", desired)
+        object.__setattr__(self, "sources", sources)
 
 
 class ResearchWorkspacePort(Protocol):
@@ -530,7 +599,7 @@ class ResearchWorkspacePort(Protocol):
         self,
         ref: QualifiedWorkspaceRef,
         source_ids: tuple[str, ...],
-    ) -> tuple[ResearchSourceSummary, ...]: ...
+    ) -> SourceSelectionResult: ...
 
     async def reorder_sources(
         self,

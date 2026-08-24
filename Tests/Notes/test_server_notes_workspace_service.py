@@ -699,6 +699,29 @@ async def test_service_exposes_preview_status_and_capability_read_projections():
 
 
 @pytest.mark.asyncio
+async def test_service_retains_mismatched_status_identities_for_adapter_validation(
+):
+    client = SourceProjectionClient()
+
+    async def mismatched_status(_workspace_id):
+        return {
+            "workspace_id": "workspace-top-other",
+            "sources": [
+                {"id": "source-1", "workspace_id": "workspace-row-other"}
+            ],
+            "summary": {},
+        }
+
+    client.get_workspace_source_status = mismatched_status
+    service = ServerNotesWorkspaceService(client=client)
+
+    status = await service.get_workspace_source_status("workspace-1")
+
+    assert status["workspace_id"] == "workspace-top-other"
+    assert status["sources"][0]["workspace_id"] == "workspace-row-other"
+
+
+@pytest.mark.asyncio
 async def test_service_selection_and_reorder_return_post_write_refetched_versions():
     client = SourceProjectionClient()
     service = ServerNotesWorkspaceService(client=client)

@@ -9,11 +9,13 @@ from .contracts import (
     ResearchCapability,
     ResearchSourcePreview,
     ResearchSourceSummary,
+    SourceSelectionResult,
     ResearchWorkspacePort,
     ResearchWorkspaceSummary,
     RetrievalMode,
     SourceReadiness,
     SourceReadinessState,
+    SourceIdentityMismatchError,
     WorkspaceDataSource,
 )
 from .controller import (
@@ -40,6 +42,7 @@ __all__ = [
     "ResearchRequestContext",
     "ResearchSourcePreview",
     "ResearchSourceSummary",
+    "SourceSelectionResult",
     "ResearchSurfaceRequest",
     "ResearchWorkspaceController",
     "ResearchWorkspaceCatalogState",
@@ -49,5 +52,6 @@ __all__ = [
     "RetrievalMode",
     "SourceReadiness",
     "SourceReadinessState",
+    "SourceIdentityMismatchError",
     "WorkspaceDataSource",
 ]

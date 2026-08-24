@@ -136,6 +136,35 @@ legacy unscoped state.
   and vector-failure recovery copy stays bounded and does not advertise a fake
   retry endpoint.
 
+## Fix round 2 reconciliation
+
+- Added `SourceSelectionResult`, deliberately separate from
+  `BoundedPageResult`. It carries exact ordered, unique desired owner IDs up to
+  the audited 10,100-row owner cap and at most 100 reconciled selected source
+  rows. It does not claim that an owner projection is one visible page.
+- Local selection now validates up to 10,100 attached canonical Media IDs,
+  persists them in the canonical workspace `RagScope`, and reads that owner
+  state back directly. It never lists page 1 to prove selection, so canonical
+  item 101 and Select all beyond 100 survive reconciliation.
+- Server selection accepts the same finite owner cap, validates every refetched
+  row's workspace/association/boolean identity, derives the exact selected ID
+  tuple from the post-PUT owner projection, and returns only the first 100
+  selected rows as optional cache evidence.
+- Controller selection validates the qualified result and exact desired ID set,
+  preserves the current visible page, invalidates an older source refresh, and
+  updates canonical rows only for the bounded rows the owner returned.
+- Server readiness now validates the top-level `workspace_id` and every status
+  row's `workspace_id` before normalization. A typed identity mismatch leaves
+  the readiness receipt pending and retryable with zero Local calls; nonidentity
+  refresh failures still settle terminal as `readiness_refresh_failed`.
+- A valid Server `missing_media` preview now retains its required association ID
+  with `catalog_item_id=None`. The nullable identity is allowed only for Server
+  `missing_media`/unavailable modes, and the controller cache remains keyed by
+  qualified workspace plus association ID.
+- Updated the older lifecycle-capability test to account for the nine source
+  capabilities added by Task 3 while still proving an unimplemented source
+  service reports those capabilities unavailable rather than inferred.
+
 ## WebUI parity mapping retained for Task 4
 
 | Existing WebUI control | Task 3 foundation |
@@ -155,20 +184,23 @@ Search Server.
 
 ## Verification evidence
 
-- Fix-round focused gate (contracts, Local/Server adapters, association,
-  readiness, selection, Workspace scope storage, and source client):
-  `130 passed, 1 warning in 1.97s`.
-- Expanded restored-tree owner/consumer gate (RAG codecs/storage, Library
-  ingest runner, Media normalizers, Notes service/client, Research contracts,
-  controller, operations/adapters/coordinators, Workspace registry/scope, and
-  source client): `489 passed, 1 skipped, 1 warning in 22.49s`. The skip is
-  the existing Windows spawn/resource-tracker boundary.
-- The only warning is the accepted environment `RequestsDependencyWarning`;
-  no new warning class appeared. Full pytest was not run.
+- Round 2 focused gate (contracts, controller, Local/Server adapters,
+  association/readiness/selection, workspace adapters, source client, and Notes
+  service): `199 passed, 1 warning in 2.27s`.
+- Expanded restored-tree owner/consumer gate excluding the known high-FD
+  Library-ingest process suite: `440 passed, 1 warning in 11.21s`.
+- Library-ingest runner gate: `145 passed, 1 skipped, 1 warning in 15.95s`.
+  The skip is the existing Windows spawn/resource-tracker boundary.
+- The split gates contain only the accepted environment
+  `RequestsDependencyWarning`. A diagnostic combined run reported FD growth
+  +208; isolation with `TLDW_TEST_FD_GROWTH_LIMIT=0` showed the unchanged
+  Library ingest test process owns +190 while all six Round 2 focused files own
+  +3. This is preserved as baseline fixture evidence, not hidden by raising the
+  sentinel. Full pytest was not run.
 - Scoped Ruff on all fix-round production and focused tests: pass. The format
   probe still reports 12 existing legacy files as whole-file reformat
   candidates, so they were not mechanically reformatted into this focused fix;
-  the changed readiness copy and its tests pass the format check.
+  no whole-file formatting churn was introduced.
 - Changed-production `compileall`, `git diff --check`, and the Impeccable
   detector on Research/user-facing recovery copy: pass.
 
@@ -195,6 +227,17 @@ Search Server.
   lifecycle guards red because no source retry endpoint exists.
 
 All nine reviewed defect families were reverted before the restored-tree gates.
+
+Round 2 added four inverse checks, all restored before the final gates:
+
+- Rebuilding the visible source page from a selection result replaced the
+  existing 101-row owner page with a synthetic one-row page and made the page
+  preservation guard red.
+- Removing top-level readiness workspace validation made the exact top-level
+  mismatch guard red; removing the coordinator's typed identity branch made the
+  pending-receipt/no-Local guard red.
+- Converting `media_id=None` back to `""` made the actual-shaped missing-media
+  preview fixture fail at the domain boundary.
 
 ## Files and boundaries
 

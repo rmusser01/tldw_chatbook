@@ -29,13 +29,17 @@ from tldw_chatbook.tldw_api.notes_workspace_schemas import (
 from .contracts import (
     BoundedPageResult,
     CapabilityUnavailableError,
+    MAX_RESEARCH_SELECTION_IDS,
+    MAX_RESEARCH_SELECTION_ROWS,
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
     ResearchCapability,
     ResearchSourcePreview,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    SourceSelectionResult,
     SourceReadiness,
+    SourceIdentityMismatchError,
     WorkspaceDataSource,
     require_capability,
 )
@@ -567,7 +571,9 @@ class ServerResearchWorkspaceAdapter:
         return ResearchSourcePreview(
             ref=ref,
             source_id=source_id,
-            catalog_item_id=str(row.get("media_id") or ""),
+            catalog_item_id=(
+                None if row.get("media_id") is None else str(row["media_id"])
+            ),
             preview_mode=str(row.get("preview_mode") or "unavailable"),
             text=str(row.get("text_preview") or ""),
             snippets=tuple(
@@ -592,10 +598,22 @@ class ServerResearchWorkspaceAdapter:
         )
         rows = payload.get("sources") if isinstance(payload, Mapping) else None
         if (
-            not isinstance(rows, list)
+            not isinstance(payload, Mapping)
+            or str(payload.get("workspace_id") or "") != ref.workspace_id
+            or not isinstance(rows, list)
             or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS
         ):
-            raise ValueError("Server readiness returned invalid rows")
+            raise SourceIdentityMismatchError(
+                "Server readiness returned a mismatched workspace"
+            )
+        if any(
+            not isinstance(row, Mapping)
+            or str(row.get("workspace_id") or "") != ref.workspace_id
+            for row in rows
+        ):
+            raise SourceIdentityMismatchError(
+                "Server readiness returned a mismatched workspace"
+            )
         requested = set(source_ids)
         normalized = tuple(normalize_server_readiness(ref=ref, status=row) for row in rows)
         if requested and not requested.issubset({row.source_id for row in normalized}):
@@ -608,8 +626,12 @@ class ServerResearchWorkspaceAdapter:
         self,
         ref: QualifiedWorkspaceRef,
         source_ids: tuple[str, ...],
-    ) -> tuple[ResearchSourceSummary, ...]:
-        source_ids = self._association_ids(source_ids, allow_empty=True)
+    ) -> SourceSelectionResult:
+        source_ids = self._association_ids(
+            source_ids,
+            allow_empty=True,
+            maximum=MAX_RESEARCH_SELECTION_IDS,
+        )
         await self._require_source_action(ref, "add_sources")
         context = self._context_for_ref(ref)
         rows = await self._server_call(
@@ -618,7 +640,34 @@ class ServerResearchWorkspaceAdapter:
             ),
             context=context,
         )
-        return tuple(self._source_summary(ref, row) for row in rows)
+        if not isinstance(rows, list) or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS:
+            raise ValueError("Server source selection reconciliation is invalid")
+        owner_ids: list[str] = []
+        selected_sources: list[ResearchSourceSummary] = []
+        seen_ids: set[str] = set()
+        for row in rows:
+            if (
+                not isinstance(row, Mapping)
+                or str(row.get("workspace_id") or "") != ref.workspace_id
+                or type(row.get("selected")) is not bool
+            ):
+                raise ValueError("Server source selection returned mismatched identity")
+            source_id = self._association_id(row.get("id"))
+            if source_id in seen_ids:
+                raise ValueError("Server source selection returned duplicate identity")
+            seen_ids.add(source_id)
+            if not row["selected"]:
+                continue
+            owner_ids.append(source_id)
+            if len(selected_sources) < MAX_RESEARCH_SELECTION_ROWS:
+                selected_sources.append(self._source_summary(ref, row))
+        if frozenset(owner_ids) != frozenset(source_ids):
+            raise ValueError("Server source selection reconciliation did not match")
+        return SourceSelectionResult(
+            ref=ref,
+            desired_source_ids=tuple(owner_ids),
+            sources=tuple(selected_sources),
+        )
 
     async def reorder_sources(
         self,
@@ -835,9 +884,9 @@ class ServerResearchWorkspaceAdapter:
 
     @classmethod
     def _association_ids(
-        cls, values: object, *, allow_empty: bool
+        cls, values: object, *, allow_empty: bool, maximum: int = 100
     ) -> tuple[str, ...]:
-        if not isinstance(values, tuple) or len(values) > 100:
+        if not isinstance(values, tuple) or len(values) > maximum:
             raise ValueError("source_ids must be a bounded tuple of association IDs")
         normalized = tuple(cls._association_id(value) for value in values)
         if (not allow_empty and not normalized) or len(set(normalized)) != len(

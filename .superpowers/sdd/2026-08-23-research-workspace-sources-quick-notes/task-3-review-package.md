@@ -2,17 +2,17 @@
 
 Review base:
 
-`ee7185115ba2d37e32d30f4e933bab934d51ae82`
+`60a7bf27c15b285b4a80a1f9f6f1d0737835ac80`
 
 Expected commit subject:
 
-`fix: harden Research source ownership boundaries`
+`fix: reconcile Research source owner projections`
 
 Exact review command after commit:
 
 ```bash
-git diff --stat ee7185115ba2d37e32d30f4e933bab934d51ae82..HEAD
-git diff ee7185115ba2d37e32d30f4e933bab934d51ae82..HEAD -- \
+git diff --stat 60a7bf27c15b285b4a80a1f9f6f1d0737835ac80..HEAD
+git diff 60a7bf27c15b285b4a80a1f9f6f1d0737835ac80..HEAD -- \
   ':!backlog/tasks/task-21508 - Add-Research-Sources-ingest-association-and-Quick-Notes.md'
 ```
 
@@ -21,17 +21,15 @@ this implementation or commit.
 
 ## Review order
 
-1. `contracts.py`, `source_readiness.py`, and `Chat/rag_scope.py`: identity,
-   readiness, retrieval, and explicit-empty invariants.
-2. `local_adapter.py` and `server_adapter.py`: authority isolation, real Media
-   scope calls, durable attach, typed capabilities, and association-only remove.
-3. `notes_workspace_schemas.py`, `client.py`, and
-   `server_notes_workspace_service.py`: strict bounds, quoted paths, actual
-   `{ok}` then GET traces, and reconciliation failures.
-4. `source_operation_store.py`, `source_association.py`, and `app.py`: bounded
-   readiness receipt recovery after association and restart.
-5. `controller.py`: qualified per-surface generations and late-result fencing.
-6. Focused tests and `task-3-report.md`: inverse guards and WebUI parity gaps.
+1. `contracts.py`, `local_adapter.py`, `server_adapter.py`, and `controller.py`:
+   exact owner selection versus the independently bounded visible source page.
+2. `notes_workspace_schemas.py` and source-client/service tests: the 10,100-ID
+   owner selection cap and preservation of top-level/row workspace identities.
+3. `server_adapter.py` and `source_readiness.py`: pre-normalization identity
+   validation and pending-versus-terminal readiness receipt behavior.
+4. `ResearchSourcePreview`, Server preview projection, client fixture, and
+   controller cache tests: honest nullable canonical identity for missing Media.
+5. Focused tests and `task-3-report.md`: RED/GREEN and inverse-mutation evidence.
 
 ## High-risk invariants to challenge
 
@@ -39,8 +37,18 @@ this implementation or commit.
   association IDs. Cross-space substitutions must fail.
 - Select none must survive Local restart as explicit empty while Console's
   ordinary empty save remains unscoped.
-- Server selection/reorder never invent a revision: PUT `{ok}` must be followed
-  by GET, and a failed/mismatched refetch must not return stale rows.
+- A 101+ source owner mutation must never be repackaged as a 100-row page.
+  Exact desired IDs remain ordered and unique up to 10,100; the optional source
+  row reconciliation is independently capped at 100.
+- Local selection reads back canonical `RagScope` state without listing page 1.
+  Server selection derives exact IDs from the validated post-PUT owner refetch.
+- Controller selection preserves the current visible page, validates exact
+  desired identities, and caches only source rows the owner returned.
+- Server readiness rejects both top-level and every row-level workspace mismatch
+  before normalization. A typed identity mismatch remains pending/retryable;
+  ordinary refresh failures remain terminal.
+- Missing-media preview keeps the Server association ID and carries
+  `catalog_item_id=None`; no blank or fabricated catalog identity is allowed.
 - Missing vector readiness is FTS-only and cannot enter Hybrid retrieval.
 - Readiness retry must make zero catalog-ingest or association calls.
 - Late ABA, preview, readiness, and pre-write source-list results cannot enter
@@ -58,14 +66,19 @@ this implementation or commit.
 
 ## Verification snapshot
 
-- Fix-round focused gate: `130 passed`.
-- Expanded restored-tree owner/consumer gate: `489 passed`, `1 skipped`
-  (existing Windows-only boundary).
+- Fix-round focused gate: `199 passed`.
+- Expanded restored-tree owner/consumer gates: `440 passed`, plus Library
+  ingestion `145 passed, 1 skipped` (existing Windows-only boundary).
 - Only accepted `RequestsDependencyWarning`.
 - Scoped Ruff, readiness-copy format check, changed-production compileall,
   `git diff --check`, and Impeccable detector pass. The whole changed-inventory
   format probe still identifies 12 legacy whole-file reformat candidates; none
   were mechanically reformatted into this fix.
-- Nine reviewed defect families turned their intended guards red and were
-  restored before the final gates.
+- All three Round 2 defect families, plus the identity-receipt branch, turned
+  their intended guards red under inverse mutation and were restored. The prior
+  nine guard families are included in the representative regression gates.
+- A diagnostic all-in-one run crossed the repository FD sentinel at +208. The
+  isolated cause is the pre-existing Library ingest test process (+190 alone),
+  not changed production or focused tests (+3); split default-threshold gates
+  above are pristine apart from the accepted dependency warning.
 - Full pytest intentionally not run.

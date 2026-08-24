@@ -337,8 +337,32 @@ async def test_server_projects_audited_lifecycle_from_real_context_shape() -> No
         "archive",
         "restore",
         "delete",
+        "list_sources",
+        "search_catalog",
+        "attach_existing",
+        "remove_source",
+        "update_source",
+        "preview_source",
+        "get_readiness",
+        "set_selected_scope",
+        "reorder_sources",
     }
-    assert all(capability.available is True for capability in capabilities.values())
+    lifecycle_names = {
+        "list",
+        "get",
+        "create",
+        "update",
+        "duplicate",
+        "archive",
+        "restore",
+        "delete",
+    }
+    assert all(capabilities[name].available is True for name in lifecycle_names)
+    assert all(
+        capability.available is False
+        for name, capability in capabilities.items()
+        if name not in lifecycle_names
+    )
     assert {capability.capability_revision for capability in capabilities.values()} == {
         "server-notes-workspace-service-v1:reachable:authenticated"
     }

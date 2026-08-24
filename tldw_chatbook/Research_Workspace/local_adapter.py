@@ -20,12 +20,14 @@ from tldw_chatbook.Workspaces.registry_service import (
 from .contracts import (
     BoundedPageResult,
     CapabilityUnavailableError,
+    MAX_RESEARCH_SELECTION_IDS,
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
     ResearchCapability,
     ResearchSourcePreview,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    SourceSelectionResult,
     SourceReadiness,
     WorkspaceDataSource,
     require_capability,
@@ -554,11 +556,16 @@ class LocalResearchWorkspaceAdapter:
         self,
         ref: QualifiedWorkspaceRef,
         source_ids: tuple[str, ...],
-    ) -> tuple[ResearchSourceSummary, ...]:
+    ) -> SourceSelectionResult:
         self._require_local_ref(ref)
-        if len(source_ids) > 100 or len(set(source_ids)) != len(source_ids):
+        if (
+            not isinstance(source_ids, tuple)
+            or len(source_ids) > MAX_RESEARCH_SELECTION_IDS
+        ):
             raise ValueError("source_ids must be a unique bounded list")
-        desired = {self._canonical_media_id(item) for item in source_ids}
+        desired = tuple(self._canonical_media_id(item) for item in source_ids)
+        if len(desired) != len(set(desired)):
+            raise ValueError("source_ids must be a unique bounded list")
         membership_groups = await asyncio.gather(
             *(
                 asyncio.to_thread(
@@ -581,13 +588,27 @@ class LocalResearchWorkspaceAdapter:
             ref.workspace_id,
             RagScope(
                 items=tuple(
-                    ScopeItem("media", item_id) for item_id in sorted(desired)
+                    ScopeItem("media", item_id) for item_id in desired
                 ),
                 updated_at=self._now_factory(),
                 empty_is_scoped=True,
             ),
         )
-        return (await self.list_sources(ref, limit=100, offset=0)).items
+        stored_scope = await asyncio.to_thread(
+            self._service.get_workspace_scope, ref.workspace_id
+        )
+        stored_ids = (
+            ()
+            if stored_scope is None
+            else tuple(
+                item.source_id
+                for item in stored_scope.items
+                if item.source_type == "media"
+            )
+        )
+        if stored_ids != desired or stored_scope is None:
+            raise ValueError("Local source selection reconciliation did not match")
+        return SourceSelectionResult(ref=ref, desired_source_ids=stored_ids)
 
     async def reorder_sources(
         self,

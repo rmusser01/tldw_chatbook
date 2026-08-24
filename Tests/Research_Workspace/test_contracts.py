@@ -9,11 +9,67 @@ from tldw_chatbook.Research_Workspace.contracts import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
     ResearchCapability,
+    ResearchSourcePreview,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    SourceSelectionResult,
     WorkspaceDataSource,
     require_capability,
 )
+
+
+def test_selection_result_keeps_exact_owner_ids_separate_from_bounded_rows() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    desired = tuple(str(index) for index in range(1, 102))
+
+    result = SourceSelectionResult(ref=ref, desired_source_ids=desired)
+
+    assert result.desired_source_ids == desired
+    assert result.sources == ()
+
+
+def test_selection_result_rejects_duplicate_owner_ids() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    with pytest.raises(ValueError, match="unique"):
+        SourceSelectionResult(ref=ref, desired_source_ids=("1", "1"))
+
+
+def test_selection_result_rejects_oversized_owner_identity() -> None:
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER, "workspace-1", "profile-1"
+    )
+
+    with pytest.raises(ValueError, match="too long"):
+        SourceSelectionResult(ref=ref, desired_source_ids=("x" * 1025,))
+
+
+def test_null_preview_catalog_id_is_limited_to_unavailable_server_modes() -> None:
+    server_ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER, "workspace-1", "profile-1"
+    )
+    preview = ResearchSourcePreview(
+        ref=server_ref,
+        source_id="source-1",
+        catalog_item_id=None,
+        preview_mode="missing_media",
+    )
+
+    assert preview.catalog_item_id is None
+    with pytest.raises(ValueError, match="unavailable Server preview"):
+        ResearchSourcePreview(
+            ref=server_ref,
+            source_id="source-1",
+            catalog_item_id=None,
+            preview_mode="available",
+        )
+    with pytest.raises(ValueError, match="unavailable Server preview"):
+        ResearchSourcePreview(
+            ref=QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
+            source_id="membership-1",
+            catalog_item_id=None,
+            preview_mode="missing_media",
+        )
 
 
 @pytest.mark.parametrize("workspace_id", ["", "   "])
