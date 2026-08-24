@@ -30,7 +30,16 @@ class SimplifiedRAGSearchService:
     async def profile_search(
         self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Search using the active profile's configured mode."""
+        """Search using the active profile's configured mode.
+
+        Args:
+            query: Search query.
+            limit: Maximum number of results.
+            media_types: Optional media types to include.
+
+        Returns:
+            Media search results formatted for MCP.
+        """
         mode = resolve_active_rag_search_mode()
         if mode == "plain":
             return await self.keyword_search(query, limit, media_types)
@@ -45,7 +54,16 @@ class SimplifiedRAGSearchService:
     async def semantic_search(
         self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Perform explicit semantic search across media."""
+        """Perform explicit semantic search across media.
+
+        Args:
+            query: Search query.
+            limit: Maximum number of results.
+            media_types: Optional media types to include.
+
+        Returns:
+            Media search results formatted for MCP.
+        """
         return await self._enhanced_search(
             query, limit, media_types, search_type="semantic"
         )

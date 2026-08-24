@@ -46,7 +46,14 @@ _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k"
 
 
 def normalize_rag_search_mode(value: object) -> str:
-    """Return a supported exact search mode, defaulting to ``semantic``."""
+    """Return a supported exact search mode.
+
+    Args:
+        value: Candidate search mode.
+
+    Returns:
+        ``value`` when it is a supported mode; otherwise ``"semantic"``.
+    """
     return (
         value if isinstance(value, str) and value in _RAG_SEARCH_MODES else "semantic"
     )
@@ -204,7 +211,11 @@ def resolve_active_rag_top_k() -> int:
 
 
 def resolve_active_rag_search_mode() -> str:
-    """Return the active profile's normalized search mode without building a config."""
+    """Resolve the active profile's search mode without building a full config.
+
+    Returns:
+        The normalized active search mode after applying ``RAG_SEARCH_MODE``.
+    """
     profile = _resolved_active_profile()
     base = (
         profile.rag_config.search.default_search_mode

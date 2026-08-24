@@ -353,7 +353,10 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                             f"reranker ({exception_name}); returning unreranked results"
                         )
                 # A selected experiment with no reranking config explicitly
-                # opts out; it must not inherit the base reranker.
+                # opts out by default, but an explicit override may inherit it.
+                elif rerank is True:
+                    active_reranker = self.reranker
+                    unavailable_reason = self._reranker_unavailable_reason
             else:
                 active_reranker = self.reranker
                 unavailable_reason = self._reranker_unavailable_reason
