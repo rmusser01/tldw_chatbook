@@ -59,6 +59,10 @@ The current production layout has five related problems:
 - Render Character images with aspect-ratio-preserving contain behavior and a
   35-row section ceiling.
 - Keep Inspector's existing 20-row bounded-section contract unchanged.
+- Render every direct Context section header as the same raised, full-width
+  title band used by Inspector group headings. The disclosure control remains
+  inside the band, and this visual treatment does not change section height,
+  content ceilings, scroll ownership, or interaction behavior.
 
 ## Shell layout
 
@@ -120,6 +124,22 @@ This makes allocation depend on terminal cells reported by Textual, not on the
 terminal emulator or physical pixel size. A 15-row section is therefore 15
 terminal content rows in iTerm2, Windows Terminal, and other supported
 emulators.
+
+## Context section title hierarchy
+
+Sessions, Workspaces, Conversations, Model, Agent, Details, and Character are
+peer section titles, not ordinary content rows. Each direct Context header uses
+Inspector's existing raised-surface title grammar: a full-width
+`$ds-surface-raised` band, bold primary text, and one cell of horizontal
+padding. The disclosure arrow is part of the same band so the whole header
+reads as one control and remains visually distinct from the section items below.
+
+This is appearance parity, not component or ownership convergence. Context
+retains `DestinationRailSectionHeader`, its stable ids, title-click behavior,
+toggle tooltips, keyboard focus, and the existing two-row measured footprint.
+Inspector retains its own group-heading widgets. The implementation reuses the
+same semantic surface/text tokens without moving bodies, adding rows, changing
+15/20/35 content ceilings, or altering local/outer scrolling.
 
 ## Workspaces Tree
 
@@ -491,9 +511,13 @@ Automated coverage must include:
    reconciliation when scrollbar width changes.
 10. Preservation of Inspector geometry/navigation and ADR-043 responsive width
    behavior.
-11. Mutation-sensitive performance evidence for incremental node updates under
+11. Production-stylesheet comparison proving every direct Context header uses
+    the same raised background, primary text, bold title, and horizontal inset
+    as Inspector group headings while retaining the existing header footprint,
+    disclosure interaction, and 15/20/35 body ceilings.
+12. Mutation-sensitive performance evidence for incremental node updates under
     the documented benchmark matrix.
-12. Unicode, ASCII-glyph, and no-color Tree rendering plus stable compositor
+13. Unicode, ASCII-glyph, and no-color Tree rendering plus stable compositor
     geometry for focused/unfocused rails, collapsed handles, transcript, and
     the single divider owners.
 
