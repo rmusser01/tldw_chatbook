@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -81,6 +82,7 @@ class WatchlistsWorkbench(Vertical):
         self.read_mode = (
             Region.CONTENT not in hidden if read_mode is None else read_mode
         )
+        self.set_class(self.read_mode, "watchlists-read-mode")
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
 
     def compose(self) -> ComposeResult:
@@ -147,23 +149,51 @@ class WatchlistsWorkbench(Vertical):
         body = self._body()
         if body is None:
             return
-        for region in self._grip_regions:
-            if previous.is_collapsed(region) == layout.is_collapsed(region):
-                continue
-            grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
-            expanded = not layout.is_collapsed(region)
-            grip.expanded = expanded
-            mounted = self._mounted_region_body(region)
-            if not expanded:
-                if mounted is not None:
-                    await mounted.remove()
-                continue
-            if mounted is None:
-                node = self._region_body(region)
+        changed = [
+            region
+            for region in self._grip_regions
+            if previous.is_collapsed(region) != layout.is_collapsed(region)
+        ]
+        prepared: dict[Region, Widget] = {}
+        try:
+            for region in changed:
+                if (
+                    not layout.is_collapsed(region)
+                    and self._mounted_region_body(region) is None
+                ):
+                    prepared[region] = self._region_body(region)
+        except Exception:
+            self.set_reactive(WatchlistsWorkbench.region_layout, previous)
+            logger.exception("Watchlists pane expansion factory failed")
+            return
+
+        try:
+            for region, node in prepared.items():
+                grip = self.query_one(
+                    f"#wl-grip-{region.value}", WatchlistsPaneGrip
+                )
                 if region is Region.RIGHT_RAIL:
                     await body.mount(node, after=grip)
                 else:
                     await body.mount(node, before=grip)
+        except Exception:
+            for node in prepared.values():
+                if node.is_mounted:
+                    await node.remove()
+            self.set_reactive(WatchlistsWorkbench.region_layout, previous)
+            logger.exception("Watchlists pane expansion mount failed")
+            return
+
+        for region in changed:
+            expanded = not layout.is_collapsed(region)
+            if not expanded:
+                mounted = self._mounted_region_body(region)
+                if mounted is not None:
+                    await mounted.remove()
+            grip = self.query_one(
+                f"#wl-grip-{region.value}", WatchlistsPaneGrip
+            )
+            grip.expanded = expanded
 
     @property
     def _grip_regions(self) -> tuple[Region, ...]:
@@ -204,68 +234,117 @@ class WatchlistsWorkbench(Vertical):
             )
         if not self.is_mounted:
             self.read_mode = next_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
             self.set_reactive(WatchlistsWorkbench.region_layout, layout)
             return
 
+        replacement_header = (
+            self._header()
+            if rebuild_header and self._header is not None
+            else None
+        )
         with self.app.batch_update():
+            await self._reconcile_body(
+                read_mode=next_read_mode,
+                layout=layout,
+                rebuild_regions=rebuild_regions,
+            )
+            if replacement_header is not None:
+                await self._replace_header(replacement_header)
             self.read_mode = next_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
             self.set_reactive(WatchlistsWorkbench.region_layout, layout)
-            created = await self._reconcile_body()
-            for region in rebuild_regions:
-                if region not in created:
-                    await self.refresh_region_content(region)
-            if rebuild_header:
-                await self.refresh_header_content()
 
-    async def _reconcile_body(self) -> set[Region]:
-        """Reconcile direct children while retaining every reusable node."""
+    async def _reconcile_body(
+        self,
+        *,
+        read_mode: bool,
+        layout: RegionLayout,
+        rebuild_regions: tuple[Region, ...],
+    ) -> None:
+        """Prepare factories, then atomically reconcile direct children."""
         body = self._body()
         if body is None:
-            return set()
-        desired_ids = self._desired_body_ids()
+            return
+        desired_ids = self._desired_body_ids(
+            read_mode=read_mode,
+            layout=layout,
+        )
+        mounted_ids = {child.id for child in body.children}
+        prepared_nodes: dict[str, Widget] = {}
+        created: set[Region] = set()
+        for node_id in desired_ids:
+            if node_id in mounted_ids:
+                continue
+            prepared_nodes[node_id] = self._node_for_id(node_id, layout=layout)
+            region = self._region_from_body_id(node_id)
+            if region is not None:
+                created.add(region)
+
+        prepared_content: dict[Region, Widget] = {}
+        for region in rebuild_regions:
+            if region in created or f"wl-region-{region.value}" not in desired_ids:
+                continue
+            factory = self._content.get(region)
+            if factory is not None:
+                prepared_content[region] = factory()
+
         for child in list(body.children):
             if child.id not in desired_ids:
                 await child.remove()
 
-        created: set[Region] = set()
         for index, node_id in enumerate(desired_ids):
-            try:
-                self.query_one(f"#{node_id}")
-            except NoMatches:
-                node = self._node_for_id(node_id)
-                region = self._region_from_body_id(node_id)
-                if region is not None:
-                    created.add(region)
+            node = prepared_nodes.get(node_id)
+            if node is not None:
                 if index >= len(body.children):
                     await body.mount(node)
                 else:
                     await body.mount(node, before=index)
 
-        for region in self._grip_regions:
-            grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
-            grip.expanded = not self.region_layout.is_collapsed(region)
-        return created
+        for region, replacement in prepared_content.items():
+            container = self._mounted_region_body(region)
+            if container is not None:
+                await self._replace_region_content(container, replacement)
 
-    def _desired_body_ids(self) -> list[str]:
+        grip_regions = (
+            _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
+        )
+        for region in grip_regions:
+            grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
+            grip.expanded = not layout.is_collapsed(region)
+
+    def _desired_body_ids(
+        self,
+        *,
+        read_mode: bool | None = None,
+        layout: RegionLayout | None = None,
+    ) -> list[str]:
+        read_mode = self.read_mode if read_mode is None else read_mode
+        layout = self.region_layout if layout is None else layout
         ids: list[str] = []
-        if not self.region_layout.is_collapsed(Region.LEFT_RAIL):
+        if not layout.is_collapsed(Region.LEFT_RAIL):
             ids.append("wl-region-left_rail")
         ids.append("wl-grip-left_rail")
-        if self.read_mode:
-            if not self.region_layout.is_collapsed(Region.ITEMS):
+        if read_mode:
+            if not layout.is_collapsed(Region.ITEMS):
                 ids.append("wl-region-items")
             ids.extend(("wl-grip-items", "wl-region-content"))
         else:
             ids.append("wl-region-items")
         ids.append("wl-grip-right_rail")
-        if not self.region_layout.is_collapsed(Region.RIGHT_RAIL):
+        if not layout.is_collapsed(Region.RIGHT_RAIL):
             ids.append("wl-region-right_rail")
         return ids
 
-    def _node_for_id(self, node_id: str) -> Widget:
+    def _node_for_id(self, node_id: str, *, layout: RegionLayout) -> Widget:
         if node_id.startswith("wl-region-"):
             return self._region_body(Region(node_id.removeprefix("wl-region-")))
-        return self._grip(Region(node_id.removeprefix("wl-grip-")))
+        region = Region(node_id.removeprefix("wl-grip-"))
+        return WatchlistsPaneGrip(
+            region,
+            expanded=not layout.is_collapsed(region),
+            id=node_id,
+        )
 
     @staticmethod
     def _region_from_body_id(node_id: str) -> Region | None:
@@ -282,6 +361,12 @@ class WatchlistsWorkbench(Vertical):
         if container is None:
             return
         replacement = factory()
+        await self._replace_region_content(container, replacement)
+
+    async def _replace_region_content(
+        self, container: Widget, replacement: Widget
+    ) -> None:
+        """Commit one already-built factory replacement."""
         stale = [
             child
             for child in container.children
@@ -295,11 +380,15 @@ class WatchlistsWorkbench(Vertical):
         """Replace only header factory output, leaving the body untouched."""
         if self._header is None:
             return
+        replacement = self._header()
+        await self._replace_header(replacement)
+
+    async def _replace_header(self, replacement: Widget) -> None:
+        """Commit one already-built header replacement."""
         try:
             stale = self.query_one("#wl-centre-status")
         except NoMatches:
             stale = None
-        replacement = self._header()
         if stale is not None:
             await stale.remove()
         await self.mount(replacement, before=0)

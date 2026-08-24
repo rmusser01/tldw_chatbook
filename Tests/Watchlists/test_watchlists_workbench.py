@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
@@ -217,6 +218,47 @@ async def test_expanding_inspector_mounts_body_after_permanent_grip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
+    fail_rail = True
+
+    def rail_factory() -> Widget:
+        if fail_rail:
+            raise RuntimeError("rail build failed")
+        return Label("navigation")
+
+    class _App(App[None]):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(collapsed=frozenset({Region.LEFT_RAIL})),
+                content={Region.LEFT_RAIL: rail_factory},
+                read_mode=True,
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+        grip = app.query_one("#wl-grip-left_rail", WatchlistsPaneGrip)
+        reader = app.query_one("#wl-region-content")
+
+        workbench.region_layout = RegionLayout()
+        await pilot.pause()
+
+        assert workbench.region_layout.is_collapsed(Region.LEFT_RAIL)
+        assert app.query_one("#wl-grip-left_rail") is grip
+        assert grip.expanded is False
+        assert not app.query("#wl-region-left_rail")
+        assert app.query_one("#wl-region-content") is reader
+        assert app.is_running
+
+        fail_rail = False
+        workbench.region_layout = RegionLayout()
+        await pilot.pause()
+        assert app.query("#wl-region-left_rail")
+        assert grip.expanded is True
+
+
+@pytest.mark.asyncio
 async def test_grip_activation_uses_shared_region_toggled_message() -> None:
     app = _WorkbenchApp(RegionLayout())
     async with app.run_test() as pilot:
@@ -412,6 +454,82 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
         assert app.query("#wl-grip-items")
         assert app.query_one("#content-content") is not reader
         assert calls == {"items": 3, "content": 2}
+
+
+@pytest.mark.asyncio
+async def test_mode_switch_factory_failure_preserves_previous_read_view() -> None:
+    fail_items = False
+
+    def items_factory() -> Label:
+        if fail_items:
+            raise RuntimeError("management centre failed")
+        return Label("feed items", id="items-content")
+
+    class _App(App[None]):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={
+                    Region.ITEMS: items_factory,
+                    Region.CONTENT: lambda: Label("reader", id="reader-content"),
+                },
+                read_mode=True,
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+        body = app.query_one("#wl-workbench-body", Horizontal)
+        previous_ids = _direct_child_ids(body)
+        items = app.query_one("#items-content")
+        reader = app.query_one("#reader-content")
+        fail_items = True
+
+        with pytest.raises(RuntimeError, match="management centre failed"):
+            await workbench.apply_section_view(
+                read_mode=False,
+                layout=RegionLayout(),
+                rebuild_regions=(Region.ITEMS,),
+            )
+        await pilot.pause()
+
+        assert workbench.read_mode is True
+        assert workbench.has_class("watchlists-read-mode")
+        assert _direct_child_ids(body) == previous_ids
+        assert app.query_one("#items-content") is items
+        assert app.query_one("#reader-content") is reader
+        assert app.is_running
+
+        fail_items = False
+        await workbench.apply_section_view(
+            read_mode=False,
+            layout=RegionLayout(),
+            rebuild_regions=(Region.ITEMS,),
+        )
+        assert workbench.read_mode is False
+        assert not workbench.has_class("watchlists-read-mode")
+        assert not app.query("#reader-content")
+
+
+@pytest.mark.asyncio
+async def test_read_mode_class_tracks_incremental_mode_switches() -> None:
+    app = _WorkbenchApp(RegionLayout(), read_mode=True)
+    async with app.run_test():
+        workbench = app.query_one(WatchlistsWorkbench)
+        assert workbench.has_class("watchlists-read-mode")
+
+        await workbench.apply_section_view(
+            read_mode=False,
+            layout=RegionLayout(),
+        )
+        assert not workbench.has_class("watchlists-read-mode")
+
+        await workbench.apply_section_view(
+            hidden=frozenset(),
+            layout=RegionLayout(),
+        )
+        assert workbench.has_class("watchlists-read-mode")
 
 
 def _article(item_id: int) -> dict:
