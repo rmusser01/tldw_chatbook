@@ -664,7 +664,7 @@ class TldwMCPServer:
             media_types: Optional[List[str]] = None,
             use_semantic: bool = True,
         ) -> List[Dict[str, Any]]:
-            """Search the RAG database for relevant content."""
+            """Search media using the active RAG profile unless keyword search is forced."""
             return await self.tools.perform_rag_search(
                 query=query,
                 limit=limit,

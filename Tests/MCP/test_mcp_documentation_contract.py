@@ -246,6 +246,24 @@ def test_documents_explain_retired_ingest_media_replacement(
     assert "Library Import" in normalized, path
 
 
+def test_mcp_documents_explain_profile_driven_rag_search_compatibility() -> None:
+    for path in (DESIGN_DOCUMENT, USER_GUIDE_DOCUMENT):
+        normalized = " ".join(path.read_text(encoding="utf-8").split())
+        assert "`false` forces media keyword search" in normalized, path
+        assert "`true` or omission follows the active RAG profile" in normalized, path
+        assert "`plain`, `semantic`, or `hybrid` search mode" in normalized, path
+
+
+def test_user_guide_explains_weak_match_similarity_provenance() -> None:
+    normalized = " ".join(USER_GUIDE_DOCUMENT.read_text(encoding="utf-8").split())
+    for contract in (
+        "ordinary semantic rows use their score",
+        "hybrid rows use the preserved vector leg when present",
+        "FTS-only hybrid, reranker, and unscored keyword rows do not trigger a cosine-similarity claim",
+    ):
+        assert contract in normalized
+
+
 def test_local_library_tools_documentation_uses_current_standalone_inventory() -> None:
     text = LOCAL_LIBRARY_TOOLS_DOCUMENT.read_text(encoding="utf-8")
     normalized = " ".join(text.split())

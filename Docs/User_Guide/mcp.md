@@ -42,6 +42,10 @@ persistent URL or file ingestion.
 
 ### Standalone behavior and controls
 
+`use_semantic` remains a boolean compatibility switch: `false` forces media
+keyword search; `true` or omission follows the active RAG profile's `plain`,
+`semantic`, or `hybrid` search mode.
+
 All 24 Library tools are excluded from the standalone stdio catalog. They
 remain behind the in-app gated and logged direct Library action; raw in-app
 `tools/call` is refused.
@@ -282,11 +286,12 @@ A completed run shows:
   "No strong semantic matches — results below are weak." beside the
   summary line — so a nonsense `search_rag` query that still comes back
   with rows reads as the weak match it is, not a bare `OK · N results`
-  that looks like a real hit. Keyword-mode rows carry no score at all
-  (FTS relevance is misleading, so no band beats a wrong one) — the notice
-  only ever fires for scored (semantic) rows, never for a pure
-  keyword-mode result, whatever it finds. A tool whose rows carry no
-  `score` at all (e.g. `list_characters`) never shows this notice either.
+  that looks like a real hit. The notice considers only rows carrying an
+  actual vector similarity: ordinary semantic rows use their score, hybrid
+  rows use the preserved vector leg when present, and FTS-only hybrid,
+  reranker, and unscored keyword rows do not trigger a cosine-similarity
+  claim. A tool whose rows carry no `score` at all (e.g.
+  `list_characters`) never shows this notice either.
 - **A collapsed "Raw response" section** with the full result as JSON —
   secrets redacted, capped at 20,000 characters — for whenever the summary
   isn't enough.
