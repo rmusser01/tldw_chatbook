@@ -5,6 +5,7 @@
 - **Last amended:** 2026-08-24 (private Local Quick Note recovery proof)
 - **Status:** Proposed
 - **Date:** 2026-08-23
+- **Last amended:** 2026-08-23 (unsent draft recovery and extended-output owners)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
 - **Amends:** ADR-015 (shell destination taxonomy); ADR-028 (adds Research
