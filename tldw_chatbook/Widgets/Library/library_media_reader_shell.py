@@ -55,7 +55,11 @@ class LibraryMediaPaneGrip(Button):
         self.sync_open(open)
 
     def sync_open(self, open: bool) -> None:
-        """Patch arrow and action copy without changing geometry."""
+        """Patch arrow and action copy without changing geometry.
+
+        Args:
+            open: Whether the controlled pane is currently visible.
+        """
         action = "Collapse" if open else "Expand"
         copy = f"{action} {self.pane.title()} pane"
         self.label = "<---" if open else "--->"
@@ -64,7 +68,11 @@ class LibraryMediaPaneGrip(Button):
 
     @on(Button.Pressed)
     def request_toggle(self, event: Button.Pressed) -> None:
-        """Translate native Button activation into the shell message."""
+        """Translate native Button activation into the shell message.
+
+        Args:
+            event: Button activation event.
+        """
         if event.button is not self:
             return
         event.stop()
@@ -95,6 +103,11 @@ class LibraryMediaReaderShell(Horizontal):
         self.effective_layout = layout
 
     def compose(self) -> ComposeResult:
+        """Compose retained Library, Items, grips, and Reader widgets.
+
+        Returns:
+            Compose result for the permanent Media shell.
+        """
         yield self.library
         yield self.library_grip
         yield self.items
@@ -102,6 +115,7 @@ class LibraryMediaReaderShell(Horizontal):
         yield self.reader
 
     def on_mount(self) -> None:
+        """Apply initial geometry and request a settled resize projection."""
         self.sync_layout(self.effective_layout)
         collapse = self.query("#library-rail-collapse")
         if collapse:
@@ -109,10 +123,15 @@ class LibraryMediaReaderShell(Horizontal):
         self.call_after_refresh(self.post_message, MediaShellResized())
 
     def on_resize(self) -> None:
+        """Request layout resolution after the shell allocation changes."""
         self.post_message(MediaShellResized())
 
     def sync_layout(self, layout: MediaReaderEffectiveLayout) -> None:
-        """Patch pane display and exact cell widths in place."""
+        """Patch pane display and exact cell widths in place.
+
+        Args:
+            layout: Effective overflow-free pane geometry.
+        """
         self.effective_layout = layout
         for pane, open, width in (
             (self.library, layout.library_open, layout.library_width),

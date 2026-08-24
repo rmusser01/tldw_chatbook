@@ -159,7 +159,12 @@ class LibraryMediaReaderSessionState:
 
     @property
     def pending_banner(self) -> str | None:
-        """Return truthful selected-versus-loaded loading copy when applicable."""
+        """Return truthful selected-versus-loaded loading copy.
+
+        Returns:
+            Loading copy for the pending request, or None when no request is
+            pending or the current request is in an error state.
+        """
         if self.pending_request is None or self.error is not None:
             return None
         selected = self.selected_title or self.selected_id or "selected item"
@@ -197,7 +202,14 @@ def _coerce_width(value: Any, default: int, minimum: int, maximum: int) -> int:
 def normalize_media_reader_preferences(
     raw: Mapping[str, Any],
 ) -> MediaReaderLayoutPreferences:
-    """Normalize persisted values without importing application configuration."""
+    """Normalize persisted values without importing application configuration.
+
+    Args:
+        raw: Untrusted persisted preference values.
+
+    Returns:
+        Normalized pane-open and width preferences.
+    """
     library_open = _coerce_bool(raw.get("library_open"), True)
     items_open = _coerce_bool(raw.get("items_open"), True)
     custom_widths_enabled = _coerce_bool(raw.get("custom_widths_enabled"), False)
@@ -238,6 +250,20 @@ def resolve_media_reader_layout(
     resolution keeps target widths and collapses Library before Items. An
     explicit open instead protects the requested pane, collapses its sibling,
     and may use the requested pane's declared minimum.
+
+    Args:
+        width: Available shell width in terminal cells.
+        preferences: Persisted manual pane preferences.
+        previous: Previously resolved layout used for hysteresis.
+        priority: Pane explicitly requested by the user, if any.
+
+    Returns:
+        Overflow-free effective pane geometry.
+
+    Raises:
+        TypeError: If ``preferences`` has the wrong type.
+        ValueError: If ``width`` is not a non-negative integer or ``priority``
+            is unsupported.
     """
     if type(width) is not int or width < 0:
         raise ValueError("width must be a non-negative integer.")
@@ -348,7 +374,22 @@ def begin_selection(
     *,
     immediate: bool = False,
 ) -> LibraryMediaReaderSessionState:
-    """Select a local item immediately and create its next fenced request."""
+    """Select a local item and create its next fenced request.
+
+    Args:
+        state: Current Reader session.
+        canonical_id: Local backend-qualified media id.
+        backing_id: Service-facing id matching ``canonical_id``.
+        title: Display title for loading and recovery copy.
+        immediate: Whether to bypass the selection-settle delay.
+
+    Returns:
+        Session with the new selection and pending request.
+
+    Raises:
+        TypeError: If an identity or title has the wrong type.
+        ValueError: If the identity is invalid or is not local.
+    """
     _validate_media_identity(canonical_id, backing_id)
     if not canonical_id.startswith("local:media:"):
         raise ValueError("Items selection must use a local canonical id.")
@@ -395,7 +436,16 @@ def settle_success(
     generation: int,
     requested_id: str,
 ) -> LibraryMediaReaderSessionState:
-    """Apply a detail success only when both request fence fields match."""
+    """Apply a detail success only when both request fence fields match.
+
+    Args:
+        state: Current Reader session.
+        generation: Completing request generation.
+        requested_id: Completing request's canonical id.
+
+    Returns:
+        Settled session, or ``state`` unchanged for a stale completion.
+    """
     if not _matches_pending(state, generation, requested_id):
         return state
     return replace(
@@ -414,7 +464,20 @@ def settle_failure(
     requested_id: str,
     error: str,
 ) -> LibraryMediaReaderSessionState:
-    """Record a current detail failure while rejecting stale completions."""
+    """Record a current detail failure while rejecting stale completions.
+
+    Args:
+        state: Current Reader session.
+        generation: Completing request generation.
+        requested_id: Completing request's canonical id.
+        error: Non-blank user-facing failure copy.
+
+    Returns:
+        Failed pending session, or ``state`` unchanged for a stale completion.
+
+    Raises:
+        ValueError: If a current request receives blank error text.
+    """
     if not _matches_pending(state, generation, requested_id):
         return state
     if not isinstance(error, str) or not error.strip():
@@ -425,7 +488,18 @@ def settle_failure(
 def set_mode(
     state: LibraryMediaReaderSessionState, mode: ReaderMode
 ) -> LibraryMediaReaderSessionState:
-    """Change the session Reader mode without touching item identities."""
+    """Change the Reader mode without touching item identities.
+
+    Args:
+        state: Current Reader session.
+        mode: Destination Reader mode.
+
+    Returns:
+        Session with ``mode`` selected.
+
+    Raises:
+        ValueError: If ``mode`` is unsupported.
+    """
     if mode not in {"read", "analysis", "highlights", "info"}:
         raise ValueError("mode is not a supported Reader mode.")
     return replace(state, mode=mode)
@@ -434,7 +508,18 @@ def set_mode(
 def set_more_open(
     state: LibraryMediaReaderSessionState, more_open: bool
 ) -> LibraryMediaReaderSessionState:
-    """Change the transient inline More region without touching identity."""
+    """Change the transient inline More region without touching identity.
+
+    Args:
+        state: Current Reader session.
+        more_open: Whether the secondary-action region is open.
+
+    Returns:
+        Session with the requested More-region state.
+
+    Raises:
+        TypeError: If ``more_open`` is not a bool.
+    """
     if type(more_open) is not bool:
         raise TypeError("more_open must be a bool.")
     return replace(state, more_open=more_open)
@@ -445,7 +530,20 @@ def enter_external_detail(
     backing_id: BackingMediaId,
     title: str,
 ) -> LibraryMediaReaderSessionState:
-    """Enter one settled, read-only server detail outside the local Items list."""
+    """Enter one settled server detail outside the local Items list.
+
+    Args:
+        state: Current Reader session.
+        backing_id: Server-facing media id.
+        title: Server item title.
+
+    Returns:
+        Settled read-only external-detail session.
+
+    Raises:
+        TypeError: If the title or identity has the wrong type.
+        ValueError: If the backing identity is invalid.
+    """
     canonical_id = f"server:media:{backing_id}"
     _validate_media_identity(canonical_id, backing_id)
     if not isinstance(title, str):
@@ -468,7 +566,14 @@ def enter_external_detail(
 def leave_external_detail(
     state: LibraryMediaReaderSessionState,
 ) -> LibraryMediaReaderSessionState:
-    """Leave an external detail and invalidate all server selection anchors."""
+    """Leave an external detail and invalidate server selection anchors.
+
+    Args:
+        state: Current Reader session.
+
+    Returns:
+        Local empty session, or ``state`` unchanged when already local.
+    """
     if not state.external_detail:
         return state
     return replace(

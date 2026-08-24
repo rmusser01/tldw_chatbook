@@ -171,7 +171,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         open_viewer.can_focus = self.show_preview and not compact
 
     def apply_reader_state(self, canvas: LibraryMediaCanvasState) -> None:
-        """Patch selected/loading/loaded row state without replacing row widgets."""
+        """Patch Reader row state without replacing row widgets.
+
+        Args:
+            canvas: Fresh media canvas state carrying selection and load flags.
+        """
         self.canvas = canvas
         rows = {row.media_id: row for row in canvas.rows}
         select_mode = getattr(canvas, "select_mode", False)

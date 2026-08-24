@@ -554,6 +554,7 @@ LIBRARY_SOURCE_PAGE_SIZES = {
 # honestly ("showing X of N") rather than pretending the page is the whole
 # trash.
 LIBRARY_MEDIA_TRASH_PAGE_SIZE = 200
+LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT = 20
 _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
 # alphabetical) <-> "status" (needs-review first, then alphabetical) --
@@ -14103,6 +14104,20 @@ class LibraryScreen(BaseAppScreen):
             and session.loaded_id == canonical_id
         )
 
+    def _cache_library_media_preview(self, canonical_id: str, image: Any) -> None:
+        """Store one decoded preview and evict the oldest cached entry."""
+        self._library_media_preview_images.pop(canonical_id, None)
+        self._library_media_preview_images[canonical_id] = image
+        while (
+            len(self._library_media_preview_images)
+            > LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT
+        ):
+            evicted_id = next(iter(self._library_media_preview_images))
+            self._library_media_preview_images.pop(evicted_id, None)
+            self._library_media_preview_status.pop(evicted_id, None)
+            self._library_media_preview_hidden.discard(evicted_id)
+            self._library_media_preview_loading.pop(evicted_id, None)
+
     async def _load_library_media_image_preview(
         self,
         *,
@@ -14164,7 +14179,7 @@ class LibraryScreen(BaseAppScreen):
                 request_generation, canonical_id
             ):
                 return
-            self._library_media_preview_images[canonical_id] = image
+            self._cache_library_media_preview(canonical_id, image)
             self._library_media_preview_status.pop(canonical_id, None)
             self._sync_library_media_viewer_or_recompose()
         except Exception:
@@ -33018,16 +33033,16 @@ class LibraryScreen(BaseAppScreen):
         self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
     ):
         """Build display facts and qualify one-off server provenance."""
-        state = build_library_media_viewer_state(detail, arrival_note=arrival_note)
         session = self._library_media_reader_session
-        if not session.external_detail:
-            return state
-        return dataclasses.replace(
-            state,
-            backend="server",
-            canonical_id=session.loaded_id or "",
-            is_markdown=False,
+        state = build_library_media_viewer_state(
+            detail,
+            arrival_note=arrival_note,
+            backend="server" if session.external_detail else "local",
+            canonical_id=(session.loaded_id or "") if session.external_detail else "",
         )
+        if session.external_detail:
+            return dataclasses.replace(state, is_markdown=False)
+        return state
 
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
         """Re-read every viewer compose input after its mount await.

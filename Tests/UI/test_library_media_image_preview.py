@@ -24,11 +24,13 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Utils import optional_deps
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
 )
 
 from tldw_chatbook.Widgets.Library.library_media_image_preview import (
+    build_media_image_widget,
     decode_media_image,
     image_preview_eligibility,
 )
@@ -126,6 +128,46 @@ def test_decode_rejects_an_unsupported_image_even_when_bytes_are_valid() -> None
         decode_media_image(buffer.getvalue())
 
 
+def test_decode_routes_pillow_through_optional_dependency_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def unavailable(module_name: str, feature_name: str | None = None) -> bool:
+        calls.append((module_name, feature_name))
+        return False
+
+    monkeypatch.setattr(optional_deps, "check_dependency", unavailable)
+
+    with pytest.raises(ImportError):
+        decode_media_image(_image_bytes(width=3))
+
+    assert calls == [("PIL", "pillow")]
+
+
+def test_graphics_widget_routes_textual_image_through_optional_dependency_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def unavailable(module_name: str, feature_name: str | None = None) -> bool:
+        calls.append((module_name, feature_name))
+        return False
+
+    monkeypatch.setattr(optional_deps, "check_dependency", unavailable)
+    image = Image.new("RGB", (3, 2), "blue")
+
+    widget = build_media_image_widget(
+        image,
+        app_config={"chat": {"images": {"default_render_mode": "regular"}}},
+        box_cols=10,
+        box_lines=5,
+    )
+
+    assert isinstance(widget, Static)
+    assert calls == [("textual_image", None)]
+
+
 def _image_bytes(*, width: int, color: str = "blue") -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (width, 3), color).save(buffer, format="PNG")
@@ -193,6 +235,26 @@ def _preview_app():
     service = PreviewMediaService(items)
     app.media_reading_scope_service = service
     return app, service
+
+
+def test_preview_cache_evicts_oldest_image_and_related_session_state() -> None:
+    app, _service = _preview_app()
+    screen = LibraryScreen(app, preview_widget_factory=_fake_preview_factory([]))
+    first_id = "local:media:1"
+    screen._library_media_preview_status[first_id] = "cached"
+    screen._library_media_preview_hidden.add(first_id)
+    screen._library_media_preview_loading[first_id] = 1
+
+    for index in range(1, 22):
+        screen._cache_library_media_preview(
+            f"local:media:{index}", Image.new("RGB", (1, 1))
+        )
+
+    assert len(screen._library_media_preview_images) == 20
+    assert first_id not in screen._library_media_preview_images
+    assert first_id not in screen._library_media_preview_status
+    assert first_id not in screen._library_media_preview_hidden
+    assert first_id not in screen._library_media_preview_loading
 
 
 def _fake_preview_factory(calls):

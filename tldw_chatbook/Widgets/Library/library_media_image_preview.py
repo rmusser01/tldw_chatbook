@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 from textual.widget import Widget
 from textual.widgets import Static
 
+from tldw_chatbook.Utils import optional_deps
+
 SUPPORTED_IMAGE_MIME_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/webp"}
 )
@@ -56,7 +58,16 @@ def image_preview_eligibility(
     *,
     backend: str,
 ) -> PreviewEligibility:
-    """Return whether an existing local original is a supported raster image."""
+    """Return whether an existing local original is a supported raster image.
+
+    Args:
+        detail: Loaded media detail, or None when unavailable.
+        file_check: Local original-file availability receipt.
+        backend: Detail backend; only ``"local"`` is eligible.
+
+    Returns:
+        Eligibility decision with a stable reason and normalized MIME type.
+    """
     if backend != "local":
         return PreviewEligibility(False, "external")
     if not isinstance(detail, Mapping):
@@ -80,9 +91,22 @@ def image_preview_eligibility(
 
 
 def decode_media_image(content: bytes) -> Any:
-    """Decode and detach one supported image, bounded for terminal display."""
+    """Decode and detach one supported image for terminal display.
+
+    Args:
+        content: Encoded raster-image bytes.
+
+    Returns:
+        Detached Pillow image bounded to the preview dimension limit.
+
+    Raises:
+        ImportError: If Pillow is unavailable.
+        ValueError: If content is empty or its raster format is unsupported.
+    """
     if not isinstance(content, bytes) or not content:
         raise ValueError("image content must be non-empty bytes")
+    if not optional_deps.check_dependency("PIL", "pillow"):
+        raise ImportError("Pillow is unavailable")
     from PIL import Image
 
     with Image.open(BytesIO(content)) as source:
@@ -107,7 +131,17 @@ def build_media_image_widget(
     box_cols: int,
     box_lines: int,
 ) -> Widget:
-    """Build the existing graphics widget or universal mosaic fallback."""
+    """Build the existing graphics widget or universal mosaic fallback.
+
+    Args:
+        image: Decoded image object.
+        app_config: Application image-rendering configuration.
+        box_cols: Available preview width in terminal cells.
+        box_lines: Available preview height in terminal cells.
+
+    Returns:
+        Graphics-protocol image when available, otherwise a mosaic Static.
+    """
     from tldw_chatbook.Chat.console_image_view import (
         fit_image_cell_size,
         resolve_default_mode,
@@ -117,6 +151,8 @@ def build_media_image_widget(
     lines = max(1, int(box_lines))
     if resolve_default_mode(app_config) == "graphics":
         try:
+            if not optional_deps.check_dependency("textual_image"):
+                raise ImportError("textual_image is unavailable")
             from textual_image.widget import Image as GraphicsImage
 
             widget: Widget = GraphicsImage(image)

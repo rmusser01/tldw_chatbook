@@ -79,6 +79,23 @@ def test_viewer_state_exposes_truthful_local_provenance_and_representation():
     assert state.stored_representation == "Complete stored text"
 
 
+def test_viewer_state_preserves_explicit_server_provenance():
+    state = build_library_media_viewer_state(
+        {
+            "id": "42",
+            "title": "Server report",
+            "type": "plaintext",
+            "content": "Remote body",
+        },
+        backend="server",
+        canonical_id="server:media:42",
+        now=NOW,
+    )
+
+    assert state.backend == "server"
+    assert state.canonical_id == "server:media:42"
+
+
 def test_media_type_key_fallback():
     """Falls back to media_type when type is absent."""
     detail = {"media_id": "1", "title": "T", "media_type": "pdf"}
