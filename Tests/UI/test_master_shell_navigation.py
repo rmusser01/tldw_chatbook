@@ -127,17 +127,12 @@ async def test_master_shell_navigation_order_and_labels():
 def test_nav_button_label_numbering_scheme():
     from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
 
-    # F-002: the labels used to read "1 Home" -- implying a bare-digit key
-    # -- while the actual binding is ctrl+digit. The label now carries the
-    # control glyph so the affordance matches the keybinding at zero extra
-    # width per tab. ctrl+1..ctrl+9 cover the first nine destinations,
-    # ctrl+0 the tenth; Lab, Logs, Settings carry their F7/F8/F9 routes.
-    digits = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
-    for index, digit in enumerate(digits):
-        assert nav_button_label(index, "Label") == f"\u2303{digit} Label"
-    assert nav_button_label(10, "Lab") == "F7 Lab"
-    assert nav_button_label(11, "Logs") == "F8 Logs"
-    assert nav_button_label(12, "Settings") == "F9 Settings"
+    assert nav_button_label("home", "Home") == "\u23031 Home"
+    assert nav_button_label("acp", "ACP") == "\u23030 ACP"
+    assert nav_button_label("lab", "Lab") == "F7 Lab"
+    assert nav_button_label("logs", "Logs") == "F8 Logs"
+    assert nav_button_label("settings", "Settings") == "F9 Settings"
+    assert nav_button_label("research", "Research") == "F10 Research"
 
 
 @pytest.mark.asyncio
@@ -428,6 +423,8 @@ async def test_folded_screen_boxes_owning_destination_button():
 
 def test_shell_destination_hotkeys_keep_existing_destination_owners():
     """Inserting Research cannot move any existing destination's shortcut."""
+    from textual.actions import parse
+
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Navigation.shell_destinations import (
         SHELL_DESTINATION_ORDER,
@@ -458,15 +455,35 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for binding in hotkey_bindings:
-        destination_id = binding.action.removeprefix("shell_destination(").removesuffix(")")
+        _namespace, _action, (destination_id,) = parse(binding.action)
         destination = next(
             candidate
             for candidate in SHELL_DESTINATION_ORDER
             if candidate.destination_id == destination_id
         )
         assert binding.key == SHELL_DESTINATION_SHORTCUTS[destination_id]
-        assert binding.action == f"shell_destination({destination_id})"
+        assert binding.action == f"shell_destination({destination_id!r})"
         assert destination.accessible_label in binding.description
+
+
+def test_shell_destination_binding_arguments_are_textual_strings():
+    """Ctrl+1 and F10 must dispatch a string destination ID, not a name token."""
+    from textual.actions import ActionError, parse
+
+    from tldw_chatbook.app import TldwCli
+
+    bindings = {binding.key: binding for binding in TldwCli.BINDINGS}
+
+    for key, destination_id in (("ctrl+1", "home"), ("f10", "research")):
+        try:
+            namespace, action, arguments = parse(bindings[key].action)
+        except ActionError as exc:
+            pytest.fail(f"{key} has an unparseable Textual action: {exc}")
+        assert (namespace, action, arguments) == (
+            "",
+            "shell_destination",
+            (destination_id,),
+        )
 
 
 def test_action_shell_destination_posts_primary_route():

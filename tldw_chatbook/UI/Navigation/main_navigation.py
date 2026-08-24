@@ -40,13 +40,6 @@ def _straddles_viewport(region: Region, viewport: Region) -> bool:
     )
 
 
-#: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first
-#: nine destinations in SHELL_DESTINATION_ORDER and ctrl+0 selects the tenth.
-#: The remaining destinations get F7/F8/F9 (see app.py SHELL_DESTINATION_FKEYS);
-#: their labels carry the key name so the bar stays truthful.
-NAV_HOTKEY_DIGITS: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
-NAV_FKEY_LABELS: tuple[str, ...] = ("F7", "F8", "F9")
-
 #: F-002: the tab labels used to read "1 Home", implying a bare-digit key
 #: while the actual binding (app.py SHELL_DESTINATION_HOTKEYS) is ctrl+digit.
 #: The UP ARROWHEAD glyph (⌃, the macOS control convention) makes the label
@@ -54,38 +47,23 @@ NAV_FKEY_LABELS: tuple[str, ...] = ("F7", "F8", "F9")
 NAV_HOTKEY_GLYPH = "⌃"
 
 
-def nav_button_label(
-    index: int, label: str, *, destination_id: str | None = None
-) -> str:
+def nav_button_label(destination_id: str, label: str) -> str:
     """Prefix a destination label with its hotkey affordance when it has one.
 
-    The destination hotkey layer is ``ctrl+<digit>`` for the first ten
-    destinations and F7/F8/F9 for the rest (see ``app.py``), so the label
-    must say so: rendering a bare "1 Home" taught users a key that does
-    nothing.
+    Shortcut ownership comes from the stable destination-ID mapping, so the
+    label cannot drift when navigation order changes.
 
     Args:
-        index: Position of the destination in SHELL_DESTINATION_ORDER. Retained
-            for compatibility with callers that do not provide a destination ID.
+        destination_id: Stable shell destination ID.
         label: Compact destination label from the shell destination model.
-        destination_id: Stable shell destination ID, when available.
 
     Returns:
-        ``"⌃<digit> <label>"`` for the first ten destinations,
-        ``"F<n> <label>"`` for the next ones with an F-key route,
-        else the bare ``label``.
+        The shortcut-prefixed label.
     """
-    shortcut = SHELL_DESTINATION_SHORTCUTS.get(destination_id or "")
-    if shortcut:
-        if shortcut.startswith("ctrl+"):
-            return f"{NAV_HOTKEY_GLYPH}{shortcut.removeprefix('ctrl+')} {label}"
-        return f"{shortcut.upper()} {label}"
-    if 0 <= index < len(NAV_HOTKEY_DIGITS):
-        return f"{NAV_HOTKEY_GLYPH}{NAV_HOTKEY_DIGITS[index]} {label}"
-    fkey_index = index - len(NAV_HOTKEY_DIGITS)
-    if 0 <= fkey_index < len(NAV_FKEY_LABELS):
-        return f"{NAV_FKEY_LABELS[fkey_index]} {label}"
-    return label
+    shortcut = SHELL_DESTINATION_SHORTCUTS[destination_id]
+    if shortcut.startswith("ctrl+"):
+        return f"{NAV_HOTKEY_GLYPH}{shortcut.removeprefix('ctrl+')} {label}"
+    return f"{shortcut.upper()} {label}"
 
 
 class NavigateToScreen(Message):
@@ -363,12 +341,11 @@ class MainNavigationBar(Container):
         left_hint.display = False
         yield left_hint
         with Horizontal(id="nav-destination-strip", classes="main-nav"):
-            for index, destination in enumerate(SHELL_DESTINATION_ORDER):
+            for destination in SHELL_DESTINATION_ORDER:
                 button = NavigationButton(
                     nav_button_label(
-                        index,
+                        destination.destination_id,
                         destination.label,
-                        destination_id=destination.destination_id,
                     ),
                     id=f"nav-{destination.destination_id}",
                     classes="nav-button ascii-nav-tab",

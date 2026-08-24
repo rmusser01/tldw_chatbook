@@ -5729,7 +5729,7 @@ class TldwCli(
         + [
             Binding(
                 SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
-                f"shell_destination({destination.destination_id})",
+                f"shell_destination({destination.destination_id!r})",
                 f"Go to {destination.accessible_label}",
                 show=SHELL_DESTINATION_SHORTCUTS[
                     destination.destination_id

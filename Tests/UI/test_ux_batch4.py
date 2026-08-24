@@ -30,15 +30,18 @@ def test_every_destination_has_a_hotkey_route() -> None:
         for binding in TldwCli.BINDINGS
         if binding.action.startswith("shell_destination(")
     }
-    expected = {f"shell_destination({destination_id})" for destination_id in SHELL_DESTINATION_SHORTCUTS}
+    expected = {
+        f"shell_destination({destination_id!r})"
+        for destination_id in SHELL_DESTINATION_SHORTCUTS
+    }
     assert actions == expected
 
 
 def test_fkey_labels_on_late_destinations() -> None:
-    assert nav_button_label(3, "Research", destination_id="research") == "F10 Research"
-    assert nav_button_label(10, "Lab") == "F7 Lab"
-    assert nav_button_label(11, "Logs") == "F8 Logs"
-    assert nav_button_label(12, "Settings") == "F9 Settings"
+    assert nav_button_label("research", "Research") == "F10 Research"
+    assert nav_button_label("lab", "Lab") == "F7 Lab"
+    assert nav_button_label("logs", "Logs") == "F8 Logs"
+    assert nav_button_label("settings", "Settings") == "F9 Settings"
 
 
 # UX-069 -----------------------------------------------------------------
