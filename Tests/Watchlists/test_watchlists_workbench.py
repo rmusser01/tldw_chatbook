@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import inspect
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
@@ -11,6 +12,9 @@ from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalS
 from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
+from tldw_chatbook.UI.Watchlists_Modules import (
+    watchlists_workbench as workbench_module,
+)
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.pane_grip import (
@@ -467,8 +471,18 @@ async def test_expanding_inspector_mounts_body_after_permanent_grip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
+async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom(
+    monkeypatch,
+) -> None:
     fail_rail = True
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        workbench_module.logger,
+        "bind",
+        lambda **context: SimpleNamespace(
+            exception=lambda message: logged.append((message, context))
+        ),
+    )
 
     def rail_factory() -> Widget:
         if fail_rail:
@@ -508,6 +522,12 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
         assert app.query_one("#wl-region-content") is reader
         assert not workbench.has_class("watchlists-has-expanded-side-pane")
         assert app.is_running
+        assert logged == [
+            (
+                "Watchlists pane expansion factory failed",
+                {"token": 1, "read_mode": True, "regions": ("left_rail",)},
+            )
+        ]
 
         fail_rail = False
         workbench.request_region_layout(expanded_left, token=2)
@@ -515,6 +535,37 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
         assert app.query("#wl-region-left_rail")
         assert grip.expanded is True
         assert workbench.has_class("watchlists-has-expanded-side-pane")
+
+
+@pytest.mark.asyncio
+async def test_expansion_mount_failure_logs_request_context(monkeypatch) -> None:
+    collapsed = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL}))
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        workbench_module.logger,
+        "bind",
+        lambda **context: SimpleNamespace(
+            exception=lambda message: logged.append((message, context))
+        ),
+    )
+    app = _WorkbenchApp(collapsed)
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+
+        async def fail_mount(*_widgets, **_kwargs) -> None:
+            raise RuntimeError("mount failed")
+
+        monkeypatch.setattr(app.query_one("#wl-workbench-body"), "mount", fail_mount)
+        workbench.request_region_layout(RegionLayout(), token=9)
+        await pilot.pause()
+
+        assert workbench.region_layout == collapsed
+        assert logged == [
+            (
+                "Watchlists pane expansion mount failed",
+                {"token": 9, "read_mode": True, "regions": ("left_rail",)},
+            )
+        ]
 
 
 @pytest.mark.asyncio
@@ -763,9 +814,19 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mode_switch_factory_failure_preserves_previous_read_view() -> None:
+async def test_mode_switch_factory_failure_preserves_previous_read_view(
+    monkeypatch,
+) -> None:
     fail_items = False
     observed_read_classes: list[bool] = []
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        workbench_module.logger,
+        "bind",
+        lambda **context: SimpleNamespace(
+            exception=lambda message: logged.append((message, context))
+        ),
+    )
 
     def items_factory() -> Label:
         if fail_items:
@@ -815,6 +876,12 @@ async def test_mode_switch_factory_failure_preserves_previous_read_view() -> Non
             "the target mode class must be active while its body is reconciled, "
             "then rolled back with the previous view when the factory fails"
         )
+        assert logged == [
+            (
+                "Watchlists section-view factory failed",
+                {"token": 7, "read_mode": False, "regions": ("items",)},
+            )
+        ]
 
         fail_items = False
         applied = await workbench.apply_section_view(

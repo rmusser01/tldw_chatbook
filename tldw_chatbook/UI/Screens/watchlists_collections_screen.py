@@ -411,7 +411,7 @@ class _ItemStatusIntent:
 
 
 @dataclass(frozen=True)
-class _ManualLayoutRollback:
+class ManualLayoutRollback:
     """One manual preference intent owned by its latest request token."""
 
     token: int
@@ -423,7 +423,7 @@ class _ManualLayoutRollback:
 
 
 @dataclass(frozen=True)
-class _SectionViewIntent:
+class SectionViewIntent:
     """A section reconciliation snapshot, independent of later tab clicks."""
 
     token: int
@@ -1019,7 +1019,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Avoid initializing the reactive (and its watcher) before Textual
         # attaches this screen to an app; on_mount replaces this seed.
         self._rendered_section = "items"
-        self._manual_layout_rollback: _ManualLayoutRollback | None = None
+        self._manual_layout_rollback: ManualLayoutRollback | None = None
         self._items_view_anchor_id: str | None = None
         self._items_view_scroll_y = 0.0
         self._items_view_had_focus = False
@@ -1059,7 +1059,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # queue rather than `run_worker(exclusive=True)` per surface.
         self._pending_surface_refresh: set[str] = set()
         self._surface_refresh_draining = False
-        self._pending_section_intent: _SectionViewIntent | None = None
+        self._pending_section_intent: SectionViewIntent | None = None
         # The Console-follow adapter's latest answer, mirrored here so the
         # RIGHT_RAIL factory reads an attribute instead of polling from
         # `compose()` (TASK-2200 review wave, M4). Refreshed by
@@ -3015,7 +3015,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             rollback is not None
             and self.region_layout == rollback.attempted_preferred
         ):
-            self._manual_layout_rollback = _ManualLayoutRollback(
+            self._manual_layout_rollback = ManualLayoutRollback(
                 token=self._current_layout_request_token,
                 attempted_layout=self._effective_region_layout,
                 attempted_preferred=rollback.attempted_preferred,
@@ -3412,7 +3412,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.region_layout = preferred
         token = self._recompute_effective_layout()
         request_token = token or self._current_layout_request_token
-        self._manual_layout_rollback = _ManualLayoutRollback(
+        self._manual_layout_rollback = ManualLayoutRollback(
             token=request_token,
             attempted_layout=self._effective_region_layout,
             attempted_preferred=preferred,
@@ -4370,7 +4370,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             token = self._next_layout_request_token()
             detail_builder = self._build_detail_pane
             header_builder = self._build_centre_status_header
-            intent = _SectionViewIntent(
+            intent = SectionViewIntent(
                 token=token,
                 section=section,
                 read_mode=section == "items",
@@ -4691,7 +4691,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             section = self.active_section
             detail_builder = self._build_detail_pane
             header_builder = self._build_centre_status_header
-            self._pending_section_intent = _SectionViewIntent(
+            self._pending_section_intent = SectionViewIntent(
                 token=token,
                 section=section,
                 read_mode=section == "items",

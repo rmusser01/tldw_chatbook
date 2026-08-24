@@ -36,7 +36,7 @@ from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
-    _ManualLayoutRollback,
+    ManualLayoutRollback,
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
@@ -1489,7 +1489,7 @@ async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noo
     async with _open(app) as (screen, pilot, host):
         layout = screen._effective_region_layout
         token = screen._next_layout_request_token()
-        rollback = _ManualLayoutRollback(
+        rollback = ManualLayoutRollback(
             token=token,
             attempted_layout=layout,
             attempted_preferred=screen.region_layout,
@@ -1540,7 +1540,7 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         preferred = screen.region_layout
         effective = screen._effective_region_layout
         token1 = screen._next_layout_request_token()
-        screen._manual_layout_rollback = _ManualLayoutRollback(
+        screen._manual_layout_rollback = ManualLayoutRollback(
             token=token1,
             attempted_layout=effective,
             attempted_preferred=preferred,

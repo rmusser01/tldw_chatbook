@@ -238,7 +238,11 @@ class WatchlistsWorkbench(Vertical):
                     prepared[region] = self._region_body(region)
         except Exception:
             self._sync_expanded_side_pane_class(layout=previous)
-            logger.exception("Watchlists pane expansion factory failed")
+            logger.bind(
+                token=token,
+                read_mode=self.read_mode,
+                regions=tuple(region.value for region in changed),
+            ).exception("Watchlists pane expansion factory failed")
             self.post_message(
                 RegionLayoutApplyFailed(
                     token=token, attempted=layout, fallback=previous
@@ -267,7 +271,11 @@ class WatchlistsWorkbench(Vertical):
                 if node.is_mounted:
                     await node.remove()
             self._sync_expanded_side_pane_class(layout=previous)
-            logger.exception("Watchlists pane expansion mount failed")
+            logger.bind(
+                token=token,
+                read_mode=self.read_mode,
+                regions=tuple(region.value for region in prepared),
+            ).exception("Watchlists pane expansion mount failed")
             self.post_message(
                 RegionLayoutApplyFailed(
                     token=token, attempted=layout, fallback=previous
@@ -417,7 +425,11 @@ class WatchlistsWorkbench(Vertical):
         except Exception:
             self.read_mode = previous_read_mode
             self.set_class(self.read_mode, "watchlists-read-mode")
-            logger.exception("Watchlists section-view factory failed")
+            logger.bind(
+                token=token,
+                read_mode=next_read_mode,
+                regions=tuple(region.value for region in rebuild_regions),
+            ).exception("Watchlists section-view factory failed")
             self.post_message(
                 RegionLayoutApplyFailed(
                     token=token, attempted=layout, fallback=previous

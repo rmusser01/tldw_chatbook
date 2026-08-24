@@ -985,7 +985,7 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
-    """Open the full Library rail after its async evidence load settles.
+    """Wait for the Library rail shell to finish its async source-count load.
 
     Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
     suites (like this one) that mount Library through the generic
@@ -993,20 +993,13 @@ async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> 
     retired 3-pane hub's terminal selectors (``#library-source-error``,
     ``#library-source-empty``, the per-source summary ids) never mount under
     the rail + canvas shell, so readiness is keyed off ``_library_loaded``
-    and the rail itself. Library now admits fresh profiles through a compact
-    Starter rail; the source-shell contracts below intentionally exercise
-    the full rail, so enter it through the real ``Explore all`` action.
+    and the rail itself.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
             await pilot.pause()
             await pilot.pause()
-            explore = screen.query("#library-rail-explore-all")
-            if explore:
-                explore.first(Button).press()
-                await pilot.pause()
-                await pilot.pause()
             return
         await pilot.pause(0.01)
     raise AssertionError(
@@ -1153,7 +1146,7 @@ def _custom_policy_recovery_state(
         # of the generic "source material" phrasing artifacts/personas use.
         # (F-013: the copy was rewritten in plain language -- "Search
         # everything, pick a section, or add something new.")
-        ("library", "#library-header-line", "add something useful"),
+        ("library", "#library-header-line", "pick a section"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
     ],
@@ -1691,15 +1684,17 @@ async def test_library_destination_service_failure_uses_recovery_copy():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
-        await _wait_for_visible_text(
-            screen, pilot, "Some Library sources are unavailable."
-        )
-        retry = screen.query_one("#library-hub-retry-evidence", Button)
+        button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Some Library sources are unavailable." in _visible_text(screen)
-        assert retry.disabled is False
-        assert "Retry" in str(retry.label)
+        assert (
+            "Library source services unavailable; retry Library later."
+            in _visible_text(screen)
+        )
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
+        assert "Library source services are unavailable" in str(button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -2336,26 +2331,15 @@ async def test_destination_action_buttons_explain_their_outcome(route):
             "this audit when tooltips are added (tracked as a UX follow-up)."
         )
     app = _build_test_app()
-    if route == "library":
-        app.notes_scope_service = StaticLibraryNotesScopeService([])
-        app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-        app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-        if route == "library":
-            await _wait_for_library_snapshot(screen, pilot)
-        else:
-            await pilot.pause(0.1)
 
         missing_tooltips = [
             button.id
             for button in screen.query(Button)
-            # Library's lifecycle entry controls are orientation actions,
-            # not destination outcome actions. Their behavior and focus
-            # contracts live in Tests/UI/test_library_shell.py.
-            if button.id != "library-rail-explore-all"
             if str(getattr(button, "tooltip", None)).strip().lower() in {"", "none"}
         ]
         assert not missing_tooltips, (

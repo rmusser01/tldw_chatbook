@@ -13,6 +13,7 @@ from textual.widgets import Button, Input, Static, TextArea
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
+from tldw_chatbook.UI.Screens import watchlists_collections_screen as collections_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
@@ -43,6 +44,13 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 from tldw_chatbook.Utils.input_validation import validate_url as real_validate_url
+
+
+def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
+    assert hasattr(collections_module, "ManualLayoutRollback")
+    assert hasattr(collections_module, "SectionViewIntent")
+    assert not hasattr(collections_module, "_ManualLayoutRollback")
+    assert not hasattr(collections_module, "_SectionViewIntent")
 
 
 @pytest.fixture
