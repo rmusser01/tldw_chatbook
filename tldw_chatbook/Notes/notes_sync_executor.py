@@ -2611,11 +2611,7 @@ class NotesSyncExecutor:
                 )
             self._require_new_root(request)
             self._require_new_candidate_owner(request)
-            desired = tuple(
-                (request.logical_folder_id, binding.note_id)
-                for binding in self._store.list_bindings(request.root_id)
-                if binding.state is NotesSyncBindingState.ACTIVE
-            )
+            desired = await self._desired_managed_memberships(request)
             _, cancelled = await self._joined_thread_call(
                 lambda: asyncio.run(
                     self._notes.reconcile_managed_memberships(
@@ -2723,11 +2719,7 @@ class NotesSyncExecutor:
             request.operation_id,
             NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
         )
-        desired = tuple(
-            (request.logical_folder_id, binding.note_id)
-            for binding in self._store.list_bindings(request.root_id)
-            if binding.state is NotesSyncBindingState.ACTIVE
-        )
+        desired = await self._desired_managed_memberships(request)
         _, cancelled = await self._joined_thread_call(
             lambda: asyncio.run(
                 self._notes.reconcile_managed_memberships(
@@ -3283,11 +3275,7 @@ class NotesSyncExecutor:
                 self._require_new_root(request)
                 self._require_new_candidate_owner(request)
                 note, file = await self._require_new_desired(request)
-                desired = [
-                    (request.logical_folder_id, binding.note_id)
-                    for binding in self._store.list_bindings(request.root_id)
-                    if binding.state is NotesSyncBindingState.ACTIVE
-                ]
+                desired = list(await self._desired_managed_memberships(request))
                 if request.action_kind is not NotesSyncActionKind.MOVE_FILE:
                     desired.append((request.logical_folder_id, note.note_id))
                 _, cancelled = await self._joined_thread_call(
@@ -3496,15 +3484,41 @@ class NotesSyncExecutor:
             pass
         else:
             raise RuntimeError("binding_authority_changed")
-        note_scope_id = self._request_note_scope_id(request)
-        note_id = self._request_note_id(request)
-        relative_path = self._request_file_path(request)
-        if any(
-            (binding.note_scope_id == note_scope_id and binding.note_id == note_id)
-            or binding.normalized_relative_path == relative_path
-            for binding in self._store.list_bindings(request.root_id)
+        # TASK-21129: this guard stays synchronous on purpose. Every caller
+        # relies on nothing else running between the check and the mutation it
+        # admits, so it must not gain an await point; the cost is removed by
+        # asking the store an indexed LIMIT-1 question instead of hydrating
+        # every binding of the root and answering it in Python.
+        if self._store.has_binding_for_note_or_path(
+            request.root_id,
+            note_scope_id=self._request_note_scope_id(request),
+            note_id=self._request_note_id(request),
+            relative_path=self._request_file_path(request),
         ):
             raise RuntimeError("binding_authority_changed")
+
+    async def _desired_managed_memberships(
+        self,
+        request: NotesSyncExecutionRequest,
+        *,
+        exclude_binding_id: str | None = None,
+    ) -> tuple[tuple[str, str], ...]:
+        """Project this root's active managed memberships off the event loop.
+
+        The five reconcile stages that need this set all run as coroutines on
+        the application's event loop and all hand the result straight to an
+        awaited ``reconcile_managed_memberships``, so reading it on a worker
+        thread widens no critical section: the loop already yields on the very
+        next statement, and each stage re-checks its authority after the
+        reconcile returns. See TASK-21129.
+        """
+
+        note_ids = await asyncio.to_thread(
+            self._store.active_binding_note_ids,
+            request.root_id,
+            exclude_binding_id=exclude_binding_id,
+        )
+        return tuple((request.logical_folder_id, note_id) for note_id in note_ids)
 
     @staticmethod
     def _request_note_scope_id(request: NotesSyncExecutionRequest) -> str:
@@ -3932,11 +3946,7 @@ class NotesSyncExecutor:
             if state is NotesSyncOperationState.SECOND_AUTHORITY_APPLIED:
                 self._require_reviewed_owner(request)
                 note, file = await self._require_desired(request)
-                desired = tuple(
-                    (request.logical_folder_id, binding.note_id)
-                    for binding in self._store.list_bindings(request.root_id)
-                    if binding.state is NotesSyncBindingState.ACTIVE
-                )
+                desired = await self._desired_managed_memberships(request)
                 self._require_reviewed_owner(request)
                 _, cancelled = await self._joined_thread_call(
                     lambda: asyncio.run(
@@ -5078,11 +5088,8 @@ class NotesSyncExecutor:
             or selected_binding.note_id != request.note.note_id
         ):
             raise RuntimeError("binding_authority_changed")
-        desired = tuple(
-            (request.logical_folder_id, binding.note_id)
-            for binding in self._store.list_bindings(request.root_id)
-            if binding.state is NotesSyncBindingState.ACTIVE
-            and binding.binding_id != request.binding_id
+        desired = await self._desired_managed_memberships(
+            request, exclude_binding_id=request.binding_id
         )
         _, cancelled = await self._joined_thread_call(
             lambda: asyncio.run(

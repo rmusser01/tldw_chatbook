@@ -7824,3 +7824,41 @@ close a **live** connection.
   connection open** rather than closing it anyway — closing it converts a slow
   shutdown into `ProgrammingError: Cannot operate on a closed database` inside
   live work, which is the exact defect the settle wait existed to prevent.
+---
+
+## "No index" was wrong and it would not have mattered: 88% of that read was Python (TASK-21129, 2026-08-23)
+
+**What happened.** The holistic-perf finding for the Notes-sync executor said its
+six `list_bindings` sites had "no LIMIT, no `root_id` index" and prescribed
+"indexed predicates + `to_thread`". Both halves of the diagnosis were checkable
+before writing a line of fix, and both came back different:
+
+- `idx_notes_sync_bindings_root(root_id, state, binding_id)` had existed since the
+  feature's **first commit**, and `EXPLAIN QUERY PLAN` on the real thirteen-column
+  statement showed SQLite already using it. Adding an index would have bought
+  nothing and cost write amplification on every binding insert.
+- Splitting the read showed where the time actually was: on a 1,000-binding root,
+  `fetchall` was **1.83 ms of a 14.75 ms read** — the other **12.9 ms (88%)** was
+  `_binding_from_row` building a dataclass, a nested serialization profile and an
+  enum, per row, for call sites that kept **one string** off each record.
+
+The fix that follows from the measurement is a different fix from the one that
+follows from the filing: project only the columns the caller consumes (and answer
+the existence question with `LIMIT 1`), rather than index anything.
+
+**What to do.** Before accepting "this query is slow because it is unindexed",
+run two cheap probes: `EXPLAIN QUERY PLAN` on the *actual* statement (not a
+paraphrase with fewer columns — the reduced form can report a covering index the
+real one cannot use), and a timing split of raw `fetchall` versus the full store
+method. In this repo the shape to suspect is any `for x in store.list_*(...)`
+whose loop body touches one or two attributes: the row-to-dataclass hydration is
+usually the bill, and it is invisible to the query planner.
+
+**Adjacent trap, same task: a "never crosses the boundary" assertion can be
+vacuous.** The mutation battery ran eleven deliberate defects; ten were caught and
+one survived — a probe rewritten to ignore its `root_id` filter entirely. The test
+that should have caught it asserted "root-1 does not see root-2's binding" using a
+note id that existed on **neither** root, so it passed for the wrong reason. The
+fixture now gives the other root values that exist only there. Any negative
+cross-scope assertion needs the value to genuinely exist in the other scope, or it
+proves only that nothing matches nothing.

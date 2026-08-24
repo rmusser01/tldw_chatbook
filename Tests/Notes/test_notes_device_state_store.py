@@ -1215,3 +1215,170 @@ def test_read_only_connect_requires_existing_database_and_cannot_write(
             connection.execute("DELETE FROM notes_sync_roots")
     finally:
         connection.close()
+
+
+def _seeded_binding_store(tmp_path: Path) -> NotesDeviceStateStore:
+    """One active root carrying a binding in every durable binding state."""
+
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    for index, state in enumerate(NotesSyncBindingState):
+        store.create_binding(
+            _binding(
+                binding_id=f"binding-{index}",
+                note_id=f"note-{index}",
+                relative_path=f"folder/note-{index}.md",
+                identity_digest=f"{index:064d}",
+                state=NotesSyncBindingState.ACTIVE,
+            )
+        )
+        if state is not NotesSyncBindingState.ACTIVE:
+            with store.transaction(immediate=True) as connection:
+                connection.execute(
+                    "UPDATE notes_sync_bindings SET state = ? WHERE binding_id = ?",
+                    (state.value, f"binding-{index}"),
+                )
+    # A second root proves the projections never leak across owners.
+    store.create_root(
+        _root(
+            root_id="root-2",
+            logical_folder_id="folder-2",
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    # Deliberately values that exist ONLY here, so a probe that forgot its
+    # root filter would answer True for root-1 and be caught.
+    store.create_binding(
+        _binding(
+            binding_id="binding-other",
+            root_id="root-2",
+            note_id="note-only-on-root-2",
+            relative_path="folder/only-on-root-2.md",
+            identity_digest=f"{99:064d}",
+        )
+    )
+    return store
+
+
+def test_active_binding_note_ids_matches_the_full_scan_it_replaces(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the narrow projection is byte-identical to the old read."""
+
+    store = _seeded_binding_store(tmp_path)
+
+    def retired_projection(root_id: str, exclude: str | None = None) -> tuple[str, ...]:
+        return tuple(
+            binding.note_id
+            for binding in store.list_bindings(root_id)
+            if binding.state is NotesSyncBindingState.ACTIVE
+            and binding.binding_id != exclude
+        )
+
+    assert store.active_binding_note_ids("root-1") == retired_projection("root-1")
+    assert store.active_binding_note_ids("root-1") == ("note-1",)
+    assert store.active_binding_note_ids(
+        "root-1", exclude_binding_id="binding-1"
+    ) == retired_projection("root-1", "binding-1")
+    assert store.active_binding_note_ids("root-1", exclude_binding_id="binding-1") == ()
+    assert store.active_binding_note_ids("root-2") == ("note-only-on-root-2",)
+    # Excluding an id that belongs to another root removes nothing.
+    assert store.active_binding_note_ids(
+        "root-1", exclude_binding_id="binding-other"
+    ) == ("note-1",)
+    with pytest.raises(ValueError, match="root_id"):
+        store.active_binding_note_ids("folder/root")
+    with pytest.raises(ValueError, match="exclude_binding_id"):
+        store.active_binding_note_ids("root-1", exclude_binding_id="folder/binding")
+
+
+def test_active_binding_note_ids_orders_by_binding_id_and_is_empty_on_a_bare_root(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: order is the contract the reconcile input depends on."""
+
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    assert store.active_binding_note_ids("root-1") == ()
+
+    for suffix in ("c", "a", "b"):
+        store.create_binding(
+            _binding(
+                binding_id=f"binding-{suffix}",
+                note_id=f"note-{suffix}",
+                relative_path=f"folder/note-{suffix}.md",
+                identity_digest=hashlib.sha256(suffix.encode()).hexdigest(),
+            )
+        )
+
+    assert store.active_binding_note_ids("root-1") == ("note-a", "note-b", "note-c")
+    assert store.active_binding_note_ids("root-1") == tuple(
+        binding.note_id for binding in store.list_bindings("root-1")
+    )
+
+
+def test_has_binding_for_note_or_path_matches_the_any_scan_it_replaces(
+    tmp_path: Path,
+) -> None:
+    """TASK-21129: the LIMIT-1 probe answers the retired predicate exactly."""
+
+    store = _seeded_binding_store(tmp_path)
+
+    def retired_probe(root_id: str, scope: str, note: str, path: str) -> bool:
+        return any(
+            (binding.note_scope_id == scope and binding.note_id == note)
+            or binding.normalized_relative_path == path
+            for binding in store.list_bindings(root_id)
+        )
+
+    cases = (
+        # (scope, note, path) -- note identity, path, both, neither, blanks.
+        ("scope-1", "note-1", "folder/absent.md"),
+        ("scope-1", "absent", "folder/note-1.md"),
+        ("scope-1", "note-1", "folder/note-1.md"),
+        ("scope-1", "absent", "folder/absent.md"),
+        ("", "", ""),
+        ("scope-1", "", "folder/note-3.md"),
+        # A non-active binding still owns its note and path.
+        ("scope-1", "note-0", "folder/absent.md"),
+        ("scope-1", "absent", "folder/note-4.md"),
+        # The scope half is conjunctive: a right note under a wrong scope misses.
+        ("scope-other", "note-1", "folder/absent.md"),
+    )
+    for scope, note, path in cases:
+        expected = retired_probe("root-1", scope, note, path)
+        assert (
+            store.has_binding_for_note_or_path(
+                "root-1", note_scope_id=scope, note_id=note, relative_path=path
+            )
+            is expected
+        ), (scope, note, path)
+
+    # The probe never sees another root's bindings -- and root-2 really does
+    # hold this note and this path, so the assertion is not vacuous.
+    assert store.has_binding_for_note_or_path(
+        "root-2",
+        note_scope_id="scope-1",
+        note_id="note-only-on-root-2",
+        relative_path="folder/absent.md",
+    )
+    assert store.has_binding_for_note_or_path(
+        "root-2",
+        note_scope_id="scope-1",
+        note_id="absent",
+        relative_path="folder/only-on-root-2.md",
+    )
+    assert not store.has_binding_for_note_or_path(
+        "root-1",
+        note_scope_id="scope-1",
+        note_id="note-only-on-root-2",
+        relative_path="folder/only-on-root-2.md",
+    )
+    with pytest.raises(ValueError, match="root_id"):
+        store.has_binding_for_note_or_path(
+            "folder/root", note_scope_id="s", note_id="n", relative_path="p"
+        )

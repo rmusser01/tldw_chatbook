@@ -1125,6 +1125,107 @@ class NotesDeviceStateStore:
             ).fetchall()
         return tuple(self._binding_from_row(row) for row in rows)
 
+    def active_binding_note_ids(
+        self,
+        root_id: str,
+        *,
+        exclude_binding_id: str | None = None,
+    ) -> tuple[str, ...]:
+        """Return this root's active binding note ids, ordered by binding id.
+
+        The private executor projects managed folder memberships from this set
+        many times per reviewed operation. Reading it through
+        :meth:`list_bindings` hydrated one full ``NotesSyncBindingRecord`` --
+        thirteen columns, a nested serialization profile and an enum coercion
+        -- for every binding of the root, including the ones the caller then
+        discarded; measured on a 1,000-binding root that hydration was 88% of
+        a 15 ms read (TASK-21129). The predicate here is served entirely by
+        ``idx_notes_sync_bindings_root(root_id, state, binding_id)``, which
+        also supplies the ordering, so no temporary B-tree sort is built.
+
+        This is a private projection for owner-side reconciliation, not a
+        public summary: it deliberately carries no
+        :func:`validate_notes_sync_opaque_id` fail-closed check, exactly like
+        the :meth:`list_bindings` read it replaces. ``list_binding_summaries``
+        keeps that contract because it feeds surfaces outside this owner.
+
+        Args:
+            root_id: The opaque sync root whose active bindings to project.
+            exclude_binding_id: An optional binding to omit, for callers that
+                reconcile the set as it will be *without* one binding.
+
+        Returns:
+            tuple[str, ...]: Note ids of the matching active bindings, ordered
+            by binding id.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if exclude_binding_id is not None:
+            validate_notes_sync_opaque_id(
+                exclude_binding_id, field_name="exclude_binding_id"
+            )
+        statement = (
+            "SELECT note_id FROM notes_sync_bindings "
+            "WHERE root_id = ? AND state = 'active'"
+        )
+        parameters: tuple[str, ...] = (root_id,)
+        if exclude_binding_id is not None:
+            statement += " AND binding_id != ?"
+            parameters += (exclude_binding_id,)
+        statement += " ORDER BY binding_id"
+        with self.transaction() as connection:
+            rows = connection.execute(statement, parameters).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def has_binding_for_note_or_path(
+        self,
+        root_id: str,
+        *,
+        note_scope_id: str,
+        note_id: str,
+        relative_path: str,
+    ) -> bool:
+        """Report whether any binding of this root already claims note or path.
+
+        The executor's new-candidate authority guard asks this question before
+        every admitted stage; it used to answer it by materializing every
+        binding of the root and running a Python ``any(...)`` over them. The
+        predicate is the same one, pushed into SQL with ``LIMIT 1`` so a match
+        stops the scan (TASK-21129).
+
+        Every compared column is ``TEXT NOT NULL`` with the default BINARY
+        collation, so SQL equality here is the same byte comparison Python
+        ``==`` performed. The three predicate values are search terms rather
+        than identifiers -- callers legitimately pass ``""`` for an absent
+        note or file side -- so they are parameterized but not validated as
+        opaque ids; a stored value can never be empty (the table's length
+        checks), so an empty term matches nothing, as before.
+
+        Args:
+            root_id: The opaque sync root to search within.
+            note_scope_id: The candidate note's scope, or ``""`` when absent.
+            note_id: The candidate note id, or ``""`` when absent.
+            relative_path: The candidate normalized path, or ``""``.
+
+        Returns:
+            bool: True when some binding of this root, in any state, already
+            claims that note identity or that relative path.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM notes_sync_bindings
+                WHERE root_id = ?
+                      AND ((note_scope_id = ? AND note_id = ?)
+                           OR normalized_relative_path = ?)
+                LIMIT 1
+                """,
+                (root_id, note_scope_id, note_id, relative_path),
+            ).fetchone()
+        return row is not None
+
     def list_binding_summaries(
         self,
         root_id: str,
