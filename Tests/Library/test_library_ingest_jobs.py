@@ -716,6 +716,33 @@ def test_listener_fires_once_per_successful_mutation() -> None:
     assert len(calls) == 7
 
 
+def test_completion_listener_observes_settled_research_job() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(
+        source_path="/tmp/research.txt",
+        research_source_operation_id="research-op-listener",
+    )
+    observations: list[tuple[IngestJobState, int | None, str | None]] = []
+
+    def observe() -> None:
+        current = registry.get_job(job.job_id)
+        assert current is not None
+        observations.append(
+            (
+                current.state,
+                current.media_id,
+                current.research_source_operation_id,
+            )
+        )
+
+    registry.add_listener(observe)
+    registry.mark_done(job.job_id, media_id=41)
+
+    assert observations == [
+        (IngestJobState.DONE, 41, "research-op-listener")
+    ]
+
+
 def test_listener_exception_is_swallowed_and_other_listeners_still_run() -> None:
     registry = LibraryIngestJobRegistry()
     calls: list[str] = []

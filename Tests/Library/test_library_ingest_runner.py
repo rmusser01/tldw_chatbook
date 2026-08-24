@@ -410,6 +410,17 @@ def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
     return path
 
 
+class _RecordingAssociationScheduler:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def resume(self, operation_id: str) -> None:
+        self.calls.append(operation_id)
+
+    async def resume_incomplete(self) -> None:
+        return None
+
+
 def _exit_ingest_worker_abruptly() -> None:
     """Picklable spawn-pool target that simulates a hard worker crash."""
     os._exit(17)
@@ -465,6 +476,228 @@ async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
         assert row["title"] == "Note A"
         assert "moon's gravity" in row["content"]
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_local_completion_schedules_research_association_after_mark_done(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "research-source.txt", "Captured source.")
+    app = _IngestRunnerHarness(db)
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+    listener_observations: list[list[str]] = []
+    app.library_ingest_jobs.add_listener(
+        lambda: listener_observations.append(list(scheduler.calls))
+    )
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            research_source_operation_id="research-op-app-local",
+        )
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        await _wait_for_runner_idle(app, pilot)
+
+    assert scheduler.calls == ["research-op-app-local"]
+    assert listener_observations
+    assert all(observation == [] for observation in listener_observations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_research_operation_refuses_multi_file_folder_before_creating_jobs(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    folder = tmp_path / "research-folder"
+    folder.mkdir()
+    _write_text_file(folder, "first.txt", "First source.")
+    _write_text_file(folder, "second.txt", "Second source.")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test():
+        with pytest.raises(
+            ValueError,
+            match="one Research source operation per catalog item",
+        ):
+            app.submit_library_ingest_job(
+                source_path=str(folder),
+                research_source_operation_id="research-op-folder",
+            )
+
+    assert app.library_ingest_jobs.jobs() == ()
+
+
+def test_server_research_catalog_retry_stays_on_server_adapter(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    source = _write_text_file(tmp_path, "remote-retry.pdf", "PDF fixture")
+    failed = app.library_ingest_jobs.submit(
+        source_path=str(source),
+        origin="server",
+        detected_type="pdf",
+        research_source_operation_id="research-op-server-retry",
+    )
+    app.library_ingest_jobs.mark_failed(failed.job_id, error="Temporary failure")
+
+    with patch.object(app, "_send_server_ingest_job") as send:
+        retried = app._retry_research_source_catalog_job(failed.job_id)
+
+    assert retried is not None
+    assert retried.origin == "server"
+    assert retried.research_source_operation_id == "research-op-server-retry"
+    assert app._pool_create_count == 0
+    send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_schedules_research_catalog_receipt(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+
+    async with app.run_test() as pilot:
+        job = app.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "missing.txt"),
+            research_source_operation_id="research-op-failed",
+        )
+        app.library_ingest_jobs.mark_failed(job.job_id, error="missing")
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert scheduler.calls == ["research-op-failed"]
+
+
+@pytest.mark.asyncio
+async def test_worker_exception_releases_terminal_job_for_later_resume(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+
+    class FailOnceScheduler:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def resume(self, operation_id: str) -> None:
+            assert operation_id == "research-op-worker-retry"
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("worker conflict")
+
+    scheduler = FailOnceScheduler()
+    app.research_source_association_scheduler = scheduler
+
+    async with app.run_test() as pilot:
+        job = app.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "missing.txt"),
+            research_source_operation_id="research-op-worker-retry",
+        )
+        app.library_ingest_jobs.mark_failed(job.job_id, error="missing")
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls == 1 and (
+                job.job_id not in app._research_source_terminal_jobs_scheduled
+            ):
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        app.library_ingest_jobs.submit(source_path=str(tmp_path / "unrelated.txt"))
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert scheduler.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_clearing_terminal_history_prunes_research_schedule_dedupe(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+
+    async with app.run_test() as pilot:
+        job = app.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "missing.txt"),
+            research_source_operation_id="research-op-cleared",
+        )
+        app.library_ingest_jobs.mark_failed(job.job_id, error="missing")
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert job.job_id in app._research_source_terminal_jobs_scheduled
+
+        app.library_ingest_jobs.clear_finished()
+
+    assert app._research_source_terminal_jobs_scheduled == set()
+
+
+def test_real_app_wires_research_association_and_restores_before_startup_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    workspace_db = _app_module.WorkspaceDB(
+        tmp_path / "app-workspaces.sqlite",
+        client_id="app-wiring-test",
+    )
+    request.addfinalizer(workspace_db.close)
+    provider = SimpleNamespace(get_active_context=lambda: None)
+    server_service = _app_module.ServerNotesWorkspaceService.from_server_context_provider(
+        provider
+    )
+    app = _app_module.TldwCli.__new__(_app_module.TldwCli)
+    app.local_workspace_db = workspace_db
+    app.workspace_registry_service = _app_module.LocalWorkspaceRegistryService(
+        workspace_db
+    )
+    app.library_ingest_jobs = LibraryIngestJobRegistry()
+    app.server_context_provider = provider
+    app.server_notes_workspace_service = server_service
+
+    app._wire_research_source_association()
+
+    scheduler = app.research_source_association_scheduler
+    coordinator = app.research_source_association_coordinator
+
+    assert scheduler._coordinator is coordinator
+    assert scheduler._operation_store is app.research_source_operation_store
+    assert coordinator._operation_store is app.research_source_operation_store
+    assert coordinator._ingest_jobs is app.library_ingest_jobs
+    assert coordinator._local_registry is app.workspace_registry_service
+    assert coordinator._server_service is app.server_notes_workspace_service
+    assert coordinator._server_context_provider is app.server_context_provider
+
+    order: list[str] = []
+
+    async def resume_incomplete() -> None:
+        return None
+
+    def queue_worker(awaitable, *, group: str):
+        order.append(group)
+        awaitable.close()
+
+    monkeypatch.setattr(app, "_restore_ingest_jobs", lambda: order.append("restore"))
+    monkeypatch.setattr(scheduler, "resume_incomplete", resume_incomplete)
+    monkeypatch.setattr(app, "run_worker", queue_worker)
+
+    app._restore_ingest_jobs_and_schedule_research_sources()
+
+    assert order == ["restore", "research_source_association_startup"]
 
 
 @pytest.mark.asyncio
@@ -4415,8 +4648,18 @@ class _FakeServerMediaService:
         return {"batch_id": batch_id, "jobs": []}
 
 
-def _queued_server_job(app, *, remote_job_id: str, batch_id: str = "batch-1"):
-    job = app.library_ingest_jobs.submit(source_path="/tmp/a.mp3", origin="server")
+def _queued_server_job(
+    app,
+    *,
+    remote_job_id: str,
+    batch_id: str = "batch-1",
+    research_source_operation_id: str | None = None,
+):
+    job = app.library_ingest_jobs.submit(
+        source_path="/tmp/a.mp3",
+        origin="server",
+        research_source_operation_id=research_source_operation_id,
+    )
     return app.library_ingest_jobs.attach_remote(
         job.job_id, remote_job_id=remote_job_id, batch_id=batch_id
     )
@@ -4453,6 +4696,49 @@ async def test_remote_poll_settles_a_server_job_then_stops(tmp_path: Path) -> No
         assert len(service.batch_calls) == calls_after_settle, (
             "poller kept fetching a settled batch"
         )
+
+
+@pytest.mark.asyncio
+async def test_remote_completion_schedules_research_association_after_settle(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    scheduler = _RecordingAssociationScheduler()
+    app.research_source_association_scheduler = scheduler
+    app.server_media_reading_service = _FakeServerMediaService(
+        [
+            {
+                "batch_id": "batch-1",
+                "jobs": [
+                    {
+                        "id": 11,
+                        "status": "completed",
+                        "result": {"media_id": 884},
+                    }
+                ],
+            }
+        ]
+    )
+
+    async with app.run_test() as pilot:
+        job = _queued_server_job(
+            app,
+            remote_job_id="11",
+            research_source_operation_id="research-op-app-server",
+        )
+        app.poll_remote_ingest_jobs()
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        for _ in range(_POLL_ATTEMPTS):
+            if scheduler.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert scheduler.calls == ["research-op-app-server"]
+    settled = app.library_ingest_jobs.get_job(job.job_id)
+    assert settled is not None
+    assert settled.media_id is None
+    assert settled.remote_media_id == "884"
 
 
 @pytest.mark.asyncio

@@ -687,6 +687,90 @@ class LocalWorkspaceRegistryService:
             return _membership_from_row(row)
         raise WorkspaceRegistryServiceError("Workspace membership link failed.")
 
+    def unlink_membership(
+        self,
+        workspace_id: str,
+        *,
+        item_type: str,
+        item_id: str,
+        role: str = "source",
+    ) -> bool:
+        """Remove one association without deleting the item."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_item_type = _normalize_required_text(item_type, "item_type")
+        safe_item_id = _normalize_required_text(item_id, "item_id")
+        safe_role = _normalize_required_text(role, "role")
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = ?
+                        AND item_id = ?
+                        AND role = ?
+                    """,
+                    (safe_workspace_id, safe_item_type, safe_item_id, safe_role),
+                )
+                if cursor.rowcount == 0:
+                    return False
+                if safe_role != "source":
+                    return True
+
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM workspace_rag_scopes
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+                if row is None:
+                    return True
+                try:
+                    raw_scope = json.loads(row["payload"])
+                except (TypeError, ValueError):
+                    return True
+                scope = parse_scope(raw_scope)
+                if scope is None:
+                    return True
+                remaining = tuple(
+                    item
+                    for item in scope.items
+                    if not (
+                        item.source_type == safe_item_type
+                        and item.source_id == safe_item_id
+                    )
+                )
+                if remaining == scope.items:
+                    return True
+                if not remaining:
+                    conn.execute(
+                        "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                        (safe_workspace_id,),
+                    )
+                    return True
+                updated_scope = RagScope(
+                    items=remaining,
+                    updated_at=self._now_factory(),
+                )
+                conn.execute(
+                    """
+                    UPDATE workspace_rag_scopes
+                    SET payload = ?, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (
+                        json.dumps(serialize_scope(updated_scope)),
+                        updated_scope.updated_at,
+                        safe_workspace_id,
+                    ),
+                )
+                return True
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
     def get_item_memberships(
         self,
         item_type: str,
