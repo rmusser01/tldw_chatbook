@@ -49,6 +49,7 @@ from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from Tests.UI.console_controller_stubs import stub_fleet_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -129,6 +130,13 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     silently-wrong no-op.
     """
     screen = ChatScreen.__new__(ChatScreen)
+    # Must precede the `_console_chat_store` assignment below: that is a
+    # property whose setter reaches `_console_runtime().set_chat_store`, which
+    # builds the chat controller's kwargs, which reads
+    # `self._fleet._console_wake_user_priority`. Without a fleet controller the
+    # shell dies during SETUP with an AttributeError naming an attribute this
+    # file never mentions (TASK-21381).
+    stub_fleet_controller(screen, context="_bare_generation_screen")
     screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._session._chat_store_accessor = lambda: screen._console_chat_store
