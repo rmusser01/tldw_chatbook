@@ -1180,6 +1180,8 @@ class NotesScopeService:
         if not deleted:
             raise RuntimeError("stale_note")
         record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if record is None:
+            return {"id": str(note_id), "deleted": True}
         if not isinstance(record, Mapping) or not record.get("deleted"):
             raise RuntimeError("note_verification_failed")
         return dict(record)

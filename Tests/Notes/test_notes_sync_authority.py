@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -100,6 +101,12 @@ class NoCallServer:
 class HostileLocalNotes(RecordingLocalNotes):
     def get_note_by_id(self, user_id: str, note_id: str) -> Mapping[str, object]:
         raise RuntimeError("credential_secret")
+
+
+class ActiveOnlyLocalNotes(RecordingLocalNotes):
+    def get_note_by_id(self, user_id: str, note_id: str) -> Mapping[str, object] | None:
+        record = super().get_note_by_id(user_id, note_id)
+        return None if record["deleted"] else record
 
 
 class RecordingFolderRepository:
@@ -376,6 +383,22 @@ async def test_private_note_authority_maps_production_last_modified_to_updated_a
 
 
 @pytest.mark.asyncio
+async def test_private_note_authority_maps_database_datetime_to_updated_at() -> None:
+    local = RecordingLocalNotes()
+    local.record.pop("updated_at")
+    local.record["last_modified"] = datetime(2026, 8, 22, 13, 45, tzinfo=UTC)
+    authority = NotesScopeSyncAuthority(
+        NotesScopeService(local, NoCallServer()),
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+    )
+
+    observed = await authority.observe("note-1")
+
+    assert observed.updated_at == "2026-08-22T13:45:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_private_note_authority_prefers_updated_at_over_last_modified() -> None:
     local = RecordingLocalNotes()
     local.record["last_modified"] = "2026-08-22T13:45:00+00:00"
@@ -422,6 +445,23 @@ async def test_private_note_authority_creates_caller_identified_note_through_ser
         ("soft_delete_note", "user-1", "note-created", 1),
         ("get_note_by_id", "user-1", "note-created"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_private_note_authority_accepts_active_only_soft_delete_readback() -> (
+    None
+):
+    local = ActiveOnlyLocalNotes()
+    authority = NotesScopeSyncAuthority(
+        NotesScopeService(local, NoCallServer()),
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+    )
+    observed = await authority.observe("note-1")
+
+    await authority.delete(observed)
+
+    assert local.record["deleted"] == 1
 
 
 @pytest.mark.asyncio

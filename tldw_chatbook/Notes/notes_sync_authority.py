@@ -636,6 +636,8 @@ class NotesScopeSyncAuthority:
             if "updated_at" in record
             else record.get("last_modified")
         )
+        if type(updated_at) is datetime:
+            updated_at = updated_at.isoformat()
         if updated_at is not None and type(updated_at) is not str:
             raise NotesSyncAuthorityError("note_observation_invalid")
         return NotesSyncNoteSnapshot(

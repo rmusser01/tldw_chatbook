@@ -64,7 +64,7 @@
 - Modify: `tldw_chatbook/Library/library_notes_lasting_sync_state.py:112-204,351-432`
 - Test: `Tests/Library/test_library_notes_lasting_sync_state.py`
 
-- [ ] **Step 1: Write failing pure-contract tests**
+- [x] **Step 1: Write failing pure-contract tests**
 
 Cover the four exact enum values, typed selection validation, eligible reasons, managed-placement exclusion, deterministic IDs, comparison bounds/elision, Note-to-File orientation, missing timestamp, and privacy-safe `repr`.
 
@@ -100,7 +100,7 @@ def test_comparison_is_bounded_and_private() -> None:
     assert "/private/" not in repr(comparison)
 ```
 
-- [ ] **Step 2: Run the RED tests**
+- [x] **Step 2: Run the RED tests**
 
 Run:
 
@@ -113,7 +113,7 @@ Run:
 
 Expected: collection/import failures for the missing module and assertion failures because every `CONFLICT` row currently exposes three disabled choices and no Skip.
 
-- [ ] **Step 3: Implement the minimum pure module**
+- [x] **Step 3: Implement the minimum pure module**
 
 Use only stdlib and existing validators. Keep exact constants in one place.
 
@@ -136,17 +136,17 @@ def eligible_conflict_reason(reason_code: str, *, managed: bool) -> bool:
 
 Add frozen private-repr dataclasses for selection, comparison, apply result, receipt, and history. Measure both complete inputs first. If either side exceeds 200,000 characters or 10,000 lines, omit the diff entirely and return only the exact per-side character/line sizes plus the bounded too-large explanation; never show a partial diff. Otherwise use `difflib.unified_diff` and enforce the 120,000-character/2,000-line output ceiling. Use canonical NUL-delimited, domain-separated SHA-256 helpers for conflict folders, copy notes, operations, and linked Undo IDs.
 
-- [ ] **Step 4: Project only exact eligible rows**
+- [x] **Step 4: Project only exact eligible rows**
 
 Build a binding-ID set from `plan.managed_placement_effects`. Eligible rows get four choices and exact reason copy; every other conflict/deletion/pause row retains disabled existing copy. Do not put note content, hashes, or absolute paths in `LastingSyncReviewRow`.
 
-- [ ] **Step 5: Run GREEN and mutation checks**
+- [x] **Step 5: Run GREEN and mutation checks**
 
 Run the Step 2 command. Then temporarily remove the managed-placement exclusion and confirm the named eligibility test fails; restore it. Temporarily reverse the unified-diff inputs and confirm the orientation test fails; restore it.
 
 Expected: all selected tests pass after both mutations are restored.
 
-- [ ] **Step 6: Run scoped statics and commit**
+- [x] **Step 6: Run scoped statics and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -181,7 +181,7 @@ git commit -m "feat(notes): define reviewed sync conflict choices"
 - Create: `Tests/Notes/test_notes_sync_conflict_runtime.py`
 - Modify: `Tests/Notes/test_notes_sync_authority.py`
 
-- [ ] **Step 1: Write RED runtime tests**
+- [x] **Step 1: Write RED runtime tests**
 
 Use `asyncio.Event` barriers, never sleeps, to prove:
 
@@ -210,7 +210,7 @@ async def test_same_root_mutations_serialize_and_revalidate() -> None:
     assert adapter.mutation_count == 1
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -221,7 +221,7 @@ async def test_same_root_mutations_serialize_and_revalidate() -> None:
 
 Expected: missing public comparison/lock APIs and missing note timestamp.
 
-- [ ] **Step 3: Add the weak root-lock registry with one outer acquisition**
+- [x] **Step 3: Add the weak root-lock registry with one outer acquisition**
 
 In `LastingNotesSyncRuntime.__init__`, keep one `WeakValueDictionary[str, asyncio.Lock]`. Resolve a lock synchronously before any await and retain the local variable through `async with lock`. Each top-level mutating route—automatic reconciliation, reviewed apply, recovery, and later Undo—acquires exactly once, then calls a shared `_execute_locked`/equivalent helper that assumes the root lock is already held and must never reacquire it. Keep coordinator admission outside and authority revalidation inside the lock. Read-only comparison does not acquire it. Never acquire two root locks and never call a locking wrapper from inside a locked route.
 
@@ -238,15 +238,15 @@ Add a deterministic regression in which reviewed apply reaches the shared execut
 
 Add separate Event-barrier interleavings for automatic-versus-reviewed and recovery-versus-reviewed. Hold the first route immediately after fresh authority is accepted, start the competing route, assert it has not observed or mutated yet, release the winner, then prove the loser obtains a new observation and either executes against that authority or refuses cleanly. These tests establish that every current top-level mutation route uses the same root lock; Task 5 later adds the Undo interleaving.
 
-- [ ] **Step 4: Add bounded comparison while the bundle is alive**
+- [x] **Step 4: Add bounded comparison while the bundle is alive**
 
 Add `compare_conflict(root_id, observation_token, binding_id)` to the runtime port and adapter. Enter the coordinator's root planning lease and call `_require_authority(..., "plan")` before observation. While the private bundle remains live, observe → plan → call `_require_authority(..., "plan")` again → verify exact root/token/plan/binding equality → build the bounded projection → release in `finally`. Refuse missing/stale leases and missing, inactive, or mismatched roots without returning comparison content. Do not route through `_fresh_authority`, whose existing `finally` releases its private bundle before the caller can compare. Add optional validated `updated_at` to `NotesSyncNoteSnapshot`, sourced through the existing service mapping.
 
-- [ ] **Step 5: Run GREEN and mutation checks**
+- [x] **Step 5: Run GREEN and mutation checks**
 
 Run Step 2. Mutate `_mutation_lock` to return a fresh lock and confirm the same-root test fails. Mutate the shared locked execution helper to reacquire the same root lock and confirm the explicit second-acquisition guard test fails. Remove the post-observation `_require_authority(..., "plan")` call and confirm the stale-lease/root test fails. Remove the final token equality check and confirm stale comparison fails. Restore all four mutations.
 
-- [ ] **Step 6: Run adjacent runtime tests and commit**
+- [x] **Step 6: Run adjacent runtime tests and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -291,7 +291,7 @@ git commit -m "feat(notes): compare sync conflicts under fresh authority"
 - Extend: `Tests/Notes/test_notes_sync_conflict_runtime.py`
 - Extend: `Tests/Notes/test_notes_sync_conflict_executor.py`
 
-- [ ] **Step 1: Write RED subset-apply tests**
+- [x] **Step 1: Write RED subset-apply tests**
 
 Cover bidirectional plus both one-way directions, occurrence-only overrides, Skip plus safe actions, all non-content blockers, deterministic safe-then-binding order, 30-day recovery, terminal refresh, and honest partial stop.
 
@@ -310,7 +310,7 @@ async def test_selected_conflict_executes_and_skip_remains_attention(choice) -> 
     assert result.attention_remains is True
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -321,23 +321,23 @@ async def test_selected_conflict_executes_and_skip_remains_attention(choice) -> 
 
 Expected: typed apply signature/result and resolution operation kinds do not exist.
 
-- [ ] **Step 3: Extend the request without replacing the action enum**
+- [x] **Step 3: Extend the request without replacing the action enum**
 
 Keep `NotesSyncActionKind.UPDATE_NOTE/UPDATE_FILE` as the executor action. Add a validated optional journal kind (`resolve_keep_file` or `resolve_keep_note`) and store the underlying action kind in private recovery metadata. Existing action requests remain byte/behavior compatible. Use one named `CONFLICT_RECOVERY_RETENTION_NS = 30 * 24 * 60 * 60 * 1_000_000_000` only for conflict and Undo operations.
 
-- [ ] **Step 4: Implement narrow manual admission**
+- [x] **Step 4: Implement narrow manual admission**
 
 Under the root lock, rebuild exact authority. Reject any deletion group, deletion attention, pause, managed placement, capability/root skip, activation review, unknown/duplicate/cross-root selection, or ineligible reason before recovery admission. Build selected requests before releasing the private bundle. Skip builds nothing. Execute existing safe actions in plan order, then selected conflicts ordered by binding ID.
 
-- [ ] **Step 5: Preserve automatic behavior**
+- [x] **Step 5: Preserve automatic behavior**
 
 Do not relax `_blocked_plan_status` for automatic reconciliation. Its existing all-attention blocker remains exact. Only `apply_reviewed` receives the content-conflict exception.
 
-- [ ] **Step 6: Run GREEN and required mutations**
+- [x] **Step 6: Run GREEN and required mutations**
 
 Run Step 2. Remove observation-token equality and confirm stale apply fails. Move recovery admission after the first write and confirm recovery-before-write fails. Allow deletion attention and confirm the blocker test fails. Restore each mutation separately.
 
-- [ ] **Step 7: Run adjacent suites and commit**
+- [x] **Step 7: Run adjacent suites and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -393,11 +393,11 @@ git commit -m "feat(notes): apply reviewed sync conflict choices"
 - Extend: `Tests/Notes/test_notes_sync_conflict_executor.py`
 - Extend: `Tests/Notes/test_notes_sync_conflict_runtime.py`
 
-- [ ] **Step 1: Write RED authority, direction, and crash-matrix tests**
+- [x] **Step 1: Write RED authority, direction, and crash-matrix tests**
 
 Test one effect per call, caller-owned IDs, reuse by normalized manual path, actual reused IDs, owner/kind/path/content/placement mismatch, concurrent create loser verification, and all eight durable boundaries. Repository/authority RED cases must prove: an active exact membership is returned/reused even when older deleted history exists; deleted-only history returns the latest `modified_at DESC, id DESC` row and causes fail-closed with zero mutation; and `include_deleted=False` returns no deleted row. Name these cases with the focused selector, for example `test_conflict_copy_deleted_placement_fails_closed`. Parameterize Keep both across `bidirectional`, `folder_to_notes`, and `notes_to_folder`, including `out_of_direction_change`; prove the bound-note update receives a one-occurrence override only when the configured direction would otherwise forbid that exact selected update. At each folder, note, placement, bound-note, file-recheck, binding, and verification boundary, inject cancellation after the external effect begins and prove the durable substage is coherent and replayable before cancellation reaches the caller. Seed recovery capacity immediately below the ceiling and prove every substage transition has zero byte growth and completes without bypassing or rechecking the global ceiling after mutation begins. Every restart test must discard runtime, executor, request, snapshots, and fakes; reconstruct from a reopened store plus fresh authority only.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -410,11 +410,11 @@ Test one effect per call, caller-owned IDs, reuse by normalized manual path, act
 
 Expected: single-effect folder/note/placement methods and Keep-both request/replay are missing.
 
-- [ ] **Step 3: Add local-only service capabilities**
+- [x] **Step 3: Add local-only service capabilities**
 
 Expose the repository's existing caller-owned `folder_id` only through sync-specific local service methods. Add one read-only repository lookup for the exact `(folder_id, note_id, ownership='manual', owner_id='')` membership with an explicit `include_deleted` option, following the existing `get_folder(..., include_deleted=...)` pattern; it returns the stored row without reviving it. Selection semantics are exact: return the active row first; only when none exists and `include_deleted=True`, return the latest deleted row ordered by `modified_at DESC, id DESC`, matching the existing `attach_manual` revival order and stable tie-break. Route exact get-by-path/get-by-ID and manual-placement reads through the service. A valid active placement may be reused; when only deleted history exists, sync authority fails closed rather than invoking revival. Also reject server scopes, sync-managed placement, and owner mismatch with bounded errors before calling the existing `attach_manual`, whose ordinary revive behavior remains unchanged for non-sync callers. Do not add a second repository, mutation, or SQL owner.
 
-- [ ] **Step 4: Add three authority methods**
+- [x] **Step 4: Add three authority methods**
 
 Implement:
 
@@ -426,23 +426,23 @@ async def create_or_verify_manual_placement(request) -> VerifiedPlacement: ...
 
 Each method performs at most one create, catches uniqueness races by rereading, verifies the exact winner, and returns fresh identity/version. A deterministic ID at another path or an existing deterministic copy with different title/body/placement fails closed.
 
-- [ ] **Step 5: Add capacity-neutral private substage CAS**
+- [x] **Step 5: Add capacity-neutral private substage CAS**
 
 At admission, encode every deterministic ID and authority field needed by every future Keep-both stage. Keep `conflict_substage` as the exact durable enum string from the approved spec (`recovery_admitted`, `folders_established`, and so on). Add a private reserved-padding field whose length is `longest_conflict_substage_length - len(conflict_substage)`, so the stage string plus padding occupies a fixed admitted envelope for every legal value. Capacity admission accounts for that complete maximum/final payload once, before the first mutation.
 
 Add one store method that atomically compares operation ID, recovery ID, current operation state, current exact `conflict_substage`, matching reserved padding, expected recovery payload digest, and existing byte length before replacing the enum plus reciprocal padding and `updated_at`. It accepts only the exact forward sequence from the spec and rejects unknown values, invalid padding, or any total-length change as corruption. It never performs a new capacity decision after an external effect. No schema change.
 
-- [ ] **Step 6: Implement Keep-both replay and its occurrence-only direction override**
+- [x] **Step 6: Implement Keep-both replay and its occurrence-only direction override**
 
 Extend the existing runtime adapter's conflict request builder to construct the complete private Keep-both request while the observation bundle is live, and remove only the reviewed-apply Keep-both refusal. The same top-level admission/blocker/token/root checks from Task 3 remain exact; automatic reconciliation still never chooses Keep both.
 
 Admission stores all deterministic IDs and exact expected authority. Execute parent folder → child folder → copy note → placement → joint verification → bound note update → file recheck → binding update → final verification. The bound-note update uses the same narrowly validated occurrence-only override contract as a selected Keep file resolution when the root direction would otherwise forbid it; it never changes the root configuration or authorizes any other action. Use the executor's existing joined/shielded mutation pattern for every admitted external effect and its immediately following substage CAS: cancellation is propagated only after that pair reaches a coherent durable checkpoint. On replay, reobserve the prior effect before advancing. Never delete a folder on recovery failure.
 
-- [ ] **Step 7: Run GREEN and mutations**
+- [x] **Step 7: Run GREEN and mutations**
 
 Run Step 2. Mutate collision verification to accept different content and confirm failure. Skip one substage CAS and confirm its restart node fails. Restore both.
 
-- [ ] **Step 8: Run adjacent suites and commit**
+- [x] **Step 8: Run adjacent suites and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -509,11 +509,11 @@ git commit -m "feat(notes): preserve both sync conflict versions"
 - Extend: `Tests/Notes/test_notes_sync_conflict_executor.py`
 - Extend: `Tests/Notes/test_notes_sync_conflict_runtime.py`
 
-- [ ] **Step 1: Write RED Undo/history tests**
+- [x] **Step 1: Write RED Undo/history tests**
 
 Cover Keep file/note/both Undo, exact expiry boundary, edited copy/current authority refusal, wrong root, duplicate delivery, source-row immutability, fresh note version in active binding, second resolution after Undo, self-contained recovery after deleting/expiring source recovery, every Undo crash boundary, and apply/apply plus apply/Undo serialization. Inject cancellation during authority restoration, binding update, and Keep-both copy cleanup; each test must prove the external effect plus its checkpoint complete coherently before cancellation propagates and a fresh executor resumes safely. At one byte below the admitted recovery ceiling, prove every Undo substage replacement remains byte-for-byte length neutral and cannot introduce a late capacity refusal.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -524,27 +524,27 @@ Cover Keep file/note/both Undo, exact expiry boundary, edited copy/current autho
 
 Expected: linked Undo/history/receipt APIs are absent.
 
-- [ ] **Step 3: Add bounded store queries**
+- [x] **Step 3: Add bounded store queries**
 
 List only `resolve_keep_file`, `resolve_keep_note`, and `resolve_keep_both`, newest first, limit/offset capped at 100. For each source operation, derive the deterministic Undo ID and fetch that row; do not mutate the completed source row or overload its `reason_code`.
 
-- [ ] **Step 4: Admit self-contained Undo recovery**
+- [x] **Step 4: Admit self-contained Undo recovery**
 
 Before mutation, copy all pre-resolution target authority, current rollback/check authority, original binding fields, source operation/choice, conflict-copy checks, and every field needed by later substages into the linked operation's own capacity-accounted recovery. Keep `undo_substage` as the exact durable enum strings from the approved spec and pair it with private reciprocal padding sized against the longest legal Undo value, so every stage has one fixed admitted envelope. Later CAS transitions replace the exact enum plus its padding, validate enum/padding/total byte length, and cannot run a second capacity decision after mutation starts. After admission, restart reconstruction must not read source recovery.
 
-- [ ] **Step 5: Implement idempotent Undo stages**
+- [x] **Step 5: Implement idempotent Undo stages**
 
 Restore changed authority → verify opposite authority → commit original binding digest/identity/path/serialization with the fresh restored note version while keeping binding `active` → conditionally soft-delete unchanged Keep-both copy → verify → complete linked Undo. Run each admitted mutation and its following recovery/substage checkpoint through the executor's joined/shielded pattern, then propagate cancellation. A partial linked Undo stays coherent, recoverable, and attention-worthy. History projects Undone only when the deterministic linked operation is completed.
 
-- [ ] **Step 6: Add runtime receipt/history projections**
+- [x] **Step 6: Add runtime receipt/history projections**
 
 Keep one `OrderedDict` of at most 100 active receipt operation IDs per root. Completion inserts/moves-to-end; Dismiss removes; superseding the same item removes the older receipt. Remount reads the map; process restart begins empty. History decorates rows from fresh authority with bounded current title/path or the first eight operation-ID characters, without logging/persisting labels.
 
-- [ ] **Step 7: Run GREEN and mutations**
+- [x] **Step 7: Run GREEN and mutations**
 
 Run Step 2. Remove linked recovery payload copying and prove restart-after-source-expiry fails. Write historical note version into the binding and prove second resolution fails. Project Undone from admission rather than completion and prove the crash test fails. Restore each.
 
-- [ ] **Step 8: Run adjacent suites and commit**
+- [x] **Step 8: Run adjacent suites and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -594,11 +594,11 @@ git commit -m "feat(notes): undo reviewed sync resolutions"
 - Modify: `Tests/Library/test_library_notes_lasting_sync_state.py`
 - Modify: `Tests/UI/Library_Modules/test_library_notes_sync_controller.py`
 
-- [ ] **Step 1: Write RED controller tests**
+- [x] **Step 1: Write RED controller tests**
 
 Cover selection staging without runtime calls, page persistence, new-token/stale/Back/root/remount clearing, one retained comparison, generation-guarded async completion, comparison release on Return and page change without clearing staged choices, typed blocker Apply enablement, Skip-only disablement, exact status-line update once, partial/fresh-review behavior, receipt Undo/Dismiss, and history paging.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -609,23 +609,23 @@ Cover selection staging without runtime calls, page persistence, new-token/stale
 
 Expected: current `stage_attention_choice` reports unavailable and never records a choice.
 
-- [ ] **Step 3: Add bounded immutable projections**
+- [x] **Step 3: Add bounded immutable projections**
 
 Extend review rows with typed eligibility and selected label, and the snapshot with one optional comparison plus bounded receipt/history pages. Keep raw snapshots/content out. Validate every tuple, page, label, and count.
 
-- [ ] **Step 4: Implement private controller state**
+- [x] **Step 4: Implement private controller state**
 
 Use `dict[(observation_token, binding_id), NotesSyncConflictChoice]`; never key by binding alone. Staging updates that map and publishes `Choice staged. No changes yet.` without a runtime call. Paging reprojects selections but clears the sole comparison payload and increments its generation. Return/collapse also clears that payload and generation without touching staged choices. New-token/stale/Back/root/remount invalidation clears both selections and comparison and increments the comparison generation.
 
-- [ ] **Step 5: Handle typed apply results and receipts**
+- [x] **Step 5: Handle typed apply results and receipts**
 
 Send safe IDs plus typed selections. On terminal subset completion, show receipts and either the fresh remaining review or normal receipt phase. On non-terminal work show recovery. Update the existing status line once; no success notification.
 
-- [ ] **Step 6: Run GREEN and mutation checks**
+- [x] **Step 6: Run GREEN and mutation checks**
 
 Run Step 2. Key selections by binding only and confirm stale-token test fails. Publish a delayed comparison without generation validation and confirm stale-remount test fails. Restore.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -662,13 +662,13 @@ git commit -m "feat(library): stage inline Notes sync choices"
 - Modify: `Tests/Widgets/Library/test_library_notes_add_from_files_canvas.py`
 - Modify: `Tests/UI/test_library_notes_files_sync_journey.py`
 
-- [ ] **Step 1: Write mounted RED tests first**
+- [x] **Step 1: Write mounted RED tests first**
 
 Mount the production hierarchy with exact `TldwCli.CSS_PATH`. Cover four choices, checkmark plus Selected text, Enter/Space, View/Return, read-only markup-disabled TextArea, horizontal scrolling, focus/scroll stability without review recompose, delayed comparison focus provenance, at-action Undo/Dismiss, history labels/fallback, and containment/compositor visibility at 60x20 and wide size.
 
 Use monotonic condition waits and re-query after recomposition; never use one `pilot.pause()` as the settle oracle.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -679,19 +679,19 @@ Use monotonic condition waits and re-query after recomposition; never use one `p
 
 Expected: choices remain disabled; comparison/receipt/history controls are missing.
 
-- [ ] **Step 3: Add exact messages and inline widgets**
+- [x] **Step 3: Add exact messages and inline widgets**
 
 Add messages for Choice, View, Return, Undo, Dismiss, History open/page. Give each row stable page-local DOM IDs while keeping opaque IDs in `name`. Noneligible rows remain disabled with existing copy. Render one expanded comparison only. Use `TextArea(..., read_only=True)` and set language/markup behavior explicitly.
 
-- [ ] **Step 4: Update in place where required**
+- [x] **Step 4: Update in place where required**
 
 When only selection/status changes, update button labels/classes, Selected text, Apply disabled/tooltip, and status `Static` directly. Do not call full `refresh(recompose=True)`. Comparison expansion may replace only the row body; capture the View control and restore focus synchronously on Return.
 
-- [ ] **Step 5: Keep async comparison off the message pump**
+- [x] **Step 5: Keep async comparison off the message pump**
 
 The screen handler schedules one named Textual worker and returns. The controller/runtime generation checks decide whether completion may publish. Cancellation releases private data; no mutation is involved. Do not add a generic task registry.
 
-- [ ] **Step 6: Add CSS and regenerate the bundle**
+- [x] **Step 6: Add CSS and regenerate the bundle**
 
 Edit only `_agentic_terminal.tcss`, then run:
 
@@ -701,11 +701,11 @@ Edit only `_agentic_terminal.tcss`, then run:
 
 Assert the generated bundle contains the same selectors. Do not hand-merge the bundle.
 
-- [ ] **Step 7: Run GREEN and visibility mutations**
+- [x] **Step 7: Run GREEN and visibility mutations**
 
 Run Step 2. Disable the generation check and prove stale completion fails. Remove the non-color Selected label and prove accessibility contract fails. Force comparison/receipt overflow and prove 60x20 containment fails. Restore.
 
-- [ ] **Step 8: Run scoped statics and commit**
+- [x] **Step 8: Run scoped statics and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -745,11 +745,11 @@ git commit -m "feat(library): resolve Notes sync conflicts inline"
 - Modify: this plan as evidence is collected
 - Test: all focused files named below
 
-- [ ] **Step 1: Add one joined real-authority integration matrix**
+- [x] **Step 1: Add one joined real-authority integration matrix**
 
 In `Tests/UI/test_library_notes_files_sync_journey.py`, use real temporary ChaChaNotes/device-state databases and a temporary sync folder. Drive Check → compare → stage → Apply for Keep file, Keep note, Keep both, and Skip. For each mutating choice, restart from fresh runtime/executor/controller objects and prove the durable outcome, receipt/history projection, and one Undo. Verify no candidate filesystem access escapes the temp root.
 
-- [ ] **Step 2: Run the exact bounded matrix**
+- [x] **Step 2: Run the exact bounded matrix**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -769,7 +769,7 @@ In `Tests/UI/test_library_notes_files_sync_journey.py`, use real temporary ChaCh
 
 Expected: all selected tests pass; record exact count, warnings, and duration. If an untouched failure appears, reproduce the exact node against the pre-task base before claiming provenance. Do not broaden to the entire repository without a concrete failure requiring it.
 
-- [ ] **Step 3: Run exact static/governance checks**
+- [x] **Step 3: Run exact static/governance checks**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -840,19 +840,19 @@ git diff --check
 
 Also rerun the private-SQLite owner, backup exclusion, legacy-path ratchet, startup invocation, privacy, and CSS generation checks already named by the focused test files. No new inventory exemption is allowed.
 
-- [ ] **Step 4: Perform isolated live UAT only after tests are green**
+- [x] **Step 4: Perform isolated live UAT only after tests are green**
 
 Use a scratch `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH`, and `[paths].data_dir`; disable model-catalog networking. Seed only scratch databases/folders. Drive the real TUI at 60x20 and a wide terminal through compare, all choices, partial Skip, receipt Undo/Dismiss, and history. Capture compositor/tmux evidence and fingerprint real profile/config/database paths before and after. Do not launch against the shared real database.
 
-- [ ] **Step 5: Update user docs and task evidence**
+- [x] **Step 5: Update user docs and task evidence**
 
 Document exact choice effects, Skip, 30-day Undo eligibility, at-action receipt behavior, durable history, and failure/unsupported behavior in `Docs/User_Guide/library/notes.md`. In TASK-97, link this plan and ADRs, add concise implementation notes, record deviations/evidence, check ACs only from proof, and use Backlog CLI to set Done only after every DoD item passes.
 
-- [ ] **Step 6: Run independent cumulative review**
+- [x] **Step 6: Run independent cumulative review**
 
 Review the merge-base-to-HEAD diff for correctness, security/privacy, restart truth, UI reachability, and plan/spec compliance. Resolve every P0-P2 before closeout. Separately run a ponytail pass and remove any abstraction not required by an AC or crash boundary.
 
-- [ ] **Step 7: Commit closeout docs**
+- [x] **Step 7: Commit closeout docs**
 
 ```bash
 backlog task 97 --plain
@@ -867,6 +867,40 @@ git status --short
 ```
 
 Expected: exact TASK-97 is Done with all nine ACs checked, the worktree is clean, and the plan records only genuinely completed steps.
+
+## Completion evidence — 2026-08-23
+
+- The joined real-authority Check → compare → stage → Apply matrix covers Keep
+  file, Keep note, Keep both, and Skip with disposable ChaChaNotes/device-state
+  databases and a disposable folder. Mutating cases rebuild the runtime,
+  executor, and controller before proving history and one Undo; the sentinel
+  and invalid-relative-path assertions prove the filesystem boundary.
+- Task 8 TDD caught three production-boundary mismatches: ChaChaNotes returned
+  a `datetime` timestamp, the active-only Notes reader hid a successfully
+  written tombstone, and a restarted partial review rejected its terminal
+  `NO_CHANGE` rows. Focused RED tests reproduced each before the narrow fixes.
+- The exact 12-file matrix passed: **732 passed, 8 warnings in 176.21s**. The
+  focused private-SQLite owner/backup, legacy cutover/startup, privacy, and
+  unsupported-write governance nodes passed within that matrix; the earlier
+  isolated governance rerun was **10 passed, 7 warnings in 19.55s**.
+- Ruff check and format, compileall, CSS generation, and `git diff --check`
+  passed. The exact MyPy command reports the same pre-existing **144 errors in
+  5 files** at the Task 8 starting SHA `96c502cdd`; this closeout adds none.
+- Live UAT redirected `HOME`, all XDG roots, `TLDW_CONFIG_PATH`, and
+  `[paths].data_dir` into one disposable profile, disabled model-catalog and
+  model-network activity, and seeded only scratch authorities. Wide and 60x20
+  compositor/tmux captures prove comparison, all choices, partial Skip,
+  receipt Dismiss/Undo, restart, and durable history. The shared config,
+  ChaChaNotes DB, and Notes sync-state DB SHA-256 manifests match exactly before
+  and after; only the four expected scratch-root files were accessed.
+- Cumulative merge-base review found and fixed the restarted mixed-plan defect
+  above plus one inaccurate draft-doc claim that recovery was encrypted.
+  Correctness, privacy, recovery, restart truth, focus/keyboard reachability,
+  and plan/spec compliance have no remaining P0-P2 findings. The full ponytail
+  pass retained the joined fixture helpers as test boundary setup, added no
+  dependency or abstraction, and reduced the production fixes to boundary
+  normalization, tombstone verification, and accepting reviewed no-ops without
+  executing or counting them.
 
 ---
 

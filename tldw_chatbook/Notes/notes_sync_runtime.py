@@ -1955,14 +1955,22 @@ class NotesSyncRuntimeOwner:
                     if any(binding_id not in eligible for binding_id in selection_ids):
                         raise ValueError("conflict_selection_mismatch")
                     selected_safe_ids = set(safe_action_ids)
-                    safe_actions = tuple(
+                    selected_safe_actions = tuple(
                         action
                         for action in plan.safe_actions
                         if action.action_id in selected_safe_ids
-                        and action.kind in _EXECUTABLE_ACTIONS
                     )
-                    if len(safe_actions) != len(selected_safe_ids):
+                    if len(selected_safe_actions) != len(selected_safe_ids) or any(
+                        action.kind not in _EXECUTABLE_ACTIONS
+                        and action.kind is not NotesSyncActionKind.NO_CHANGE
+                        for action in selected_safe_actions
+                    ):
                         raise ValueError("reviewed_action_mismatch")
+                    safe_actions = tuple(
+                        action
+                        for action in selected_safe_actions
+                        if action.kind in _EXECUTABLE_ACTIONS
+                    )
                     requests: dict[str, object] = {}
                     for action in safe_actions:
                         self._require_authority(root_id, "write")

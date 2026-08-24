@@ -2285,6 +2285,32 @@ async def test_manual_empty_apply_keeps_content_conflict_attention(
 
 
 @pytest.mark.asyncio
+async def test_manual_apply_accepts_reviewed_no_change_rows_without_executing_them(
+    tmp_path: Path,
+) -> None:
+    unchanged = _input(file_digest=_A, note_digest=_A)
+    adapter = _Adapter([unchanged, unchanged, unchanged, unchanged])
+    owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
+    await owner.start()
+    adapter.executor.executed.clear()
+    reviewed = await owner.check_root("root-1")
+    assert [action.kind for action in reviewed.safe_actions] == [
+        NotesSyncActionKind.NO_CHANGE
+    ]
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        reviewed.observation_token,
+        tuple(action.action_id for action in reviewed.safe_actions),
+    )
+
+    assert result.safe_completed == 0
+    assert result.attention_remains is False
+    assert adapter.executor.executed == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_automatic_hint_applies_only_a_safe_direction_authorized_action(
     tmp_path: Path,
 ) -> None:

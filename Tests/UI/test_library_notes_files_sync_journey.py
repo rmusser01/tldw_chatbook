@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ast
 from dataclasses import replace
+import hashlib
 import inspect
 import json
 import os
@@ -62,13 +63,26 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     ImportSessionState,
 )
 from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+from tldw_chatbook.Notes.notes_device_state_store import (
+    NotesSyncBindingRecord,
+    NotesSyncRootRecord,
+    NotesSyncStoreSetting,
+)
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
     ConflictComparison,
     NotesSyncConflictChoice,
 )
-from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutionResult
-from tldw_chatbook.Notes.notes_sync_models import NotesSyncOperationState
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncExecutionResult,
+    NotesSyncExecutor,
+)
+from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncBindingState,
+    NotesSyncDirection,
+    NotesSyncOperationState,
+    NotesSyncRootState,
+)
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
@@ -91,11 +105,20 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationPlan,
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
+    NotesSyncRuntimeOwner,
     NotesSyncControlResult,
     NotesSyncRootRuntimeSnapshot,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictLabel,
     RuntimeConflictReceipt,
+    build_notes_sync_runtime_owner,
+)
+from tldw_chatbook.Notes.notes_sync_filesystem import (
+    NotesSyncFilesystemError,
+    PosixNotesSyncFilesystem,
+)
+from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+    LibraryNotesSyncController,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
@@ -145,6 +168,111 @@ def _assert_inside(outer, inner) -> None:
 
 def _painted_text(app) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+def _seed_real_conflict_authority(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create one real two-sided conflict in disposable Notes authorities."""
+
+    notes_path = tmp_path / "notes.sqlite3"
+    state_path = tmp_path / "sync.sqlite3"
+    sync_root = tmp_path / "folder"
+    sync_root.mkdir()
+    target = sync_root / "note.md"
+    target.write_text("baseline", encoding="utf-8")
+    database = CharactersRAGDB(notes_path, client_id="task-97-seed")
+    folders = LocalNoteFolderRepository(database)
+    assert database.add_note("Joined conflict", "baseline", "note-1") == "note-1"
+    folders.create_folder(name="Synced notes", parent_id=None, folder_id="folder-1")
+    folders.reconcile_managed(owner_id="root-1", desired=(("folder-1", "note-1"),))
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        baseline_file = filesystem.observe("note.md")
+    baseline_note = database.get_note_by_id("note-1")
+    assert baseline_note is not None
+    store = NotesDeviceStateStore(state_path)
+    store.initialize()
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-1",
+            note_scope_id="local_note",
+            logical_folder_id="folder-1",
+            canonical_path=str(sync_root.resolve()),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(
+                baseline_file
+            ),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=baseline_file.observation.serialization,
+            content_digest=hashlib.sha256(b"baseline").hexdigest(),
+            note_version=int(baseline_note["version"]),
+        )
+    )
+    assert database.update_note(
+        "note-1",
+        {"title": "Joined conflict", "content": "note side"},
+        int(baseline_note["version"]),
+    )
+    target.write_text("file side", encoding="utf-8")
+    database.close_connection()
+    return notes_path, state_path, sync_root
+
+
+async def _start_real_conflict_stack(
+    notes_path: Path, state_path: Path
+) -> tuple[
+    NotesSyncRuntimeOwner,
+    CharactersRAGDB,
+    NotesInteropService,
+    LibraryNotesSyncController,
+]:
+    """Build fresh production runtime/executor/controller objects over disk state."""
+
+    database = CharactersRAGDB(notes_path, client_id="task-97-runtime")
+    interop = NotesInteropService(
+        base_db_directory=notes_path.parent,
+        api_client_id="task-97-runtime",
+        global_db_to_use=database,
+    )
+    scope_service = NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        folder_repository=LocalNoteFolderRepository(database),
+    )
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=scope_service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=state_path,
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    controller = LibraryNotesSyncController(
+        runtime=owner,
+        import_controller=SimpleNamespace(begin_selection=lambda: None),
+    )
+    return owner, database, interop, controller
+
+
+async def _close_real_conflict_stack(
+    owner: NotesSyncRuntimeOwner,
+    database: CharactersRAGDB,
+    interop: NotesInteropService,
+) -> None:
+    await owner.shutdown()
+    interop.close_all_user_connections()
+    database.close_connection()
 
 
 def test_live_verifier_is_a_checked_in_isolated_entry_point(tmp_path: Path) -> None:
@@ -1194,6 +1322,127 @@ async def test_lasting_runtime_reopens_and_resumes_a_durable_incomplete_journal(
         assert owner.snapshot().roots[0].status == "up_to_date"
     finally:
         await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("choice", "label"),
+    (
+        (NotesSyncConflictChoice.KEEP_FILE, "Keep file"),
+        (NotesSyncConflictChoice.KEEP_NOTE, "Keep note"),
+        (NotesSyncConflictChoice.KEEP_BOTH, "Keep both"),
+        (NotesSyncConflictChoice.SKIP, "Skip for now"),
+    ),
+)
+async def test_real_authority_conflict_choice_journey_is_durable_and_undoable(
+    tmp_path: Path,
+    choice: NotesSyncConflictChoice,
+    label: str,
+) -> None:
+    """Join Check, comparison, staging, apply, restart, history, and Undo."""
+
+    case = tmp_path / choice.value
+    case.mkdir()
+    notes_path, state_path, sync_root = _seed_real_conflict_authority(case)
+    outside = case / "outside.md"
+    outside.write_text("outside sentinel", encoding="utf-8")
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    operation_id: str | None = None
+    try:
+        await controller.check_root("root-1")
+        reviewed = controller.snapshot.review
+        assert reviewed.rows, controller.snapshot.status_line
+        row = next(item for item in reviewed.rows if item.item_id == "binding-1")
+        assert row.conflict_eligible
+        await controller.show_conflict_comparison(
+            "root-1", reviewed.observation_token, "binding-1"
+        )
+        comparison = controller.snapshot.comparison
+        assert comparison is not None
+        assert comparison.diff.startswith("--- Note\n+++ File\n")
+        controller.return_to_conflict_choices(
+            "root-1", reviewed.observation_token, "binding-1"
+        )
+        controller.stage_attention_choice(
+            "root-1", reviewed.observation_token, "binding-1", label
+        )
+        staged_note = database.get_note_by_id("note-1")
+        assert staged_note is not None and staged_note["content"] == "note side"
+        assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
+
+        await controller.apply_reviewed("root-1", reviewed.observation_token)
+
+        if choice is NotesSyncConflictChoice.SKIP:
+            assert controller.snapshot.review.can_apply is False
+            assert controller.snapshot.receipts == ()
+            assert "cannot be applied" in controller.snapshot.status_line
+        else:
+            receipt = controller.snapshot.receipts
+            assert len(receipt) == 1
+            assert receipt[0].choice is choice
+            assert receipt[0].undo_available
+            operation_id = receipt[0].operation_id
+            note = database.get_note_by_id("note-1")
+            assert note is not None
+            expected_note = (
+                "note side"
+                if choice is NotesSyncConflictChoice.KEEP_NOTE
+                else "file side"
+            )
+            expected_file = (
+                "note side"
+                if choice is NotesSyncConflictChoice.KEEP_NOTE
+                else "file side"
+            )
+            assert note["content"] == expected_note
+            assert (sync_root / "note.md").read_text(encoding="utf-8") == expected_file
+            assert database.count_notes() == (
+                2 if choice is NotesSyncConflictChoice.KEEP_BOTH else 1
+            )
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+    assert outside.read_text(encoding="utf-8") == "outside sentinel"
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        with pytest.raises(NotesSyncFilesystemError, match="invalid_relative_path"):
+            filesystem.observe("../outside.md")
+
+    (
+        fresh_owner,
+        fresh_database,
+        fresh_interop,
+        fresh_controller,
+    ) = await _start_real_conflict_stack(notes_path, state_path)
+    try:
+        await fresh_controller.check_root("root-1")
+        fresh_token = fresh_controller.snapshot.review.observation_token
+        await fresh_controller.show_resolution_history("root-1")
+        history = fresh_controller.snapshot.history
+        if choice is NotesSyncConflictChoice.SKIP:
+            assert history.rows == ()
+            unchanged_note = fresh_database.get_note_by_id("note-1")
+            assert unchanged_note is not None
+            assert unchanged_note["content"] == "note side"
+            assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
+            return
+
+        assert operation_id is not None
+        assert len(history.rows) == 1
+        assert history.rows[0].operation_id == operation_id
+        assert history.rows[0].choice is choice
+        assert history.rows[0].undo_available
+        await fresh_controller.undo_conflict_resolution(
+            "root-1", fresh_token, operation_id, history_page=1
+        )
+        restored = fresh_database.get_note_by_id("note-1")
+        assert restored is not None and restored["content"] == "note side"
+        assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
+        assert fresh_database.count_notes() == 1
+        assert fresh_controller.snapshot.history.rows[0].state == "undone"
+    finally:
+        await _close_real_conflict_stack(fresh_owner, fresh_database, fresh_interop)
 
 
 @pytest.mark.asyncio
