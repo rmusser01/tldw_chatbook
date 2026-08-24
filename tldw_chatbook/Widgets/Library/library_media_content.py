@@ -122,8 +122,15 @@ class LibraryMediaContentBody(VerticalScroll):
         self._query = query
         self._match_index = match_index
         if self._raw_widget is not None:
+            # TASK-21134: ``layout=False`` -- a search refresh restyles the
+            # SAME characters (``build_raw_content_renderable`` only moves
+            # highlight spans around; it never adds, removes or rewraps a
+            # line), so the widget's size cannot change and the layout pass
+            # Static.update() arms by default was pure waste on every
+            # match-nav click and every keystroke in the search box.
             self._raw_widget.update(
-                build_raw_content_renderable(self.content, query, match_index)
+                build_raw_content_renderable(self.content, query, match_index),
+                layout=False,
             )
 
     async def _ensure_mode_mounted(self, mode: str) -> None:

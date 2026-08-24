@@ -538,3 +538,121 @@ def test_widget_clock_formats_local_time_like_ledger() -> None:
 
     assert strip_clock(_T0) == ledger_clock(_T0)
     assert strip_clock(_T0) == datetime.fromtimestamp(_T0).strftime("%H:%M:%S")
+
+
+# ---------------------------------------------------------------------------
+# TASK-21134: one brush drag must not rebuild the ledger once per column
+# ---------------------------------------------------------------------------
+
+
+def _mouse(x: int, y: int = 1):
+    """A minimal left-button mouse event for the strip's own handlers."""
+    return type("_Mouse", (), {"button": 1, "x": x, "y": y})()
+
+
+@pytest.mark.asyncio
+async def test_one_drag_gesture_rebuilds_the_ledger_once() -> None:
+    """A drag emits at most one brush per repaint, not one per column.
+
+    A real terminal delivers mouse-moves faster than Textual repaints, so the
+    whole gesture below is posted without forcing a frame between moves.
+    Before this throttle that was 69 full ledger rebuilds for one gesture, at
+    a measured 5.93 ms each on a 600-row ledger -- roughly 0.4 s of
+    synchronous event-loop work while the button is still down.
+    """
+    from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await pilot.pause()
+
+        rebuilds = {"count": 0}
+        real_render = TrajectoryScreen._render_ledger
+
+        def counting_render(self):
+            rebuilds["count"] += 1
+            return real_render(self)
+
+        TrajectoryScreen._render_ledger = counting_render
+        try:
+            start = LANE_LABEL_WIDTH + 1
+            end = timeline.size.width - 2
+            assert end - start > 10, "strip too narrow to drag across"
+            timeline.on_mouse_down(_mouse(start))
+            for x in range(start, end):
+                timeline.on_mouse_move(_mouse(x))
+            timeline.on_mouse_up(_mouse(end - 1))
+            await pilot.pause()
+            await pilot.pause()
+        finally:
+            TrajectoryScreen._render_ledger = real_render
+
+        assert rebuilds["count"] == 1, (
+            f"a {end - start}-column drag rebuilt the ledger "
+            f"{rebuilds['count']} times"
+        )
+        # The throttle may not cost the gesture its result.
+        assert timeline.brush is not None
+        assert screen._filter_bar.state.time_range == timeline.brush
+
+
+@pytest.mark.asyncio
+async def test_a_drag_that_ends_where_it_paused_still_reaches_the_ledger() -> None:
+    """The coalesced emission must not be swallowed by the mouse-up.
+
+    ``on_mouse_up`` re-brushes from the final column. When that column is the
+    one the last coalesced move already reached, the range does not change and
+    the equality gate in ``_set_brush`` emits nothing -- so the pending
+    emission has to be issued by the mouse-up itself.
+    """
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await pilot.pause()
+
+        start = LANE_LABEL_WIDTH + 1
+        last = start + 8
+        timeline.on_mouse_down(_mouse(start))
+        for x in range(start, last + 1):
+            timeline.on_mouse_move(_mouse(x))
+        # Ends on exactly the column the last move reached.
+        timeline.on_mouse_up(_mouse(last))
+        await pilot.pause()
+
+        assert timeline.brush is not None
+        assert screen._filter_bar.state.time_range == timeline.brush
+
+
+@pytest.mark.asyncio
+async def test_a_drag_abandoned_without_a_mouse_up_still_reaches_the_ledger() -> None:
+    """A coalesced emission is self-draining -- no gesture can lose it."""
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await pilot.pause()
+
+        start = LANE_LABEL_WIDTH + 1
+        timeline.on_mouse_down(_mouse(start))
+        for x in range(start, start + 9):
+            timeline.on_mouse_move(_mouse(x))
+        # No mouse-up at all (capture lost, terminal dropped the release...).
+        await pilot.pause()
+        await pilot.pause()
+
+        assert timeline.brush is not None
+        assert screen._filter_bar.state.time_range == timeline.brush
+
+
+@pytest.mark.asyncio
+async def test_a_non_drag_brush_still_reaches_the_ledger_immediately() -> None:
+    """Only the drag path throttles; every other caller emits synchronously."""
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await pilot.pause()
+
+        timeline.brush_columns(LANE_LABEL_WIDTH, LANE_LABEL_WIDTH + 10)
+        # Asserted BEFORE any pause: nothing may be left coalescing, or the
+        # throttle has leaked out of the drag path and delayed every caller
+        # (live snapshot re-brush, keyboard range select) by a repaint.
+        assert timeline._brush_emit_pending is False
+
+        await pilot.pause()
+        assert screen._filter_bar.state.time_range == timeline.brush
