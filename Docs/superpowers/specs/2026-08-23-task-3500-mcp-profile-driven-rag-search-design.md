@@ -1,9 +1,9 @@
 # TASK-3500: MCP profile-driven RAG search design
 
 Date: 2026-08-23
-Status: revised after second-pass audit; pending written-spec reapproval
+Status: approved after second-pass audit
 Task: TASK-3500
-Base: `origin/dev` at `2088b1bb0`
+Base: `origin/dev` at `25be05419`
 
 ## Problem
 
