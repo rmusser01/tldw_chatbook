@@ -29,7 +29,7 @@ The live Chat-RAG pipeline merge in `RAG_Search/pipeline_builder_simple.py` repl
 ## Implementation Plan
 
 1. Record and review the narrow call-site design in `Docs/superpowers/specs/2026-08-24-task-3501-pipeline-fusion-provenance-design.md`.
-2. Extend the real parallel `rrf_merge` regression with distinct FTS and vector scores and prove the pre-fix path fails the provenance assertions.
+2. Extend the real parallel `rrf_merge` regression with distinct raw scores for overlapping, FTS-only, and vector-only rows; prove the pre-fix path fails the provenance assertions and each absent leg is recorded as `None`.
 3. Snapshot each available leg score before mutating the selected result, then add those snapshots to the existing `hybrid_fusion` metadata without changing selection, ranking, citations, or non-hybrid merges.
 4. Run the focused fusion suite, mutation-check the new assertion against the pre-fix behavior, review the diff, and complete task documentation.
 

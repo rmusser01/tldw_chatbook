@@ -50,13 +50,13 @@ Extracting a shared materializer would either require a callback-heavy abstracti
 5. Existing metadata and citations are merged.
 6. Fusion ranks, RRF contributions, raw leg scores, alpha, and k are attached.
 
-For an FTS-only or vector-only result, the present leg retains its original score and the absent leg is `None`. If the same Python object appears in both legs, both snapshots are read before mutation and therefore remain raw. Empty inputs and non-`rrf_merge` strategies do not enter this materializer and are unchanged.
+For an FTS-only or vector-only result, the present leg retains its original score and the absent leg is `None`. Empty inputs and non-`rrf_merge` strategies do not enter this materializer and are unchanged.
 
 ## Testing
 
-Extend `Tests/RAG/test_fusion.py::TestPipelineRrfMerge::test_parallel_step_rrf_merge_fuses_legs`, which drives the real `_execute_parallel_step` dispatch and `rrf_merge` implementation. Give the shared FTS and vector items distinct raw scores and assert that the fused result records both exact values while its top-level `score` remains the computed RRF score and differs from both inputs.
+Extend `Tests/RAG/test_fusion.py::TestPipelineRrfMerge::test_parallel_step_rrf_merge_fuses_legs`, which drives the real `_execute_parallel_step` dispatch and `rrf_merge` implementation. Give the existing overlapping, FTS-only, and vector-only items distinct raw scores and assert the exact `(fts_score, vector_score)` pair for every row shape, including `None` for an absent leg. Each top-level `score` must remain the computed RRF score and differ from its present raw input score or scores.
 
-The test must be observed failing on the untouched implementation because the two metadata keys are absent, then passing after the minimal production change. The full `Tests/RAG/test_fusion.py` suite covers fusion math, profile-default coupling, pipeline dispatch, and the engine materializer. A diff review must confirm no non-hybrid branch changed.
+The test must be observed failing on the untouched implementation because the two metadata keys are absent, then passing after the minimal production change. As a discrimination check, moving either the FTS snapshot or the vector snapshot below `result.score = entry.score` must fail the corresponding overlapping/one-leg assertions. The full `Tests/RAG/test_fusion.py` suite covers fusion math, profile-default coupling, pipeline dispatch, and the engine materializer. A diff review must confirm no non-hybrid branch changed.
 
 ## ADR Check
 
