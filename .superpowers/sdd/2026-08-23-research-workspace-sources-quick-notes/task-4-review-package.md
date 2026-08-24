@@ -1,5 +1,45 @@
 # Task 4 review package — Research Sources workbench
 
+Fix-round-5 review base:
+
+`58dc62050fe6db2ad8c79624eff18d0c6d938f15`
+
+The controller-owned dirty TASK-21508 file remains excluded from the
+implementation and commit.
+
+## Fix-round-5 review order
+
+1. `source_association.py`: dispatcher exceptions durably fail the exact retry
+   replacement before the catalog receipt can become terminal.
+2. `app.py`: worker replacement validation rejects terminal failed catalog
+   receipts while preserving successful and concurrently reread replacements.
+3. Real-store Local+Server regression: release, raise with sensitive text,
+   durable job/receipt settlement, no next queued work, sanitized recovery, and
+   both SQLite owners reopened.
+4. Split app/DB/registry/association, runner, source-operation/readiness,
+   inverse, and static evidence in the Task 4 report.
+
+### Fix-round-5 high-risk invariants
+
+- A terminal failed Research catalog retry never leaves its replacement in an
+  unheld queueable state, in memory or after restart.
+- Replacement settlement is durable before operation failure settlement; a
+  crash between them remains resumable and cannot create terminal orphan work.
+- Failed receipts never produce a successful worker result or expose dispatcher
+  exception text, secrets, or source paths.
+- Local and Server replacements preserve their captured authority; ordinary
+  Library retry return/top-up behavior and successful scheduler fencing remain
+  unchanged.
+
+### Fix-round-5 verification snapshot
+
+- Direct contract **13 passed**; App/DB/registry/association **311 passed**;
+  Runner **145 passed, 1 Windows-only skipped**; source-operation/readiness/
+  controller **101 passed**.
+- Both inverse mutations failed at their intended invariant and were restored.
+  Scoped Ruff/format, compilation, and whitespace gates pass. Full pytest was
+  not run by repository policy.
+
 Fix-round-4 review base:
 
 `5cc0292eefe251db7083e36c49bde7df14cf5555`

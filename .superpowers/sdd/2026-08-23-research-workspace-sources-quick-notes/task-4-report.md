@@ -341,3 +341,56 @@ catalog retry owner and the dispatch-hold contract added in fix round 3.
   not run, per repository policy.
 
 TASK-21508 remains controller-owned and is excluded from the fix commit.
+
+## Review fix round 5
+
+The release-then-raise reviewer finding was reproduced against the real retry
+scheduler, operation store, and ingest-job database for both Local and Server.
+The catalog coordinator terminalized the operation after its dispatcher raised,
+but did not settle the replacement that the dispatcher had already durably
+released. The app then accepted that failed receipt as a successful worker
+result. No new ADR is required: this closes another failure window in ADR-078's
+existing dispatch-hold transaction.
+
+- On dispatcher exception, the coordinator now durably marks the exact
+  replacement failed before persisting the catalog-stage failure. A crash after
+  replacement settlement but before receipt settlement leaves an in-progress
+  operation pointing to a durable failed job, which startup resume can safely
+  terminalize; a terminal failed operation never points at a queueable row.
+- The app replacement validator accepts only exact receipts whose catalog stage
+  is in progress or succeeded. A terminal failed receipt returns no replacement
+  and emits the existing fixed, path-free Research Workspace recovery.
+- Ordinary Library retries, successful Research dispatch, concurrent scheduler
+  fencing, and explicit Local/Server authority checks remain unchanged.
+
+### Fix-round-5 RED and inverse evidence
+
+- Initial Local+Server RED: **2 expected failures**. Each worker returned the
+  released replacement while its receipt was failed, the replacement remained
+  `QUEUED` with `dispatch_held=False`, `next_queued()` selected it, and no
+  recovery warning was emitted.
+- Removing durable replacement settlement made the restored Local inverse fail
+  with a queued replacement. Removing the catalog-status gate made the worker
+  return the terminal failed replacement. Both mutations were restored; the
+  final exact Local+Server, concurrency, and ordinary controls are green.
+
+### Fix-round-5 GREEN and closeout evidence
+
+- Final direct retry contract: **13 passed**, including Local+Server durable
+  replacement failure, zero later queue selection, sanitized recovery, and
+  ingest/operation SQLite reopen. App/DB/registry/association split: **311
+  passed**.
+- Complete Library runner: **145 passed, 1 Windows-only skipped**. Source
+  operation/readiness/controller neighbors: **101 passed**.
+- One parallel first pass transiently observed the retained concurrency test
+  return the durable winner to one rather than both waiters (**1 failed, 310
+  passed**). The exact test then passed six consecutive isolated runs, the
+  release/concurrency sequence passed eight consecutive runs, and the fresh
+  complete split finished **311 passed** without a production change.
+- Scoped Ruff lint/format, changed-production `compileall`, and
+  `git diff --check` pass. Warnings are the accepted Requests dependency warning
+  and pre-existing third-party SWIG deprecations in an untouched PDF neighbor.
+  No UI changed in this round, so the prior final-candidate Impeccable `[]`
+  remains applicable. Full pytest was not run, per repository policy.
+
+TASK-21508 remains controller-owned and is excluded from the fix commit.

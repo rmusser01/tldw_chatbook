@@ -120,6 +120,15 @@ class ResearchSourceAssociationCoordinator:
         try:
             self._catalog_dispatcher(retry_job.job_id)
         except Exception:
+            failed_job = self._ingest_jobs.mark_failed(
+                retry_job.job_id,
+                error="Research catalog dispatch could not be started.",
+                require_persisted=True,
+            )
+            if failed_job is None:
+                raise RuntimeError(
+                    "Research catalog retry replacement could not be settled."
+                ) from None
             return await self._catalog_failed(
                 operation,
                 error_code="catalog_retry_failed",

@@ -3338,7 +3338,15 @@ class LibraryIngestQueueMixin:
     ) -> LibraryIngestJob | None:
         """Return only the released replacement named by the exact receipt."""
 
-        if receipt is None or getattr(receipt, "operation_id", "") != operation_id:
+        if (
+            receipt is None
+            or getattr(receipt, "operation_id", "") != operation_id
+            or getattr(receipt, "catalog_status", None)
+            not in {
+                SourceOperationStatus.IN_PROGRESS,
+                SourceOperationStatus.SUCCEEDED,
+            }
+        ):
             return None
         replacement_id = str(getattr(receipt, "ingest_job_id", "") or "")
         if not replacement_id or replacement_id == source.job_id:
