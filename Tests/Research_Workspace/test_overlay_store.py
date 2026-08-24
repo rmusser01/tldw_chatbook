@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+import tldw_chatbook.Research_Workspace.overlay_store as overlay_store_module
 from tldw_chatbook.Research_Workspace.contracts import (
     QualifiedWorkspaceRef,
     WorkspaceDataSource,
@@ -105,28 +106,41 @@ def test_round_trip_persists_only_presentation_preferences_and_qualified_identit
         assert forbidden not in serialized
 
 
-def test_server_overlays_are_isolated_by_canonical_qualified_identity_not_display_name(
+def test_overlays_are_isolated_on_every_qualified_identity_axis(
     tmp_path,
 ) -> None:
     store = ResearchPresentationOverlayStore(tmp_path / "research" / "overlay.json")
-    first = server_ref("workspace-id-1")
-    second = server_ref("workspace-id-2")
-
-    store.save(
-        first,
-        ResearchPanePreferences(sources_open=False),
-        expected_revision=0,
-        timestamp=NOW,
+    refs_and_preferences = (
+        (
+            local_ref("same-workspace-id"),
+            ResearchPanePreferences(sources_open=False, studio_open=False),
+        ),
+        (
+            server_ref("same-workspace-id", profile="profile-a", principal="one"),
+            ResearchPanePreferences(sources_open=False, studio_open=True),
+        ),
+        (
+            server_ref("same-workspace-id", profile="profile-b", principal="one"),
+            ResearchPanePreferences(sources_open=True, studio_open=False),
+        ),
+        (
+            server_ref("same-workspace-id", profile="profile-a", principal="two"),
+            ResearchPanePreferences(preferred_companion="studio"),
+        ),
     )
-    store.save(
-        second,
-        ResearchPanePreferences(studio_open=False),
-        expected_revision=0,
-        timestamp=NOW,
-    )
 
-    assert store.load(first).preferences.sources_open is False  # type: ignore[union-attr]
-    assert store.load(second).preferences.studio_open is False  # type: ignore[union-attr]
+    for ref, preferences in refs_and_preferences:
+        store.save(
+            ref,
+            preferences,
+            expected_revision=0,
+            timestamp=NOW,
+        )
+
+    assert {
+        ref: store.load(ref).preferences  # type: ignore[union-attr]
+        for ref, _ in refs_and_preferences
+    } == dict(refs_and_preferences)
 
 
 def test_compare_before_replace_rejects_a_concurrent_revision_change(tmp_path) -> None:
@@ -157,6 +171,52 @@ def test_compare_before_replace_rejects_a_concurrent_revision_change(tmp_path) -
         )
 
     assert first_process.load(ref).preferences.sources_open is False  # type: ignore[union-attr]
+
+
+def test_replace_boundary_rejects_revision_change_after_store_precondition_read(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "research" / "overlay.json"
+    first_process = ResearchPresentationOverlayStore(path)
+    second_process = ResearchPresentationOverlayStore(path)
+    ref = local_ref()
+    initial = first_process.save(
+        ref,
+        ResearchPanePreferences(),
+        expected_revision=0,
+        timestamp=NOW,
+    )
+    real_atomic_write = overlay_store_module.atomic_private_write_text
+    interleaved = False
+
+    def replace_between_compare_and_helper(*args, **kwargs):
+        nonlocal interleaved
+        if not interleaved:
+            interleaved = True
+            second_process.save(
+                ref,
+                ResearchPanePreferences(sources_open=False),
+                expected_revision=initial.revision,
+                timestamp=LATER,
+            )
+        return real_atomic_write(*args, **kwargs)
+
+    monkeypatch.setattr(
+        overlay_store_module,
+        "atomic_private_write_text",
+        replace_between_compare_and_helper,
+    )
+
+    with pytest.raises(OverlayConflictError, match="replacement boundary"):
+        first_process.save(
+            ref,
+            ResearchPanePreferences(studio_open=False),
+            expected_revision=initial.revision,
+            timestamp=LATER,
+        )
+
+    assert second_process.load(ref).preferences.sources_open is False  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize(
@@ -215,6 +275,32 @@ def test_corrupt_record_does_not_block_canonical_workspace_overlay_loading(
 
     assert result.records[good_ref].preferences == ResearchPanePreferences()
     assert len(result.quarantined) == 1
+
+
+def test_valid_save_preserves_corrupt_record_for_quarantine_export(tmp_path) -> None:
+    path = tmp_path / "research" / "overlay.json"
+    good_ref = local_ref("canonical-workspace")
+    corrupt = {"key": "not-a-qualified-key"}
+    write_payload(
+        path,
+        {
+            "schema_version": 1,
+            "records": [raw_record(good_ref), corrupt],
+        },
+    )
+    store = ResearchPresentationOverlayStore(path)
+
+    store.save(
+        good_ref,
+        ResearchPanePreferences(sources_open=False),
+        expected_revision=1,
+        timestamp=LATER,
+    )
+    reloaded = store.load_all()
+
+    assert reloaded.records[good_ref].revision == 2
+    assert len(reloaded.quarantined) == 1
+    assert json.loads(reloaded.quarantined[0].export_json()) == corrupt
 
 
 def test_effective_forced_collapse_fields_are_never_accepted_for_persistence(

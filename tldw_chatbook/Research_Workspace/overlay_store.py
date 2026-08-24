@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 
 from tldw_chatbook.Utils.private_paths import (
+    PrivateFileWritePrecondition,
+    PrivatePathError,
     atomic_private_write_text,
     lexical_path,
     open_private_binary,
@@ -82,6 +84,9 @@ class QuarantinedOverlayRecord:
 class OverlayLoadResult:
     records: dict[QualifiedWorkspaceRef, ResearchPresentationOverlay]
     quarantined: tuple[QuarantinedOverlayRecord, ...] = ()
+    target_precondition: PrivateFileWritePrecondition = (
+        PrivateFileWritePrecondition.missing()
+    )
 
 
 class ResearchPresentationOverlayStore:
@@ -94,24 +99,32 @@ class ResearchPresentationOverlayStore:
     def load_all(self) -> OverlayLoadResult:
         """Load valid records while independently quarantining invalid ones."""
 
+        raw_payload, target_precondition = self._read_payload()
+        if raw_payload is None:
+            return OverlayLoadResult({}, target_precondition=target_precondition)
         try:
-            payload = self._read_payload()
+            payload = raw_payload.decode("utf-8")
+            root = json.loads(payload)
+            records = self._validated_record_list(root)
         except UnicodeDecodeError as exc:
             return OverlayLoadResult(
                 {},
-                (QuarantinedOverlayRecord(-1, str(exc), None),),
+                (
+                    QuarantinedOverlayRecord(
+                        -1,
+                        str(exc),
+                        raw_payload.decode("utf-8", errors="replace"),
+                    ),
+                ),
+                target_precondition,
             )
-        if payload is None:
-            return OverlayLoadResult({})
-        try:
-            root = json.loads(payload)
-            records = self._validated_record_list(root)
         except OverlayLimitError:
             raise
         except (json.JSONDecodeError, OverlayValidationError) as exc:
             return OverlayLoadResult(
                 {},
                 (QuarantinedOverlayRecord(-1, str(exc), payload),),
+                target_precondition,
             )
 
         decoded: dict[QualifiedWorkspaceRef, ResearchPresentationOverlay] = {}
@@ -125,7 +138,7 @@ class ResearchPresentationOverlayStore:
                 quarantined.append(QuarantinedOverlayRecord(index, str(exc), raw))
                 continue
             decoded[record.ref] = record
-        return OverlayLoadResult(decoded, tuple(quarantined))
+        return OverlayLoadResult(decoded, tuple(quarantined), target_precondition)
 
     def load(self, ref: QualifiedWorkspaceRef) -> ResearchPresentationOverlay | None:
         """Load one qualified overlay; canonical workspace access is separate."""
@@ -168,7 +181,13 @@ class ResearchPresentationOverlayStore:
                 f"overlay revision changed: expected {expected_revision}, "
                 f"found {current_revision}"
             )
-        if current is None and len(loaded.records) >= MAX_OVERLAY_RECORDS:
+        if any(item.record_index < 0 for item in loaded.quarantined):
+            raise OverlayValidationError(
+                "overlay container must be recovered before replacement"
+            )
+        if current is None and (
+            len(loaded.records) + len(loaded.quarantined) >= MAX_OVERLAY_RECORDS
+        ):
             raise OverlayLimitError(
                 f"overlay records exceed maximum {MAX_OVERLAY_RECORDS}"
             )
@@ -182,7 +201,7 @@ class ResearchPresentationOverlayStore:
         )
         records = dict(loaded.records)
         records[ref] = saved
-        serialized = _encode_store(records.values())
+        serialized = _encode_store(records.values(), loaded.quarantined)
         if len(serialized.encode("utf-8")) > MAX_OVERLAY_FILE_BYTES:
             raise OverlayLimitError(
                 f"overlay file exceeds maximum {MAX_OVERLAY_FILE_BYTES} bytes"
@@ -193,14 +212,24 @@ class ResearchPresentationOverlayStore:
             create=True,
             application_owned=True,
         )
-        atomic_private_write_text(
-            self.path,
-            serialized,
-            application_owned_directory=self.application_owned_directory,
-        )
+        try:
+            atomic_private_write_text(
+                self.path,
+                serialized,
+                application_owned_directory=self.application_owned_directory,
+                target_precondition=loaded.target_precondition,
+            )
+        except PrivatePathError as exc:
+            if exc.result.reason in {"target_appeared", "target_replaced"}:
+                raise OverlayConflictError(
+                    "overlay changed at the atomic replacement boundary"
+                ) from None
+            raise
         return saved
 
-    def _read_payload(self) -> str | None:
+    def _read_payload(
+        self,
+    ) -> tuple[bytes | None, PrivateFileWritePrecondition]:
         secure_private_directory(
             self.application_owned_directory,
             create=True,
@@ -208,14 +237,15 @@ class ResearchPresentationOverlayStore:
         )
         try:
             with open_private_binary(self.path) as opened:
+                target_precondition = PrivateFileWritePrecondition.from_opened(opened)
                 raw = opened.stream.read(MAX_OVERLAY_FILE_BYTES + 1)
         except FileNotFoundError:
-            return None
+            return None, PrivateFileWritePrecondition.missing()
         if len(raw) > MAX_OVERLAY_FILE_BYTES:
             raise OverlayLimitError(
                 f"overlay file exceeds maximum {MAX_OVERLAY_FILE_BYTES} bytes"
             )
-        return raw.decode("utf-8")
+        return raw, target_precondition
 
     @staticmethod
     def _validated_record_list(root: object) -> list[object]:
@@ -271,10 +301,16 @@ def _decode_record(raw: object) -> ResearchPresentationOverlay:
     )
 
 
-def _encode_store(records: Iterable[ResearchPresentationOverlay]) -> str:
+def _encode_store(
+    records: Iterable[ResearchPresentationOverlay],
+    quarantined: Iterable[QuarantinedOverlayRecord] = (),
+) -> str:
     payload = {
         "schema_version": OVERLAY_SCHEMA_VERSION,
-        "records": [_encode_record(record) for record in records],
+        "records": [
+            *(_encode_record(record) for record in records),
+            *(item.raw for item in quarantined),
+        ],
     }
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 

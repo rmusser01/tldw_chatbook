@@ -228,6 +228,26 @@ def test_private_json_overlay_pair_creates_0700_directory_and_0600_file(tmp_path
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX atomic precondition contract")
+def test_atomic_private_write_rejects_replacement_before_helper_entry(tmp_path):
+    target = tmp_path / "overlay.json"
+    atomic_private_write_text(target, '{"revision": 1}\n')
+    with open_private_binary(target) as opened:
+        precondition = private_paths.PrivateFileWritePrecondition.from_opened(opened)
+
+    atomic_private_write_text(target, '{"revision": 2}\n')
+
+    with pytest.raises(PrivatePathError) as caught:
+        atomic_private_write_text(
+            target,
+            '{"revision": 3}\n',
+            target_precondition=precondition,
+        )
+
+    assert caught.value.result.reason == "target_replaced"
+    assert target.read_text(encoding="utf-8") == '{"revision": 2}\n'
+
+
 def test_unsupported_posix_guards_fail_closed_without_creating(
     tmp_path,
     monkeypatch,

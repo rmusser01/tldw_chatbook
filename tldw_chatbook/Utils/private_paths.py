@@ -81,6 +81,37 @@ class PrivateBinaryFile:
     result: PrivatePathResult
 
 
+@dataclass(frozen=True)
+class PrivateFileWritePrecondition:
+    """Pinned target identity required by a later atomic replacement."""
+
+    target_identity: tuple[int, int] | None
+
+    def __post_init__(self) -> None:
+        identity = self.target_identity
+        if identity is not None and (
+            type(identity) is not tuple
+            or len(identity) != 2
+            or any(type(part) is not int or part < 0 for part in identity)
+        ):
+            raise ValueError("target_identity must be a device/inode pair or None")
+
+    @classmethod
+    def from_opened(cls, opened: PrivateBinaryFile) -> PrivateFileWritePrecondition:
+        """Capture the identity of a pinned private file."""
+
+        if not isinstance(opened, PrivateBinaryFile):
+            raise TypeError("opened must be PrivateBinaryFile")
+        opened_stat = os.fstat(opened.stream.fileno())
+        return cls((opened_stat.st_dev, opened_stat.st_ino))
+
+    @classmethod
+    def missing(cls) -> PrivateFileWritePrecondition:
+        """Require the atomic replacement target to remain absent."""
+
+        return cls(None)
+
+
 def lexical_path(path: PathInput) -> Path:
     raw = os.fspath(path)
     if "\x00" in raw:
@@ -560,13 +591,26 @@ def atomic_private_write_bytes(
     payload: bytes,
     *,
     application_owned_directory: PathInput | None = None,
+    target_precondition: PrivateFileWritePrecondition | None = None,
 ) -> PrivatePathResult:
     """Atomically replace a private file without following its target."""
 
     selected = lexical_path(path)
+    if target_precondition is not None and not isinstance(
+        target_precondition, PrivateFileWritePrecondition
+    ):
+        raise TypeError("target_precondition must be PrivateFileWritePrecondition")
     _prepare_application_owned_parent(selected, application_owned_directory)
 
     if not _atomic_posix_guards_available():
+        if target_precondition is not None:
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="atomic_target_precondition_unavailable",
+                )
+            )
         if _WINDOWS_PLATFORM:
             try:
                 fd, temporary = tempfile.mkstemp(
@@ -613,7 +657,35 @@ def atomic_private_write_bytes(
         except FileNotFoundError:
             existing_stat = None
             prior_mode = None
-        else:
+
+        if target_precondition is not None:
+            expected_identity = target_precondition.target_identity
+            if expected_identity is None:
+                if existing_stat is not None:
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.OPERATION_FAILED,
+                            reason="target_appeared",
+                        )
+                    )
+            elif (
+                existing_stat is None
+                or (
+                    existing_stat.st_dev,
+                    existing_stat.st_ino,
+                )
+                != expected_identity
+            ):
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="target_replaced",
+                    )
+                )
+
+        if existing_stat is not None:
             rejected = _classify_private_file_stat(
                 existing_stat,
                 expected_uid=os.geteuid(),
@@ -732,6 +804,7 @@ def atomic_private_write_text(
     *,
     application_owned_directory: PathInput | None = None,
     encoding: str = "utf-8",
+    target_precondition: PrivateFileWritePrecondition | None = None,
 ) -> PrivatePathResult:
     """Atomically replace a private text file."""
 
@@ -739,6 +812,7 @@ def atomic_private_write_text(
         path,
         text.encode(encoding),
         application_owned_directory=application_owned_directory,
+        target_precondition=target_precondition,
     )
 
 
