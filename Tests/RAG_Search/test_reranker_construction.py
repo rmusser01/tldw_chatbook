@@ -35,6 +35,8 @@ Two more review findings on this same task, both fixed here (task-3170 P0):
     shared reranker singleton cannot misattribute them.)
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.RAG_Search.reranker import (
@@ -270,10 +272,8 @@ async def test_experiment_reranker_construction_failure_is_safely_disclosed(
     tmp_path, monkeypatch
 ):
     service = _make_v2_service_with_reranking(tmp_path)
-    base_results = [
-        SearchResult(id="result-1", score=0.8, document="First", metadata={}),
-        SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
-    ]
+    base_result = SearchResult(id="result-1", score=0.8, document="First", metadata={})
+    base_results = [base_result]
     experiment_profile = ProfileConfig(
         name="experiment reranking profile",
         description="experiment reranking configuration",
@@ -286,7 +286,11 @@ async def test_experiment_reranker_construction_failure_is_safely_disclosed(
     async def _base_search(*args, **kwargs):
         return list(base_results)
 
+    factory_calls = 0
+
     def _raise_construction_failure(*args, **kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
         raise RuntimeError("secret-token-value")
 
     monkeypatch.setattr(
@@ -315,6 +319,155 @@ async def test_experiment_reranker_construction_failure_is_safely_disclosed(
     assert results[0].metadata["reranking_skipped"] == (
         "reranker construction failed (RuntimeError)"
     )
+    assert warnings
+    assert all("secret-token-value" not in warning for warning in warnings)
+    assert factory_calls == 1
+
+    base_results.clear()
+    assert await service.search("query", user_id="user-1") == []
+    assert factory_calls == 1
+
+    base_results.append(base_result)
+    disabled_results = await service.search("query", rerank=False, user_id="user-1")
+    assert "reranking_skipped" not in disabled_results[0].metadata
+    assert factory_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_experiment_reranker_overrides_an_unavailable_base_reranker(
+    tmp_path, monkeypatch
+):
+    service = _make_v2_service_with_reranking(tmp_path)
+    service.reranker = None
+    service._reranker_unavailable_reason = "reranker construction failed (RuntimeError)"
+    base_results = [
+        SearchResult(id="result-1", score=0.8, document="First", metadata={}),
+        SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
+    ]
+    experiment_profile = ProfileConfig(
+        name="available experiment reranker",
+        description="experiment reranking configuration",
+        profile_type="balanced",
+        rag_config=service.config,
+        reranking_config=RerankingConfig(strategy="pointwise", top_k_to_rerank=5),
+    )
+    metrics = []
+
+    class _ExperimentReranker:
+        calls = 0
+
+        async def rerank(self, query, results):
+            self.calls += 1
+            return SimpleNamespace(results=results, degraded=False)
+
+    experiment_reranker = _ExperimentReranker()
+
+    async def _base_search(*args, **kwargs):
+        return list(base_results)
+
+    monkeypatch.setattr(
+        enhanced_rag_service_v2.EnhancedRAGService, "search", _base_search
+    )
+    monkeypatch.setattr(
+        enhanced_rag_service_v2,
+        "create_reranker_from_config",
+        lambda config: experiment_reranker,
+    )
+    monkeypatch.setattr(
+        service.profile_manager,
+        "select_profile_for_experiment",
+        lambda user_id: (experiment_profile.id, experiment_profile),
+    )
+    monkeypatch.setattr(
+        service.profile_manager,
+        "record_experiment_result",
+        lambda profile_name, query, values: metrics.append(values),
+    )
+    service._current_experiment = object()
+
+    results = await service.search("query", user_id="user-1")
+
+    assert experiment_reranker.calls == 1
+    assert "reranking_skipped" not in results[0].metadata
+    assert metrics[-1]["reranked"] is True
+
+
+@pytest.mark.asyncio
+async def test_experiment_without_reranking_does_not_inherit_the_base_reranker(
+    tmp_path, monkeypatch
+):
+    service = _make_v2_service_with_reranking(tmp_path)
+    base_results = [
+        SearchResult(id="result-1", score=0.8, document="First", metadata={}),
+        SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
+    ]
+    experiment_profile = ProfileConfig(
+        name="experiment without reranking",
+        description="experiment without a reranking configuration",
+        profile_type="balanced",
+        rag_config=service.config,
+    )
+    metrics = []
+
+    class _BaseReranker:
+        calls = 0
+
+        async def rerank(self, query, results):
+            self.calls += 1
+            return SimpleNamespace(results=results, degraded=False)
+
+    base_reranker = _BaseReranker()
+    service.reranker = base_reranker
+
+    async def _base_search(*args, **kwargs):
+        return list(base_results)
+
+    monkeypatch.setattr(
+        enhanced_rag_service_v2.EnhancedRAGService, "search", _base_search
+    )
+    monkeypatch.setattr(
+        service.profile_manager,
+        "select_profile_for_experiment",
+        lambda user_id: (experiment_profile.id, experiment_profile),
+    )
+    monkeypatch.setattr(
+        service.profile_manager,
+        "record_experiment_result",
+        lambda profile_name, query, values: metrics.append(values),
+    )
+    service._current_experiment = object()
+
+    results = await service.search("query", user_id="user-1")
+
+    assert base_reranker.calls == 0
+    assert "reranking_skipped" not in results[0].metadata
+    assert metrics[-1]["reranked"] is False
+
+
+@pytest.mark.asyncio
+async def test_runtime_reranker_failure_is_safely_disclosed(tmp_path, monkeypatch):
+    service = _make_v2_service_with_reranking(tmp_path)
+    base_results = [
+        SearchResult(id="result-1", score=0.8, document="First", metadata={}),
+        SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
+    ]
+    warnings = []
+
+    async def _base_search(*args, **kwargs):
+        return list(base_results)
+
+    async def _raise_reranker_failure(*args, **kwargs):
+        raise RuntimeError("secret-token-value")
+
+    monkeypatch.setattr(
+        enhanced_rag_service_v2.EnhancedRAGService, "search", _base_search
+    )
+    monkeypatch.setattr(service.reranker, "rerank", _raise_reranker_failure)
+    monkeypatch.setattr(enhanced_rag_service_v2.logger, "warning", warnings.append)
+
+    results = await service.search("query")
+
+    assert results[0].metadata["reranking_skipped"] == "reranking failed (RuntimeError)"
     assert warnings
     assert all("secret-token-value" not in warning for warning in warnings)
 

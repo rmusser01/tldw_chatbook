@@ -328,27 +328,36 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         # `reranking_skipped` tag is the counterpart that discloses when it
         # was attempted and skipped.
         should_rerank = rerank if rerank is not None else self.enable_reranking
-        if should_rerank and self.reranker and len(results) > 1:
-            rerank_start = time.time()
-            active_reranker = self.reranker
-            if experiment_profile and experiment_profile.reranking_config:
-                try:
-                    active_reranker = create_reranker_from_config(
-                        experiment_profile.reranking_config
-                    )
-                except Exception as exc:
-                    exception_name = type(exc).__name__
-                    detail = f"reranker construction failed ({exception_name})"
-                    logger.warning(
-                        f"Failed to construct {experiment_profile.reranking_config.strategy} "
-                        f"reranker ({exception_name}); returning unreranked results"
-                    )
-                    results = _tag_first_result(results, "reranking_skipped", detail)
-                    active_reranker = None
-            if active_reranker is not None:
+        reranked = False
+        if should_rerank and results:
+            active_reranker = None
+            unavailable_reason = None
+            if experiment_profile is not None:
+                if experiment_profile.reranking_config:
+                    try:
+                        active_reranker = create_reranker_from_config(
+                            experiment_profile.reranking_config
+                        )
+                    except Exception as exc:
+                        exception_name = type(exc).__name__
+                        unavailable_reason = (
+                            f"reranker construction failed ({exception_name})"
+                        )
+                        logger.warning(
+                            f"Failed to construct {experiment_profile.reranking_config.strategy} "
+                            f"reranker ({exception_name}); returning unreranked results"
+                        )
+                # A selected experiment with no reranking config explicitly
+                # opts out; it must not inherit the base reranker.
+            else:
+                active_reranker = self.reranker
+                unavailable_reason = self._reranker_unavailable_reason
+            if active_reranker is not None and len(results) > 1:
+                rerank_start = time.time()
                 try:
                     outcome = await active_reranker.rerank(query, results)
                     results = outcome.results
+                    reranked = True
 
                     rerank_time = time.time() - rerank_start
                     log_histogram("rag_reranking_time", rerank_time)
@@ -374,19 +383,16 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                             results, "reranking_degraded", detail
                         )
                 except Exception as exc:
+                    exception_name = type(exc).__name__
+                    detail = f"reranking failed ({exception_name})"
                     logger.warning(
-                        f"Reranking failed ({exc}); returning unreranked results"
+                        f"Reranking failed ({exception_name}); returning unreranked results"
                     )
-                    results = _tag_first_result(results, "reranking_skipped", str(exc))
-        if (
-            should_rerank
-            and self.reranker is None
-            and self._reranker_unavailable_reason
-            and results
-        ):
-            results = _tag_first_result(
-                results, "reranking_skipped", self._reranker_unavailable_reason
-            )
+                    results = _tag_first_result(results, "reranking_skipped", detail)
+            elif unavailable_reason:
+                results = _tag_first_result(
+                    results, "reranking_skipped", unavailable_reason
+                )
 
         # Record experiment metrics if active
         if self._current_experiment and user_id:
@@ -395,7 +401,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 "search_latency": search_time * 1000,  # Convert to ms
                 "results_returned": len(results),
                 "search_type": search_type,
-                "reranked": should_rerank,
+                "reranked": reranked,
             }
 
             # Add result quality metrics
