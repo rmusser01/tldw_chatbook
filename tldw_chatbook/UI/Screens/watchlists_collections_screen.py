@@ -11,7 +11,7 @@ import asyncio
 import re
 import threading
 import webbrowser
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -408,6 +408,30 @@ class _ItemStatusIntent:
     refresh: bool = True
     patch_item: dict[str, Any] | None = None
     gate: bool = False
+
+
+@dataclass(frozen=True)
+class _ManualLayoutRollback:
+    """One manual preference intent and every automatic token derived from it."""
+
+    tokens: frozenset[int]
+    attempted_layout: RegionLayout
+    attempted_preferred: RegionLayout
+    preferred_before: RegionLayout
+    article_focus_before: bool
+    priority_before: Region | None
+
+
+@dataclass(frozen=True)
+class _SectionViewIntent:
+    """A section reconciliation snapshot, independent of later tab clicks."""
+
+    token: int
+    section: str
+    read_mode: bool
+    layout: RegionLayout
+    items_factory: Callable[[], Widget]
+    header_factory: Callable[[], Widget]
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -994,12 +1018,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Avoid initializing the reactive (and its watcher) before Textual
         # attaches this screen to an app; on_mount replaces this seed.
         self._rendered_section = "items"
-        self._manual_layout_rollback: tuple[
-            int, RegionLayout, RegionLayout, bool, Region | None
-        ] | None = None
+        self._manual_layout_rollback: _ManualLayoutRollback | None = None
         self._items_view_anchor_id: str | None = None
         self._items_view_scroll_y = 0.0
         self._items_view_had_focus = False
+        self._items_view_focus_id: str | None = None
+        self._items_view_context_key: tuple[Any, ...] | None = None
         self._last_persisted_collapsed: frozenset[Region] | None = (
             loaded_layout.collapsed
         )
@@ -1034,6 +1058,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # queue rather than `run_worker(exclusive=True)` per surface.
         self._pending_surface_refresh: set[str] = set()
         self._surface_refresh_draining = False
+        self._pending_section_intent: _SectionViewIntent | None = None
         # The Console-follow adapter's latest answer, mirrored here so the
         # RIGHT_RAIL factory reads an attribute instead of polling from
         # `compose()` (TASK-2200 review wave, M4). Refreshed by
@@ -1964,7 +1989,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return "All sources"
 
     def _watchlists_status_marker_widgets(
-        self, scoped_rows: Sequence[Mapping[str, Any]]
+        self,
+        scoped_rows: Sequence[Mapping[str, Any]],
+        *,
+        section: str | None = None,
     ) -> list[Widget]:
         """The snapshot's own loading/error/empty/summary marker.
 
@@ -2043,7 +2071,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # row below this header, so repeating them here was the "Import
             # OPML twice on one screen" UAT finding. Omitted on Sources
             # only; every other section still gets the one bootstrap path.
-            if self.active_section != "sources":
+            if (self.active_section if section is None else section) != "sources":
                 widgets.append(
                     Horizontal(
                         # TASK-2303 AC#1: the same create verb the Sources
@@ -2083,7 +2111,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         ]
 
-    def _build_centre_status_header(self) -> Vertical:
+    def _build_centre_status_header(self, section: str | None = None) -> Vertical:
         """Build the ALWAYS-rendered centre header: the section tab strip
         plus the snapshot's own loading/error/empty/summary marker.
 
@@ -2103,18 +2131,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             `_watchlists_status_marker_widgets` returns for the current
             snapshot state.
         """
+        section = self.active_section if section is None else section
         scoped_rows = self.scoped_source_rows()
         children: list[Widget] = [
-            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
+            WatchlistsTabStrip(active_section=section, id="wl-tabs"),
         ]
-        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
+        children.extend(
+            self._watchlists_status_marker_widgets(scoped_rows, section=section)
+        )
         return Vertical(
             *children,
             id="wl-centre-status",
             classes="watchlists-centre-status",
         )
 
-    def _build_detail_pane(self) -> Vertical:
+    def _build_detail_pane(self, section: str | None = None) -> Vertical:
         """Build the ITEMS-region content: the active-section-routed pane.
 
         Called fresh on every region rebuild — see the factory note on
@@ -2136,7 +2167,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `RunsPane.selected_run`'s watcher side effects are load-bearing
         (see that branch).
         """
-        detail_title = self._SECTION_DETAIL_TITLE.get(self.active_section, "Detail")
+        section = self.active_section if section is None else section
+        detail_title = self._SECTION_DETAIL_TITLE.get(section, "Detail")
         children: list[Widget] = [
             Static(
                 detail_title,
@@ -2144,7 +2176,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 id="watchlists-detail-title",
             )
         ]
-        if self.active_section == "overview":
+        if section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
             overview.set_reactive(OverviewPane.data, self.overview_data)
             # TASK-998: lets the first-run panel distinguish "no watchlists at
@@ -2154,7 +2186,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 OverviewPane.watchlist_count, len(self._tree_watchlists)
             )
             children.append(overview)
-        elif self.active_section == "sources":
+        elif section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
             # Seed the last-loaded rows and selection (Finding 2, fix round
             # 2) the same way RunsPane/NotificationsPane already do below —
@@ -2209,7 +2241,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     self._source_create_draft_selectors
                 )
             children.append(sources_pane)
-        elif self.active_section == "runs":
+        elif section == "runs":
             runs_pane = RunsPane(id="watchlists-runs-pane")
             # `runs` is the pane's only `recompose=True` reactive, so it is
             # the only one converted to `set_reactive` (task-15778). The
@@ -2229,7 +2261,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             runs_pane.run_logs = self._run_detail_logs
             runs_pane.run_items_note = self._run_detail_items_note
             children.append(runs_pane)
-        elif self.active_section == "items":
+        elif section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
             # Audited for task-15778 and deliberately left as plain
@@ -2261,7 +2293,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_search_results_authoritative
             )
             children.append(items_pane)
-        elif self.active_section == "rules":
+        elif section == "rules":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
             rules_pane = RulesPane(id="watchlists-rules-pane")
@@ -2279,7 +2311,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 else:
                     rules_pane.set_reactive(RulesPane.show_rule_form, True)
             children.append(rules_pane)
-        elif self.active_section == "notifications":
+        elif section == "notifications":
             notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
             notifications_pane.set_reactive(
                 NotificationsPane.notifications, self._loaded_notifications
@@ -2289,7 +2321,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self.selected_notification,
             )
             children.append(notifications_pane)
-        elif self.active_section == "artifacts":
+        elif section == "artifacts":
             # Seeded from screen state for the same reason every sibling
             # above is -- this is a factory the workbench calls on every
             # region rebuild, so a fresh pane's reactives start at their
@@ -2364,6 +2396,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _reset_items_paging_for_context(self, *, loading: bool) -> None:
         """Invalidate Read paging before a query-context change is loaded."""
+        self._discard_items_view_state()
         timer = getattr(self, "_items_search_reload_timer", None)
         if timer is not None:
             timer.stop()
@@ -2864,16 +2897,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
         return next((width for width in candidates if width > 0), 10_000)
 
-    def _next_layout_request_token(self) -> int:
+    def _next_layout_request_token(self, *, preserve_manual_intent: bool = True) -> int:
         """Allocate the one current controller/workbench request token."""
         self._layout_request_generation += 1
         self._current_layout_request_token = self._layout_request_generation
-        self._manual_layout_rollback = None
+        rollback = self._manual_layout_rollback
+        if (
+            preserve_manual_intent
+            and rollback is not None
+            and self.region_layout == rollback.attempted_preferred
+        ):
+            self._manual_layout_rollback = _ManualLayoutRollback(
+                tokens=rollback.tokens | {self._current_layout_request_token},
+                attempted_layout=self._effective_region_layout,
+                attempted_preferred=rollback.attempted_preferred,
+                preferred_before=rollback.preferred_before,
+                article_focus_before=rollback.article_focus_before,
+                priority_before=rollback.priority_before,
+            )
+        elif not preserve_manual_intent:
+            self._manual_layout_rollback = None
         return self._current_layout_request_token
 
-    def _recompute_effective_layout(self) -> int | None:
+    def _recompute_effective_layout(
+        self,
+        *,
+        section: str | None = None,
+        request_workbench: bool = True,
+    ) -> int | None:
         """Resolve and push transient responsive/Article Focus state."""
-        read_mode = self.active_section == "items"
+        section = self.active_section if section is None else section
+        read_mode = section == "items"
         width = self._available_layout_width()
         mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
         unprioritized = resolve_effective_layout(
@@ -2902,6 +2956,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ):
             self._capture_items_view_state()
         self._effective_region_layout = effective
+        if not request_workbench:
+            return None
         try:
             workbench = self.query_one(WatchlistsWorkbench)
             if workbench.read_mode == read_mode:
@@ -2922,33 +2978,60 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_view_anchor_id = getattr(highlighted, "item_id_key", None)
         self._items_view_scroll_y = float(getattr(table, "scroll_y", 0.0))
         self._items_view_had_focus = bool(table.has_focus)
+        self._items_view_focus_id = None
+        focused = self.focused
+        while focused is not None and focused is not pane:
+            focused_id = getattr(focused, "id", None)
+            if focused_id:
+                self._items_view_focus_id = focused_id
+                break
+            focused = focused.parent
+        self._items_view_context_key = self._items_page_key(self._items_page_index)
+
+    def _discard_items_view_state(self) -> None:
+        """Discard one consumed or invalidated Items restoration snapshot."""
+        self._items_view_anchor_id = None
+        self._items_view_focus_id = None
+        self._items_view_context_key = None
+        self._items_view_had_focus = False
 
     def _restore_items_view_state(self) -> None:
+        if self._items_view_context_key is None:
+            return
+        if self._items_page_loading:
+            return
+        if self._items_view_context_key != self._items_page_key(
+            self._items_page_index
+        ):
+            self._discard_items_view_state()
+            return
         try:
             pane = self.query_one("#watchlists-items-pane", ArticleListPane)
             table = pane.query_one("#items-table")
         except NoMatches:
-            if (
-                self._items_view_anchor_id is not None
-                and self.active_section == "items"
-                and not self._effective_region_layout.is_collapsed(Region.ITEMS)
-            ):
-                self.set_timer(0.01, self._restore_items_view_state)
             return
         if self._items_view_anchor_id is not None:
-            restored_anchor = False
             for index, row in enumerate(table.children):
                 if getattr(row, "item_id_key", None) == self._items_view_anchor_id:
                     pane._suppressed_highlight_item_id = self._items_view_anchor_id
                     table.index = index
-                    restored_anchor = True
                     break
-            if not restored_anchor:
-                self.set_timer(0.01, self._restore_items_view_state)
-                return
         table.scroll_to(y=self._items_view_scroll_y, animate=False)
-        if self._items_view_had_focus:
+        focus_id = self._items_view_focus_id
+        restored_focus = False
+        if focus_id is not None:
+            try:
+                pane.query_one(f"#{focus_id}").focus()
+                restored_focus = True
+            except NoMatches:
+                pass
+        if not restored_focus and (
+            self._items_view_had_focus or self._items_view_anchor_id is not None
+        ):
             table.focus()
+        elif not restored_focus:
+            pane.focus()
+        self._discard_items_view_state()
 
     def _apply_layout(self, layout: RegionLayout) -> None:
         """Set the layout, push it to the workbench, and persist any change.
@@ -2993,11 +3076,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self._layout_persist_draining:
                 return
             self._layout_persist_draining = True
-        self.run_worker(
-            self._persist_layout_worker,
-            group="wl-layout-persist",
-            thread=True,
-        )
+        try:
+            self.run_worker(
+                self._persist_layout_worker,
+                group="wl-layout-persist",
+                thread=True,
+            )
+        except Exception:
+            with self._layout_persist_lock:
+                self._layout_persist_draining = False
+            logger.opt(exception=True).debug(
+                "Could not schedule preferred Watchlists layout persistence."
+            )
 
     def _persist_layout_worker(self) -> None:
         """Write the most recently requested layout to config.
@@ -3015,32 +3105,42 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         every `_schedule_layout_persist` call the burst has made so far —
         writes the true final layout, so the last write always wins.
         """
-        while True:
-            with self._layout_persist_lock:
-                generation = self._pending_persist_generation
-                layout = self._pending_persist_layout
-            if generation is None or layout is None:
+        try:
+            while True:
                 with self._layout_persist_lock:
-                    self._layout_persist_draining = False
-                return
-            try:
-                success = save_region_layout(layout)
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Failed to persist preferred Watchlists pane layout."
-                )
-                success = False
-            self.app.call_from_thread(
-                self._acknowledge_layout_persist,
-                generation,
-                layout,
-                success,
-            )
-            with self._layout_persist_lock:
-                pending_generation = self._pending_persist_generation
-                if pending_generation is None or pending_generation == generation:
-                    self._layout_persist_draining = False
+                    generation = self._pending_persist_generation
+                    layout = self._pending_persist_layout
+                if generation is None or layout is None:
                     return
+                try:
+                    success = save_region_layout(layout)
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Failed to persist preferred Watchlists pane layout."
+                    )
+                    success = False
+                try:
+                    self.app.call_from_thread(
+                        self._acknowledge_layout_persist,
+                        generation,
+                        layout,
+                        success,
+                    )
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Could not acknowledge preferred Watchlists layout write."
+                    )
+                    return
+                with self._layout_persist_lock:
+                    pending_generation = self._pending_persist_generation
+                    if (
+                        pending_generation is None
+                        or pending_generation == generation
+                    ):
+                        return
+        finally:
+            with self._layout_persist_lock:
+                self._layout_persist_draining = False
 
     def _acknowledge_layout_persist(
         self,
@@ -3186,6 +3286,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _toggle_preferred_region(self, region: Region) -> None:
         """Apply one manual gesture, inferred from effective state."""
         requested_open = self._effective_region_layout.is_collapsed(region)
+        self._manual_layout_rollback = None
         before = (
             self.region_layout,
             self._effective_region_layout,
@@ -3205,12 +3306,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._responsive_priority_target = None
         self.region_layout = preferred
         token = self._recompute_effective_layout()
-        self._manual_layout_rollback = (
-            token or self._current_layout_request_token,
-            self._effective_region_layout,
-            before[0],
-            before[2],
-            before[3],
+        request_token = token or self._current_layout_request_token
+        self._manual_layout_rollback = _ManualLayoutRollback(
+            tokens=frozenset({request_token}),
+            attempted_layout=self._effective_region_layout,
+            attempted_preferred=preferred,
+            preferred_before=before[0],
+            article_focus_before=before[2],
+            priority_before=before[3],
         )
         self._schedule_layout_persist(preferred)
 
@@ -3229,21 +3332,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Correct screen preference only while the failed intent is current."""
         event.stop()
+        rollback = self._manual_layout_rollback
+        if rollback is not None and event.token in rollback.tokens:
+            current_preferred = self.region_layout
+            self.region_layout = rollback.preferred_before
+            self._article_focus_active = rollback.article_focus_before
+            self._responsive_priority_target = rollback.priority_before
+            self._manual_layout_rollback = None
+            self._recompute_effective_layout()
+            if current_preferred != rollback.preferred_before:
+                self._schedule_layout_persist(rollback.preferred_before)
+            return
         if event.token != self._current_layout_request_token:
             return
-        rollback = self._manual_layout_rollback
-        if rollback is None or rollback[0] != event.token:
+        if rollback is None:
             self._effective_region_layout = event.fallback
             return
-        current_preferred = self.region_layout
-        _, _, preferred, article_focus, priority_target = rollback
-        self.region_layout = preferred
-        self._article_focus_active = article_focus
-        self._responsive_priority_target = priority_target
-        self._manual_layout_rollback = None
-        self._recompute_effective_layout()
-        if current_preferred != preferred:
-            self._schedule_layout_persist(preferred)
 
     @on(RegionLayoutApplied)
     def _on_region_layout_applied(self, event: RegionLayoutApplied) -> None:
@@ -3253,7 +3357,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if (
             self._manual_layout_rollback is not None
-            and self._manual_layout_rollback[0] == event.token
+            and event.token in self._manual_layout_rollback.tokens
         ):
             self._manual_layout_rollback = None
         if (
@@ -4143,19 +4247,39 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Args:
             workbench: The mounted workbench, resolved once by the drainer.
         """
+        intent = self._pending_section_intent
+        self._pending_section_intent = None
+        if intent is None:
+            section = self.active_section
+            self._recompute_effective_layout(
+                section=section, request_workbench=False
+            )
+            token = self._next_layout_request_token()
+            detail_builder = self._build_detail_pane
+            header_builder = self._build_centre_status_header
+            intent = _SectionViewIntent(
+                token=token,
+                section=section,
+                read_mode=section == "items",
+                layout=self._effective_region_layout,
+                items_factory=lambda: detail_builder(section),
+                header_factory=lambda: header_builder(section),
+            )
         # Asked BEFORE the swap: afterwards the widget is already gone and
         # Textual has already re-homed focus (see `_restore_focus_after_swap`).
         rehome_focus = self._swap_will_destroy_focus()
-        self._recompute_effective_layout()
-        token = self._next_layout_request_token()
         applied = await workbench.apply_section_view(
-            read_mode=self.active_section == "items",
-            layout=self._effective_region_layout,
-            token=token,
+            read_mode=intent.read_mode,
+            layout=intent.layout,
+            token=intent.token,
             rebuild_regions=(Region.ITEMS,),
             rebuild_header=True,
+            content={**workbench._content, Region.ITEMS: intent.items_factory},
+            header=intent.header_factory,
         )
-        if not applied or token != self._current_layout_request_token:
+        if not applied:
+            if intent.token != self._current_layout_request_token:
+                return
             previous_section = self._rendered_section
             self.set_reactive(
                 WatchlistsCollectionsScreen.active_section, previous_section
@@ -4163,9 +4287,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._article_focus_active = False
             self._effective_region_layout = workbench.region_layout
             self._sync_backend_header_bar()
-            self._recompute_effective_layout()
             return
-        self._rendered_section = self.active_section
+        self._rendered_section = intent.section
+        if intent.token != self._current_layout_request_token:
+            return
         if rehome_focus:
             self._restore_focus_after_swap()
         self._reseed_active_section_pane()
@@ -4427,13 +4552,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._focus_in_centre_header = False
         if self.active_section != "items":
             self._article_focus_active = False
-        self._recompute_effective_layout()
+        self._recompute_effective_layout(request_workbench=False)
         if self.active_section == "overview":
             self.selected_entity = None
         if self.active_section != WATCHLISTS_SECTION_RUNS:
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
         if self.is_mounted:
+            token = self._next_layout_request_token()
+            section = self.active_section
+            detail_builder = self._build_detail_pane
+            header_builder = self._build_centre_status_header
+            self._pending_section_intent = _SectionViewIntent(
+                token=token,
+                section=section,
+                read_mode=section == "items",
+                layout=self._effective_region_layout,
+                items_factory=lambda: detail_builder(section),
+                header_factory=lambda: header_builder(section),
+            )
             # task-15461: one region-scoped swap, not a whole-screen
             # `refresh(recompose=True)`. Queued on the surface drain rather
             # than run here because it swaps `#wl-centre-status`, the same
@@ -9389,6 +9526,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> bool:
         """Fetch, present, and commit one page load owned by `_load_items`."""
         notify = getattr(self.app_instance, "notify", None)
+        if (
+            self._items_view_context_key is not None
+            and target_key != self._items_view_context_key
+        ):
+            self._discard_items_view_state()
         self._items_load_generation += 1
         generation = self._items_load_generation
         self._items_page_loading = True
@@ -9513,6 +9655,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._items_search_results_authoritative = True
             self._items_page_loading = False
             self._push_items_pager_state()
+            self._restore_items_view_state()
         return True
 
     def _items_load_is_current(

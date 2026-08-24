@@ -168,9 +168,13 @@ class WatchlistsWorkbench(Vertical):
             nodes.append(self._region_body(Region.RIGHT_RAIL))
         return nodes
 
-    def _region_body(self, region: Region) -> Vertical:
+    def _region_body(
+        self,
+        region: Region,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+    ) -> Vertical:
         """Build one expanded body around its current factory output."""
-        factory = self._content.get(region)
+        factory = (self._content if content is None else content).get(region)
         supplied = factory() if factory is not None else None
         children: list[Widget] = []
         if region not in SELF_HEADED_REGIONS:
@@ -337,6 +341,8 @@ class WatchlistsWorkbench(Vertical):
         token: int,
         rebuild_regions: tuple[Region, ...] = (),
         rebuild_header: bool = False,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+        header: Callable[[], Widget] | None = None,
     ) -> bool:
         """Incrementally apply a Read/management section view."""
         async with self._layout_apply_lock:
@@ -346,6 +352,8 @@ class WatchlistsWorkbench(Vertical):
                 token=token,
                 rebuild_regions=rebuild_regions,
                 rebuild_header=rebuild_header,
+                content=content,
+                header=header,
             )
 
     async def _apply_section_view(
@@ -356,6 +364,8 @@ class WatchlistsWorkbench(Vertical):
         token: int,
         rebuild_regions: tuple[Region, ...] = (),
         rebuild_header: bool = False,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+        header: Callable[[], Widget] | None = None,
     ) -> bool:
         """Reconcile one section view while holding the layout lock."""
         next_read_mode = read_mode
@@ -380,8 +390,9 @@ class WatchlistsWorkbench(Vertical):
 
         try:
             replacement_header = (
-                self._header()
-                if rebuild_header and self._header is not None
+                (self._header if header is None else header)()
+                if rebuild_header
+                and (self._header if header is None else header) is not None
                 else None
             )
             with self.app.batch_update():
@@ -389,6 +400,7 @@ class WatchlistsWorkbench(Vertical):
                     read_mode=next_read_mode,
                     layout=layout,
                     rebuild_regions=rebuild_regions,
+                    content=content,
                 )
                 if replacement_header is not None:
                     await self._replace_header(replacement_header)
@@ -420,6 +432,7 @@ class WatchlistsWorkbench(Vertical):
         read_mode: bool,
         layout: RegionLayout,
         rebuild_regions: tuple[Region, ...],
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
     ) -> None:
         """Prepare factories, then atomically reconcile direct children."""
         body = self._body()
@@ -435,7 +448,9 @@ class WatchlistsWorkbench(Vertical):
         for node_id in desired_ids:
             if node_id in mounted_ids:
                 continue
-            prepared_nodes[node_id] = self._node_for_id(node_id, layout=layout)
+            prepared_nodes[node_id] = self._node_for_id(
+                node_id, layout=layout, content=content
+            )
             region = self._region_from_body_id(node_id)
             if region is not None:
                 created.add(region)
@@ -444,7 +459,7 @@ class WatchlistsWorkbench(Vertical):
         for region in rebuild_regions:
             if region in created or f"wl-region-{region.value}" not in desired_ids:
                 continue
-            factory = self._content.get(region)
+            factory = (self._content if content is None else content).get(region)
             if factory is not None:
                 prepared_content[region] = factory()
 
@@ -517,9 +532,17 @@ class WatchlistsWorkbench(Vertical):
             ids.append("wl-region-right_rail")
         return ids
 
-    def _node_for_id(self, node_id: str, *, layout: RegionLayout) -> Widget:
+    def _node_for_id(
+        self,
+        node_id: str,
+        *,
+        layout: RegionLayout,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+    ) -> Widget:
         if node_id.startswith("wl-region-"):
-            return self._region_body(Region(node_id.removeprefix("wl-region-")))
+            return self._region_body(
+                Region(node_id.removeprefix("wl-region-")), content
+            )
         region = Region(node_id.removeprefix("wl-grip-"))
         return WatchlistsPaneGrip(
             region,
