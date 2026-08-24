@@ -8335,3 +8335,29 @@ and reported "duplicate". Warming each thread's connection **before**
 `barrier.wait()` restored the failure. If the first thing your barriered
 workers do is acquire a shared, lock-serialised resource, the barrier is
 synchronising the wrong instant.
+
+---
+
+## When the guarantee is "this is never invoked", assert on the CALL, not on the effect
+
+**TASK-21113, 2026-08-24.** The screen pre-importer gained a proportional
+sleep between route imports. task-21110's initial-screen warm-up shares that
+same method with a one-route list, so the guarantee for it is "nothing is
+added in front of the single import". The test asserted that no `time.sleep`
+happened. Mutating `if index:` (pause between routes) to `if True:` (pause
+before every route) **survived**: the first route's pause is computed from a
+`previous_cost` of `0.0`, so it sleeps nothing — while still probing the
+navigation lock and still being able to park. The observable effect the test
+watched was absent under the defect; the defect was not.
+
+**What to do.** Where the contract is "not invoked", spy the invocation
+(`monkeypatch.setattr(obj, "_pause_between_preimports", calls.append)`) rather
+than one of its downstream effects. A zero-valued or short-circuiting call is
+invisible to an effect-based assertion and is exactly the shape a refactor
+introduces. Effect-based assertions are fine for "invoked with X"; they are
+not evidence for "not invoked at all".
+
+**Same task, cheaper trap:** a poll bound built by accumulating a float
+(`waited += 0.05` against a `5.0` limit) is off by one at random — a hundred
+additions of `0.05` do not reliably reach `5.0`. Count polls against an
+integer budget derived once from the two constants.
