@@ -42,30 +42,40 @@ jobs:
     # task-1465: full coverage on every PR replaces `-m unit` (which selected
     # 27 of ~950 files while ~590 files ran in no PR-triggered job). The UI
     # shard is its own job below; OS/Python breadth lives in nightly-deep.
-    name: Core Tests (all but UI) - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    # 120, not 60: the suite grew past the old budget -- the ubuntu leg was
-    # killed by the 60-minute cap mid-run (TASK-18608) while the macOS leg
-    # finished at ~58m. 2x headroom over the observed ~60m worst leg.
+    #
+    # TASK-21411: sharded, because the 120-minute budget stopped being the
+    # question. Read from a killed run's own log: the ubuntu leg started
+    # pytest at 15:44:55 and was still emitting progress steadily -- no
+    # stall -- when the cap killed it at 17:39 having reached **60%**. So the
+    # suite needs ~190 minutes on a 4-vCPU runner, and no timeout this side
+    # of GitHub's 6-hour ceiling makes a single job a sane place to put it.
+    # Six deterministic pytest-shard slices are ~32 min each, roughly a
+    # quarter of the budget, and xdist still parallelizes within each slice.
+    #
+    # ubuntu only, on purpose. macOS runners are the scarce ones -- queue
+    # waits of 42-90 minutes are routine here -- and multiplying the scarcest
+    # pool by six would cost more in queueing than it buys in coverage. macOS
+    # breadth already lives in nightly-deep, which is where it belongs.
+    name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
+    runs-on: ubuntu-latest
+    # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
+    # ~4x margin rather than a target. A shard that approaches it is a signal
+    # to resize the matrix, not to raise the cap again.
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: macos-latest
-            python-version: "3.12"
+        shard: [0, 1, 2, 3, 4, 5]
 
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.12"
         cache: 'pip'
 
     - name: Install all dependencies
@@ -86,18 +96,23 @@ jobs:
         python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
     - name: Run core tests in parallel
+      # pytest-shard slices the collected list deterministically, so the union
+      # of the six shards is exactly the set one unsharded job would have run
+      # -- the same contract the UI job below relies on.
       run: |
         pytest Tests --ignore=Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=6 \
           --timeout=300 \
           --json-report --json-report-omit log \
-          --json-report-file=core-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json
+          --json-report-file=core-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: core-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        # Per-shard, so matrix siblings cannot overwrite each other's report.
+        name: core-test-results-${{ matrix.shard }}
         path: |
           core-test-results-*.json
 
@@ -432,3 +447,26 @@ jobs:
             repo: context.repo.repo,
             body: summary
           });
+
+    # TASK-21411: this job declares `needs:` and `if: always()`, which makes it
+    # RUN after those jobs whatever they did -- it never inspected what they
+    # did. On run 32647831275 it reported `success` while all twelve UI shards
+    # were red. A summary that cannot go red is not a gate, and this is the
+    # check most likely to be marked required.
+    #
+    # `always()` stays: the summary is worth publishing on failure too. The
+    # verdict is the LAST step, after the comment is posted above,
+    # so a red suite still leaves a readable PR comment behind.
+    - name: Require every gated job to have succeeded
+      if: >-
+        needs.core-tests.result != 'success' ||
+        needs.ui-tests.result != 'success' ||
+        needs.textual-minimum.result != 'success' ||
+        needs.artifact-lease-gate.result != 'success'
+      run: |
+        echo "core-tests:          ${{ needs.core-tests.result }}"
+        echo "ui-tests:            ${{ needs.ui-tests.result }}"
+        echo "textual-minimum:     ${{ needs.textual-minimum.result }}"
+        echo "artifact-lease-gate: ${{ needs.artifact-lease-gate.result }}"
+        echo "::error::A gated test job did not succeed; see the results above."
+        exit 1
