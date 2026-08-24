@@ -4,7 +4,7 @@ title: Persist Media Reader layout preferences and complete visual QA
 status: Done
 assignee: []
 created_date: '2026-08-24 16:35'
-updated_date: '2026-08-24 17:07'
+updated_date: '2026-08-24 20:25'
 labels:
   - library
   - media
@@ -58,4 +58,11 @@ Production visual QA used the exact `TldwCli.CSS_PATH` stack and a scratch `TLDW
 Documentation now covers the three roles, manual versus responsive collapse, search scopes, Reader modes/actions, local-only Items, server compatibility detail, authoritative complete text, eligible image preview/fallback, delete/Undo/Trash, keyboard behavior, and Appearance settings. Source CSS and generated bundles are synchronized.
 
 Verification: 714 focused reader/settings/config tests passed; after the final concurrency review change, 50 affected shell/settings/config/CSS-integrity tests passed. Ruff, compileall, CSS bundle reproducibility, and `git diff --check` passed. Expected environment warnings were limited to the existing requests dependency-version warning and Python 3.12 `audioop` deprecation. Required review covered stale responses, responsive persistence leakage, hidden controls/focus, resize reads, server claims, complete-text authority, CSS drift, and Watchlists coupling. ADR-084 remains the applicable decision; no new ADR was required. Added the incident-backed config/package import-cycle recurrence to `backlog/docs/lessons-testing-evidence.md`.
+
+CI follow-up reviewed the five added persistent diagnostics before regenerating
+`Docs/security/production-diagnostic-inventory.json`: four are fixed Library
+Media warning messages (two append only an internal backend-qualified canonical
+media id), and one is a fixed Settings refresh warning. None interpolate user
+content, secrets, filesystem paths, or URLs, and no persistent-sink topology
+changed.
 <!-- SECTION:NOTES:END -->
