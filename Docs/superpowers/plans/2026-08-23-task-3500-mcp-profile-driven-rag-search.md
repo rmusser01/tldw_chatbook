@@ -46,7 +46,7 @@ No new production module, dependency, public field, response key, configuration 
 
 - [x] **Step 1: Record the approved spec/base**
 
-Set the spec status to approved and its reviewed base to current `origin/dev`.
+Set the spec status to approved and its reviewed base to `a84e6ba09`.
 
 - [x] **Step 2: Add the mandatory Backlog implementation plan**
 
@@ -92,7 +92,7 @@ and plan commits before Task 1 starts.
 - Modify: `tldw_chatbook/RAG_Search/simplified/active_config.py:31-195,263-265`
 - Modify: `tldw_chatbook/Library/library_local_rag_search_service.py:95-116,1129-1154`
 
-- [ ] **Step 1: Pin and implement the normalizer as one RED/GREEN slice**
+- [x] **Step 1: Pin and implement the normalizer as one RED/GREEN slice**
 
 First add `test_normalize_rag_search_mode_accepts_only_known_exact_values`,
 parameterized over `plain`, `semantic`, `hybrid`, unknown strings, uppercase,
@@ -108,7 +108,7 @@ Expected RED: collection/import fails because `normalize_rag_search_mode` does
 not exist. Add only `_RAG_SEARCH_MODES` and `normalize_rag_search_mode()` from
 Step 3 below, rerun the exact node, and expect PASS.
 
-- [ ] **Step 2: Pin active-profile/env resolution as its own RED/GREEN slice**
+- [x] **Step 2: Pin active-profile/env resolution as its own RED/GREEN slice**
 
 Add a parameterized coupling test covering stored `plain`, `semantic`, `hybrid`, an unknown stored value, a valid `RAG_SEARCH_MODE` override, and an unknown override. Pin both the narrow resolver and full config resolver to the same expected result:
 
@@ -146,7 +146,7 @@ Add only the resolver and `_apply_env_overrides()` delegation below; rerun and
 expect all parameter cases PASS. Then run the fresh-process node separately and
 expect `NO_TORCH`.
 
-- [ ] **Step 3: Use these minimal shared mode implementations**
+- [x] **Step 3: Use these minimal shared mode implementations**
 
 In `active_config.py`, add:
 
@@ -180,7 +180,7 @@ config.search.default_search_mode = normalize_rag_search_mode(
 
 Do not strip or lowercase values; exact known strings retain Library's current behavior and everything else safely becomes `semantic`.
 
-- [ ] **Step 4: Pin and implement Library delegation as one RED/GREEN slice**
+- [x] **Step 4: Pin and implement Library delegation as one RED/GREEN slice**
 
 In the Library mode test, monkeypatch the module's imported normalizer and
 assert `_resolve_profile_search_mode()` delegates to it, so a future local
@@ -200,7 +200,7 @@ return normalize_rag_search_mode(mode)
 
 Update its return docstring to say `plain`, `semantic`, or `hybrid` instead of naming the deleted tuple. Rerun the exact node and expect PASS.
 
-- [ ] **Step 5: Run the aggregate focused mode tests**
+- [x] **Step 5: Run the aggregate focused mode tests**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py -q
@@ -208,7 +208,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: all tests PASS, including both fresh-process no-`torch` checks.
 
-- [ ] **Step 6: Commit the shared rule**
+- [x] **Step 6: Commit the shared rule**
 
 ```bash
 git add Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py tldw_chatbook/RAG_Search/simplified/active_config.py tldw_chatbook/Library/library_local_rag_search_service.py
@@ -221,7 +221,7 @@ git commit -m "feat(rag): share active profile search mode"
 - Add: `Tests/RAG/simplified/test_metadata_filter_matching.py`
 - Modify: `tldw_chatbook/RAG_Search/simplified/rag_service.py:1494-1556,3085-3230`
 
-- [ ] **Step 1: Pin and implement the value matcher as one RED/GREEN slice**
+- [x] **Step 1: Pin and implement the value matcher as one RED/GREEN slice**
 
 Cover exact scalar equality, exact mapping equality without `$in`, valid single/multi-value `$in`, and malformed `$in` (string, mapping, extra operator key, non-collection) failing closed. Then exercise all three production sites:
 
@@ -253,7 +253,7 @@ def _metadata_filter_value_matches(actual: Any, expected: Any) -> bool:
         return False
 ```
 
-- [ ] **Step 2: Pin each production call site after the helper is green**
+- [x] **Step 2: Pin each production call site after the helper is green**
 
 Add and run these nodes one at a time, before wiring that site:
 
@@ -277,7 +277,7 @@ semantic site's current `metadata.get` behavior and the keyword sites' current
 `if k in item_meta` behavior.
 This sequencing is the mutation evidence for all three call-site wires.
 
-- [ ] **Step 3: Document the exact supported filter contract**
+- [x] **Step 3: Document the exact supported filter contract**
 
 Update the public/filter parameter documentation at every owner that currently
 says equality-only: `RAGService.search`, `_semantic_search_scoped`,
@@ -285,7 +285,7 @@ says equality-only: `RAGService.search`, `_semantic_search_scoped`,
 `_create_keyword_result_with_citations`. Each must say exact equality plus the
 single-key `$in` membership form; do not advertise a general operator language.
 
-- [ ] **Step 4: Run focused engine coverage**
+- [x] **Step 4: Run focused engine coverage**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_metadata_filter_matching.py Tests/RAG_Search/test_hybrid_allowlist_pushdown.py Tests/RAG_Search/test_keyword_leg_pushdown.py -q
@@ -293,7 +293,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: all tests PASS; existing allowlist and keyword pushdown behavior remains unchanged.
 
-- [ ] **Step 5: Commit the root fix**
+- [x] **Step 5: Commit the root fix**
 
 ```bash
 git add Tests/RAG/simplified/test_metadata_filter_matching.py tldw_chatbook/RAG_Search/simplified/rag_service.py
@@ -308,7 +308,7 @@ git commit -m "fix(rag): honor media type membership filters"
 - Modify: `tldw_chatbook/RAG_Search/simplified/search_service.py:8-109`
 - Modify: `tldw_chatbook/MCP/tools.py:273-315`
 
-- [ ] **Step 1: Make construction lazy in an isolated RED/GREEN slice**
+- [x] **Step 1: Make construction lazy in an isolated RED/GREEN slice**
 
 Use the real `SimplifiedRAGSearchService(media_db)` constructor. Monkeypatch
 the obsolete factory with `raising=False` to fail if called (so the same test
@@ -331,7 +331,7 @@ def __init__(self, media_db: MediaDatabase):
     self.rag_service = None
 ```
 
-- [ ] **Step 2: Add plain profile routing as its own RED/GREEN slice**
+- [x] **Step 2: Add plain profile routing as its own RED/GREEN slice**
 
 Add `test_profile_plain_routes_to_keyword_without_resolving_shared_runtime`,
 using the real MediaDatabase keyword path and a fail-fast shared resolver.
@@ -344,7 +344,7 @@ Expected RED: `profile_search` is missing. Add only `profile_search()` with the
 plain branch and a temporary call to the not-yet-implemented enhanced helper
 for other normalized modes. Rerun the exact node and expect PASS.
 
-- [ ] **Step 3: Add semantic/hybrid confinement one parameterized RED/GREEN slice**
+- [x] **Step 3: Add semantic/hybrid confinement one parameterized RED/GREEN slice**
 
 Add `test_profile_enhanced_routes_are_media_confined`, parameterized for
 `semantic`/`hybrid` and single/multi-value media filters. Assert exact
@@ -388,7 +388,7 @@ async def _enhanced_search(self, query, limit, media_types, *, search_type):
 
 Keep `semantic_search()` as an explicit semantic wrapper around `_enhanced_search`. Extract the existing mapping loop unchanged into `_format_enhanced_results()`. Do not catch `service.search()` exceptions, cache the production shared service, or mutate its config.
 
-- [ ] **Step 4: Pin lifecycle, fallback, error, and metadata behavior individually**
+- [x] **Step 4: Pin lifecycle, fallback, error, and metadata behavior individually**
 
 After the injected enhanced route exists, add/run these exact nodes in order:
 
@@ -445,7 +445,7 @@ Expected: both PASS. They guard the two intentional negative constraints: do
 not broaden the acquisition catch around `service.search()`, and do not drop
 nested fusion/reranking provenance in formatting.
 
-- [ ] **Step 5: Preserve the public MCP switch in its own RED/GREEN slice**
+- [x] **Step 5: Preserve the public MCP switch in its own RED/GREEN slice**
 
 Update the MCP tool stub to expose `profile_search()`. Add/rename exact tests
 `test_perform_rag_search_default_uses_profile_search` and
@@ -475,7 +475,7 @@ else:
 
 Keep the existing formatter and `[{'error': ...}]` exception boundary. Update the Args text: false forces media keyword search; true/omitted follows the active profile.
 
-- [ ] **Step 6: Run aggregate adapter, tool, and shared-runtime tests**
+- [x] **Step 6: Run aggregate adapter, tool, and shared-runtime tests**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py Tests/MCP/test_rag_search_tool.py -q
@@ -484,7 +484,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: all selected tests PASS. The plain-mode test proves no model/runtime construction; the real MediaDatabase keyword tests prove the fallback/override path.
 
-- [ ] **Step 7: Commit the MCP routing change**
+- [x] **Step 7: Commit the MCP routing change**
 
 ```bash
 git add Tests/RAG/simplified/test_search_service.py Tests/MCP/test_rag_search_tool.py tldw_chatbook/RAG_Search/simplified/search_service.py tldw_chatbook/MCP/tools.py
@@ -497,7 +497,7 @@ git commit -m "feat(mcp): follow active RAG profile"
 - Modify: `Tests/RAG_Search/test_reranker_construction.py:113-241,290-390`
 - Modify: `tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py:151-170,310-362,436-466`
 
-- [ ] **Step 1: Pin construction state as one RED/GREEN slice**
+- [x] **Step 1: Pin construction state as one RED/GREEN slice**
 
 Add `test_reranker_construction_failure_records_safe_unavailability`. Patch the
 factory to raise `RuntimeError("secret-token-value")`; assert the service stays
@@ -512,7 +512,7 @@ Expected RED: `_reranker_unavailable_reason` is missing and the warning exposes
 the exception message. Add `_configure_reranker()` and call it from `__init__`,
 then rerun the exact node to PASS.
 
-- [ ] **Step 2: Centralize reranker setup with this implementation**
+- [x] **Step 2: Centralize reranker setup with this implementation**
 
 Add one owner method and call it from both `__init__` and `switch_profile`:
 
@@ -538,7 +538,7 @@ def _configure_reranker(self) -> None:
 
 Do not log or expose `str(exc)` on this construction path.
 
-- [ ] **Step 3: Pin one-result disclosure as one RED/GREEN slice**
+- [x] **Step 3: Pin one-result disclosure as one RED/GREEN slice**
 
 Add `test_construction_failure_tags_one_base_result_without_mutating_original`.
 Patch only `EnhancedRAGService.search` to return one deterministic real
@@ -570,7 +570,7 @@ if (
 
 This deliberately includes a single result, per ADR-084. Do not create a tag when reranking is disabled or no base result exists.
 
-- [ ] **Step 4: Pin profile-switch cleanup as one RED/GREEN slice**
+- [x] **Step 4: Pin profile-switch cleanup as one RED/GREEN slice**
 
 Add `test_switch_profile_clears_stale_reranker_and_unavailability_reason`,
 using this exact state sequence:
@@ -591,7 +591,7 @@ reason, and the disabled profile can retain the previous reranker because the
 duplicated switch block does not reset state first. Replace that block with
 `self._configure_reranker()`, rerun, and expect every transition above to PASS.
 
-- [ ] **Step 5: Run all shared reranking degradation coverage**
+- [x] **Step 5: Run all shared reranking degradation coverage**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG_Search/test_reranker_construction.py Tests/RAG_Search/test_reranker_degraded_paths.py -q
@@ -599,7 +599,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: all tests PASS; existing runtime failure/degraded and cache-poisoning behavior remains green.
 
-- [ ] **Step 6: Commit shared-runtime honesty**
+- [x] **Step 6: Commit shared-runtime honesty**
 
 ```bash
 git add Tests/RAG_Search/test_reranker_construction.py tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py
@@ -613,7 +613,7 @@ git commit -m "fix(rag): disclose unavailable reranker setup"
 - Modify: `tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:30-34,502-554`
 - Modify: `tldw_chatbook/Library/library_rag_state.py:1692-1722`
 
-- [ ] **Step 1: Pin one fused-row defect before changing the shim**
+- [x] **Step 1: Pin one fused-row defect before changing the shim**
 
 Add `test_extract_scored_rows_reads_nested_hybrid_vector_score`, using fused
 top-level score `0.016` and nested vector score `0.8`. Assert the extracted
@@ -627,7 +627,7 @@ Expected RED: `_ScoredRow` has no `score_kind`/`vector_score`, and the fused
 `0.016` is misread as weak vector similarity. Implement the shim/extraction
 change in Step 2, rerun this node, and expect PASS.
 
-- [ ] **Step 2: Extend the duck-typed shim with shared provenance**
+- [x] **Step 2: Extend the duck-typed shim with shared provenance**
 
 Import `library_rag_result_score_kind` from `Library.library_rag_score_kinds`. Change the shim to:
 
@@ -655,7 +655,7 @@ scored_rows.append(_ScoredRow(row.get("score"), score_kind, vector_score))
 
 Do not teach `library_rag_result_score_kind()` to recurse or duplicate score rules in MCP.
 
-- [ ] **Step 3: Add the remaining provenance matrix after the seam is reachable**
+- [x] **Step 3: Add the remaining provenance matrix after the seam is reachable**
 
 Add direct `_extract_scored_rows` assertions plus summary assertions for:
 
@@ -679,11 +679,11 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 Expected: PASS. Passing only the outer row would make the fused and reranker
 cases fail, so the matrix is the mutation guard for nested metadata ordering.
 
-- [ ] **Step 4: Correct the stale shared-helper docstring**
+- [x] **Step 4: Correct the stale shared-helper docstring**
 
 Update `library_rag_all_matches_weak()`'s Args note so it describes the MCP shim as carrying `.score`, `.score_kind`, and `.vector_score` rather than claiming it has only a score slot.
 
-- [ ] **Step 5: Run inspector and Library score-kind coverage**
+- [x] **Step 5: Run inspector and Library score-kind coverage**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_mcp_inspector.py Tests/Library/test_library_rag_state.py -q
@@ -691,7 +691,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: all tests PASS; non-RAG row shapes and empty/error summaries remain unchanged.
 
-- [ ] **Step 6: Commit truthful score interpretation**
+- [x] **Step 6: Commit truthful score interpretation**
 
 ```bash
 git add Tests/UI/test_mcp_inspector.py tldw_chatbook/UI/MCP_Modules/mcp_inspector.py tldw_chatbook/Library/library_rag_state.py
@@ -707,13 +707,13 @@ git commit -m "fix(mcp): interpret RAG score provenance"
 - Modify: `Docs/Design/MCP.md:198-207`
 - Modify: `Docs/User_Guide/mcp.md:43-62,261-299`
 
-- [ ] **Step 1: Write failing public-copy contract tests**
+- [x] **Step 1: Write failing public-copy contract tests**
 
 In the built-in manifest test, assert `search_rag` retains the same four properties, `use_semantic.default is True`, and the AST-derived tool description names the active RAG profile.
 
 In the documentation contract, normalize both MCP documents and require all three facts: false forces media keyword search; true or omission follows the active profile; the recognized modes are `plain`, `semantic`, and `hybrid`. Add a User Guide assertion that weak-match disclosure uses actual similarity provenance: a hybrid row may use its preserved vector leg, while FTS-only hybrid, reranker, and unscored keyword rows are not cosine-banded.
 
-- [ ] **Step 2: Run the documentation contracts and record RED evidence**
+- [x] **Step 2: Run the documentation contracts and record RED evidence**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py -q
@@ -721,7 +721,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: FAIL only on the new profile-routing copy assertions; inventory/schema-shape assertions remain green.
 
-- [ ] **Step 3: Update tool and user-facing documentation**
+- [x] **Step 3: Update tool and user-facing documentation**
 
 Change the standalone registration's first docstring line to:
 
@@ -745,7 +745,7 @@ an actual vector similarity: ordinary semantic rows use their score, hybrid
 rows use the preserved vector leg when present, and FTS-only hybrid, reranker,
 and unscored keyword rows do not trigger a cosine-similarity claim.
 
-- [ ] **Step 4: Run MCP documentation and tool contracts**
+- [x] **Step 4: Run MCP documentation and tool contracts**
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py Tests/MCP/test_rag_search_tool.py -q
@@ -753,7 +753,7 @@ PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python 
 
 Expected: all tests PASS with the public field names/default and seven-key result rows unchanged.
 
-- [ ] **Step 5: Commit public documentation**
+- [x] **Step 5: Commit public documentation**
 
 ```bash
 git add Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py tldw_chatbook/MCP/server.py Docs/Design/MCP.md Docs/User_Guide/mcp.md
@@ -795,33 +795,41 @@ keyword-leg filtering, and shared singleton reset/generation ownership.
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check tldw_chatbook/RAG_Search/simplified/active_config.py tldw_chatbook/Library/library_local_rag_search_service.py tldw_chatbook/RAG_Search/simplified/rag_service.py tldw_chatbook/RAG_Search/simplified/search_service.py tldw_chatbook/MCP/tools.py tldw_chatbook/MCP/server.py tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py tldw_chatbook/UI/MCP_Modules/mcp_inspector.py tldw_chatbook/Library/library_rag_state.py Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py Tests/RAG/simplified/test_metadata_filter_matching.py Tests/RAG/simplified/test_search_service.py Tests/RAG_Search/test_reranker_construction.py Tests/MCP/test_rag_search_tool.py Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py Tests/UI/test_mcp_inspector.py
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/RAG_Search/simplified/active_config.py tldw_chatbook/Library/library_local_rag_search_service.py tldw_chatbook/RAG_Search/simplified/rag_service.py tldw_chatbook/RAG_Search/simplified/search_service.py tldw_chatbook/MCP/tools.py tldw_chatbook/MCP/server.py tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py tldw_chatbook/UI/MCP_Modules/mcp_inspector.py tldw_chatbook/Library/library_rag_state.py Tests/RAG/test_active_config_resolution.py Tests/Library/test_library_rag_mode_resolution.py Tests/RAG/simplified/test_metadata_filter_matching.py Tests/RAG/simplified/test_search_service.py Tests/RAG_Search/test_reranker_construction.py Tests/MCP/test_rag_search_tool.py Tests/MCP/test_builtin_tool_imports.py Tests/MCP/test_mcp_documentation_contract.py Tests/UI/test_mcp_inspector.py
-git diff --check origin/dev...HEAD
+git diff --check a84e6ba09...HEAD
 ```
 
 Expected: all commands exit `0`; Ruff and `git diff --check` report no findings. Repository CI and the full suite are intentionally excluded per user direction.
 
 **Closeout deviation (2026-08-24).** The prescribed whole-file Ruff gates were
-run over the dynamic `git diff --name-only origin/dev...HEAD -- '*.py'` set
-(21 HEAD files; 20 have an `origin/dev` counterpart and one is new). They do
-not exit zero because the current checkout retains inherited debt: HEAD reports
-seven `E702` findings in `Tests/RAG/test_active_config_resolution.py` and seven
-`E402` findings in `library_local_rag_search_service.py`; the matching
-`origin/dev` snapshots report those same baseline categories plus one `E402`
-and two `F401` findings that this task removes. Similarly, HEAD's 12 files
-that Ruff would reformat are a subset of the 15 counterpart baseline files.
-The sole new Python file, `test_metadata_filter_matching.py`, was formatted and
-then passed its focused test and `ruff format --check`. A new TASK-3500 `E402`
-on the shared mode import was repaired by relocating that import into the
-existing top import block (`fix(rag): keep shared mode import ordered`); no
-baseline formatting or lint debt was churned. This differential evidence is
-the acceptance gate for static hygiene, and `git diff --check origin/dev...HEAD`
-remains required to exit zero.
+run over the dynamic `git diff --name-only a84e6ba09...HEAD -- '*.py'` set
+(21 HEAD files; 20 have an `a84e6ba09` counterpart and one is new). They do
+not exit zero because the checkout retains baseline debt: the changed-file
+whole-file check reports seven `E702` findings in
+`Tests/RAG/test_active_config_resolution.py` and seven `E402` findings in
+`library_local_rag_search_service.py`; the pinned-base snapshots report those
+categories plus one `E402` and two `F401` findings. Whole-file format likewise
+still reports baseline candidates. The sole new Python file,
+`test_metadata_filter_matching.py`, was formatted and passed its focused test
+and `ruff format --check`. A TASK-3500 `E402` on the shared mode import was
+repaired by relocating that import into the existing top import block
+(`fix(rag): keep shared mode import ordered`). After the style closeout, a
+line-differential audit intersects each changed Python file's task-added lines
+from `git diff --unified=0 a84e6ba09` with the current-source lines changed by
+`ruff format --diff`; it reports zero remaining TASK-3500-owned formatter
+overlaps. This differential evidence is the acceptance gate for static hygiene,
+and `git diff --check a84e6ba09...HEAD` remains required to exit zero.
+
+**Review-loop correction (2026-08-24).** A closeout review reopened Task 7 to
+make the behavioral command reproducible, correct the vacuous-selector exit
+evidence, and format only TASK-3500-owned lines. The completed plan records the
+additional focused style shard and the post-fix line-differential audit; no
+semantic production change was introduced by this review loop.
 
 - [x] **Step 4: Review the final diff against scope and ADR-084**
 
 ```bash
-git diff --stat origin/dev...HEAD
-git diff origin/dev...HEAD -- tldw_chatbook/RAG_Search/simplified/search_service.py tldw_chatbook/MCP/tools.py tldw_chatbook/RAG_Search/simplified/rag_service.py tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py tldw_chatbook/UI/MCP_Modules/mcp_inspector.py
+git diff --stat a84e6ba09...HEAD
+git diff a84e6ba09...HEAD -- tldw_chatbook/RAG_Search/simplified/search_service.py tldw_chatbook/MCP/tools.py tldw_chatbook/RAG_Search/simplified/rag_service.py tldw_chatbook/RAG_Search/simplified/enhanced_rag_service_v2.py tldw_chatbook/UI/MCP_Modules/mcp_inspector.py
 ```
 
 Confirm: no Library multi-source routing, no MCP-local service cache, no eager enhanced construction, no non-media allowlist, no fabricated keyword/vector score, no raw construction exception disclosure, and no public schema/key changes.
@@ -863,4 +871,4 @@ backlog task 3500 --plain
 git log --oneline --decorate -12
 ```
 
-Expected: clean worktree; TASK-3500 is `Done` with six checked ACs, ADR/implementation notes, and exact local evidence; commits are based on current `origin/dev`.
+Expected: clean worktree; TASK-3500 is `Done` with six checked ACs, ADR/implementation notes, and exact local evidence; commits are based on pinned base `a84e6ba09`.
