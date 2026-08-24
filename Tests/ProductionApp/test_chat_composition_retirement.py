@@ -52,7 +52,7 @@ def isolated_video_store(monkeypatch: pytest.MonkeyPatch, tmp_path):
         lambda: data_root,
     )
     monkeypatch.setattr(
-        "tldw_chatbook.Video_Generation.video_store.get_video_generation_config",
+        "tldw_chatbook.Video_Generation.video_store.get_video_store_policy",
         lambda: config,
     )
     return data_root / "generated_videos", config

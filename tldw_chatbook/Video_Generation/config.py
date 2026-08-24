@@ -219,6 +219,50 @@ def _load_video_generation_section() -> tuple[dict, dict[str, str]]:
 
 
 @dataclass(frozen=True)
+class VideoStorePolicy:
+    """The only three settings ``VideoStore`` reads. No secrets involved.
+
+    Field names and value normalization match ``VideoGenerationConfig``
+    exactly, so the store cannot tell the two apart (it reads all three via
+    ``getattr(config, name, default)``).
+    """
+
+    retention: str
+    retention_ttl_hours: int
+    max_store_mb: int
+
+
+def get_video_store_policy() -> VideoStorePolicy:
+    """Read the generated-video retention/capacity policy without any secret.
+
+    ``VideoStore`` is constructed and asked to ``enforce_retention()`` inside
+    ``TldwCli.__init__``. Routing that through ``get_video_generation_config()``
+    made every single boot resolve the MiniMax API key, whose last resort is
+    ``keyring.get_password(...)`` -- a real OS credential-store round trip,
+    measured at **18.2 ms** on macOS (11.3 ms of keyring backend discovery +
+    the Security.framework ctypes load, then the Keychain query itself), for a
+    secret the store never looks at. On a locked keychain that call can block
+    or raise a consent dialog during startup. TASK-21111(b).
+
+    Returns:
+        The retention mode, TTL and capacity, normalized exactly as
+        ``get_video_generation_config`` normalizes them.
+    """
+    raw = _read_video_generation_toml()
+    if not isinstance(raw, dict):
+        raw = {}
+    return VideoStorePolicy(
+        retention=_coerce_choice(
+            raw.get("retention"), default=DEFAULT_RETENTION, allowed={"session", "ttl"}
+        ),
+        retention_ttl_hours=max(
+            1, _coerce_int(raw.get("retention_ttl_hours"), DEFAULT_RETENTION_TTL_HOURS)
+        ),
+        max_store_mb=max(1, _coerce_int(raw.get("max_store_mb"), DEFAULT_MAX_STORE_MB)),
+    )
+
+
+@dataclass(frozen=True)
 class VideoGenerationConfig:
     default_backend: str | None
     enabled_backends: list[str]

@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -237,17 +237,51 @@ class LocalSkillsService:
         store_dir: str | Path,
         policy_enforcer: Any | None = None,
         trust_service: Any | None = None,
+        trust_service_factory: Callable[[], Any] | None = None,
         allow_untrusted_without_trust_service: bool = False,
     ) -> None:
+        """Construct the local skill library service.
+
+        Args:
+            store_dir: Root of the local skill store.
+            policy_enforcer: Optional authorization policy enforcer.
+            trust_service: A ready trust service, or None for "no trust
+                service configured" (the escape-hatch shape tests use).
+            trust_service_factory: A zero-argument builder consulted the
+                first time ``trust_service`` is read, and memoized. The app
+                passes this because building the trust service performs OS
+                keyring backend discovery, and the Console's agent bridge
+                takes this service at screen mount while nothing has yet
+                asked a trust question (TASK-21111(b)).
+            allow_untrusted_without_trust_service: Escape hatch for a
+                deliberately trust-service-less service.
+        """
         self.store_dir = Path(store_dir)
         self.skills_dir = self.store_dir / _SKILLS_DIRNAME
         self.index_path = self.store_dir / _INDEX_FILENAME
         self.policy_enforcer = policy_enforcer
-        self.trust_service = trust_service
+        self._trust_service = trust_service
+        self._trust_service_factory = trust_service_factory
         self.allow_untrusted_without_trust_service = (
             allow_untrusted_without_trust_service
         )
         self._lock = asyncio.Lock()
+
+    @property
+    def trust_service(self) -> Any | None:
+        """The trust service, built on first read when deferred.
+
+        Stays ``None`` -- the documented "no trust service" state that every
+        call site guards on -- when neither a service nor a factory was
+        supplied.
+        """
+        if self._trust_service is None and self._trust_service_factory is not None:
+            self._trust_service = self._trust_service_factory()
+        return self._trust_service
+
+    @trust_service.setter
+    def trust_service(self, service: Any | None) -> None:
+        self._trust_service = service
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
