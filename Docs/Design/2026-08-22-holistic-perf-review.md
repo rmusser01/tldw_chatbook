@@ -506,6 +506,84 @@ silently edited.
 
 ---
 
+## Final outcome (2026-08-24)
+
+**30 of 35 findings shipped, across 40 PRs.** Five remain open, and four of those are recommended
+for closure rather than work — see below.
+
+### What the burn-down actually bought
+
+The wins that a user on the constrained hardware this review targets would notice, largest first:
+
+| finding | measure | before | after |
+|---|---|---|---|
+| 21730 (found mid-burn-down) | boot closure / time-to-interactive | 703 modules · 2699 ms | **637 · 2478 ms** |
+| 21130 | TTS v3→v4 migration peak memory | 966.9 MiB | **88.0 MiB** |
+| 21110 | first boot after upgrade, splash close → usable | 2.103 s | **1.128 s** |
+| 21127 | Research: connection opens / loop-side DB time | 1741 · 877 ms | **3 · 29 ms** |
+| 21131 | Notifications feed + mark_presented | 15.39 ms | **0.899 ms** |
+| 21129 | notes-sync per action @1k bindings; worst loop stall | 149.6 ms · 1495 ms | **2.96 ms · 2.40 ms** |
+| 21126 | Library legacy-chunk census (200k rows) | 118.8 ms | **23.4 ms** |
+| 21692 | composer blink tick | 396 `Widget.arrange`/6 ticks | **0** |
+| 21111 | app construction; keyring calls at boot | 77.0 ms · 4 | **60.9 ms · 0** |
+| 21134 item 1 | setup-modal snow idle burn | 6.2% of a core | **2.7%** |
+
+Two changes fixed correctness, not speed: 21131 took concurrent event recording from **9 of 12
+`IntegrityError`s to zero**, and 21127's `BEGIN IMMEDIATE` conversion eliminated a lost-update race
+(40 writes reporting success while the version advanced 11 times).
+
+### The dominant lesson: a finding tells you where to look, not what to do
+
+**Five of seven re-verified findings needed correcting before dispatch, and then nearly every
+implementer corrected its brief again during implementation.** Recorded here because the pattern
+matters more than any single number:
+
+- **21126** — the prescribed index would have shipped **dead**. It measured 112 → 3.4 ms only
+  because the probe had run `ANALYZE`; no media database in the wild has `sqlite_stat1`, and with
+  stats absent it was 118.8 vs 120.2 ms. The shipped index leads with a *redundant* column so the
+  no-stats planner will pick it at all.
+- **21130** — the cited call site is one real upgrades never take.
+- **21111** — the three named keyring sites bank **0 ms**; `keyring.get_keyring()` memoizes, so
+  whoever runs first pays for everyone.
+- **21129** — "no index on `root_id`" was false; **88%** of the read was dataclass hydration.
+- **21134 item 5** — the "close the leaked connections" fix measured **worse** (128 → 160 ms),
+  because the leaked handles were acting as WAL anchors.
+- **21134 item 2** — the casefold UDF runs n+2 times, not the filed 2n.
+- **21731** — the filed import chain was wrong on all three files; and deferring only the real edge
+  would have turned both guards green while leaving 62 of 67 modules loading before first paint.
+- **21113** — "a short sleep bounds GIL contention to one module" is impossible with one thread.
+
+### Guard hygiene, which turned out to matter as much as the fixes
+
+Three guards were found **silently red on dev**: the boot-closure weight guard, the chunking-closure
+guard, and the derived-artifacts gate (twice, from stale diagnostic-inventory pins — which blocks
+*every* PR in the repo, not just the offender's). A guard nobody runs protects nothing;
+`MAX_TLDW_MODULE_COUNT` was deliberately **not** raised to accommodate the regression it caught.
+
+### Still open
+
+- **21123** — the import half shipped (PIL off the post-paint loop). The architectural relocation is
+  deferred: `super().recompose()` removes every child, so an app-level owner reacting only to
+  screen-change events would silently lose the Buddy. **Owner decision.**
+- **21107 · 21109 · 21120 · 21132 — recommended for closure, each with the measurement that
+  retired it.** 21107 is ~19 ms and its prescribed fix cannot compile (the spec table stores schema
+  classes as runtime values, and a test already allowlists the import as deliberate). 21109 is
+  sub-millisecond in practice, and deferring it would let the default `session` sweep delete a video
+  published that session. 21120 is mis-stated on all three legs, and its one real cost already
+  shipped as 21692. 21132's recursion walks *upward*, so it is empty for the default profile and
+  already off-loop; the "fix" is a query inversion, not a filter.
+
+### Filed during the burn-down, not part of the original 35
+
+`21441` (v48 broke self-migration; 15 tests red) · `21531` (four dev reds from stale doubles) ·
+`21532` · `21590` (**Console send had 26 red tests and no working baseline** — send itself proved
+healthy) · `21591` (`skip_on_keypress` cannot fire) · `21592` · `21593` · `21594` · `21595` ·
+`21596` · `21700` (**RAG cache-hit log writes the user's search query to a persistent sink**) ·
+`21731` · `22000` (**users cannot queue a follow-up during a run, behind a button that says they
+can**) · `22030` (**a failed DB open makes Send silently do nothing**).
+
+---
+
 ## Verified clean — do not re-fix
 
 - **All 13 audited 2026-08-11 fix families are structurally intact** (checked one by one):

@@ -55,3 +55,13 @@ prior-session video marker can briefly resolve to a file that is about to vanish
 **Revised severity: low, bordering on not-worth-doing.** If something here is worth shipping, it
 is the smaller honest win — stop creating `.generated_videos.capacity.lock` in every profile's
 data dir at every boot for users who have never generated a video.
+
+## Closure recommendation (2026-08-24, burn-down close-out)
+
+**Recommend closing without work.** Sub-millisecond in practice: for a user with no videos the whole pass is one mkdir, one lock-file create, one flock, one failed scandir. The 5 s stall needs a second instance mid-save, and boot already catches VideoStoreBusyError. Worse, the prescribed deferral is unsafe -- the default retention mode is "session", which deletes everything, so moving the pass past first paint opens a window where a video published this session is wiped.
+
+Left open rather than closed unilaterally: retiring a filed finding is the owner's call. The
+evidence above is what a re-verification pass measured against dev before dispatch; if it is
+accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
+real and only the cost or the prescribed fix was wrong.
+
