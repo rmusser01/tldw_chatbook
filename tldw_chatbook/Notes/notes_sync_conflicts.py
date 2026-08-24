@@ -42,7 +42,18 @@ class NotesSyncConflictChoice(StrEnum):
 
 
 def eligible_conflict_reason(reason_code: str, *, managed: bool) -> bool:
-    """Return whether one un-managed reason supports inline resolution."""
+    """Return whether one unmanaged reason supports inline resolution.
+
+    Args:
+        reason_code: Stable reconciliation reason code to evaluate.
+        managed: Whether the binding is managed by a lasting-sync root.
+
+    Returns:
+        ``True`` when the reason is eligible and the binding is unmanaged.
+
+    Raises:
+        TypeError: If ``managed`` is not a boolean.
+    """
 
     if type(managed) is not bool:
         raise TypeError("managed must be a boolean")
@@ -251,7 +262,27 @@ def build_conflict_comparison(
     note_updated_at: str | None,
     file_modified_ns: int,
 ) -> ConflictComparison:
-    """Build one bounded Note-to-File unified comparison."""
+    """Build one bounded Note-to-File unified comparison.
+
+    Args:
+        binding_id: Opaque identifier of the reviewed binding.
+        title: Note title used only for the bounded display label.
+        relative_path: Normalized path of the bound file.
+        note_text: Complete note content to compare.
+        file_text: Complete file content to compare.
+        note_version: Version of the observed note.
+        note_updated_at: Optional ISO-8601 note update timestamp.
+        file_modified_ns: File modification timestamp in nanoseconds.
+
+    Returns:
+        A validated, privacy-bounded comparison projection.
+
+    Raises:
+        TypeError: If comparison content or projection fields have invalid
+            types.
+        ValueError: If an identifier, path, version, timestamp, or display
+            field is invalid.
+    """
 
     if type(note_text) is not str or type(file_text) is not str:
         raise TypeError("comparison inputs must be strings")
@@ -306,7 +337,17 @@ def build_conflict_comparison(
 
 
 def conflict_copies_folder_id(note_scope_id: str) -> str:
-    """Return the stable top-level conflict-copies folder ID."""
+    """Return the stable top-level conflict-copies folder ID.
+
+    Args:
+        note_scope_id: Opaque identifier of the note scope.
+
+    Returns:
+        A deterministic opaque folder identifier.
+
+    Raises:
+        ValueError: If ``note_scope_id`` is invalid.
+    """
 
     validate_notes_sync_opaque_id(note_scope_id, field_name="note_scope_id")
     return _canonical_id("conflict_copies_folder_v1", note_scope_id)

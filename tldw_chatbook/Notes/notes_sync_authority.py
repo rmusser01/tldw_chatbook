@@ -31,6 +31,15 @@ class NotesSyncAuthorityError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ManualFolderRequest:
+    """Request for deterministic creation or verification of a manual folder.
+
+    Attributes:
+        folder_id: Deterministic opaque identifier for the folder.
+        parent_id: Optional opaque identifier of the parent folder.
+        name: Display name of the requested folder.
+        path_segments: Ordered folder path used for winner verification.
+    """
+
     folder_id: str
     parent_id: str | None
     name: str
@@ -53,6 +62,15 @@ class ManualFolderRequest:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class VerifiedFolder:
+    """Verified identity and version of one active manual folder.
+
+    Attributes:
+        folder_id: Opaque identifier of the verified folder.
+        parent_id: Optional opaque identifier of its parent folder.
+        normalized_path: Canonical normalized folder path.
+        version: Persisted folder version observed during verification.
+    """
+
     folder_id: str
     parent_id: str | None
     normalized_path: str
@@ -61,6 +79,14 @@ class VerifiedFolder:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ConflictNoteRequest:
+    """Request for deterministic creation or verification of a conflict note.
+
+    Attributes:
+        note_id: Deterministic opaque identifier for the conflict copy.
+        title: Bounded title of the conflict copy.
+        content: Exact content the conflict copy must preserve.
+    """
+
     note_id: str
     title: str
     content: str
@@ -78,6 +104,14 @@ class ConflictNoteRequest:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ManualPlacementRequest:
+    """Request for deterministic creation or verification of a placement.
+
+    Attributes:
+        folder_id: Opaque identifier of the target manual folder.
+        note_id: Opaque identifier of the note to place.
+        expected_note_version: Note version authorized for the placement.
+    """
+
     folder_id: str
     note_id: str
     expected_note_version: int
@@ -97,6 +131,15 @@ class ManualPlacementRequest:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class VerifiedPlacement:
+    """Verified identity and version of one active manual placement.
+
+    Attributes:
+        membership_id: Opaque identifier of the folder membership.
+        folder_id: Opaque identifier of the containing folder.
+        note_id: Opaque identifier of the placed note.
+        version: Persisted membership version observed during verification.
+    """
+
     membership_id: str
     folder_id: str
     note_id: str
@@ -105,6 +148,18 @@ class VerifiedPlacement:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class NotesSyncNoteSnapshot:
+    """Private note-authority snapshot used for lasting-sync decisions.
+
+    Attributes:
+        note_scope_id: Opaque identifier of the note authority scope.
+        note_id: Opaque identifier of the note.
+        title: Exact observed note title.
+        content: Exact observed note content.
+        version: Persisted note version.
+        content_digest: Digest that must match ``content``.
+        updated_at: Optional ISO-8601 update timestamp.
+    """
+
     note_scope_id: str
     note_id: str
     title: str

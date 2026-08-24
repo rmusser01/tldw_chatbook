@@ -178,7 +178,21 @@ def notes_sync_recovery_envelope_digest(
     payload: bytes,
     metadata: bytes,
 ) -> str:
-    """Digest one immutable recovery envelope independently of its row."""
+    """Digest one immutable recovery envelope independently of its row.
+
+    Args:
+        kind: Supported recovery operation kind.
+        payload: Immutable recovery payload bytes.
+        metadata: UTF-8 JSON metadata bytes.
+
+    Returns:
+        The hexadecimal SHA-256 digest for the canonical envelope.
+
+    Raises:
+        NotesDeviceStateError: If the kind is unsupported or the metadata is
+            not a valid JSON object.
+        TypeError: If ``payload`` or ``metadata`` is not bytes.
+    """
 
     if kind not in _RECOVERY_ENVELOPE_KINDS:
         raise NotesDeviceStateError("The recovery envelope kind is invalid.")

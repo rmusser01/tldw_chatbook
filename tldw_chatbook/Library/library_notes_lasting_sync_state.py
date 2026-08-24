@@ -414,7 +414,18 @@ class LastingSyncHistory:
 
 
 def validate_lasting_sync_history_page(page: int) -> int:
-    """Return a SQLite-safe page offset for one bounded history projection."""
+    """Return a SQLite-safe page offset for one bounded history projection.
+
+    Args:
+        page: One-based history page number.
+
+    Returns:
+        The zero-based SQLite row offset for ``page``.
+
+    Raises:
+        ValueError: If ``page`` is not a positive integer or its offset would
+            exceed SQLite's integer range.
+    """
 
     if type(page) is not int or page < 1:
         raise ValueError("history page must be a positive integer")

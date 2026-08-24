@@ -758,7 +758,21 @@ class LocalNoteFolderRepository:
         note_id: str,
         include_deleted: bool = False,
     ) -> tuple[NoteFolderMembership, bool] | None:
-        """Read one exact manual placement, optionally including its tombstone."""
+        """Read one exact manual placement, optionally including its tombstone.
+
+        Args:
+            folder_id: Opaque identifier of the containing folder.
+            note_id: Opaque identifier of the placed note.
+            include_deleted: Whether a deleted placement may be returned.
+
+        Returns:
+            The matching placement and its deletion flag, or ``None`` when no
+            eligible placement exists.
+
+        Raises:
+            FolderValidationError: If an identifier or ``include_deleted`` is
+                invalid.
+        """
 
         _validate_folder_id(folder_id, field="folder_id")
         _validate_folder_id(note_id, field="note_id")
@@ -779,7 +793,17 @@ class LocalNoteFolderRepository:
         return _membership_from_row(row), bool(row["deleted"])
 
     def has_managed_folder_ownership(self, folder_id: str) -> bool:
-        """Return whether an active managed placement owns this folder subtree."""
+        """Return whether an active managed placement owns this folder subtree.
+
+        Args:
+            folder_id: Opaque identifier of the folder to inspect.
+
+        Returns:
+            ``True`` when active managed ownership exists; otherwise ``False``.
+
+        Raises:
+            FolderValidationError: If ``folder_id`` is invalid.
+        """
 
         _validate_folder_id(folder_id, field="folder_id")
         with self.db.transaction() as cursor:
