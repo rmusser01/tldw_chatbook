@@ -4,7 +4,7 @@ title: 'Token counting downloads an encoding in CI, and the failure is swallowed
 status: Done
 assignee: []
 created_date: ''
-updated_date: '2026-08-24 16:51'
+updated_date: '2026-08-24 20:13'
 labels:
   - testing
   - test-integrity
@@ -58,9 +58,27 @@ the rest of this tractable, and it is the reason the earlier attribution went wr
 default tokenizer is `gpt2`, which uses the two-file data-gym format
 (`vocab.bpe` + `encoder.json`) rather than a single `.tiktoken` table — vendoring
 `cl100k_base` alone left 33 attempts outstanding. Vendoring `gpt2` as well took it to zero.
-`p50k_base`, `r50k_base` and `o200k_base` were fetched during the investigation and removed
-again: nothing asked for them, and `o200k_base` alone is 3.5 MB. Final size **3.0 MB** for
-three files.
+**A scoping error worth recording, because it nearly shipped.** `p50k_base`, `r50k_base` and
+`o200k_base` were fetched during the investigation and removed again on the grounds that
+nothing asked for them. That was measured over Chunking, Subscriptions, RAG_Search and Utils
+— none of which name a gpt-4o-class model. A ninety-five file Console and Library run then
+requested `o200k_base` **fifty-three times**: `encoding_for_model` returns it for those model
+names, and it is the Console suites that name them.
+
+It is back. The requester is whichever suite happens to name a model, not whichever suite
+looks like it tokenizes, so the sample has to be wide. `p50k_base` and `r50k_base` remain
+absent — nothing requested them across either sample. Final size **6.5 MB** for four files.
+
+The single largest Console file shows what it was costing:
+
+| `Tests/UI/test_console_native_chat_flow.py` | without `o200k_base` | with |
+|---|---|---|
+| failed | 26 | **2** |
+| errors | 13 | **0** |
+| recorded attempts | 21 | **0** |
+| runtime | 7m34s | **4m41s** |
+
+The runtime difference is the retries: each blocked fetch is retried before it gives up.
 
 **Evidence (AC#1).** `Tests/Chunking`, same command, vendored cache absent then present:
 

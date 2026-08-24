@@ -34,6 +34,7 @@ VENDORED = {
     "gpt2 vocab": f"{BASE}/gpt-2/encodings/main/vocab.bpe",
     "gpt2 encoder": f"{BASE}/gpt-2/encodings/main/encoder.json",
     "cl100k_base": f"{BASE}/encodings/cl100k_base.tiktoken",
+    "o200k_base": f"{BASE}/encodings/o200k_base.tiktoken",
 }
 
 
@@ -73,3 +74,4 @@ def test_encodings_load_with_the_network_guard_active() -> None:
 
     assert tiktoken.get_encoding("gpt2").encode("hello world")
     assert tiktoken.get_encoding("cl100k_base").encode("hello world")
+    assert tiktoken.get_encoding("o200k_base").encode("hello world")
