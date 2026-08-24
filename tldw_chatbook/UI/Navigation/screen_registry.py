@@ -300,6 +300,32 @@ def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
     return route.screen_name, route.canonical_tab, route.load_screen_class()
 
 
+def resolve_screen_route(target: str) -> ScreenRoute | None:
+    """Resolve a navigation target to its ``ScreenRoute`` WITHOUT importing it.
+
+    ``resolve_screen_target()`` answers the same question but calls
+    ``load_screen_class()`` as part of answering it, which is precisely the
+    synchronous import a caller wanting the *metadata* is trying to avoid.
+    This exposes the already-existing lazy lookup (aliases, then direct
+    routes, then the shell destination model -- identical resolution, same
+    helper) so a caller can decide what to import before importing it.
+
+    task-21110: ``app.py`` uses this to learn which module the initial screen
+    will need while the splash is still on screen, then warms it on the
+    background thread the screen pre-importer already owns.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        The resolved ``ScreenRoute``, or ``None`` when the target is not
+        routable (the same miss that ``resolve_screen_target()`` reports as a
+        ``None`` screen class).
+    """
+
+    return _lookup_route(target)[1]
+
+
 def _lookup_route(target: str) -> tuple[str, ScreenRoute | None]:
     """Resolve a navigation target to its route, without importing the class.
 
