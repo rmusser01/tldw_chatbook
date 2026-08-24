@@ -1,6 +1,6 @@
-TASK-20937.6 iTerm2 operator evidence
+TASK-20937.6 iTerm2 failed-render evidence
 Captured: 2026-08-24 07:27:35 America/Los_Angeles
-Status: partial; capture 2 remains required
+Status: FAILED; neither screenshot is acceptance evidence
 
 Source identity:
 - Product source commit: 8d6784541c8dcf6ff7297d8a45747ecff5c51ad1
@@ -17,15 +17,18 @@ Environment:
 - Prepared tmux window and application pane: 235x52 cells
 - Disposable profile: /tmp/tldw-task20937.6-iterm.G3ETE5
 
-Capture 1:
+Failed capture 1:
 - File: task-20937-6-iterm2-landscape-2026-08-24.png
 - PNG raster: 3020x1720 pixels (recorded for artifact identity only; not used
   as the layout oracle)
 - SHA-256: f44359e9b8d6d0de7f7e18070b139e4779c07cfca412a9c95deedecb40fe6bb2
 - The operator attached the prepared tmux session from iTerm2 and supplied the
   screenshot.
+- The Inspector rail and its collapsed reveal handle are absent at the
+  application right edge. This invalidates the whole render as acceptance
+  evidence.
 
-Visible proof in capture 1:
+Other visible state in failed capture 1 (diagnostic only):
 - Context is owned by the application edge and has one divider between the rail
   and conversation canvas; there is no inlaid outer rail frame.
 - Context is outer-scrolled to the lower sections. Conversations contains only
@@ -38,23 +41,49 @@ Visible proof in capture 1:
 - Model, Agent, Details, and Character boundaries remain readable at the lower
   outer-scroll position.
 
-Not visible in capture 1:
+Missing or invalid in failed capture 1:
+- The entire Inspector surface, including the <-Inspect reveal control.
 - The Workspaces Tree and its disclosure/selection rows are above the retained
   outer-scroll position.
 - The top-of-rail Sessions/Workspaces local ceilings and the outer-scroll cue.
 - Portrait containment, resize continuity, and collapse/reopen continuity.
 
-Capture 2 handoff:
-- A replacement disposable session is prepared at the same 235x52 cells with
-  Context at the top.
-- It visibly shows Research Lab's six conversations, Roleplay Tavern's temporary
-  plus landscape/portrait conversations, Writing Room's draft, the empty flat
-  Conversations projection for a named workspace, and the outer-scroll cue.
-- Attach from iTerm2 with:
-  tmux -L task20937-6-live attach -t console
-- Detach with Ctrl+B then D.
+Failed capture 2:
+- File: task-20937-6-iterm2-missing-inspector-regression-2026-08-24.png
+- Captured: 2026-08-24 07:33:37 America/Los_Angeles
+- PNG raster: 3002x1738 pixels (artifact identity only; not a layout oracle)
+- SHA-256: 285c9fa31f1ddb3a9b4eab614378f4a94145be3486be822ae884dde2050430de
+- Workspaces and their conversations are visible, but the entire Inspector rail
+  and its <-Inspect reveal handle are again absent at the right edge. This is a
+  second reproduction of the same blocking render defect, not acceptance.
 
 Acceptance accounting:
-- This is genuine iTerm2 capture evidence, but the iTerm2 checklist remains
-  partial until capture 2 is supplied and reviewed.
-- Windows Terminal same/source-equivalent-commit evidence remains outstanding.
+- Neither iTerm2 screenshot is accepted. Both are regression evidence for the
+  missing right-side Inspector owner/handle.
+- iTerm2 acceptance must be repeated after the defect is fixed.
+- Windows Terminal same/source-equivalent-commit evidence remains outstanding
+  and must also wait for the corrected product source.
+
+Root-cause diagnosis:
+- Immediately before each iTerm2 attachment, `tmux capture-pane` contained the
+  complete <-Inspect handle at the application right edge.
+- Both iTerm2 screenshots also truncate content outside the Console grid: the
+  header's Hands-free control and tmux's own right-side date/status text end at
+  the physical viewport edge. This isolates the failure after the application
+  compositor, between the fixed tmux window and the attached client viewport.
+- The QA session had `window-size manual` at 235x52. The attached iTerm2 client
+  was narrower, so tmux retained a canvas wider than the visible client and the
+  client clipped the rightmost columns.
+- This is a capture-harness defect, not evidence for a Console layout change.
+  No product code was changed.
+
+Corrected handoff:
+- The replacement session uses `window-size latest`, allowing tmux to adopt the
+  most recently attached client's exact cell size.
+- Before handoff, its server capture showed expanded Context, the complete
+  Workspaces Tree, expanded Inspector, and both single boundary dividers in one
+  frame.
+- Attach with: tmux -L task20937-6-live attach -t console
+- Do not treat a new screenshot as acceptance unless its right edge includes the
+  full `Inspect|--------->` header and tmux's right-side status text is not
+  truncated.
