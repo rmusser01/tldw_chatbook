@@ -33,6 +33,9 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
+from tldw_chatbook.RAG_Search.simplified.active_config import (
+    normalize_rag_search_mode,
+)
 
 #: Diagnostics slot for per-seam keyword outcomes (TASK-18903). Mirrors
 #: ``SCOPE_DIAGNOSTICS_KEY``/``SEMANTIC_DIAGNOSTICS_KEY``: a LIST of
@@ -88,10 +91,6 @@ from tldw_chatbook.RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
     shared_rag_service_generation,
 )
-from tldw_chatbook.RAG_Search.simplified.active_config import (
-    normalize_rag_search_mode,
-)
-
 # One staleness rule for the `app._rag_service` cache, shared with the chat/
 # Search resolver (`resolve_semantic_rag_service`): a profile switch resets
 # the shared singleton, and both app-level caches must notice.
