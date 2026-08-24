@@ -35,6 +35,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConversationFileEntry,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -1118,6 +1119,61 @@ async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
             await pilot.pause()
 
         assert not list(inspector.query("#console-inspector-more-toggle"))
+        assert pilot.app.focused is context_focus
+
+
+@pytest.mark.asyncio
+async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        context_focus = screen.query_one("#console-context-rail-collapse", Button)
+        active_actions = tuple(
+            replace(action, enabled=True, disabled_reason="")
+            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
+            else action
+            for action in inspector.state.actions
+        )
+        active_state = replace(inspector.state, actions=active_actions)
+        before_recompose = inspector.recompose_count
+        inspector.sync_state(active_state)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                inspector.recompose_count > before_recompose
+                and not inspector.query_one(
+                    f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+                ).disabled
+                and inspector.query_one("#console-inspector-more-body")
+                not in inspector.query_one(
+                    f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+                ).ancestors
+            ),
+            description="promoted Artifacts action before demotion",
+        )
+        artifact_action = inspector.query_one(
+            f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+        )
+        artifact_action.focus()
+        await pilot.pause()
+        assert pilot.app.focused is artifact_action
+
+        disabled_actions = tuple(
+            replace(action, enabled=False, disabled_reason="unavailable")
+            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
+            else action
+            for action in active_actions
+        )
+        inspector.sync_state(replace(active_state, actions=disabled_actions))
+        context_focus.focus()
+        for _ in range(4):
+            await pilot.pause()
+
         assert pilot.app.focused is context_focus
 
 

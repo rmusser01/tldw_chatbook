@@ -429,6 +429,14 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     def _recover_conditional_focus(self, owner: str, focused_id: str | None) -> None:
         if not self.is_mounted:
             return
+        current = self.app.focused
+        if (
+            isinstance(current, Widget)
+            and current.is_mounted
+            and self not in current.ancestors
+            and self._focusable(current)
+        ):
+            return
         promoted, more = self._group_projection(self._ownership)
         if focused_id and owner in promoted:
             try:
