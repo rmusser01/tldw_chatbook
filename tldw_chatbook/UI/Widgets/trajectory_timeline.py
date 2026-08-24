@@ -790,11 +790,13 @@ class TrajectoryTimeline(Widget):
             # last coalesced move reached, it does not, so the pending emission
             # is issued here instead of a repaint later. Exactly one message
             # either way, and the ledger always ends the gesture on the range
-            # the strip is painting.
-            self._brush_emit_pending = False
+            # the strip is painting. Gated on there actually being one pending:
+            # a drag over a strip with no time domain never brushed anything,
+            # and must stay silent exactly as it did before.
+            pending, self._brush_emit_pending = self._brush_emit_pending, False
             settled = self._brush
             self.brush_columns(start_x, event.x)
-            if self._brush == settled:
+            if pending and self._brush == settled:
                 self.post_message(self.TrajectoryBrushChanged(self._brush))
 
     def on_mouse_scroll_up(self, event: MouseEvent) -> None:
