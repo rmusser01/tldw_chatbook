@@ -4,7 +4,7 @@ title: Keep Windows startup alive when Actor Pack cleanup is unsupported
 status: In Progress
 assignee: []
 created_date: '2026-08-24 00:09'
-updated_date: '2026-08-24 02:41'
+updated_date: '2026-08-24 03:00'
 labels:
   - bug
   - actor-packs
@@ -28,6 +28,7 @@ Prevent Actor Pack startup housekeeping from terminating the application on plat
 - [x] #2 Startup cleanup does not enumerate, modify, or delete staged candidates unless private staging authority is verified.
 - [x] #3 Authenticated startup cleanup behavior on supported platforms remains unchanged.
 - [x] #4 Automated regression coverage exercises the unsupported-platform startup path and the supported cleanup path.
+- [x] #5 Attempting to inspect a valid Actor Pack when private staging is usable but unverified fails with actor_pack_import_disk_unavailable before any staging candidate is created.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,10 +38,11 @@ Prevent Actor Pack startup housekeeping from terminating the application on plat
 2. Add a regression test proving unsupported-platform cleanup is a non-destructive no-op during service construction.
 3. Implement the smallest guard that skips startup sweeping when platform verification is unavailable while preserving errors for unusable staging.
 4. Run focused Actor Pack tests, relevant startup coverage, and static checks.
+5. Address verified PR review feedback with a red-green regression that preserves the stable disk-unavailable category when private staging cannot be verified.
 
 ADR required: no
 ADR path: backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
-Reason: This routine boot bug fix preserves ADR-074’s existing fail-closed authority boundary and introduces no new architecture or security policy.
+Reason: This routine boot and error-classification fix preserves ADR-074’s existing fail-closed authority boundary and introduces no new architecture or security policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -55,4 +57,6 @@ Fresh current-HEAD evidence on 2026-08-23: startup selection (`PYTHONPATH=. /Use
 Repository-wide verification limitation: `PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q` produced no terminal result after roughly 100 minutes and was interrupted. This is neither a pass nor a failure and is the sole reason TASK-21251 remains In Progress.
 
 Scope review confirmed the functional diff is one focused test plus the minimal early-return guard, with no app.py, archive, schema, dependency, or config changes. ADR required: no; ADR-074 remains governing. Lessons: no new general lesson; the incident is specific to the documented platform split.
+
+PR review remediation (Qodo): verified that unverified private staging was converted through inspect_archive() to actor_pack_import_invalid. _preflight_space() now raises the existing actor_pack_import_disk_unavailable category directly, which propagates unchanged, preserves fail-closed behavior, and matches existing UI recovery copy. A red-green regression proves a valid pack receives disk-unavailable before any staging candidate is created. Verification: targeted regression passed 1/1; `PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Actor_Packs -q` passed 203/203; Ruff format reported both changed Python files already formatted; Ruff lint and git diff --check passed. TASK-21251 remains In Progress solely because the previously recorded repository-wide pytest run has no terminal result.
 <!-- SECTION:NOTES:END -->

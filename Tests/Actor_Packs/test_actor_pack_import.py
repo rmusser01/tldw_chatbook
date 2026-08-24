@@ -487,6 +487,31 @@ def test_revalidation_rechecks_publication_free_space(
     assert raised.value.category == "actor_pack_import_disk_unavailable"
 
 
+def test_inspect_reports_disk_unavailable_when_staging_is_unverified(
+    import_service: ActorPackImportService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staging_root = import_service._staging_root
+    privacy = PrivatePathResult(
+        staging_root,
+        PrivatePathStatus.UNVERIFIED_PLATFORM,
+        reason="native_acl_not_verified",
+    )
+    monkeypatch.setattr(
+        importer_module,
+        "secure_private_directory",
+        lambda *_args, **_kwargs: privacy,
+    )
+
+    with pytest.raises(ActorPackImportError) as raised:
+        import_service.inspect_archive(
+            (FIXTURES / "minimal-character.tldw-actor-pack").resolve()
+        )
+
+    assert raised.value.category == "actor_pack_import_disk_unavailable"
+    assert list(staging_root.iterdir()) == []
+
+
 def test_startup_sweep_removes_only_authenticated_bounded_candidates(
     import_service: ActorPackImportService,
 ) -> None:
