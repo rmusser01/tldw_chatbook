@@ -751,6 +751,64 @@ class LocalNoteFolderRepository:
         )
         return tuple(_membership_from_row(row) for row in rows)
 
+    def get_exact_manual_membership(
+        self,
+        *,
+        folder_id: str,
+        note_id: str,
+        include_deleted: bool = False,
+    ) -> tuple[NoteFolderMembership, bool] | None:
+        """Read one exact manual placement, optionally including its tombstone.
+
+        Args:
+            folder_id: Opaque identifier of the containing folder.
+            note_id: Opaque identifier of the placed note.
+            include_deleted: Whether a deleted placement may be returned.
+
+        Returns:
+            The matching placement and its deletion flag, or ``None`` when no
+            eligible placement exists.
+
+        Raises:
+            FolderValidationError: If an identifier or ``include_deleted`` is
+                invalid.
+        """
+
+        _validate_folder_id(folder_id, field="folder_id")
+        _validate_folder_id(note_id, field="note_id")
+        if not isinstance(include_deleted, bool):
+            raise FolderValidationError("include_deleted must be a boolean.")
+        deleted_clause = "" if include_deleted else " AND deleted = 0"
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                f"SELECT {_MEMBERSHIP_COLUMNS}, deleted "
+                "FROM note_folder_memberships "
+                "WHERE folder_id = ? AND note_id = ? "
+                "AND ownership = 'manual' AND owner_id = ''"
+                f"{deleted_clause} ORDER BY deleted, modified_at DESC, id DESC LIMIT 1",
+                (folder_id, note_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return _membership_from_row(row), bool(row["deleted"])
+
+    def has_managed_folder_ownership(self, folder_id: str) -> bool:
+        """Return whether an active managed placement owns this folder subtree.
+
+        Args:
+            folder_id: Opaque identifier of the folder to inspect.
+
+        Returns:
+            ``True`` when active managed ownership exists; otherwise ``False``.
+
+        Raises:
+            FolderValidationError: If ``folder_id`` is invalid.
+        """
+
+        _validate_folder_id(folder_id, field="folder_id")
+        with self.db.transaction() as cursor:
+            return bool(_load_managed_folder_rows(cursor, (folder_id,)))
+
     def reconcile_managed(
         self, *, owner_id: str, desired: Iterable[tuple[str, str]]
     ) -> tuple[NoteFolderMembership, ...]:

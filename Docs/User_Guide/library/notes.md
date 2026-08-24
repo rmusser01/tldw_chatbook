@@ -158,7 +158,7 @@ Project planning, Research notes, Todo list.
   reviewed receipt. Later changes to the originals are not tracked.
 - **Keep a folder synced** creates a lasting local relationship. Choose the
   folder, direction, and local Library destination, then choose **Check
-  folder**. Checking is mutation-free. Review safe actions, attention items,
+  changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
   reviewed root** is enabled.
 
@@ -166,15 +166,45 @@ If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
 silently settled by a global winner policy. Server setup is visibly disabled
 with **Unavailable - server sync-folder capability not installed**.
-Conflict and deletion-resolution choices are also visibly disabled in this
-release; Chatbook keeps the root in attention instead of staging a change it
-cannot durably execute.
+
+For an eligible conflict where the same bound note and file both changed,
+choose **View comparison** to inspect their current text and metadata, then
+stage exactly one choice:
+
+- **Keep file** updates the bound Library note from that file.
+- **Keep note** replaces that file with the bound Library note.
+- **Keep both** first preserves the original Library-note text as a new,
+  unbound manual note, then updates the original bound note from the file.
+- **Skip for now** changes nothing. The conflict stays in **Needs attention**
+  and can be reviewed later.
+
+Staging or changing a choice does not alter either authority. **Apply
+reviewed** rechecks the whole review against fresh file and note state, applies
+the safe actions and selected conflict resolutions that are still valid, and
+can finish partially when some rows were skipped. If anything changed since
+Check, Apply refuses the stale review and offers **Check again** instead.
+
+Every completed resolution leaves an at-action receipt with **Undo** and
+**Dismiss**. Dismiss hides only that receipt. Undo is offered for up to 30 days
+while the exact private recovery payload is still present and both
+authorities still match the applied outcome; it never overwrites later edits.
+**Resolution history** survives restart and records the explicit choice and
+bounded state without storing note text, hashes, or absolute paths. An expired,
+changed, failed, interrupted, or unsupported resolution remains visible with
+its safe next action instead of guessing or writing through the failure.
+
+Deletion, identity, move, representation, duplicate-authority, managed-folder,
+pause, capability, and activation attention remain blocked; this conflict
+review does not turn them into content choices. Unsupported filesystem writes
+fail closed, leave the root in attention or recovery, and do not escape the
+configured sync folder.
 
 **Manage sync folders** lists active, paused, passive, offline, attention,
-recovery, stopped, and migrated-candidate states. The declared next action is
-shown first—for example **Review migration**, **Review attention**, **Sync
-now**, **Pause**, or **Resume**. **Retarget** and **Disconnect** remain visibly
-disabled with an unavailable-in-this-release reason; no files or notes change.
+recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
+an available root. **Review** appears when its changes need attention;
+legacy candidates use **Review migration**. **Pause** and **Resume** control an
+active root. **Retarget** and **Disconnect** remain visibly disabled with an
+unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
 
@@ -232,7 +262,7 @@ receipt afterward.
    synced**.
 3. Choose a local folder, direction, and local destination. Server sync remains
    unavailable until its separate capability is installed.
-4. Choose **Check folder** and review the exact safe, attention, skipped, and
+4. Choose **Check changes** and review the exact safe, attention, skipped, and
    deletion-like effects.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead.

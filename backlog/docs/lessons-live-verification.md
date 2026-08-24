@@ -1374,3 +1374,20 @@ run, assert both the domain mutation and the owner-facing terminal state, then
 retry through the same controller. A dismissed modal or a returned failure value
 is not sufficient evidence: the run-state ledger, composer admission, dependent
 UI state, and retry path must all be terminal/current together.
+
+---
+
+## Restart the partial-review state, not only each isolated choice (TASK-97, 2026-08-23)
+
+**What happened.** Real-authority integration tests proved Keep file, Keep
+note, Keep both, Skip, receipts, restart history, and Undo one choice at a time.
+The isolated live run then applied three choices and skipped the fourth. After
+restart, the fresh plan correctly contained three `NO_CHANGE` rows plus the
+remaining conflict, but Apply rejected the reviewed no-change IDs as an invalid
+review. The single-choice cases never produced that mixed plan shape.
+
+**What to do.** For a reviewed batch that permits partial completion, restart
+after a genuinely mixed partial Apply and resolve the remainder through the
+same public boundary. Per-choice restart tests prove each operation is durable;
+they do not prove the next review accepts terminal no-op rows alongside work
+that still mutates.

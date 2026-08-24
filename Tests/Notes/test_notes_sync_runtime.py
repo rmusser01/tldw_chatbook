@@ -30,7 +30,10 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncSerializationProfile,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
-from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutor
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncExecutionResult,
+    NotesSyncExecutor,
+)
 from tldw_chatbook.Notes.notes_sync_filesystem import PosixNotesSyncFilesystem
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
@@ -132,6 +135,34 @@ def _store(tmp_path: Path, *, marker: bool = True) -> NotesDeviceStateStore:
         )
     (tmp_path / "root").mkdir()
     return store
+
+
+@pytest.mark.asyncio
+async def test_abandon_setup_ignores_persisted_root_review_authority(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    owner, coordinator, _watcher = _owner(
+        store=store,
+        admitted=True,
+        adapter=_Adapter([_input()]),
+    )
+    await owner.start()
+    try:
+        await owner.check_root("root-1")
+        path_before = owner._root_paths["root-1"]
+        status_before = owner.snapshot().roots
+        events_before = tuple(coordinator.events)
+        assert "root-1" not in owner._setup_reviews
+
+        await owner.abandon_setup("root-1")
+
+        assert owner._root_paths["root-1"] == path_before
+        assert owner.snapshot().roots == status_before
+        assert tuple(coordinator.events) == events_before
+        assert store.get_root("root-1").canonical_path == path_before
+    finally:
+        await owner.shutdown()
 
 
 @dataclass
@@ -284,11 +315,15 @@ class _Executor:
 
     async def execute(self, request: object):
         self.executed.append(request)
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
 
     async def reconstruct_request(self, operation_id: str) -> object:
         self.reconstructed.append(operation_id)
@@ -524,11 +559,15 @@ class _BlockingExecutor(_Executor):
         self.executed.append(request)
         self.started.set()
         await self.release.wait()
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
 
 
 class _InvalidatingExecutor(_Executor):
@@ -539,11 +578,15 @@ class _InvalidatingExecutor(_Executor):
     async def execute(self, request: object):
         self.executed.append(request)
         self.invalidate()
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
+        )
 
 
 class _InvalidatingReconstructExecutor(_Executor):
@@ -2222,7 +2265,7 @@ async def test_manual_apply_rechecks_that_the_root_is_still_active(
 
 
 @pytest.mark.asyncio
-async def test_manual_apply_cannot_clear_an_attention_plan_with_an_empty_apply(
+async def test_manual_empty_apply_keeps_content_conflict_attention(
     tmp_path: Path,
 ) -> None:
     adapter = _Adapter([_input(file_digest=_B, note_digest=_C)])
@@ -2230,11 +2273,71 @@ async def test_manual_apply_cannot_clear_an_attention_plan_with_an_empty_apply(
     await owner.start()
     reviewed = await owner.check_root("root-1")
 
-    with pytest.raises(ValueError, match="not_executable"):
-        await owner.apply_reviewed("root-1", reviewed.observation_token, ())
+    result = await owner.apply_reviewed("root-1", reviewed.observation_token, ())
 
     root = owner.snapshot().roots[0]
+    assert result.unresolved_conflicts == 1
+    assert result.attention_remains is True
+    assert result.fresh_plan == reviewed
     assert (root.status, root.next_action) == ("needs_attention", "review_changes")
+    assert adapter.executor.executed == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manual_apply_accepts_reviewed_no_change_rows_without_executing_them(
+    tmp_path: Path,
+) -> None:
+    unchanged = _input(file_digest=_A, note_digest=_A)
+    changed = replace(
+        unchanged.bindings[0],
+        binding_id="binding-2",
+        note_id="note-2",
+        relative_path="second.md",
+        baseline_relative_path="second.md",
+        file_digest=_B,
+    )
+    mixed = replace(unchanged, bindings=(*unchanged.bindings, changed))
+    adapter = _Adapter([mixed, mixed, mixed, mixed])
+    owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
+    await owner.start()
+    adapter.executor.executed.clear()
+    reviewed = await owner.check_root("root-1")
+    assert [action.kind for action in reviewed.safe_actions] == [
+        NotesSyncActionKind.NO_CHANGE,
+        NotesSyncActionKind.UPDATE_NOTE,
+    ]
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        reviewed.observation_token,
+        tuple(action.action_id for action in reviewed.safe_actions),
+    )
+
+    assert result.safe_completed == 1
+    assert result.attention_remains is False
+    assert [action.kind for action in adapter.executor.executed] == [
+        NotesSyncActionKind.UPDATE_NOTE
+    ]
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manual_apply_rejects_unknown_safe_action_ids(tmp_path: Path) -> None:
+    observed = _input()
+    adapter = _Adapter([observed] * 3)
+    owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
+    await owner.start()
+    adapter.executor.executed.clear()
+    reviewed = await owner.check_root("root-1")
+
+    with pytest.raises(ValueError, match="reviewed_action_mismatch"):
+        await owner.apply_reviewed(
+            "root-1",
+            reviewed.observation_token,
+            ("unknown-action",),
+        )
+
     assert adapter.executor.executed == []
     await owner.shutdown()
 

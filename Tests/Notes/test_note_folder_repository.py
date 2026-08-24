@@ -1628,6 +1628,89 @@ def test_attach_manual_is_idempotent_and_revives_only_latest_history(
     ]
 
 
+def test_conflict_copy_exact_manual_membership_reads_active_then_latest_deleted(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Conflict copies", parent_id=None)
+    note_id = repository.db.add_note("Original", "note side")
+    assert note_id is not None
+    active_id = _attach_membership(
+        repository,
+        folder_id=folder.folder_id,
+        note_id=note_id,
+    )
+    _attach_membership(
+        repository,
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="root-1",
+    )
+    with repository.db.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO note_folder_memberships("
+            "id, folder_id, note_id, ownership, owner_id, owner_active, "
+            "version, deleted, created_at, modified_at) "
+            "VALUES ('manual-old', ?, ?, 'manual', '', 1, 3, 1, ?, ?)",
+            (
+                folder.folder_id,
+                note_id,
+                "2026-08-20T00:00:00.000Z",
+                "2026-08-20T00:00:00.000Z",
+            ),
+        )
+
+    active = repository.get_exact_manual_membership(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        include_deleted=True,
+    )
+
+    assert active is not None
+    assert active[0].membership_id == active_id
+    assert active[1] is False
+    assert repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=active[0].version,
+    )
+    assert (
+        repository.get_exact_manual_membership(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            include_deleted=False,
+        )
+        is None
+    )
+    deleted = repository.get_exact_manual_membership(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        include_deleted=True,
+    )
+    assert deleted is not None
+    assert deleted[0].membership_id == active_id
+    assert deleted[0].version == active[0].version + 1
+    assert deleted[1] is True
+
+
+def test_conflict_copy_folder_ownership_detects_managed_candidate_and_ancestor(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    parent = repository.create_folder(name="Conflict copies", parent_id=None)
+    child = repository.create_folder(
+        name="My synced notes", parent_id=parent.folder_id
+    )
+    note_id = repository.db.add_note("Managed", "body")
+    assert note_id is not None
+    repository.reconcile_managed(
+        owner_id="another-root",
+        desired=((child.folder_id, note_id),),
+    )
+
+    assert repository.has_managed_folder_ownership(child.folder_id) is True
+    assert repository.has_managed_folder_ownership(parent.folder_id) is True
+
+
 def test_attach_manual_expected_note_version_guards_new_active_and_revived_rows(
     repository: LocalNoteFolderRepository,
 ) -> None:
