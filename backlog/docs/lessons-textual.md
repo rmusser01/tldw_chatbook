@@ -144,6 +144,53 @@ other writer would have to remember to invalidate.
 
 ---
 
+## `set_timer(0.0)` never fires — silently
+
+**TASK-21110, 2026-08-23.** The splash/initial-screen overlap is armed with
+`self.set_timer(SPLASH_INITIAL_SCREEN_PREIMPORT_DELAY_SECONDS, ...)`. A/B-ing that
+delay, the "0.0 s" arm looked like the best of both worlds: the boot-time win with
+none of the splash-animation stutter the 0.2 s arm showed. It was measuring nothing.
+Textual 8's `Timer._run` computes `count = int((now - start) / _interval + 1)`, so a
+zero interval raises `ZeroDivisionError` **inside the timer's own asyncio task**. Nobody
+retrieves that task's exception, so there is no traceback in normal operation, no log
+line, and no callback — the arm's `import_on_loop` was still 430 ms, i.e. the pre-import
+had never happened at all. Reproduced standalone in nine lines:
+
+```python
+class A(App):
+    def on_mount(self):
+        self.set_timer(0.0, lambda: fired.append("zero"))   # never runs
+        self.set_timer(0.2, lambda: fired.append("two"))    # runs
+# -> fired == ["two"], plus an un-retrieved ZeroDivisionError task
+```
+
+**What to do.** Treat 0 as an invalid `set_timer` delay. If "as soon as possible" is
+what you mean, use `call_after_refresh` (or `call_later`); if a constant feeds the
+delay, branch on `> 0` rather than trusting whoever edits it next, and keep a test that
+the zero case still schedules. And when a perf arm comes back looking free, check that
+the thing you were measuring actually ran before you believe it.
+
+---
+
+## Monkeypatching an `@on`-decorated handler on the class does not patch it
+
+**TASK-21110, 2026-08-23.** An instrumentation probe wrapped
+`TldwCli.on_splash_screen_closed` to timestamp splash close, and recorded the splash
+closing at 6.09 s on a boot where it demonstrably closed at 3.53 s. Textual's
+`_MessagePumpMeta` snapshots `@on`-decorated handlers as **raw function objects** into
+`cls._decorated_handlers` at class-creation time, so a later class-attribute assignment
+is invisible to that dispatch — the original still ran. Worse, the naming-convention
+fallback in `_get_dispatch_methods` skips a method only when it carries `_textual_on`,
+which the replacement did not, so the wrapper was *also* dispatched, a second time,
+much later. One handler, two invocations, and a timestamp from the wrong one.
+
+**What to do.** Do not patch a method that is both `@on`-decorated and named
+`on_<message>`; instrument the thing it calls, or the message's own sender (here,
+`SplashScreen.close`). Calling such a handler directly from a test is fine — it is only
+class-level replacement plus framework dispatch that splits in two.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget
