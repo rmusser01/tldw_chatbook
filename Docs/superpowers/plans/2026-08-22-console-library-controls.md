@@ -6,7 +6,7 @@
 
 **Architecture:** Six dependency-ordered deliveries establish schema and synchronization compatibility first, freeze authority and provider destination at execution second, add the recoverable pre-dispatch state machine third, then build UI, minimized activity review, and qualification. Policy and operational checkpoints remain device-local; only the closed assistant-generation state follows the existing whole-message sync/export contract. Pure models and projections stay outside Textual and database modules, while the app-owned store/coordinator own mutable lifetime and off-loop persistence.
 
-**Tech Stack:** Python 3.11+, Textual 8.x, SQLite/FTS5 schema v45, frozen dataclasses/enums and structural protocols, existing Console agent/Library/RAG/trajectory seams, pytest + pytest-asyncio + Hypothesis, Ruff, Backlog.md.
+**Tech Stack:** Python 3.11+, Textual 8.x, SQLite/FTS5 schema v48, frozen dataclasses/enums and structural protocols, existing Console agent/Library/RAG/trajectory seams, pytest + pytest-asyncio + Hypothesis, Ruff, Backlog.md.
 
 **Spec:** `Docs/superpowers/specs/2026-08-22-console-library-controls-design.md`
 
@@ -17,13 +17,13 @@
 - Reason: storage/migration, sync/export, authority, runtime composition, privacy, and long-lived Console recovery/UI contracts change together.
 - Delivery tasks are `TASK-19900.1` through `TASK-19900.6`; start them in dependency order and do not mark a child In Progress until its delivery begins.
 - Re-read `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-live-verification.md`, and `backlog/docs/lessons-backlog-hygiene.md` at the start of every child delivery.
-- Recheck the ChaChaNotes schema head before coding. This plan expects v44 and allocates v45; renumber the migration, tests, and documentation together if the head changed.
-- Keep historical `_FULL_SCHEMA_SQL_V4` unchanged. Fresh databases traverse v4 through v45.
+- Recheck the ChaChaNotes schema head before coding. The implementation now targets the current v47 head and allocates v48; renumber the migration, tests, and documentation together if the head changes again.
+- Keep historical `_FULL_SCHEMA_SQL_V4` unchanged. Fresh databases traverse v4 through v48.
 - Acquire `BEGIN IMMEDIATE` before the first schema-version read for fresh, current, and migratable database opens.
 - Never launch a schema-changing branch against the user's real data. Migration verification uses `:memory:` or `tmp_path`; live QA uses an explicitly isolated data directory only after the schema branch is current across participating worktrees.
 - Ask the owner before a full repository test sweep. Run the targeted commands in this plan by default.
 - Shipped new-session defaults are `[chat_defaults].rag_auto_retrieve_on_send = false` and `[console].assistant_library_access_default = false`.
-- Existing v44 conversations seed the supplied legacy automatic value and assistant access Allowed. Later missing policy rows resolve Never/Blocked without a write.
+- Existing v47 conversations seed the supplied legacy automatic value and assistant access Allowed. Later missing policy rows resolve Never/Blocked without a write.
 - Automatic categories are exactly `("notes", "media", "conversations")`; active item scope narrows Notes/Media and excludes Conversations.
 - Direct mode exposes the 18 names in `LIBRARY_TOOL_DESCRIPTORS`; RAG mode exposes only `search_library_rag`; their derived union of 19 names is always reserved.
 - The status chip copy is exactly `Library · Auto off · Agent blocked`, `Library · Auto on · Agent blocked`, `Library · Auto off · Agent allowed`, or `Library · Auto on · Agent allowed`; unreadable policy is `Library: blocked · policy unavailable`.
@@ -46,8 +46,8 @@
 | `tldw_chatbook/Chat/console_dispatch_checkpoint.py` | Strict checkpoint model, canonical bounded JSON codecs, recovery/reconstructability contracts, and CAS result types. |
 | `tldw_chatbook/Chat/console_dispatch_repository.py` | Transactional accepted insert, state CAS, terminal settlement, ADR-063 handoff, and loader reconciliation. |
 | `tldw_chatbook/Chat/console_transaction_contribution.py` | Generic insert-only transaction-writer capability and sidecar contribution protocol used by first persistence and ephemeral promotion. It names no activity/preparation event kind and exposes no raw cursor/connection. |
-| `tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_console_library_policy.sql` | Nullable assistant state, device-local policy/checkpoint tables/index, and all four final Sync-v1 message triggers. |
-| `tldw_chatbook/DB/ChaChaNotes_DB.py` | v45 runner/migration, migration seed input, message sync proof, low-level transaction operations, and trajectory rows. |
+| `tldw_chatbook/DB/migrations/chachanotes_v47_to_v48_console_library_policy.sql` | Nullable assistant state, device-local policy/checkpoint tables/index, and all four final Sync-v1 message triggers. |
+| `tldw_chatbook/DB/ChaChaNotes_DB.py` | v48 runner/migration, migration seed input, message sync proof, low-level transaction operations, and trajectory rows. |
 | `tldw_chatbook/config.py` and every production `CharactersRAGDB` opener | One sanitized migration-seed helper and shipped future-session defaults. DB code never reads TOML. |
 | `tldw_chatbook/Sync_Interop/chat_outbox_producer.py` | Carry explicit assistant state in committed Sync-v2 source records. |
 | `tldw_chatbook/Sync_Interop/envelope_builder.py` / `envelope_applier.py` | Build/apply explicit state and normalize only an older missing state key to `NULL`. |
@@ -596,9 +596,9 @@ def normalize_assistant_generation_state(
 
 **Interfaces:**
 - Consumes: `ConsoleLibraryMigrationSeed` and `load_console_library_migration_seed()` from Task 2.
-- Produces: constructor keyword `console_library_migration_seed: ConsoleLibraryMigrationSeed | None = None` on `CharactersRAGDB.__init__` and no unseeded production v44 opener.
+- Produces: constructor keyword `console_library_migration_seed: ConsoleLibraryMigrationSeed | None = None` on `CharactersRAGDB.__init__` and no unseeded production v47 opener.
 
-- [ ] **Step 1: Write the failing constructor/opener audit.** AST-scan production Python files for direct `CharactersRAGDB` calls and assert every call supplies `console_library_migration_seed=`. Add constructor tests proving fresh/current databases accept `None`, while a v44 migration rejects it before DDL.
+- [ ] **Step 1: Write the failing constructor/opener audit.** AST-scan production Python files for direct `CharactersRAGDB` calls and assert every call supplies `console_library_migration_seed=`. Add constructor tests proving fresh/current databases accept `None`, while a v47 migration rejects it before DDL.
 - [ ] **Step 2: Run RED.** Run `python -m pytest Tests/DB/test_chachanotes_console_library_migration_seed_openers.py -q`; expected: opener audit and constructor behavior fail.
 - [ ] **Step 3: Add the explicit constructor parameter and update all openers.** Each opener calls the one config helper; the DB module imports only the typed seed model and never calls config:
 
@@ -614,10 +614,10 @@ Tests and historical-fixture helpers may pass a seed directly or deliberately om
 - [ ] **Step 4: Re-run and lint.** Run the Step-2 test and `python -m ruff check` with the eleven opener files listed above plus `tldw_chatbook/DB/ChaChaNotes_DB.py`.
 - [ ] **Step 5: Commit.** Commit `refactor(db): require explicit Library migration seed`.
 
-### Task 4: Add the atomic v44-to-v45 migration and Sync-v1 triggers
+### Task 4: Add the atomic v47-to-v48 migration and Sync-v1 triggers
 
 **Files:**
-- Create: `tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_console_library_policy.sql`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v47_to_v48_console_library_policy.sql`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py:450,5816-6100`
 - Modify: `Tests/ChaChaNotesDB/historical_bootstrap.py`
 - Create: `Tests/DB/test_chachanotes_console_library_policy_migration.py`
@@ -625,15 +625,15 @@ Tests and historical-fixture helpers may pass a seed directly or deliberately om
 
 **Interfaces:**
 - Consumes: typed migration seed and closed state strings.
-- Produces: schema v45, `console_conversation_library_policy`, `console_dispatch_checkpoints`, `messages.assistant_generation_state`, index `idx_console_dispatch_checkpoint_conversation`, and final create/update/delete/undelete message triggers.
+- Produces: schema v48, `console_conversation_library_policy`, `console_dispatch_checkpoints`, `messages.assistant_generation_state`, index `idx_console_dispatch_checkpoint_conversation`, and final create/update/delete/undelete message triggers.
 
-- [ ] **Step 1: Build a real v44 fixture and write RED migration assertions.** Assert all new objects/column are absent before open; afterward assert exact columns, CHECK clauses, foreign keys, no local-table sync triggers, all four final message triggers serialize state, and the update trigger watches state.
-- [ ] **Step 2: Write lock/seed/rollback/concurrency RED tests.** Cover `BEGIN IMMEDIATE` before the first `_get_db_version` call on fresh/current/v44/older opens; missing/invalid seed; injected failure after every migration statement; two file-backed concurrent openers with opposite seeds; retry with another seed; active and soft-deleted seed rows; and a post-migration inserted conversation remaining rowless.
-- [ ] **Step 3: Run RED.** Run `python -m pytest Tests/DB/test_chachanotes_console_library_policy_migration.py Tests/ChaChaNotesDB/test_migration_atomicity.py -q`; expected: v45/locking tests fail.
+- [ ] **Step 1: Build a real v47 fixture and write RED migration assertions.** Assert all new objects/column are absent before open; afterward assert exact columns, CHECK clauses, foreign keys, no local-table sync triggers, all four final message triggers serialize state, and the update trigger watches state.
+- [ ] **Step 2: Write lock/seed/rollback/concurrency RED tests.** Cover `BEGIN IMMEDIATE` before the first `_get_db_version` call on fresh/current/v47/older opens; missing/invalid seed; injected failure after every migration statement; two file-backed concurrent openers with opposite seeds; retry with another seed; active and soft-deleted seed rows; and a post-migration inserted conversation remaining rowless.
+- [ ] **Step 3: Run RED.** Run `python -m pytest Tests/DB/test_chachanotes_console_library_policy_migration.py Tests/ChaChaNotesDB/test_migration_atomicity.py -q`; expected: v48/locking tests fail.
 - [ ] **Step 4: Implement SQL and runner changes.** Set `_CURRENT_SCHEMA_VERSION = 45`, add map entry `44`, change the outer schema context to `TransactionContextManager(self, immediate=True)`, validate the seed only when entering 44→45, replace four trigger definitions in the migration, seed with one parameterized insert, and guard `44 -> 45` with rowcount 1. Never add the column to `_FULL_SCHEMA_SQL_V4`.
-- [ ] **Step 5: Prove rollback and convergence.** Re-run Step 3 three times; the concurrent-opener test must assert one complete seed wins and the loser observes v45 without reseeding.
+- [ ] **Step 5: Prove rollback and convergence.** Re-run Step 3 three times; the concurrent-opener test must assert one complete seed wins and the loser observes v48 without reseeding.
 - [ ] **Step 6: Lint and diff-check.** Run `python -m ruff check tldw_chatbook/DB/ChaChaNotes_DB.py Tests/DB/test_chachanotes_console_library_policy_migration.py Tests/ChaChaNotesDB/test_migration_atomicity.py` and `git diff --check`.
-- [ ] **Step 7: Commit.** Commit `feat(db): add Console Library policy schema v45`.
+- [ ] **Step 7: Commit.** Commit `feat(db): add Console Library policy schema v48`.
 
 ### Task 5: Carry assistant generation state through Sync-v2 and export/import contracts
 
@@ -688,7 +688,7 @@ Validate exact allowed keys after normalization; do not use `setdefault` for any
 - Create: `Tests/Chat/test_console_transaction_contribution.py`
 
 **Interfaces:**
-- Consumes: v45 schema, strict models, existing DB transaction/message version/hash/sync primitives, ADR-063 codec.
+- Consumes: v48 schema, strict models, existing DB transaction/message version/hash/sync primitives, ADR-063 codec.
 - Produces the exact methods below:
 
 ```python
@@ -1438,7 +1438,7 @@ python -m pytest \
 
 Each child task is one reviewable PR/delivery. Do not begin a dependent child until its predecessor is integrated or the worktree is rebased onto the predecessor's exact final commit.
 
-1. `TASK-19900.1`: schema v45, Sync-v1/v2 compatibility, repositories/coordinator, and lifecycle only.
+1. `TASK-19900.1`: schema v48, Sync-v1/v2 compatibility, repositories/coordinator, and lifecycle only.
 2. `TASK-19900.2`: immutable runtime authority, egress, provider selection, reservation, and ephemeral gate only.
 3. `TASK-19900.3`: automatic preparation, atomic acceptance, checkpoint recovery, queue, continuation handoff, and projections only.
 4. `TASK-19900.4`: chip/modal/Settings/search/source/responsive UI only.
