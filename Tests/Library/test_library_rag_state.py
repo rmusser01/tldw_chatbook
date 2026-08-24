@@ -1590,7 +1590,8 @@ class TestLibraryRagResultRowScoreKind:
         assert row.vector_score is None
 
     @pytest.mark.parametrize(
-        "vector_score", (True, float("nan"), float("inf"), float("-inf"))
+        "vector_score",
+        (True, False, float("nan"), float("inf"), float("-inf"), 10**309, -(10**309)),
     )
     def test_hybrid_row_rejects_untrusted_vector_score(self, vector_score):
         row = LibraryRagResultRow.from_result(

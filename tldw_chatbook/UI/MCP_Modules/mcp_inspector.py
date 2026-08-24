@@ -520,15 +520,18 @@ class _ScoredRow:
         # bool -- `isinstance(True, int)` is True in Python) is treated
         # as unscored rather than risking a `<` comparison against a
         # non-numeric value inside `library_rag_all_matches_weak()`.
-        self.score = (
-            score
-            if (
-                isinstance(score, (int, float))
-                and not isinstance(score, bool)
-                and math.isfinite(score)
+        try:
+            self.score = (
+                score
+                if (
+                    isinstance(score, (int, float))
+                    and not isinstance(score, bool)
+                    and math.isfinite(float(score))
+                )
+                else None
             )
-            else None
-        )
+        except OverflowError:
+            self.score = None
         self.score_kind = score_kind
         self.vector_score = vector_score
 

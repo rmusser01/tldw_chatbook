@@ -1968,7 +1968,15 @@ class TestSummarizeToolResultAllWeakNotice:
             _summarize_tool_result,
         )
 
-        invalid_scores = (True, float("nan"), float("inf"), float("-inf"))
+        invalid_scores = (
+            True,
+            False,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            10**309,
+            -(10**309),
+        )
         for score in invalid_scores:
             vector_row = {"id": "vector", "score": score, "metadata": {}}
             hybrid_row = {
