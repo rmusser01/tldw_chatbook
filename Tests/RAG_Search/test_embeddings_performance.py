@@ -711,16 +711,3 @@ class TestPerformanceOptimizations:
             assert all(shape == (texts_per_thread, 384) for shape in results)
 
             service.close()
-
-
-def test_performance_summary():
-    """Generate performance summary report"""
-    # This test just ensures all performance tests can run
-    # In a real scenario, you'd collect and analyze all metrics
-    print("\n=== Performance Test Summary ===")
-    print("All performance tests completed successfully")
-    print("==============================\n")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-m", "performance"])
