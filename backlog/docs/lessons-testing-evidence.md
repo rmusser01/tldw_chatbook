@@ -7475,3 +7475,81 @@ hardware, network, or optional native inference begins, while preserving the sta
 transition the UI observes. Test those integrations separately behind their own
 explicitly marked suites. A test that can unexpectedly capture audio or initialize
 a model is not a focused UI test, even if it normally passes on a configured laptop.
+## An early `break` proves nothing when the list you scan was materialized for you (TASK-21121, 2026-08-23)
+
+**What happened.** `_console_changed_files_scope()` ran on the Console's 0.2 s
+run tick and carried a docstring arguing its own cost was fine: it scanned the
+session's messages in REVERSE and broke on the first change-review marker, and
+"markers cluster near the end", so "steady-state cost is near-constant"; the
+`O(messages)` worst case was conceded only for a session with no marker at all.
+Every clause was true and the conclusion was still wrong, because the thing
+being scanned was `store.messages_for_session()` — which `dataclasses.replace`
+-copies EVERY message in the session before the loop can look at one of them.
+Measured on a 400-message session, 25 ticks: **10,050 message copies and
+32.1 ms of event-loop time with a marker present** — i.e. the early break saved
+nothing at all, and the "worst case" and the "steady state" cost the same.
+
+**What to do.** When you reason about the cost of a scan, first ask who built
+the sequence you are scanning. An early exit only helps over a lazily produced
+or already-owned sequence; over an eagerly materialized copy the O(n) is paid
+before your loop starts, and no amount of breaking early can reach it. In this
+repo the shape to grep for is `for x in reversed(store.messages_for_session(
+...))` — several sites still have it, and each one is a full transcript copy
+regardless of how quickly it finds what it wants.
+
+**Adjacent trap from the same task: a call counter counts your fixture too.**
+The first cut of the counter probe wrapped `ConsoleChatStore._snapshot`
+globally and reported 26 copies per 25 ticks AFTER the fix — which would have
+read as "the fix is only partial". Those 26 were the probe's own
+`append_message` + 25 `append_stream_chunk` calls, each of which returns a
+snapshot; the subject's true count was 0. Arm the counter around the call under
+test and disarm it for the fixture's own store traffic, or the setup you wrote
+to make the measurement realistic gets billed to the code you are measuring.
+
+---
+
+## Sample a memo's signature BEFORE the work it describes, not after (TASK-21121 review round, 2026-08-23)
+
+**What happened.** TASK-21121's verified memo stored
+`(session_id, view_list, len(view_list), answer)` and re-checked all of it
+before serving a hit — the `TokenEstimateCache` "no invalidation protocol to
+get wrong" shape, and the reviewer's fuzzer found 0 violations in 138,565
+probes. It was still wrong, because the length was evaluated on the line that
+STORED the entry, i.e. after the scan that produced the answer:
+
+```python
+for message in reversed(view):   # answer describes the list as it is HERE
+    ...
+self._newest_change_review_memo = (sid, view, len(view), newest)  # ...but the
+#                                             ^^^^^^^^^  length as it is HERE
+```
+
+An append landing in between records a post-append length beside a pre-append
+answer. The signature then keeps matching forever, so the memo serves the stale
+value for as long as the list object survives. And this is reachable: the
+producer (`ConsoleAgentBridge._append_change_markers`) appends from the agent
+WORKER thread with no `call_from_thread` marshalling while the consumer runs on
+the event loop.
+
+**What to do.** Snapshot every component of a verification signature at the
+same instant as the value it certifies — hoist it above the computation. The
+asymmetry is what makes this safe to reason about: recording a signature that
+is *stale-short* only costs an extra miss, while one that is *stale-long* is a
+permanent wrong answer, so when in doubt sample earlier.
+
+**Two things this cost that generalise.** First, **a fuzzer that drives the
+subject single-threaded cannot see an interleaving bug** — 138,565 clean probes
+plus three passing mutation arms said nothing about this, because none of them
+ever mutated the list *during* the scan. Reach for a deterministic interleaving
+harness (here: a `list` subclass whose `__reversed__` performs the append after
+creating the iterator) rather than more volume. Second, **a memo can make an
+existing self-correcting glitch permanent**, which is a regression even when
+the memo is new: the pre-memo code recomputed every tick and healed on the next
+one, so "base had the same race" was true and irrelevant. Ask what the failure
+DURATION becomes, not just whether the failure is new.
+
+**Trap in the regression test itself.** That test is red at base too — but for
+the wrong reason (`assert racing.fired`: base reverses a snapshot *copy*, so
+the fixture's `__reversed__` hook never fires). Its real red-first evidence is
+mutating the fix back out. A base red is not automatically evidence that base
+has the bug; read *why* it failed.

@@ -11366,19 +11366,27 @@ class ChatScreen(BaseAppScreen):
         """`(conversation_id, newest change_review_run_id)` -- the guard.
 
         `conversation_id` is the same accessor the world-book/dictionary
-        caches use. `newest change_review_run_id` is found by scanning the
-        active session's own in-memory message list (no DB read) in
-        REVERSE, breaking on the first truthy `change_review_run_id`:
-        every change-summary TOOL marker carries `change_review_run_id`
+        caches use. `newest change_review_run_id` comes from the store's
+        own `newest_change_review_run_id` memo (no DB read): every
+        change-summary TOOL marker carries `change_review_run_id`
         (live-appended and resume-injected alike, both real store
         messages -- see `ConsoleAgentBridge._append_change_markers` /
-        `resume_marker_messages`), and `messages_for_session` returns them
-        in transcript order, so the newest marker sits nearest the end of
-        the list -- markers cluster there in practice, so the reverse scan
-        with an early break makes steady-state cost near-constant instead
-        of walking the whole message list forward on every 0.2s sync tick
-        (worst case is still O(messages), when no message in the session
-        carries a marker at all).
+        `resume_marker_messages`), and the store's active-path view holds
+        them in transcript order, so the newest marker is the last one on
+        the path.
+
+        TASK-21121: this used to reverse-scan `messages_for_session()`
+        here. That call `dataclasses.replace`-copies EVERY message in the
+        session before the scan can look at even one of them, so the
+        early break bought nothing and this cost a full O(messages) copy
+        pass on every 0.2s tick -- worst case (no marker anywhere in the
+        session) being the COMMON case. The store-side memo re-verifies
+        its own signature on every hit, so it can only change how long
+        this takes, never what it returns -- a property that holds
+        because that signature is sampled BEFORE the scan it describes
+        (see `newest_change_review_run_id`; sampling it after let a
+        concurrent marker append pair a pre-append answer with a
+        post-append length, which the memo then served indefinitely).
         """
         conversation_id = self._character._current_console_rail_conversation_id()
         store = self._console_chat_store
@@ -11386,14 +11394,9 @@ class ChatScreen(BaseAppScreen):
         newest_run_id: str | None = None
         if store is not None and session_id:
             try:
-                messages = store.messages_for_session(session_id)
+                newest_run_id = store.newest_change_review_run_id(session_id)
             except KeyError:
-                messages = ()
-            for message in reversed(messages):
-                run_id = getattr(message, "change_review_run_id", None)
-                if run_id:
-                    newest_run_id = str(run_id)
-                    break
+                newest_run_id = None
         return (conversation_id, newest_run_id)
 
     def _build_console_changed_files_state(self) -> ConsoleChangedFilesState:
