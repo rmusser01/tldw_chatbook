@@ -6,6 +6,7 @@ from time import monotonic
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.UI.Research_Workspace_Modules.sources_region import (
@@ -23,11 +24,20 @@ from tldw_chatbook.Research_Workspace import (
 from tldw_chatbook.UI.Research_Workspace_Modules.source_list import (
     ResearchSourceList,
 )
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 
 class _SourcesHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield ResearchSourcesRegion(id="research-sources-pane")
+
+
+class _StyledSourcesHarness(ConsolidatedCSSApp):
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="research-workspace-shell"):
+            yield ResearchSourcesRegion(id="research-sources-pane")
 
 
 @pytest.mark.asyncio
@@ -73,8 +83,10 @@ async def test_sources_region_mounts_complete_control_inventory_once() -> None:
         )
         assert (
             region.query_one("#research-source-search", Input).placeholder
-            == "Search attached sources"
+            == "Filter current page"
         )
+        assert region.query_one("#research-source-preview-selected", Button).label.plain == "Preview visible selected"
+        assert region.query_one("#research-source-remove-selected", Button).label.plain == "Remove visible selected"
         assert region.query_one("#research-source-sort", Select).value == "manual"
         assert "Device-only" in str(
             region.query_one("#research-source-folders-label", Static).render()
@@ -109,6 +121,79 @@ async def test_sources_region_uses_text_labels_for_honest_unavailable_actions() 
         assert "association only" in str(
             region.query_one("#research-source-remove-scope", Static).render()
         )
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_actions_use_full_opacity_with_noncolor_reason() -> None:
+    app = _StyledSourcesHarness()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        region = app.query_one(ResearchSourcesRegion)
+        disabled = region.query_one("#research-source-remove-selected", Button)
+
+        assert disabled.disabled
+        assert disabled.styles.opacity == 1.0
+        assert disabled.styles.text_opacity == 1.0
+        assert "canonical owner" in str(
+            region.query_one("#research-source-move-copy-reason", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_nested_folders_render_ancestry_and_disable_offpage_selection() -> None:
+    from tldw_chatbook.Research_Workspace.overlay_store import ResearchSourceFolder
+
+    app = _SourcesHarness()
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
+    page = ResearchSourcePage(
+        items=(
+            ResearchSourceSummary(
+                ref=ref,
+                source_id="membership-visible",
+                catalog_item_id="visible",
+                title="Visible",
+                source_type="text",
+            ),
+        ),
+        limit=25,
+        total=26,
+        has_more=True,
+    )
+    folders = (
+        ResearchSourceFolder("folder-root", "Root"),
+        ResearchSourceFolder(
+            "folder-child",
+            "Child",
+            ("membership-offpage",),
+            "folder-root",
+        ),
+    )
+    available = ResearchCapability(True, "available", "Available.", "local")
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        region = app.query_one(ResearchSourcesRegion)
+        region.sync_workspace(
+            page,
+            readiness=(),
+            capabilities={"set_selected_scope": available},
+            folders=folders,
+            operations=(),
+        )
+        tree = region.query_one("#research-source-folder-tree", Select)
+        assert any("Root" in str(prompt) for prompt, _value in tree._options)
+        tree.value = "folder-child"
+        await pilot.pause()
+
+        parent = region.query_one("#research-source-folder-parent", Select)
+        assert any(
+            "Child" in str(prompt) and "  " in str(prompt)
+            for prompt, _value in tree._options
+        )
+        assert parent.value == ""
+        select_sources = region.query_one("#research-source-select-folder", Button)
+        assert select_sources.disabled
+        assert "off-page" in str(select_sources.tooltip)
 
 
 @pytest.mark.asyncio
@@ -298,6 +383,7 @@ async def test_workspace_clear_removes_old_folders_and_disables_owner_actions() 
             page,
             readiness=(),
             capabilities={
+                "attach_existing": available,
                 "preview_source": available,
                 "remove_source": available,
             },
@@ -322,6 +408,38 @@ async def test_workspace_clear_removes_old_folders_and_disables_owner_actions() 
             "research-source-remove-selected",
         ):
             assert region.query_one(f"#{widget_id}", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_add_and_quick_url_fail_closed_from_typed_attach_capability() -> None:
+    app = _SourcesHarness()
+    page = ResearchSourcePage(items=(), limit=25, total=0)
+    unavailable = ResearchCapability(
+        False,
+        "viewer_forbidden",
+        "Viewers cannot add sources.",
+        "server",
+        recovery_action="Ask an owner or editor for access.",
+    )
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        region = app.query_one(ResearchSourcesRegion)
+        region.sync_workspace(
+            page,
+            readiness=(),
+            capabilities={"attach_existing": unavailable},
+            folders=(),
+            operations=(),
+        )
+
+        add = region.query_one("#research-source-add", Button)
+        quick = region.query_one("#research-source-quick-submit", Button)
+        assert add.disabled and quick.disabled
+        assert "Viewers cannot add sources" in str(add.tooltip)
+        assert "[Unavailable]" in str(
+            region.query_one("#research-source-recovery", Static).render()
+        )
 
 
 @pytest.mark.asyncio
@@ -350,6 +468,7 @@ async def test_enabled_source_controls_emit_owner_events_and_gates_are_honest() 
             page,
             readiness=(),
             capabilities={
+                "attach_existing": available,
                 "preview_source": available,
                 "remove_source": available,
                 "reorder_sources": available,

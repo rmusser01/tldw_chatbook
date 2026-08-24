@@ -97,7 +97,7 @@ async def test_active_sources_keeps_essential_controls_painted_and_reachable(
         for text in (
             "Add Sources",
             "Quick add URL",
-            "Search attached sources",
+            "Filter current page",
             "Select all",
             "No workspace selected",
         ):

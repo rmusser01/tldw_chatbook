@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook.Research_Workspace.contracts import (
     BoundedPageResult,
+    CapabilityUnavailableError,
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
     ResearchCapability,
@@ -235,6 +236,73 @@ async def test_select_all_sources_reads_every_bounded_owner_page() -> None:
     assert controller.desired_source_ids == port.selected
 
 
+@pytest.mark.asyncio
+async def test_move_source_fetches_exact_owner_order_before_reorder() -> None:
+    class OwnerPort:
+        def __init__(self) -> None:
+            self.offsets: list[int] = []
+            self.reorders: list[tuple[str, ...]] = []
+
+        async def list_sources(self, ref, *, limit=100, offset=0):
+            self.offsets.append(offset)
+            stop = min(offset + limit, 26)
+            items = tuple(
+                local_source(
+                    ref,
+                    f"membership-{index}",
+                    catalog_item_id=str(index),
+                    selected=False,
+                )
+                for index in range(offset + 1, stop + 1)
+            )
+            return ResearchSourcePage(
+                items=items,
+                limit=limit,
+                offset=offset,
+                total=26,
+                has_more=stop < 26,
+            )
+
+        async def reorder_sources(self, ref, ordered_source_ids):
+            self.reorders.append(ordered_source_ids)
+            return tuple(
+                local_source(ref, source_id, catalog_item_id=source_id.removeprefix("membership-"), selected=False)
+                for source_id in ordered_source_ids
+            )
+
+    port = OwnerPort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    controller.select_workspace(local_ref("one"), capability_revision="cap-1")
+
+    assert await controller.move_selected_source("membership-26", delta=-1) is True
+    assert port.offsets == [0]
+    assert port.reorders[0][-2:] == ("membership-26", "membership-25")
+    assert len(port.reorders[0]) == 26
+
+
+@pytest.mark.asyncio
+async def test_move_source_refuses_owner_over_reorder_bound_without_mutation() -> None:
+    class OversizedOwnerPort:
+        def __init__(self) -> None:
+            self.reorders = 0
+
+        async def list_sources(self, ref, *, limit=100, offset=0):
+            return ResearchSourcePage(items=(), limit=limit, total=101, has_more=True)
+
+        async def reorder_sources(self, ref, ordered_source_ids):
+            self.reorders += 1
+            return ()
+
+    port = OversizedOwnerPort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    controller.select_workspace(local_ref("one"), capability_revision="cap-1")
+
+    with pytest.raises(ValueError, match="bounded reorder limit"):
+        await controller.move_selected_source("membership-1", delta=1)
+
+    assert port.reorders == 0
+
+
 def test_context_revision_increases_for_each_selection_and_capability_refresh() -> None:
     controller = ResearchWorkspaceController({})
 
@@ -243,6 +311,30 @@ def test_context_revision_increases_for_each_selection_and_capability_refresh() 
     third = controller.set_capability_revision("b")
 
     assert (first, second, third) == (1, 2, 3)
+
+
+@pytest.mark.asyncio
+async def test_explicit_capability_preflight_uses_captured_owner_projection() -> None:
+    unavailable = ResearchCapability(
+        False,
+        "viewer_forbidden",
+        "Viewers cannot add sources.",
+        "server",
+        recovery_action="Ask an owner or editor for access.",
+    )
+
+    class Port:
+        async def capabilities(self, ref):
+            return {"attach_existing": unavailable}
+
+    ref = local_ref("one")
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: Port()})
+    controller.select_workspace(ref)
+
+    with pytest.raises(CapabilityUnavailableError) as caught:
+        await controller.require_workspace_capability(ref, "attach_existing")
+
+    assert caught.value.capability is unavailable
 
 
 def test_controller_rejects_result_for_a_different_captured_ref() -> None:

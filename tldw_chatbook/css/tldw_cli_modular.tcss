@@ -23992,10 +23992,12 @@ ResearchSourcesRegion Button:focus {
     text-style: bold underline;
 }
 
-ResearchSourcesRegion Button:disabled {
+#research-workspace-shell ResearchSourcesRegion Button:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
     background: $surface-darken-1;
     color: $text-muted;
-    text-style: dim;
+    text-style: none;
 }
 
 ResearchSourcesRegion Input,
@@ -24147,13 +24149,15 @@ _ResearchSourceReceiptSlot Static {
 
 /* Add Sources and source inspector modals share the workbench visual world. */
 ResearchAddSourceModal,
-ResearchSourceInspectorModal {
+ResearchSourceInspectorModal,
+ResearchOverlayConflictModal {
     align: center middle;
     background: $background 70%;
 }
 
 #research-add-source-dialog,
-#research-source-inspector-dialog {
+#research-source-inspector-dialog,
+#research-overlay-conflict-dialog {
     width: 90%;
     max-width: 110;
     height: 90%;
@@ -24161,6 +24165,18 @@ ResearchSourceInspectorModal {
     padding: 1;
     border: round $accent;
     background: $panel;
+}
+
+#research-overlay-conflict-dialog {
+    height: auto;
+    max-width: 76;
+}
+
+#research-overlay-conflict-dialog Button,
+#research-overlay-conflict-dialog Static {
+    width: 100%;
+    height: auto;
+    min-height: 1;
 }
 
 #research-add-source-heading-row,
@@ -24190,6 +24206,19 @@ ResearchSourceInspectorModal {
     min-height: 1;
     padding: 0 1;
     border: none;
+}
+
+/* Unavailable actions remain readable: the surface and adjacent reason text
+   convey the state without stacking app and Textual opacity dimmers. */
+#research-add-source-dialog Button:disabled,
+#research-add-source-dialog Input:disabled,
+#research-add-source-dialog Select:disabled,
+#research-source-inspector-dialog Button:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text-muted;
+    background: $surface-darken-1;
+    text-style: none;
 }
 
 #research-add-error {

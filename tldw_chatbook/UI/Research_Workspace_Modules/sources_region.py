@@ -58,11 +58,18 @@ class ResearchSourcesRegion(VerticalScroll):
             self.delta = delta
 
     class FolderRequested(Message):
-        def __init__(self, action: str, folder_id: str, name: str) -> None:
+        def __init__(
+            self,
+            action: str,
+            folder_id: str,
+            name: str,
+            parent_folder_id: str = "",
+        ) -> None:
             super().__init__()
             self.action = action
             self.folder_id = folder_id
             self.name = name
+            self.parent_folder_id = parent_folder_id
 
     class BatchRequested(Message):
         def __init__(self, action: str) -> None:
@@ -76,6 +83,7 @@ class ResearchSourcesRegion(VerticalScroll):
         self._capabilities: Mapping[str, ResearchCapability] = {}
         self._folders: tuple[ResearchSourceFolder, ...] = ()
         self._focused_folder_id = ""
+        self._collapsed_folder_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="research-source-header"):
@@ -90,11 +98,12 @@ class ResearchSourcesRegion(VerticalScroll):
             "No workspace selected · choose Local or Server above",
             id="research-source-recovery",
             classes="research-recovery-callout",
+            markup=False,
         )
         with Horizontal(id="research-source-quick-row"):
             yield Input(placeholder="Quick add URL", id="research-source-quick-url")
             yield Button("Add", id="research-source-quick-submit", compact=True)
-        yield Input(placeholder="Search attached sources", id="research-source-search")
+        yield Input(placeholder="Filter current page", id="research-source-search")
         with Horizontal(id="research-source-view-row"):
             yield Button("Advanced", id="research-source-advanced", compact=True)
             yield Select(
@@ -176,11 +185,15 @@ class ResearchSourcesRegion(VerticalScroll):
         with Horizontal(id="research-source-batch-actions"):
             yield Button("Move / Copy", id="research-source-move-copy", disabled=True)
             yield Button(
-                "Preview selected",
+                "Preview visible selected",
                 id="research-source-preview-selected",
                 disabled=True,
             )
-            yield Button("Remove", id="research-source-remove-selected", disabled=True)
+            yield Button(
+                "Remove visible selected",
+                id="research-source-remove-selected",
+                disabled=True,
+            )
         yield Static(
             "Move / Copy — canonical owner unavailable",
             id="research-source-move-copy-reason",
@@ -214,6 +227,18 @@ class ResearchSourcesRegion(VerticalScroll):
                     compact=True,
                     disabled=True,
                 )
+                yield Button(
+                    "Expand / collapse",
+                    id="research-source-folder-toggle",
+                    compact=True,
+                    disabled=True,
+                )
+            yield Select(
+                (("Root (no parent)", ""),),
+                value="",
+                allow_blank=False,
+                id="research-source-folder-parent",
+            )
             yield Select(
                 (("No device-only folders yet", ""),),
                 value="",
@@ -293,12 +318,38 @@ class ResearchSourcesRegion(VerticalScroll):
     @on(Button.Pressed, "#research-source-folder-focus")
     @on(Button.Pressed, "#research-source-select-folder")
     def folder_action(self, event: Button.Pressed) -> None:
-        action = str(event.button.id or "").removeprefix("research-source-folder-")
+        action = (
+            "select-folder"
+            if event.button.id == "research-source-select-folder"
+            else str(event.button.id or "").removeprefix("research-source-folder-")
+        )
         folder_id = str(
             self.query_one("#research-source-folder-tree", Select).value or ""
         )
         name = self.query_one("#research-source-folder-name", Input).value.strip()
-        self.post_message(self.FolderRequested(action, folder_id, name))
+        parent_folder_id = str(
+            self.query_one("#research-source-folder-parent", Select).value or ""
+        )
+        self.post_message(
+            self.FolderRequested(action, folder_id, name, parent_folder_id)
+        )
+
+    @on(Button.Pressed, "#research-source-folder-toggle")
+    def toggle_folder_branch(self) -> None:
+        folder_id = str(
+            self.query_one("#research-source-folder-tree", Select).value or ""
+        )
+        if not folder_id:
+            return
+        if folder_id in self._collapsed_folder_ids:
+            self._collapsed_folder_ids.remove(folder_id)
+        else:
+            self._collapsed_folder_ids.add(folder_id)
+        self._sync_folders(selected_folder_id=folder_id)
+
+    @on(Select.Changed, "#research-source-folder-tree")
+    def selected_folder_changed(self) -> None:
+        self._sync_folder_action_state()
 
     @on(Button.Pressed, "#research-source-preview-selected")
     @on(Button.Pressed, "#research-source-remove-selected")
@@ -338,6 +389,7 @@ class ResearchSourcesRegion(VerticalScroll):
         self._readiness = ()
         self._capabilities = {}
         self._folders = ()
+        self._collapsed_folder_ids.clear()
         self._focused_folder_id = ""
         self.query_one("#research-source-list", ResearchSourceList).sync_page(None)
         self.query_one(
@@ -355,6 +407,37 @@ class ResearchSourcesRegion(VerticalScroll):
         self._sync_folders()
         self._sync_capabilities()
         self.set_workspace_available(False, authority=authority)
+
+    def sync_receipts(
+        self,
+        operations: tuple[ResearchSourceOperation, ...],
+        *,
+        incomplete: bool = False,
+    ) -> None:
+        """Patch durable receipts independently of canonical owner reads."""
+
+        self.query_one(
+            "#research-source-receipts", ResearchSourceReceiptList
+        ).sync_operations(operations, incomplete=incomplete)
+
+    def clear_source_projection(self, *, authority: str, reason: str) -> None:
+        """Clear failed owner rows while retaining already-loaded receipts."""
+
+        self._page = None
+        self._readiness = ()
+        self._capabilities = {}
+        self.query_one("#research-source-list", ResearchSourceList).sync_page(None)
+        self.query_one("#research-source-recovery", Static).update(reason)
+        self.query_one("#research-source-selected-count", Static).update("0 selected")
+        self.query_one("#research-source-page-summary", Static).update(
+            "Page 1 · source owner unavailable"
+        )
+        self.query_one("#research-source-page-prev", Button).disabled = True
+        self.query_one("#research-source-page-next", Button).disabled = True
+        refresh = self.query_one("#research-source-refresh", Button)
+        refresh.disabled = False
+        refresh.tooltip = f"Retry {authority} source owner"
+        self._sync_capabilities()
 
     def sync_workspace(
         self,
@@ -386,15 +469,13 @@ class ResearchSourcesRegion(VerticalScroll):
         )
         current_page = page.offset // page.limit + 1
         self.query_one("#research-source-page-summary", Static).update(
-            f"Page {current_page} · {page.total} sources"
+            f"Page {current_page} · {page.total} owner sources · filters affect current page"
         )
         self.query_one("#research-source-page-prev", Button).disabled = page.offset == 0
         self.query_one(
             "#research-source-page-next", Button
         ).disabled = not page.has_more
-        self.query_one(
-            "#research-source-receipts", ResearchSourceReceiptList
-        ).sync_operations(operations, incomplete=receipts_incomplete)
+        self.sync_receipts(operations, incomplete=receipts_incomplete)
         self._sync_folders()
         self._sync_capabilities()
         self._render_page()
@@ -430,11 +511,30 @@ class ResearchSourcesRegion(VerticalScroll):
     def _sync_capabilities(self) -> None:
         page = self._page
         desired_count = len(page.desired_source_ids) if page is not None else 0
+        attach = self._capabilities.get("attach_existing")
         preview = self._capabilities.get("preview_source")
         remove = self._capabilities.get("remove_source")
         selection = self._capabilities.get("set_selected_scope")
         visible_selected_count = len(self.selected_source_ids())
         selection_available = bool(selection and selection.available)
+        attach_available = bool(attach and attach.available)
+        attach_reason = (
+            attach.user_message
+            if attach is not None
+            else "Add capability is unavailable until the owner projection loads."
+        )
+        for selector in ("#research-source-add", "#research-source-quick-submit"):
+            button = self.query_one(selector, Button)
+            button.disabled = not attach_available
+            button.tooltip = (
+                "Add sources to this workspace"
+                if attach_available
+                else attach_reason
+            )
+        if not attach_available and page is not None:
+            self.query_one("#research-source-recovery", Static).update(
+                f"[Unavailable] Add Sources · {attach_reason}"
+            )
         for selector in (
             "#research-source-select-all",
             "#research-source-select-visible",
@@ -466,19 +566,69 @@ class ResearchSourcesRegion(VerticalScroll):
             "Move / Copy — canonical owner action is not exposed here"
         )
 
-    def _sync_folders(self) -> None:
+    def _sync_folders(self, *, selected_folder_id: str | None = None) -> None:
         select = self.query_one("#research-source-folder-tree", Select)
-        options = [(folder.name, folder.folder_id) for folder in self._folders]
+        parent_select = self.query_one("#research-source-folder-parent", Select)
+        current = selected_folder_id
+        if current is None:
+            current = str(select.value or "")
+        by_parent: dict[str, list[ResearchSourceFolder]] = {}
+        for folder in self._folders:
+            by_parent.setdefault(folder.parent_folder_id, []).append(folder)
+
+        options: list[tuple[str, str]] = []
+        parent_options: list[tuple[str, str]] = [("Root (no parent)", "")]
+
+        def append_branch(folder: ResearchSourceFolder, depth: int) -> None:
+            children = by_parent.get(folder.folder_id, [])
+            branch = "[+]" if folder.folder_id in self._collapsed_folder_ids else "[-]"
+            marker = branch if children else "   "
+            label = f"{'  ' * depth}{marker} {folder.name}"
+            options.append((label, folder.folder_id))
+            parent_options.append((label, folder.folder_id))
+            if folder.folder_id not in self._collapsed_folder_ids:
+                for child in children:
+                    append_branch(child, depth + 1)
+
+        for root in by_parent.get("", []):
+            append_branch(root, 0)
         select.set_options(options or [("No device-only folders yet", "")])
-        if not self._folders:
+        parent_select.set_options(parent_options)
+        if current and any(folder.folder_id == current for folder in self._folders):
+            select.value = current
+        elif not self._folders:
             select.value = ""
-        enabled = bool(self._folders)
+        self._sync_folder_action_state()
+
+    def _sync_folder_action_state(self) -> None:
+        """Gate folder actions against current page and selected branch."""
+
+        if not self.is_mounted:
+            return
+        folder_id = str(
+            self.query_one("#research-source-folder-tree", Select).value or ""
+        )
+        folder = next(
+            (item for item in self._folders if item.folder_id == folder_id), None
+        )
+        enabled = folder is not None
         for selector in (
             "#research-source-folder-rename",
             "#research-source-folder-focus",
-            "#research-source-select-folder",
+            "#research-source-folder-toggle",
         ):
             self.query_one(selector, Button).disabled = not enabled
+        select_sources = self.query_one("#research-source-select-folder", Button)
+        page_ids = {
+            source.source_id for source in self._page.items
+        } if self._page is not None else set()
+        off_page = bool(folder and any(item not in page_ids for item in folder.source_ids))
+        select_sources.disabled = not enabled or off_page
+        select_sources.tooltip = (
+            "[Unavailable] Folder includes off-page sources; load their page first."
+            if off_page
+            else "Select this folder's visible qualified source associations."
+        )
 
     def _render_page(self) -> None:
         page = self._page

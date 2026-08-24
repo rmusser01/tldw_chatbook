@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete. Research Workspace now has a compose-once, authority-explicit Sources
+Complete after review fix round 1. Research Workspace now has a compose-once, authority-explicit Sources
 workbench with durable intake receipts, paged sources, exact desired selection,
 readiness/status inspection, device-only folders/annotations, and honest owner
 capability gates. Quick Notes bodies and Task 5 ownership were not added.
@@ -113,3 +113,56 @@ Research Workspace Sources UI and CSS, exact app ingest origin precondition,
 and focused tests. No canonical content database, server folder/annotation API,
 Quick Notes body, cross-authority transfer, source deletion, or keybinding was
 introduced.
+
+## Review fix round 1
+
+The review's authority, pagination, worker, overlay, accessibility, and paste
+lifecycle findings were verified against the actual app/runner and mounted
+Textual seams before repair. No new ADR was required: the fixes close gaps in
+ADR-078's existing authority, owner, conflict, and private-overlay contracts.
+
+| Review family | Closure and executable owner |
+| --- | --- |
+| Qualified Server intake | Admission and delayed dispatch recover the durable operation and validate `data_source`, `server_profile_id`, and `principal_id`; identity changes produce no catalog/job/server mutation. App admission and delayed-dispatch race tests exercise the real helper seams. |
+| Search/selection honesty | Server web search remains visible but disabled with provider/setup recovery and never calls My Media catalog search. Upload and Local Library/My Media explicitly say one file/item per action. |
+| Worker safety | One screen wrapper runs source actions with nonfatal worker policy, contains expected capability/API/network/conflict/validation failures, preserves drafts/receipts, and logs unexpected defects. A mounted failing-port matrix exercises intake, selection, reorder, preview, remove, folder, and retry. |
+| Multi-page semantics | Labels say `Filter current page`, `Preview visible selected`, and `Remove visible selected`. Reorder fetches exact owner order, works for 26, refuses 101, and never partially mutates. Off-page folder selection is disabled with exact recovery. |
+| Add capability | Add/Quick URL and modal submission require typed `attach_existing` before operation, catalog, or ingest writes; a static denial writes nothing while a post-create race remains a durable failed receipt. |
+| Receipt independence | Qualified recent receipts load first and survive owner capability/source failures, restart, and late completion; only the source projection is cleared. |
+| Overlay CAS | Conflicts retain the local draft and mount explicit Reload, metadata-only Export, and in-memory Fork/copy actions. There is no silent or force overwrite. The two-store mounted test exercises each recovery action and verifies exported JSON omits annotation text, paths, and URLs. |
+| Annotation CRUD | The inspector lists qualified annotations and creates, edits, deletes, reopens, and reloads stable IDs from the real overlay store without crossing source refs. |
+| Nested folders | The bounded device-only hierarchy honors `parent_folder_id`, validates missing parents/cycles/depth, renders ancestry with ASCII expand/collapse controls, and requires explicit `Select folder sources`. |
+| Safe dismissal/removal | Add, Inspector, removal confirmation, and overlay-conflict modal use Escape-safe dismissal. Add restores opener focus. Row/batch unlink mutation starts only after copy stating that the workspace association is removed while Library/Media is retained. |
+| Disabled accessibility | Research disabled controls keep full opacity/text opacity, add `[Unavailable]`/reason copy, and preserve visible focus distinction under the consolidated theme. |
+| Paste staging lifecycle | An app-owned 0700 directory and 0600 operation-derived files are indexed without bodies or paths. Operation creation precedes staging; success/cancel deletes, retryable failure retains, pre-job submission failure deletes, and a bounded startup sweep removes terminal/orphan artifacts without touching user upload paths. |
+| Owner-independent detail and recovery | Details/folders remain explicitly device-only and qualified. Status exposes a real Refresh/Recheck action plus exact stage retry rather than a fake server indexing endpoint. |
+
+### Fix-round RED and regression evidence
+
+- Review-owned inverse matrix: **27 passed** in 10.36s after the fixes. It
+  drives the production app/controller/store handlers and mounted screens for
+  every row above (including three terminal staging states).
+- Whole Research Workspace package: **256 passed** in 1.85s.
+- App submission seam: first fresh run found a direct-helper compatibility
+  regression (**3 failed, 130 passed**); making the optional Research operation
+  link optional for ordinary Server helper calls produced **133 passed** in
+  1.87s.
+- Whole Library runner file: **145 passed, 1 Windows-only skipped** in 14.11s.
+- Mounted Task 4 UI: **39 passed** in 15.56s; screen/app-wiring neighbors:
+  **22 passed** in 17.61s.
+- Six-size geometry initially exposed six stale assertions for the renamed
+  page-local filter (**6 failed, 9 passed**); exact copy was corrected and the
+  gate finished **15 passed** in 22.63s.
+- Honest Upload/My Media single-selection copy was added test-first
+  (**2 failed** before production, **2 passed** after).
+- CSS build completed consecutively with identical timestamp-normalized hash
+  `52463ed25c2a099680e864a8b9795d70f8ad6ce9f61caa51392b2b88837ac0c2`;
+  integrity/bundle/staleness checks are **28 passed**.
+- Impeccable detector `[]`; scoped Ruff, changed-production `compileall`,
+  `git diff --check`, ASCII/keybinding, staging privacy/path, and bounded-tree
+  scans pass. The only changed-suite warning is the accepted environment
+  `RequestsDependencyWarning`. The full App neighbor additionally emits
+  pre-existing third-party SWIG deprecations in an untouched PDF test.
+
+Full pytest was not run, per repository policy. TASK-21508 remains
+controller-owned and excluded from the fix commit.

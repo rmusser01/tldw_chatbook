@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from pathlib import Path
-import tempfile
-from typing import Any, Callable, Literal
+import hashlib
+import json
+from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
+import httpx
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -25,15 +27,21 @@ from ...Research_Workspace import (
     WorkspaceDataSource,
 )
 from ...Research_Workspace.overlay_store import (
+    OverlayConflictError,
+    OverlayLimitError,
+    OverlayValidationError,
     ResearchSourceAnnotation,
     ResearchSourceFolder,
 )
+from ...Research_Workspace.source_operation_store import SourceOperationConflictError
 from ...Research_Workspace.source_operations import (
     CanonicalItemType,
     ResearchSourceOperation,
+    SourceOperationValidationError,
     SourceOperationStage,
     SourceOperationStatus,
 )
+from ...tldw_api.exceptions import TLDWAPIError
 from ...Research_Workspace.layout_state import (
     ResearchPaneLayout,
     ResearchPanePreferences,
@@ -46,6 +54,7 @@ from ..Research_Workspace_Modules import (
     ResearchHeaderRegion,
     ResearchPaneHandle,
     ResearchPaneModeStrip,
+    ResearchOverlayConflictModal,
     ResearchSourcesRegion,
     ResearchAddSourceModal,
     ResearchSourceIntakeRequest,
@@ -56,6 +65,7 @@ from ..Research_Workspace_Modules import (
     ResearchStudioRegion,
 )
 from ..Research_Workspace_Modules.pane_handle import ResearchSidePane
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 
 
 ResearchPaneName = Literal["sources", "chat", "studio"]
@@ -75,6 +85,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         overlay_store: ResearchPresentationOverlayStore | None = None,
         operation_store: Any | None = None,
         association_scheduler: Any | None = None,
+        paste_staging_store: Any | None = None,
         operation_id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
         **kwargs: Any,
@@ -84,6 +95,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.overlay_store = overlay_store
         self.operation_store = operation_store
         self.association_scheduler = association_scheduler
+        self.paste_staging_store = paste_staging_store
         self._operation_id_factory = operation_id_factory or (
             lambda: f"research-source-operation-{uuid4().hex}"
         )
@@ -110,6 +122,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_save_requested = False
         self._overlay_save_running = False
         self._overlay_committed_revisions: dict[QualifiedWorkspaceRef, int] = {}
+        self._overlay_conflict_open = False
+        self._overlay_fork_draft: tuple[object, ...] | None = None
 
     def save_state(self) -> dict[str, object]:
         """Save Phase-1 authority, workspace intent, and responsive view state."""
@@ -479,12 +493,79 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             exclusive=True,
         )
 
+    def _run_source_action(
+        self,
+        action: Awaitable[Any],
+        *,
+        group: str,
+        exclusive: bool = False,
+        recovery: str = "Source action could not be completed. Refresh Sources and retry.",
+    ) -> None:
+        """Contain expected source failures without making them app-fatal."""
+
+        self.run_worker(
+            self._guard_source_action(action, recovery=recovery),
+            group=group,
+            exclusive=exclusive,
+            exit_on_error=False,
+        )
+
+    async def _guard_source_action(
+        self, action: Awaitable[Any], *, recovery: str
+    ) -> None:
+        """Show bounded recovery for expected failures and log unexpected defects."""
+
+        try:
+            await action
+        except asyncio.CancelledError:
+            raise
+        except CapabilityUnavailableError as exc:
+            self._show_source_action_recovery(
+                f"{exc.capability.user_message} "
+                f"{exc.capability.recovery_action}".strip()
+            )
+        except (
+            OverlayConflictError,
+            OverlayLimitError,
+            OverlayValidationError,
+            SourceOperationConflictError,
+            SourceOperationValidationError,
+            TLDWAPIError,
+            httpx.HTTPError,
+            OSError,
+        ):
+            self._show_source_action_recovery(recovery)
+        except Exception:
+            logger.exception("Unexpected Research source action failure")
+            self._show_source_action_recovery(
+                "Unexpected source action failure. Refresh Sources; details were logged."
+            )
+
+    def _show_source_action_recovery(self, message: str) -> None:
+        """Publish one sanitized recovery message in the pane and notification log."""
+
+        if self.is_mounted:
+            self.query_one("#research-source-recovery", Static).update(message)
+        self.notify(message, severity="warning")
+
     async def _refresh_source_workbench(self) -> None:
         capture = self.controller.capture_request()
         region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
         region.query_one("#research-source-recovery", Static).update(
             f"Loading {capture.ref.data_source.value.title()} sources..."
         )
+        try:
+            operations = await self._recent_operations(capture.ref)
+        except (OSError, ValueError, RuntimeError):
+            operations = ()
+            if self.controller.is_current_request(capture):
+                self.notify(
+                    "Recent source receipts could not be loaded; owner sources can still refresh.",
+                    severity="warning",
+                )
+        if not self.controller.is_current_request(capture):
+            return
+        region.sync_receipts(operations, incomplete=len(operations) == 20)
         try:
             capabilities_current = await self.controller.refresh_selected_capabilities()
             sources_current = await self.controller.refresh_selected_sources(
@@ -498,17 +579,16 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             )
             if not readiness_current or not self.controller.is_current_request(capture):
                 return
-            operations = await self._recent_operations(capture.ref)
         except CapabilityUnavailableError as exc:
             if self.controller.is_current_request(capture):
-                region.clear_workspace(
+                region.clear_source_projection(
                     authority=capture.ref.data_source.value.title(),
                     reason=f"{exc.capability.user_message} {exc.capability.recovery_action}".strip(),
                 )
             return
         except Exception:
             if self.controller.is_current_request(capture):
-                region.clear_workspace(
+                region.clear_source_projection(
                     authority=capture.ref.data_source.value.title(),
                     reason=(
                         "Sources could not be loaded from the selected owner. "
@@ -557,7 +637,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
         def submitted(request: ResearchSourceIntakeRequest | None) -> None:
             if request is not None:
-                self.run_worker(
+                self._run_source_action(
                     self._submit_intake_request(ref, request),
                     group="research-source-intake",
                 )
@@ -571,7 +651,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     def quick_add_url(self, message: ResearchSourcesRegion.QuickUrlRequested) -> None:
         ref = self.controller.selected_ref
         if ref is not None:
-            self.run_worker(
+            self._run_source_action(
                 self._submit_intake_request(
                     ref, ResearchSourceIntakeRequest("url", (message.url,))
                 ),
@@ -609,7 +689,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 await self.controller.set_selected_scope(desired)
             self._start_sources_refresh()
 
-        self.run_worker(apply(), group="research-source-selection", exclusive=True)
+        self._run_source_action(
+            apply(), group="research-source-selection", exclusive=True
+        )
 
     @on(ResearchSourceList.SelectionToggled)
     def toggle_source_selection(
@@ -625,38 +707,45 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             await self.controller.set_selected_scope(tuple(desired))
             self._start_sources_refresh()
 
-        self.run_worker(apply(), group="research-source-selection", exclusive=True)
+        self._run_source_action(
+            apply(), group="research-source-selection", exclusive=True
+        )
 
     @on(ResearchSourceList.ReorderRequested)
     def reorder_source(self, message: ResearchSourceList.ReorderRequested) -> None:
-        page = self.controller.visible_source_page
-        if page is None:
-            return
-        ordered = [source.source_id for source in page.items]
-        try:
-            index = ordered.index(message.source_id)
-        except ValueError:
-            return
-        target = index + message.delta
-        if target < 0 or target >= len(ordered):
-            return
-        ordered[index], ordered[target] = ordered[target], ordered[index]
-
         async def apply() -> None:
-            await self.controller.reorder_selected_sources(tuple(ordered))
+            await self.controller.move_selected_source(
+                message.source_id, message.delta
+            )
             self._start_sources_refresh()
 
-        self.run_worker(apply(), group="research-source-reorder", exclusive=True)
+        self._run_source_action(
+            apply(), group="research-source-reorder", exclusive=True
+        )
 
     @on(ResearchSourceList.ActionRequested)
     def source_action(self, message: ResearchSourceList.ActionRequested) -> None:
         if message.action == "remove":
-            self.run_worker(
-                self._remove_source(message.source_id),
-                group="research-source-remove",
+            def confirmed(accepted: bool | None) -> None:
+                if accepted:
+                    self._run_source_action(
+                        self._remove_source(message.source_id),
+                        group="research-source-remove",
+                    )
+
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Remove source association?",
+                    message=(
+                        "This removes from this workspace; "
+                        "Library/Media item is retained."
+                    ),
+                    confirm_label="Remove association",
+                ),
+                callback=confirmed,
             )
         elif message.action in {"details", "preview"}:
-            self.run_worker(
+            self._run_source_action(
                 self._show_source_inspector(
                     message.source_id, load_preview=message.action == "preview"
                 ),
@@ -678,7 +767,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
         source_ids = region.selected_source_ids()
         if message.action == "preview-selected" and len(source_ids) == 1:
-            self.run_worker(
+            self._run_source_action(
                 self._show_source_inspector(source_ids[0], load_preview=True),
                 group="research-source-preview",
                 exclusive=True,
@@ -703,8 +792,24 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 self._start_overlay_save()
                 self._start_sources_refresh()
 
-            self.run_worker(
-                remove_all(), group="research-source-remove", exclusive=True
+            def confirmed(accepted: bool | None) -> None:
+                if accepted:
+                    self._run_source_action(
+                        remove_all(),
+                        group="research-source-remove",
+                        exclusive=True,
+                    )
+
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Remove visible source associations?",
+                    message=(
+                        "This removes from this workspace; Library/Media item is retained. "
+                        "Only selected associations on this visible page are removed."
+                    ),
+                    confirm_label="Remove associations",
+                ),
+                callback=confirmed,
             )
         else:
             self.notify(
@@ -734,7 +839,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 return
             self._source_folders = (
                 *self._source_folders,
-                ResearchSourceFolder(f"folder-{uuid4().hex}", message.name),
+                ResearchSourceFolder(
+                    f"folder-{uuid4().hex}",
+                    message.name,
+                    parent_folder_id=message.parent_folder_id,
+                ),
             )
         elif message.action == "rename":
             if not message.folder_id or not message.name:
@@ -818,7 +927,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             await self.controller.set_selected_scope(desired)
             self._start_sources_refresh()
 
-        self.run_worker(apply(), group="research-source-selection", exclusive=True)
+        self._run_source_action(
+            apply(), group="research-source-selection", exclusive=True
+        )
 
     async def _show_source_inspector(
         self, source_id: str, *, load_preview: bool
@@ -842,22 +953,78 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         def save_annotation(draft: ResearchSourceAnnotationDraft | None) -> None:
             if draft is None:
                 return
+            if draft.action == "recheck":
+                self._start_sources_refresh()
+                return
+            if draft.source_id != source_id or ref != self.controller.selected_ref:
+                self.notify(
+                    "Annotation owner changed; reopen source details.",
+                    severity="warning",
+                )
+                return
             now = self._now_factory()
-            self._source_annotations = (
-                *self._source_annotations,
-                ResearchSourceAnnotation(
-                    annotation_id=f"annotation-{uuid4().hex}",
-                    source_id=draft.source_id,
-                    quote=draft.quote,
-                    note=draft.note,
-                    created_at=now,
-                    updated_at=now,
+            existing = next(
+                (
+                    item
+                    for item in self._source_annotations
+                    if item.annotation_id == draft.annotation_id
+                    and item.source_id == source_id
                 ),
+                None,
             )
+            if draft.action == "delete":
+                if existing is None:
+                    return
+                self._source_annotations = tuple(
+                    item
+                    for item in self._source_annotations
+                    if item.annotation_id != existing.annotation_id
+                )
+            elif draft.action == "update":
+                if existing is None:
+                    self.notify(
+                        "Annotation changed on this device; reopen source details.",
+                        severity="warning",
+                    )
+                    return
+                self._source_annotations = tuple(
+                    ResearchSourceAnnotation(
+                        annotation_id=item.annotation_id,
+                        source_id=item.source_id,
+                        quote=draft.quote,
+                        note=draft.note,
+                        created_at=item.created_at,
+                        updated_at=now,
+                    )
+                    if item.annotation_id == existing.annotation_id
+                    else item
+                    for item in self._source_annotations
+                )
+            else:
+                self._source_annotations = (
+                    *self._source_annotations,
+                    ResearchSourceAnnotation(
+                        annotation_id=f"annotation-{uuid4().hex}",
+                        source_id=draft.source_id,
+                        quote=draft.quote,
+                        note=draft.note,
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                )
             self._start_overlay_save()
 
         self.app.push_screen(
-            ResearchSourceInspectorModal(source, readiness=readiness, preview=preview),
+            ResearchSourceInspectorModal(
+                source,
+                readiness=readiness,
+                preview=preview,
+                annotations=tuple(
+                    annotation
+                    for annotation in self._source_annotations
+                    if annotation.source_id == source_id
+                ),
+            ),
             callback=save_annotation,
         )
 
@@ -871,10 +1038,20 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
 
         async def retry() -> None:
-            await scheduler.retry(message.operation_id, stage=message.stage)
+            operation = await scheduler.retry(
+                message.operation_id, stage=message.stage
+            )
+            if (
+                operation is not None
+                and operation.catalog_status is SourceOperationStatus.SUCCEEDED
+                and self.paste_staging_store is not None
+            ):
+                await asyncio.to_thread(
+                    self.paste_staging_store.delete, message.operation_id
+                )
             self._start_sources_refresh()
 
-        self.run_worker(retry(), group="research-source-retry")
+        self._run_source_action(retry(), group="research-source-retry")
 
     def _start_overlay_save(self) -> None:
         if self.overlay_store is None or self._overlay_ref is None:
@@ -923,6 +1100,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 source_folders=source_folders,
                 source_annotations=source_annotations,
             )
+        except OverlayConflictError:
+            self._open_overlay_conflict_recovery(ref)
+            return
         except (OSError, ValueError, RuntimeError):
             self.notify(
                 "Device-only pane preference was not saved; retry the pane action.",
@@ -938,6 +1118,108 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             and owner_generation == self._overlay_owner_generation
         ):
             self._overlay_revision = saved.revision
+
+    def _open_overlay_conflict_recovery(self, ref: QualifiedWorkspaceRef) -> None:
+        """Expose explicit device-only recovery without changing the draft."""
+
+        if self._overlay_conflict_open:
+            return
+        if not self.is_mounted:
+            self.notify(
+                "Device overlay changed; reopen Research to choose recovery.",
+                severity="warning",
+            )
+            return
+        self._overlay_conflict_open = True
+
+        def chosen(action: str | None) -> None:
+            self._overlay_conflict_open = False
+            if action == "reload":
+                self._run_source_action(
+                    self._reload_overlay_after_conflict(ref),
+                    group="research-overlay-conflict",
+                    exclusive=True,
+                    recovery="Device overlay could not be reloaded; local draft remains.",
+                )
+            elif action == "export":
+                self.app.copy_to_clipboard(self._device_overlay_recovery_export(ref))
+                self.notify(
+                    "Private-free device overlay recovery metadata copied.",
+                )
+            elif action == "fork":
+                self._overlay_fork_draft = (
+                    self.pane_preferences,
+                    self._source_folders,
+                    self._source_annotations,
+                )
+                self.notify(
+                    "Device layout copy retained in memory; no owner data was overwritten."
+                )
+
+        self.app.push_screen(ResearchOverlayConflictModal(), callback=chosen)
+
+    async def _reload_overlay_after_conflict(
+        self, ref: QualifiedWorkspaceRef
+    ) -> None:
+        """Replace the local draft only after the user explicitly chooses Reload."""
+
+        store = self.overlay_store
+        if store is None:
+            return
+        overlay = await asyncio.to_thread(store.load, ref)
+        if overlay is None or ref != self._overlay_ref:
+            return
+        self._overlay_revision = overlay.revision
+        self._overlay_committed_revisions[ref] = overlay.revision
+        self.pane_preferences = overlay.preferences
+        self._source_folders = overlay.source_folders
+        self._source_annotations = overlay.source_annotations
+        self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
+        self._start_sources_refresh()
+
+    def _device_overlay_recovery_export(
+        self, ref: QualifiedWorkspaceRef
+    ) -> str:
+        """Return bounded metadata-only recovery JSON with opaque IDs hashed."""
+
+        def opaque(value: str) -> str:
+            return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+        payload = {
+            "schema_version": 1,
+            "owner": {
+                "data_source": ref.data_source.value,
+                "workspace": opaque(ref.workspace_id),
+                "server_profile": opaque(ref.server_profile_id)
+                if ref.server_profile_id
+                else "",
+                "principal": opaque(ref.principal_id) if ref.principal_id else "",
+            },
+            "preferences": {
+                "sources_open": self.pane_preferences.sources_open,
+                "studio_open": self.pane_preferences.studio_open,
+                "preferred_companion": self.pane_preferences.preferred_companion,
+            },
+            "folders": [
+                {
+                    "id": opaque(folder.folder_id),
+                    "name": folder.name,
+                    "parent": opaque(folder.parent_folder_id)
+                    if folder.parent_folder_id
+                    else "",
+                    "sources": [opaque(source_id) for source_id in folder.source_ids],
+                }
+                for folder in self._source_folders
+            ],
+            "annotations": [
+                {
+                    "id": opaque(annotation.annotation_id),
+                    "source": opaque(annotation.source_id),
+                }
+                for annotation in self._source_annotations
+            ],
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     def _set_overlay_ref(self, ref: QualifiedWorkspaceRef | None) -> None:
         """Change overlay ownership and invalidate revisions from the prior ref."""
@@ -955,14 +1237,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     ) -> None:
         """Persist each captured intent before submitting it to Library ingest."""
 
+        await self.controller.require_workspace_capability(ref, "attach_existing")
         if request.kind in {"existing", "catalog"}:
             for catalog_item_id in request.values:
                 await self._attach_existing(ref, catalog_item_id)
             return
-        source_values = request.values
-        if request.kind == "paste":
-            source_values = (await asyncio.to_thread(self._stage_pasted_text, request),)
-        for source_path in source_values:
+        for source_value in request.values:
             operation = ResearchSourceOperation(
                 operation_id=self._operation_id_factory(),
                 idempotency_key=f"research-intake-{uuid4().hex}",
@@ -982,6 +1262,42 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             if self.operation_store is None:
                 raise RuntimeError("Durable Research source intake is unavailable.")
             operation = await asyncio.to_thread(self.operation_store.create, operation)
+            operation_id = operation.operation_id
+            source_path = source_value
+            staged_paste = False
+            if request.kind == "paste":
+                staging_store = self.paste_staging_store
+                if staging_store is None:
+                    await asyncio.to_thread(
+                        self.operation_store.advance_stage,
+                        operation.operation_id,
+                        stage=SourceOperationStage.CATALOG,
+                        status=SourceOperationStatus.FAILED,
+                        expected_revision=operation.revision,
+                        error_code="paste_staging_unavailable",
+                        error_message="Private paste staging is unavailable.",
+                    )
+                    continue
+                try:
+                    staged_path = await asyncio.to_thread(
+                        staging_store.stage,
+                        operation.operation_id,
+                        title=request.title,
+                        body=source_value,
+                    )
+                except Exception:
+                    await asyncio.to_thread(
+                        self.operation_store.advance_stage,
+                        operation.operation_id,
+                        stage=SourceOperationStage.CATALOG,
+                        status=SourceOperationStatus.FAILED,
+                        expected_revision=operation.revision,
+                        error_code="paste_staging_failed",
+                        error_message="Private paste staging could not be created.",
+                    )
+                    continue
+                source_path = str(staged_path)
+                staged_paste = True
             try:
                 job = self.app_instance.submit_library_ingest_job(
                     source_path=source_path,
@@ -999,6 +1315,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                     error_code="catalog_submit_failed",
                     error_message="Catalog intake could not be started for the selected authority.",
                 )
+                if staged_paste:
+                    await asyncio.to_thread(
+                        self.paste_staging_store.delete,
+                        operation.operation_id,
+                    )
                 continue
             operation = await asyncio.to_thread(
                 self.operation_store.advance_stage,
@@ -1012,7 +1333,22 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             if job_state in {"done", "failed", "cancelled", "skipped"}:
                 scheduler = self.association_scheduler
                 if scheduler is not None:
-                    await scheduler.resume(operation.operation_id)
+                    operation = await scheduler.resume(operation_id)
+                if (
+                    staged_paste
+                    and (
+                        job_state in {"cancelled", "skipped"}
+                        or (
+                            operation is not None
+                            and operation.catalog_status
+                            is SourceOperationStatus.SUCCEEDED
+                        )
+                    )
+                ):
+                    await asyncio.to_thread(
+                        self.paste_staging_store.delete,
+                        operation_id,
+                    )
         if self.is_mounted:
             self._start_sources_refresh()
 
@@ -1028,19 +1364,3 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
         if ref == self.controller.selected_ref and self.is_mounted:
             self._start_sources_refresh()
-
-    @staticmethod
-    def _stage_pasted_text(request: ResearchSourceIntakeRequest) -> str:
-        """Create a private one-item staging file; receipts never expose its path."""
-
-        title = request.title.strip() or "Pasted research source"
-        body = request.values[0]
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix="tldw-research-source-",
-            suffix=".txt",
-            delete=False,
-        ) as handle:
-            handle.write(f"{title}\n\n{body}")
-            return str(Path(handle.name))

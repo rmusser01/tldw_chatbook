@@ -9,6 +9,7 @@ from typing import Literal
 
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -27,6 +28,7 @@ from ...Research_Workspace import (
     WorkspaceDataSource,
 )
 from ...Third_Party.textual_fspicker import FileOpen
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 ResearchIntakeKind = Literal["file", "url", "paste", "existing", "catalog"]
@@ -58,10 +60,13 @@ _SORT_OPTIONS = (
 )
 
 
-class ResearchAddSourceModal(ModalScreen[ResearchSourceIntakeRequest | None]):
+class ResearchAddSourceModal(
+    SafeModalDismissMixin, ModalScreen[ResearchSourceIntakeRequest | None]
+):
     """Five-path intake modal whose authority never changes while open."""
 
-    BINDINGS = []
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#research-add-source-dialog"
 
     def __init__(
         self,
@@ -93,7 +98,8 @@ class ResearchAddSourceModal(ModalScreen[ResearchSourceIntakeRequest | None]):
                 ):
                     with VerticalScroll(classes="research-add-tab-body"):
                         yield Static(
-                            "Each file creates its own durable workspace receipt.",
+                            "Choose one source file. It creates one durable workspace receipt.",
+                            id="research-add-upload-scope",
                             classes="research-add-help",
                         )
                         yield Input(
@@ -163,6 +169,20 @@ class ResearchAddSourceModal(ModalScreen[ResearchSourceIntakeRequest | None]):
 
     def _catalog_controls(self, *, prefix: str) -> ComposeResult:
         with VerticalScroll(classes="research-add-tab-body"):
+            if prefix == "existing":
+                yield Static(
+                    "Choose one existing item per Add Sources action.",
+                    id="research-add-existing-selection-scope",
+                    classes="research-add-help",
+                    markup=False,
+                )
+            if prefix == "search" and self.data_source is WorkspaceDataSource.SERVER:
+                yield Static(
+                    "[Unavailable] Web search is unavailable here. Configure a "
+                    "web-search provider, then add selected result URLs through URL intake.",
+                    id="research-add-search-unavailable",
+                    markup=False,
+                )
             yield Input(
                 placeholder=(
                     "Search Local Library"
@@ -215,6 +235,12 @@ class ResearchAddSourceModal(ModalScreen[ResearchSourceIntakeRequest | None]):
     @on(Button.Pressed, "#research-add-close")
     def close_modal(self) -> None:
         self.dismiss(None)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Dismiss safely while leaving the mounted draft untouched for recovery."""
+
+        del source
+        self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#research-add-upload-browse")
     def browse_source(self) -> None:
@@ -325,6 +351,12 @@ class ResearchAddSourceModal(ModalScreen[ResearchSourceIntakeRequest | None]):
         self.dismiss(ResearchSourceIntakeRequest(kind, (selected,)))
 
     def _start_catalog_search(self, prefix: str) -> None:
+        if prefix == "search" and self.data_source is WorkspaceDataSource.SERVER:
+            self._show_error(
+                "Web search is unavailable here. Configure a web-search provider, "
+                "then add selected result URLs through URL intake."
+            )
+            return
         if self._catalog_search is None:
             self._show_error("Catalog search is unavailable for this authority.")
             return
@@ -384,3 +416,20 @@ class ResearchAddSourceModal(ModalScreen[ResearchSourceIntakeRequest | None]):
     def on_mount(self) -> None:
         self.query_one("#research-add-error", Static).display = False
         self.query_one("#research-add-url-batch", TextArea).display = False
+        if self.data_source is WorkspaceDataSource.SERVER:
+            for suffix in (
+                "query",
+                "type",
+                "sort",
+                "search",
+                "results",
+                "prev",
+                "next",
+                "select",
+                "submit",
+            ):
+                control = self.query_one(f"#research-add-search-{suffix}")
+                control.disabled = True
+                control.tooltip = (
+                    "Web search unavailable; configure a web-search provider and use URL intake."
+                )

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from textual.app import App
@@ -27,6 +27,15 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
+from tldw_chatbook.Research_Workspace.source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+    SourceOperationStatus,
+)
+from tldw_chatbook.runtime_policy.server_event_scope import (
+    event_principal_id_from_active_context,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.app import TldwCli
 import tldw_chatbook.app as app_module
@@ -56,6 +65,42 @@ def _minimal_stt_app() -> TldwCli:
     app._marshal_local_stt_call = lambda callback: callback()  # type: ignore[method-assign]
     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
     return app
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("job_state", "catalog_status", "expected_delete"),
+    [
+        ("done", SourceOperationStatus.SUCCEEDED, True),
+        ("cancelled", SourceOperationStatus.FAILED, True),
+        ("failed", SourceOperationStatus.FAILED, False),
+    ],
+)
+async def test_terminal_research_job_cleans_paste_only_after_success_or_cancel(
+    job_state: str,
+    catalog_status: SourceOperationStatus,
+    expected_delete: bool,
+) -> None:
+    app = object.__new__(TldwCli)
+    scheduler = SimpleNamespace(
+        resume=AsyncMock(return_value=SimpleNamespace(catalog_status=catalog_status))
+    )
+    staging = SimpleNamespace(delete=MagicMock(return_value=True))
+    app.research_source_association_scheduler = scheduler
+    app.research_paste_staging_store = staging
+    app._research_source_terminal_jobs_scheduled = {"job-1"}
+    app.library_ingest_jobs = SimpleNamespace(
+        get_job=lambda _job_id: SimpleNamespace(
+            state=SimpleNamespace(value=job_state)
+        )
+    )
+
+    await app._resume_settled_research_source_operation("job-1", "operation-1")
+
+    scheduler.resume.assert_awaited_once_with("operation-1")
+    assert staging.delete.called is expected_delete
+    if expected_delete:
+        staging.delete.assert_called_once_with("operation-1")
 
 
 def test_local_stt_accessors_share_one_executor_and_coordinator_without_deadlock(
@@ -2260,6 +2305,100 @@ def test_research_ingest_required_origin_fails_before_queue_mutation(
 
     assert app.library_ingest_jobs.jobs() == ()
     admitted.assert_not_called()
+
+
+def test_research_ingest_rejects_changed_server_identity_before_queue_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_app(media_db="present")
+    captured_context = SimpleNamespace(
+        active_server_id="server-a",
+        auth_token="captured-token",
+        credential_source="fixture",
+    )
+    changed_context = SimpleNamespace(
+        active_server_id="server-b",
+        auth_token="changed-token",
+        credential_source="fixture",
+    )
+    operation = ResearchSourceOperation(
+        operation_id="operation-server-qualified",
+        idempotency_key="intake-server-qualified",
+        data_source=WorkspaceDataSource.SERVER,
+        server_profile_id="server-a",
+        principal_id=event_principal_id_from_active_context(captured_context) or "",
+        workspace_id="workspace-server",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+    app.research_source_operation_store = SimpleNamespace(
+        get=lambda operation_id: operation if operation_id == operation.operation_id else None
+    )
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: changed_context
+    )
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "server")
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ValueError, match="captured Server workspace authority"):
+        app.submit_library_ingest_job(
+            source_path="https://example.invalid/paper",
+            research_source_operation_id=operation.operation_id,
+            required_origin="server",
+        )
+
+    assert app.library_ingest_jobs.jobs() == ()
+    admitted.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_remote_research_dispatch_rechecks_qualified_identity_before_service_call(
+) -> None:
+    app = _minimal_app(media_db="present")
+    captured_context = SimpleNamespace(
+        active_server_id="server-a",
+        auth_token="captured-token",
+        credential_source="fixture",
+    )
+    changed_context = SimpleNamespace(
+        active_server_id="server-b",
+        auth_token="changed-token",
+        credential_source="fixture",
+    )
+    operation = ResearchSourceOperation(
+        operation_id="operation-delayed-server",
+        idempotency_key="intake-delayed-server",
+        data_source=WorkspaceDataSource.SERVER,
+        server_profile_id="server-a",
+        principal_id=event_principal_id_from_active_context(captured_context) or "",
+        workspace_id="workspace-server",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+    app.research_source_operation_store = SimpleNamespace(get=lambda _operation_id: operation)
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: changed_context
+    )
+    submit = AsyncMock(return_value={"jobs": [], "errors": []})
+    app.server_media_reading_service = SimpleNamespace(submit_ingest_jobs=submit)
+    job = app.library_ingest_jobs.submit(
+        source_path="paper.pdf",
+        origin="server",
+        research_source_operation_id=operation.operation_id,
+    )
+
+    await TldwCli._send_server_ingest_job.__wrapped__(app, job.job_id, {"files": []})
+
+    submit.assert_not_called()
+    failed = app.library_ingest_jobs.get_job(job.job_id)
+    assert failed is not None
+    assert failed.state is IngestJobState.FAILED
+    assert "captured Server workspace authority" in failed.error
 
 
 def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:

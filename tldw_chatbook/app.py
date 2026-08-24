@@ -439,6 +439,8 @@ from .Research_Workspace.source_association import (
     ResearchSourceAssociationScheduler,
 )
 from .Research_Workspace.source_operation_store import ResearchSourceOperationStore
+from .Research_Workspace.paste_staging import ResearchPasteStagingStore
+from .Research_Workspace.source_operations import SourceOperationStatus
 from .Research_Workspace.source_readiness import ResearchSourceReadinessCoordinator
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from .Scheduling.constants import (
@@ -2436,7 +2438,18 @@ class LibraryIngestQueueMixin:
             self._research_source_terminal_jobs_scheduled.discard(job_id)
             return
         try:
-            await scheduler.resume(operation_id)
+            operation = await scheduler.resume(operation_id)
+            staging_store = getattr(self, "research_paste_staging_store", None)
+            job = self.library_ingest_jobs.get_job(job_id)
+            state = str(getattr(getattr(job, "state", None), "value", ""))
+            if staging_store is not None and (
+                state in {"cancelled", "skipped"}
+                or (
+                    operation is not None
+                    and operation.catalog_status is SourceOperationStatus.SUCCEEDED
+                )
+            ):
+                await asyncio.to_thread(staging_store.delete, operation_id)
         except Exception:
             self._research_source_terminal_jobs_scheduled.discard(job_id)
             logger.opt(exception=True).warning(
@@ -2457,6 +2470,32 @@ class LibraryIngestQueueMixin:
             self.run_worker(
                 scheduler.resume_startup(),
                 group="research_source_association_startup",
+            )
+        staging_store = getattr(self, "research_paste_staging_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if staging_store is not None and operation_store is not None:
+            self.run_worker(
+                self._sweep_research_paste_staging(),
+                group="research_paste_staging_startup",
+            )
+
+    async def _sweep_research_paste_staging(self) -> None:
+        """Run one bounded fail-safe startup sweep away from the UI loop."""
+
+        staging_store = getattr(self, "research_paste_staging_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if staging_store is None or operation_store is None:
+            return
+        try:
+            await asyncio.to_thread(
+                staging_store.sweep,
+                operation_store,
+                job_registry=self.library_ingest_jobs,
+                limit=100,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research paste staging sweep failed; artifacts were retained"
             )
 
     def _restore_ingest_jobs(self) -> None:
@@ -2664,6 +2703,11 @@ class LibraryIngestQueueMixin:
             raise ValueError(
                 f"Ingestion is unavailable for the selected {selected} authority. "
                 f"The active Library ingest owner is {backend.title()}."
+            )
+        if research_source_operation_id and normalized_required_origin is not None:
+            self._validate_research_source_operation_authority(
+                research_source_operation_id,
+                expected_origin=normalized_required_origin,
             )
         expanded = self._expand_library_ingest_source(source_path)
         if research_source_operation_id and expanded is not None and len(expanded) > 1:
@@ -5036,6 +5080,58 @@ class LibraryIngestQueueMixin:
         )
         return "server" if active_source == "server" else "local"
 
+    def _validate_research_source_operation_authority(
+        self,
+        operation_id: str,
+        *,
+        expected_origin: str,
+    ) -> Any:
+        """Recover and validate the durable qualified intake authority.
+
+        This is called before queue admission and again by delayed Server
+        dispatch workers.  The visible Research screen and the current Library
+        origin are never accepted as substitutes for the persisted operation.
+        """
+
+        store = getattr(self, "research_source_operation_store", None)
+        get_operation = getattr(store, "get", None)
+        if not callable(get_operation):
+            raise ValueError(
+                "Durable Research source authority is unavailable; reopen Add Sources."
+            )
+        operation = get_operation(operation_id)
+        operation_origin = str(
+            getattr(getattr(operation, "data_source", None), "value", "") or ""
+        )
+        if operation is None or operation_origin != expected_origin:
+            raise ValueError(
+                "The intake no longer matches its captured Research workspace authority."
+            )
+        if expected_origin != "server":
+            return operation
+
+        context_provider = getattr(self, "server_context_provider", None)
+        get_context = getattr(context_provider, "get_active_context", None)
+        if not callable(get_context):
+            raise ValueError(
+                "The captured Server workspace authority is unavailable; restore it and retry."
+            )
+        from tldw_chatbook.runtime_policy.server_event_scope import (
+            event_principal_id_from_active_context,
+        )
+
+        context = get_context()
+        profile_id = str(getattr(context, "active_server_id", "") or "").strip()
+        principal_id = event_principal_id_from_active_context(context) or ""
+        if (
+            profile_id != getattr(operation, "server_profile_id", "")
+            or principal_id != getattr(operation, "principal_id", "")
+        ):
+            raise ValueError(
+                "The captured Server workspace authority changed; restore it and retry."
+            )
+        return operation
+
     def _submit_server_ingest_job(
         self,
         *,
@@ -5045,7 +5141,7 @@ class LibraryIngestQueueMixin:
         author: str,
         keywords: tuple[str, ...],
         perform_analysis: bool,
-        research_source_operation_id: str | None,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Queue a ``server``-origin job and send it to the server.
 
@@ -5107,7 +5203,7 @@ class LibraryIngestQueueMixin:
         author: str,
         keywords: tuple[str, ...],
         perform_analysis: bool,
-        research_source_operation_id: str | None,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Queue a ``server``-origin job that clips a web page.
 
@@ -5167,6 +5263,22 @@ class LibraryIngestQueueMixin:
         one-shot submissions on the user's behalf, and neither should be able to
         pile up.
         """
+        job = self.library_ingest_jobs.get_job(job_id)
+        if job is not None and job.research_source_operation_id:
+            try:
+                self._validate_research_source_operation_authority(
+                    job.research_source_operation_id,
+                    expected_origin="server",
+                )
+            except ValueError:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=(
+                        "The captured Server workspace authority changed before "
+                        "submission. Restore it and retry this intake."
+                    ),
+                )
+                return
         service = getattr(self, "server_media_reading_service", None)
         clip = getattr(service, "ingest_web_content", None)
         if not callable(clip):
@@ -5212,6 +5324,22 @@ class LibraryIngestQueueMixin:
         coroutine, so staying on the event loop keeps every registry mutation
         on the UI thread without marshalling.
         """
+        job = self.library_ingest_jobs.get_job(job_id)
+        if job is not None and job.research_source_operation_id:
+            try:
+                self._validate_research_source_operation_authority(
+                    job.research_source_operation_id,
+                    expected_origin="server",
+                )
+            except ValueError:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=(
+                        "The captured Server workspace authority changed before "
+                        "submission. Restore it and retry this intake."
+                    ),
+                )
+                return
         service = getattr(self, "server_media_reading_service", None)
         submit = getattr(service, "submit_ingest_jobs", None) or getattr(
             service, "submit_media_ingest_jobs", None
@@ -7689,6 +7817,15 @@ class TldwCli(
         """Compose durable post-ingest association services."""
 
         try:
+            self.research_paste_staging_store = ResearchPasteStagingStore(
+                get_user_data_dir() / "research_paste_staging"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Private Research paste staging unavailable"
+            )
+            self.research_paste_staging_store = None
+        try:
             from .Research_Workspace import (
                 LocalResearchWorkspaceAdapter,
                 ServerResearchWorkspaceAdapter,
@@ -9715,6 +9852,9 @@ class TldwCli(
             overlay_store=overlay_store,
             operation_store=operation_store,
             association_scheduler=association_scheduler,
+            paste_staging_store=getattr(
+                self, "research_paste_staging_store", None
+            ),
         )
 
     def _valid_startup_route_ids(self) -> set[str]:

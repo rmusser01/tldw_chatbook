@@ -934,6 +934,48 @@ def open_private_text_append_stream(
         os.close(parent_fd)
 
 
+def unlink_private_file(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+) -> bool:
+    """Delete one verified private regular file without following links."""
+
+    selected = lexical_path(path)
+    _prepare_application_owned_parent(selected, application_owned_directory)
+    if not _atomic_posix_guards_available():
+        try:
+            with open_private_binary(selected):
+                pass
+            os.unlink(selected)
+        except FileNotFoundError:
+            return False
+        return True
+
+    try:
+        parent_fd, leaf = _open_verified_parent(
+            selected,
+            missing_leaf_allowed=False,
+        )
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            target_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        rejected = _classify_private_file_stat(
+            target_stat,
+            expected_uid=os.geteuid(),
+        )
+        if rejected is not None:
+            raise PrivatePathError(PrivatePathResult(selected, rejected))
+        os.unlink(leaf, dir_fd=parent_fd)
+        return True
+    finally:
+        os.close(parent_fd)
+
+
 @contextlib.contextmanager
 def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     """Open and harden an existing private file without following links."""

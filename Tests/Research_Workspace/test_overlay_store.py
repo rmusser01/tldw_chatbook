@@ -9,10 +9,12 @@ from tldw_chatbook.Research_Workspace.contracts import (
 )
 from tldw_chatbook.Research_Workspace.layout_state import ResearchPanePreferences
 from tldw_chatbook.Research_Workspace.overlay_store import (
+    MAX_FOLDER_DEPTH,
     MAX_OVERLAY_FILE_BYTES,
     MAX_OVERLAY_RECORDS,
     OverlayConflictError,
     OverlayLimitError,
+    OverlayValidationError,
     ResearchSourceAnnotation,
     ResearchSourceFolder,
     ResearchPresentationOverlayStore,
@@ -176,6 +178,41 @@ def test_v2_source_organization_is_qualified_bounded_and_private(tmp_path) -> No
         "bearer ",
     ):
         assert forbidden not in serialized.lower()
+
+
+def test_nested_folder_tree_rejects_cycles_and_excess_depth_before_write(
+    tmp_path,
+) -> None:
+    store = ResearchPresentationOverlayStore(tmp_path / "research" / "overlay.json")
+    ref = local_ref()
+    cycle = (
+        ResearchSourceFolder("folder-a", "A", parent_folder_id="folder-b"),
+        ResearchSourceFolder("folder-b", "B", parent_folder_id="folder-a"),
+    )
+
+    with pytest.raises(OverlayValidationError, match="cycle"):
+        store.save(
+            ref,
+            ResearchPanePreferences(),
+            expected_revision=0,
+            source_folders=cycle,
+        )
+
+    too_deep = tuple(
+        ResearchSourceFolder(
+            f"folder-{index}",
+            f"Level {index}",
+            parent_folder_id=f"folder-{index - 1}" if index else "",
+        )
+        for index in range(MAX_FOLDER_DEPTH + 1)
+    )
+    with pytest.raises(OverlayLimitError, match="depth"):
+        store.save(
+            ref,
+            ResearchPanePreferences(),
+            expected_revision=0,
+            source_folders=too_deep,
+        )
 
 
 def test_preference_only_save_preserves_concurrent_source_overlay_fields(

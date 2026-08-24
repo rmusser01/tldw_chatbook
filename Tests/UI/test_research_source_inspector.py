@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from tldw_chatbook.Research_Workspace import (
     QualifiedWorkspaceRef,
@@ -17,6 +17,7 @@ from tldw_chatbook.Research_Workspace import (
 from tldw_chatbook.UI.Research_Workspace_Modules.source_inspector import (
     ResearchSourceInspectorModal,
 )
+from tldw_chatbook.Research_Workspace.overlay_store import ResearchSourceAnnotation
 
 
 @pytest.mark.asyncio
@@ -115,3 +116,89 @@ async def test_inspector_missing_preview_is_honest() -> None:
         assert "Readiness: Unavailable" in str(
             modal.query_one("#research-source-status-readiness", Static).render()
         )
+
+
+@pytest.mark.asyncio
+async def test_inspector_has_real_recheck_action_and_escape_safe_cancel() -> None:
+    app = App()
+    results = []
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
+    source = ResearchSourceSummary(
+        ref=ref,
+        source_id="membership-1",
+        catalog_item_id="1",
+        title="Evidence",
+        source_type="text",
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal = ResearchSourceInspectorModal(source, readiness=None, preview=None)
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+
+        recheck = modal.query_one("#research-source-status-recheck", Button)
+        assert not recheck.disabled
+        recheck.press()
+        await pilot.pause()
+
+        reopened = ResearchSourceInspectorModal(source, readiness=None, preview=None)
+        await app.push_screen(reopened, callback=results.append)
+        await pilot.pause()
+        reopened.query_one("#research-source-annotation-quote", Input).value = "draft"
+        assert reopened.query_one("#research-source-annotation-quote", Input).value == "draft"
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert results[0].action == "recheck"
+    assert results[1] is None
+
+
+@pytest.mark.asyncio
+async def test_inspector_lists_edits_and_deletes_stable_device_annotations() -> None:
+    app = App()
+    results = []
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
+    source = ResearchSourceSummary(
+        ref=ref,
+        source_id="membership-1",
+        catalog_item_id="1",
+        title="Evidence",
+        source_type="text",
+    )
+    existing = ResearchSourceAnnotation(
+        "annotation-stable",
+        source.source_id,
+        "Quote",
+        "Original note",
+        "2026-08-24T10:00:00Z",
+        "2026-08-24T10:00:00Z",
+    )
+
+    async with app.run_test(size=(80, 28)) as pilot:
+        edit = ResearchSourceInspectorModal(
+            source, readiness=None, preview=None, annotations=(existing,)
+        )
+        await app.push_screen(edit, callback=results.append)
+        await pilot.pause()
+        annotation_list = edit.query_one("#research-source-annotation-list", Select)
+        annotation_list.value = existing.annotation_id
+        await pilot.pause()
+        assert edit.query_one("#research-source-annotation-note", TextArea).text == "Original note"
+        edit.query_one("#research-source-annotation-note", TextArea).text = "Edited note"
+        edit.query_one("#research-source-annotation-save", Button).press()
+        await pilot.pause()
+
+        delete = ResearchSourceInspectorModal(
+            source, readiness=None, preview=None, annotations=(existing,)
+        )
+        await app.push_screen(delete, callback=results.append)
+        await pilot.pause()
+        delete.query_one("#research-source-annotation-list", Select).value = existing.annotation_id
+        await pilot.pause()
+        delete.query_one("#research-source-annotation-delete", Button).press()
+        await pilot.pause()
+
+    assert results[0].action == "update"
+    assert results[0].annotation_id == "annotation-stable"
+    assert results[0].note == "Edited note"
+    assert results[1].action == "delete"
+    assert results[1].annotation_id == "annotation-stable"

@@ -9,6 +9,7 @@ from .contracts import (
     BoundedPageResult,
     CapabilityUnavailableError,
     MAX_RESEARCH_SELECTION_IDS,
+    MAX_RESEARCH_SELECTION_ROWS,
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
     ResearchCapability,
@@ -20,6 +21,7 @@ from .contracts import (
     ResearchWorkspaceSummary,
     SourceReadiness,
     WorkspaceDataSource,
+    require_capability,
 )
 from .source_operations import ResearchSourceOperation
 
@@ -300,6 +302,21 @@ class ResearchWorkspaceController:
         self.visible_capabilities = dict(result)
         return True
 
+    async def require_workspace_capability(
+        self, ref: QualifiedWorkspaceRef, capability_name: str
+    ) -> ResearchCapability:
+        """Preflight one mutation against its explicit captured owner."""
+
+        if not isinstance(ref, QualifiedWorkspaceRef):
+            raise TypeError("ref must be QualifiedWorkspaceRef")
+        projection = await self._port_for_ref(ref).capabilities(ref)
+        if not isinstance(projection, Mapping) or any(
+            not isinstance(name, str) or not isinstance(capability, ResearchCapability)
+            for name, capability in projection.items()
+        ):
+            raise TypeError("Capability projection returned invalid entries")
+        return require_capability(projection, capability_name)
+
     async def search_selected_catalog(
         self,
         *,
@@ -499,6 +516,48 @@ class ResearchWorkspaceController:
         )
         self._validate_result_refs(rows, capture.context.ref)
         if tuple(source.source_id for source in rows) != ordered_source_ids:
+            raise ValueError("Source reorder did not return the requested exact order")
+        if not self._is_current_surface(capture):
+            return False
+        for source in rows:
+            self._canonical_sources[(source.ref, source.source_id)] = source
+        return True
+
+    async def move_selected_source(self, source_id: str, *, delta: int) -> bool:
+        """Move one source in the exact bounded owner order."""
+
+        if delta not in {-1, 1}:
+            raise ValueError("delta must be -1 or 1")
+        capture = self._capture_surface("association")
+        self._surface_generations["sources"] += 1
+        port = self._port_for(capture)
+        page = await port.list_sources(
+            capture.context.ref,
+            limit=MAX_RESEARCH_SELECTION_ROWS,
+            offset=0,
+        )
+        if not isinstance(page, ResearchSourcePage):
+            raise TypeError("Source listing returned an invalid owner page")
+        self._validate_result_refs(page.items, capture.context.ref)
+        if page.total is None or page.total > MAX_RESEARCH_SELECTION_ROWS:
+            raise ValueError("Source owner exceeds the bounded reorder limit")
+        if page.offset != 0 or len(page.items) != page.total or page.has_more:
+            raise ValueError("Source owner returned an incomplete reorder snapshot")
+        ordered = [source.source_id for source in page.items]
+        try:
+            index = ordered.index(source_id)
+        except ValueError:
+            raise ValueError("Source is outside the exact owner order") from None
+        target = index + delta
+        if target < 0 or target >= len(ordered):
+            return False
+        ordered[index], ordered[target] = ordered[target], ordered[index]
+        requested = tuple(ordered)
+        rows = tuple(
+            await port.reorder_sources(capture.context.ref, requested)
+        )
+        self._validate_result_refs(rows, capture.context.ref)
+        if tuple(source.source_id for source in rows) != requested:
             raise ValueError("Source reorder did not return the requested exact order")
         if not self._is_current_surface(capture):
             return False

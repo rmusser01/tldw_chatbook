@@ -903,7 +903,10 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
 
     assert len(app.library_ingest_jobs.jobs()) == 60
     assert ui_observations == [60]
-    assert groups == ["research_source_association_startup"]
+    assert groups == [
+        "research_source_association_startup",
+        "research_paste_staging_startup",
+    ]
     assert app._research_source_terminal_jobs_scheduled == set()
 
 

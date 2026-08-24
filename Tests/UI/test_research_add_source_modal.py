@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static, TabbedContent, TextArea
 
 from tldw_chatbook.Research_Workspace import (
@@ -54,6 +54,7 @@ async def test_add_source_modal_keeps_exact_authority_tab_order(
             "research-add-existing-next",
             "research-add-existing-select",
             "research-add-existing-submit",
+            "research-add-existing-selection-scope",
             "research-add-url-mode-single",
             "research-add-url-mode-batch",
             "research-add-url-single",
@@ -82,6 +83,14 @@ async def test_add_source_modal_keeps_exact_authority_tab_order(
         assert not modal.query_one("#research-add-error", Static).display
         assert modal.query_one("#research-add-existing-submit", Button).disabled
         assert modal.query_one("#research-add-search-submit", Button).disabled
+        assert "Choose one source file" in str(
+            modal.query_one("#research-add-upload-scope", Static).render()
+        )
+        assert "one existing item" in str(
+            modal.query_one(
+                "#research-add-existing-selection-scope", Static
+            ).render()
+        )
 
 
 @pytest.mark.asyncio
@@ -159,6 +168,79 @@ async def test_catalog_search_without_owner_callback_reports_gated_reason() -> N
         error = modal.query_one("#research-add-error", Static)
         assert error.display
         assert "unavailable for this authority" in str(error.render())
+
+
+@pytest.mark.asyncio
+async def test_server_web_search_stays_visible_but_never_reuses_media_catalog() -> None:
+    app = App()
+    searches = []
+
+    async def media_search(**kwargs):
+        searches.append(kwargs)
+        return BoundedPageResult(items=(), limit=25, total=0)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        modal = ResearchAddSourceModal(
+            WorkspaceDataSource.SERVER, catalog_search=media_search
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert not modal.query_one("#research-add-existing-search", Button).disabled
+        assert "one source file" in str(
+            modal.query_one("#research-add-upload-path", Input).placeholder
+        )
+        assert modal.query_one("#research-add-existing-submit", Button).label.plain == "Add selected"
+        for suffix in ("query", "type", "sort", "search", "results", "prev", "next", "select", "submit"):
+            assert modal.query_one(f"#research-add-search-{suffix}").disabled
+        assert "Web search is unavailable" in str(
+            modal.query_one("#research-add-search-unavailable", Static).render()
+        )
+        modal._start_catalog_search("search")
+        await pilot.pause()
+
+    assert searches == []
+
+
+@pytest.mark.asyncio
+async def test_add_modal_escape_cancels_without_losing_draft_before_callback() -> None:
+    app = App()
+    results = []
+    async with app.run_test(size=(100, 32)) as pilot:
+        modal = ResearchAddSourceModal(WorkspaceDataSource.LOCAL)
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        modal.query_one("#research-add-paste-title", Input).value = "Unsaved title"
+        assert modal.query_one("#research-add-paste-title", Input).value == "Unsaved title"
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert results == [None]
+
+
+class _ModalOpenerApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield Button("Open Add Sources", id="modal-opener")
+
+
+@pytest.mark.asyncio
+async def test_add_modal_escape_traps_then_restores_opener_focus() -> None:
+    app = _ModalOpenerApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        opener = app.query_one("#modal-opener", Button)
+        opener.focus()
+        modal = ResearchAddSourceModal(WorkspaceDataSource.LOCAL)
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("shift+tab")
+        assert app.focused is not None and app.focused.screen is modal
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.focused is opener
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from .source_inspector import (
     ResearchSourceAnnotationDraft,
     ResearchSourceInspectorModal,
 )
+from .overlay_conflict_modal import ResearchOverlayConflictModal
 from .studio_region import ResearchStudioRegion
 from .workspace_menu import ResearchPaneModeStrip, ResearchWorkspaceMenu
 
@@ -28,6 +29,7 @@ __all__ = [
     "ResearchSourceList",
     "ResearchSourceAnnotationDraft",
     "ResearchSourceInspectorModal",
+    "ResearchOverlayConflictModal",
     "ResearchStudioRegion",
     "ResearchWorkspaceMenu",
 ]

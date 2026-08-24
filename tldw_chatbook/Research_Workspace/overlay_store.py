@@ -30,6 +30,7 @@ MAX_TIMESTAMP_CHARS = 64
 MAX_SOURCE_FOLDERS = 128
 MAX_SOURCE_ANNOTATIONS = 512
 MAX_SOURCE_IDS_PER_FOLDER = 512
+MAX_FOLDER_DEPTH = 8
 MAX_SOURCE_ID_CHARS = 1024
 MAX_FOLDER_NAME_CHARS = 120
 MAX_ANNOTATION_TEXT_CHARS = 4000
@@ -547,6 +548,21 @@ def _validate_source_overlay(
         for folder in folders
     ):
         raise OverlayValidationError("parent folder does not exist")
+    by_folder_id = {folder.folder_id: folder for folder in folders}
+    for folder in folders:
+        visited: set[str] = set()
+        current = folder
+        depth = 1
+        while current.parent_folder_id:
+            if current.folder_id in visited:
+                raise OverlayValidationError("folder ancestry contains a cycle")
+            visited.add(current.folder_id)
+            depth += 1
+            if depth > MAX_FOLDER_DEPTH:
+                raise OverlayLimitError(
+                    f"folder ancestry exceeds maximum depth {MAX_FOLDER_DEPTH}"
+                )
+            current = by_folder_id[current.parent_folder_id]
 
 
 def _validated_source_id(value: object, field_name: str) -> str:
