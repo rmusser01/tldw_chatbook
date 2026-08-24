@@ -2362,6 +2362,7 @@ class LibraryIngestQueueMixin:
         """
         self.library_ingest_jobs = LibraryIngestJobRegistry()
         self._research_source_terminal_jobs_scheduled: set[str] = set()
+        self._research_source_restore_in_progress = False
         self.library_ingest_jobs.add_listener(
             self._schedule_settled_research_source_operations
         )
@@ -2396,6 +2397,8 @@ class LibraryIngestQueueMixin:
         self._research_source_terminal_jobs_scheduled.intersection_update(
             job.job_id for job in jobs
         )
+        if self._research_source_restore_in_progress:
+            return
         scheduler = getattr(self, "research_source_association_scheduler", None)
         if scheduler is None:
             return
@@ -2442,7 +2445,12 @@ class LibraryIngestQueueMixin:
     def _restore_ingest_jobs_and_schedule_research_sources(self) -> None:
         """Restore ingest history before queuing bounded source-operation work."""
 
-        self._restore_ingest_jobs()
+        restore_was_in_progress = self._research_source_restore_in_progress
+        self._research_source_restore_in_progress = True
+        try:
+            self._restore_ingest_jobs()
+        finally:
+            self._research_source_restore_in_progress = restore_was_in_progress
         scheduler = getattr(self, "research_source_association_scheduler", None)
         if scheduler is not None:
             self.run_worker(

@@ -51,7 +51,6 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
-    LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     initialize_ingest_parse_worker,
@@ -783,7 +782,11 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     app.workspace_registry_service = _app_module.LocalWorkspaceRegistryService(
         workspace_db
     )
-    app.library_ingest_jobs = LibraryIngestJobRegistry()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="restore-workspace",
+        name="Restore workspace",
+    )
+    app._init_library_ingest_runtime_state()
     app.server_context_provider = provider
     app.server_notes_workspace_service = server_service
 
@@ -803,22 +806,142 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     assert coordinator._catalog_dispatcher == app._dispatch_research_source_catalog_job
     assert callable(scheduler.retry)
 
-    order: list[str] = []
+    restored_jobs: list[LibraryIngestJob] = []
+    for index in range(60):
+        operation_id = f"research-op-restored-{index:03d}"
+        job_id = f"ingest-job-{index + 1}"
+        operation = app.research_source_operation_store.create(
+            ResearchSourceOperation(
+                operation_id=operation_id,
+                idempotency_key=f"idempotency:restored:{index:03d}",
+                data_source=WorkspaceDataSource.LOCAL,
+                workspace_id="restore-workspace",
+                canonical_item_type=CanonicalItemType.LOCAL_LIBRARY,
+                desired_selected=True,
+                created_at=f"2026-08-24T12:00:{index:02d}Z",
+                updated_at=f"2026-08-24T12:00:{index:02d}Z",
+            )
+        )
+        operation = app.research_source_operation_store.advance_stage(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.IN_PROGRESS,
+            expected_revision=operation.revision,
+            ingest_job_id=job_id,
+        )
+        if index < 55:
+            operation = app.research_source_operation_store.advance_stage(
+                operation.operation_id,
+                stage=SourceOperationStage.CATALOG,
+                status=SourceOperationStatus.SUCCEEDED,
+                expected_revision=operation.revision,
+                canonical_item_id=str(index + 1),
+            )
+            app.research_source_operation_store.advance_stage(
+                operation.operation_id,
+                stage=SourceOperationStage.ASSOCIATION,
+                status=SourceOperationStatus.SUCCEEDED,
+                expected_revision=operation.revision,
+                workspace_source_id=f"membership-{index + 1}",
+            )
+        elif index < 58:
+            app.research_source_operation_store.advance_stage(
+                operation.operation_id,
+                stage=SourceOperationStage.CATALOG,
+                status=SourceOperationStatus.FAILED,
+                expected_revision=operation.revision,
+                error_code="catalog_ingest_failed",
+                error_message="Catalog ingest did not complete successfully.",
+            )
+        restored_jobs.append(
+            LibraryIngestJob(
+                job_id=job_id,
+                source_path=f"/restored/source-{index:03d}.txt",
+                state=(
+                    IngestJobState.FAILED
+                    if 55 <= index < 58
+                    else IngestJobState.DONE
+                ),
+                media_id=None if 55 <= index < 58 else index + 1,
+                research_source_operation_id=operation_id,
+            )
+        )
+    assert [
+        operation.operation_id
+        for operation in app.research_source_operation_store.list_association_actionable(
+            limit=50
+        )
+    ] == ["research-op-restored-058", "research-op-restored-059"]
 
-    async def resume_incomplete() -> None:
-        return None
+    groups: list[str] = []
+    ui_observations: list[int] = []
+    app.library_ingest_jobs.add_listener(
+        lambda: ui_observations.append(len(app.library_ingest_jobs.jobs()))
+    )
 
     def queue_worker(awaitable, *, group: str):
-        order.append(group)
+        groups.append(group)
         awaitable.close()
 
-    monkeypatch.setattr(app, "_restore_ingest_jobs", lambda: order.append("restore"))
-    monkeypatch.setattr(scheduler, "resume_incomplete", resume_incomplete)
+    def restore_real_registry() -> None:
+        app.library_ingest_jobs.restore(restored_jobs, next_id=61)
+
+    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_real_registry)
     monkeypatch.setattr(app, "run_worker", queue_worker)
 
     app._restore_ingest_jobs_and_schedule_research_sources()
 
-    assert order == ["restore", "research_source_association_startup"]
+    assert len(app.library_ingest_jobs.jobs()) == 60
+    assert ui_observations == [60]
+    assert groups == ["research_source_association_startup"]
+    assert app._research_source_terminal_jobs_scheduled == set()
+
+
+def test_restore_suppression_cleans_up_after_exception_and_empty_repeats(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.research_source_association_scheduler = _RecordingAssociationScheduler()
+    groups: list[str] = []
+
+    def queue_worker(awaitable, *, group: str) -> None:
+        groups.append(group)
+        awaitable.close()
+
+    def fail_restore() -> None:
+        raise RuntimeError("restore failed")
+
+    monkeypatch.setattr(app, "run_worker", queue_worker)
+    monkeypatch.setattr(app, "_restore_ingest_jobs", fail_restore)
+
+    with pytest.raises(RuntimeError, match="restore failed"):
+        app._restore_ingest_jobs_and_schedule_research_sources()
+
+    assert app._research_source_restore_in_progress is False
+    live = app.library_ingest_jobs.submit(
+        source_path="/live-after-restore.txt",
+        research_source_operation_id="research-op-live-after-restore",
+    )
+    app.library_ingest_jobs.mark_failed(live.job_id, error="live failure")
+    assert groups == ["research_source_association"]
+    assert app._research_source_terminal_jobs_scheduled == {live.job_id}
+
+    groups.clear()
+
+    def restore_empty_registry() -> None:
+        app.library_ingest_jobs.restore([], next_id=1)
+
+    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_empty_registry)
+    app._restore_ingest_jobs_and_schedule_research_sources()
+    app._restore_ingest_jobs_and_schedule_research_sources()
+
+    assert groups == [
+        "research_source_association_startup",
+        "research_source_association_startup",
+    ]
+    assert app._research_source_terminal_jobs_scheduled == set()
+    assert app._research_source_restore_in_progress is False
 
 
 @pytest.mark.asyncio
