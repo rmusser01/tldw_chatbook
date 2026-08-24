@@ -3,7 +3,7 @@
 Date: 2026-08-23
 Status: approved after second-pass audit
 Task: TASK-3500
-Base: `origin/dev` at `25be05419`
+Base: `origin/dev` at `33ff5b754`
 
 ## Problem
 

@@ -68,14 +68,14 @@ backlog task 3500 --plain
 Expected: status remains `In Progress`; all six ACs remain unchecked; the
 external plan link and ADR disposition are present before code changes.
 
-- [ ] **Step 3: Commit the approved planning artifacts**
+- [x] **Step 3: Commit the approved planning artifacts**
 
 ```bash
 git add Docs/superpowers/specs/2026-08-23-task-3500-mcp-profile-driven-rag-search-design.md Docs/superpowers/plans/2026-08-23-task-3500-mcp-profile-driven-rag-search.md "backlog/tasks/task-3500 - Align-MCP-perform_rag_search-with-profile-driven-retrieval.md"
 git commit -m "docs(rag): plan TASK-3500 implementation"
 ```
 
-- [ ] **Step 4: Confirm a clean pre-implementation branch**
+- [x] **Step 4: Confirm a clean pre-implementation branch**
 
 ```bash
 git status --short --branch
