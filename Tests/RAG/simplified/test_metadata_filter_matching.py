@@ -1,5 +1,6 @@
 """Regression coverage for RAG metadata post-filter matching."""
 
+from collections import defaultdict
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     RAGService,
     _metadata_filter_value_matches,
 )
+from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
 from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
 from tldw_chatbook.RAG_Search.simplified.citations import SearchResultWithCitations
 
@@ -111,3 +113,50 @@ async def test_keyword_citations_use_membership_filter():
 
     assert isinstance(included, SearchResultWithCitations)
     assert excluded is None
+
+
+@pytest.mark.asyncio
+async def test_search_bypasses_cache_for_non_serializable_membership_filter():
+    """Public search still filters correctly when $in cannot form a cache key."""
+    class Embeddings:
+        async def create_embeddings_async(self, texts):
+            return [[0.0]]
+
+    class VectorStore:
+        calls = 0
+
+        def search(self, embedding, top_k, *, metadata_allowlist=None):
+            self.calls += 1
+            return [
+                SearchResult("pdf", 1.0, "PDF", {"media_type": "pdf"}),
+                SearchResult("audio", 0.9, "Audio", {"media_type": "audio"}),
+            ]
+
+    vector_store = VectorStore()
+    service = RAGService.__new__(RAGService)
+    service.config = SimpleNamespace(
+        default_top_k=2,
+        include_citations=False,
+        score_threshold=0.0,
+    )
+    service.embeddings = Embeddings()
+    service.vector_store = vector_store
+    service.cache = SimpleRAGCache(enabled=True)
+    service._search_type_counts = defaultdict(int)
+    service._searches_performed = 0
+
+    filter_metadata = {"media_type": {"$in": {"pdf", "video"}}}
+    first = await service.search("query", filter_metadata=filter_metadata)
+    second = await service.search("query", filter_metadata=filter_metadata)
+
+    assert [result.id for result in first] == ["pdf"]
+    assert [result.id for result in second] == ["pdf"]
+    assert vector_store.calls == 2
+    assert not service.cache._cache
+
+    serializable_filter = {"media_type": {"$in": ["pdf", "video"]}}
+    await service.search("cached", filter_metadata=serializable_filter)
+    await service.search("cached", filter_metadata=serializable_filter)
+
+    assert vector_store.calls == 3
+    assert service.cache._cache

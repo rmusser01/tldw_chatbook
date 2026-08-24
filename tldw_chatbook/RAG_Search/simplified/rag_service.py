@@ -1317,22 +1317,29 @@ class RAGService:
         if search_type in ("hybrid", "keyword"):
             fts_match_construction_key = self._resolved_fts_match_construction()
 
+        try:
+            json.dumps(filter_metadata, sort_keys=True)
+            filter_metadata_is_cacheable = True
+        except (TypeError, ValueError):
+            filter_metadata_is_cacheable = False
+
         # Check cache first
-        cached_result = await self.cache.get_async(
-            query,
-            search_type,
-            top_k,
-            filter_metadata,
-            metadata_allowlist,
-            keyword_source_types=keyword_source_types,
-            hybrid_fusion=hybrid_fusion_key,
-            fts_match_construction=fts_match_construction_key,
-        )
-        if cached_result is not None:
-            results, context = cached_result
-            log_counter("rag_search_cache_hit", labels={"type": search_type})
-            logger.info(f"[{correlation_id}] Cache hit for query: '{query[:50]}...'")
-            return results
+        if filter_metadata_is_cacheable:
+            cached_result = await self.cache.get_async(
+                query,
+                search_type,
+                top_k,
+                filter_metadata,
+                metadata_allowlist,
+                keyword_source_types=keyword_source_types,
+                hybrid_fusion=hybrid_fusion_key,
+                fts_match_construction=fts_match_construction_key,
+            )
+            if cached_result is not None:
+                results, context = cached_result
+                log_counter("rag_search_cache_hit", labels={"type": search_type})
+                logger.info(f"[{correlation_id}] Cache hit for query: '{query[:50]}...'")
+                return results
 
         log_counter("rag_search_cache_miss", labels={"type": search_type})
 
@@ -1409,21 +1416,21 @@ class RAGService:
                 f"[{correlation_id}] Search completed in {elapsed:.2f}s, found {len(results)} results"
             )
 
-            # Cache the results
-            # For caching, we need to extract a simple context string
-            context = self._extract_context_from_results(results)
-            await self.cache.put_async(
-                query,
-                search_type,
-                top_k,
-                results,
-                context,
-                filter_metadata,
-                metadata_allowlist,
-                keyword_source_types=keyword_source_types,
-                hybrid_fusion=hybrid_fusion_key,
-                fts_match_construction=fts_match_construction_key,
-            )
+            if filter_metadata_is_cacheable:
+                # For caching, we need to extract a simple context string
+                context = self._extract_context_from_results(results)
+                await self.cache.put_async(
+                    query,
+                    search_type,
+                    top_k,
+                    results,
+                    context,
+                    filter_metadata,
+                    metadata_allowlist,
+                    keyword_source_types=keyword_source_types,
+                    hybrid_fusion=hybrid_fusion_key,
+                    fts_match_construction=fts_match_construction_key,
+                )
 
             return results
 
