@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.RAG_Search.simplified import rag_service as rag_service_module
 from tldw_chatbook.RAG_Search.simplified.rag_service import (
     RAGService,
     _metadata_filter_value_matches,
@@ -116,7 +117,9 @@ async def test_keyword_citations_use_membership_filter():
 
 
 @pytest.mark.asyncio
-async def test_search_bypasses_cache_for_non_serializable_membership_filter():
+async def test_search_bypasses_cache_for_non_serializable_membership_filter(
+    monkeypatch,
+):
     """Public search still filters correctly when $in cannot form a cache key."""
     class Embeddings:
         async def create_embeddings_async(self, texts):
@@ -144,6 +147,13 @@ async def test_search_bypasses_cache_for_non_serializable_membership_filter():
     service.cache = SimpleRAGCache(enabled=True)
     service._search_type_counts = defaultdict(int)
     service._searches_performed = 0
+    cache_events = []
+
+    def record_cache_event(name, *args, **kwargs):
+        if name in {"rag_search_cache_hit", "rag_search_cache_miss"}:
+            cache_events.append(name)
+
+    monkeypatch.setattr(rag_service_module, "log_counter", record_cache_event)
 
     filter_metadata = {"media_type": {"$in": {"pdf", "video"}}}
     first = await service.search("query", filter_metadata=filter_metadata)
@@ -153,6 +163,7 @@ async def test_search_bypasses_cache_for_non_serializable_membership_filter():
     assert [result.id for result in second] == ["pdf"]
     assert vector_store.calls == 2
     assert not service.cache._cache
+    assert cache_events == []
 
     serializable_filter = {"media_type": {"$in": ["pdf", "video"]}}
     await service.search("cached", filter_metadata=serializable_filter)
@@ -160,3 +171,4 @@ async def test_search_bypasses_cache_for_non_serializable_membership_filter():
 
     assert vector_store.calls == 3
     assert service.cache._cache
+    assert cache_events == ["rag_search_cache_miss", "rag_search_cache_hit"]

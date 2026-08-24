@@ -1340,8 +1340,7 @@ class RAGService:
                 log_counter("rag_search_cache_hit", labels={"type": search_type})
                 logger.info(f"[{correlation_id}] Cache hit for query: '{query[:50]}...'")
                 return results
-
-        log_counter("rag_search_cache_miss", labels={"type": search_type})
+            log_counter("rag_search_cache_miss", labels={"type": search_type})
 
         self._searches_performed += 1
         start_time = time.time()
