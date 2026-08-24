@@ -1,7 +1,9 @@
 # Windows Actor Pack Startup Cleanup Design
 
-**Task:** TASK-21251  
-**Deferred platform work:** TASK-21252  
+**Task:** TASK-21251
+
+**Deferred platform work:** TASK-21252
+
 **Governing ADR:** [ADR-074](../../../backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md)
 
 ## Problem
@@ -116,8 +118,10 @@ of work. They are not required to restore application startup safely.
 
 ## ADR check
 
-ADR required: no  
-ADR path: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`  
+ADR required: no
+
+ADR path: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
+
 Reason: This routine bug fix preserves ADR-074's existing fail-closed staging
 and cleanup authority policy. Native Windows support will require the ADR review
 and documentation captured by TASK-21252.
