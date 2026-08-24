@@ -298,3 +298,60 @@ def test_a_failed_transaction_leaves_no_open_transaction(tmp_path):
     )
     assert service.get_run(run["id"])["progress_message"] != "partial"
     service.close()
+
+
+def test_a_nested_immediate_transaction_inside_a_deferred_one_is_refused(tmp_path):
+    """Joining a DEFERRED outer would silently downgrade a nested immediate.
+
+    SQLite cannot upgrade a transaction's lock once it has begun, so the nested
+    read-then-write would run under the outer's read snapshot and fail
+    BUSY_SNAPSHOT -- only ever under contention, so it would pass every
+    single-threaded test and then appear in the field as "database is locked",
+    the one failure SQLite's busy handler does NOT retry. Refusing makes it
+    deterministic and names the mistake.
+    """
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="nesting")
+
+    with pytest.raises(RuntimeError, match="IMMEDIATE"):
+        with service._transaction():  # deferred outer
+            with service._transaction(immediate=True):  # must be refused
+                pass  # pragma: no cover - the guard fires first
+
+    # The outer transaction unwound cleanly: the store is still usable and no
+    # transaction was left open on this thread's connection.
+    assert service._connections[threading.get_ident()].in_transaction is False
+    assert service.get_run(run["id"])["query"] == "nesting"
+    service.close()
+
+
+def test_the_legal_transaction_nestings_are_still_allowed(tmp_path):
+    """The guard must refuse ONLY immediate-inside-deferred.
+
+    Deferred-inside-immediate is the shipped hot path -- ``_require_one`` runs
+    inside ``save_artifact``'s write transaction on every artifact the engine
+    saves -- so over-restricting here would break real behaviour rather than
+    protect it.
+    """
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="legal nesting")
+
+    with service._transaction(immediate=True):  # deferred inside immediate
+        assert service._require_one("research_runs", run["id"], "run")
+        with service._transaction():
+            pass
+        with service._transaction(immediate=True):  # immediate inside immediate
+            pass
+    with service._transaction():  # deferred inside deferred
+        with service._transaction():
+            pass
+
+    # And the real call graph that relies on it still works end to end.
+    saved = service.save_artifact(
+        run["id"],
+        artifact_name="nested.json",
+        content_type="application/json",
+        content={"ok": True},
+    )
+    assert saved["content"] == {"ok": True}
+    service.close()

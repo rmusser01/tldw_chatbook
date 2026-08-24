@@ -262,10 +262,46 @@ at `d589c56c5`, arms **interleaved** per the TASK-21130 lesson.
   `close()` (which pops every connection it closes). It is kept as a documented
   guard and now has a direct test, mirroring the TASK-21125 MINOR-2 precedent.
 
+### Review fix round (coordinator review, pre-merge)
+
+One finding, taken as reported: **`_transaction()`'s nested branch silently
+ignored `immediate`.** A body inside a deferred transaction that opened
+`_transaction(immediate=True)` would JOIN the deferred outer, running its
+read-then-write under a read snapshot -- exactly the `BUSY_SNAPSHOT` the flag
+exists to prevent.
+
+I re-derived the reachability claim independently before changing anything, with
+an AST pass over the class that walks the self-call graph **transitively** rather
+than checking direct calls: 9 methods open a deferred transaction, 12 open an
+immediate one, and there are **0 live deferred -> immediate paths**. Confirmed
+latent, not live.
+
+Shipped the loud option -- a nested `immediate=True` inside a deferred outer
+raises `RuntimeError`; the outer's mode is recorded on `_tx_state` so
+immediate-inside-immediate still joins normally. The decisive argument for
+raising over documenting is the *failure mode of the alternative*:
+`BUSY_SNAPSHOT` only occurs when another writer holds the lock, so a silent
+downgrade survives every single-threaded test and then appears intermittently in
+the field as "database is locked" -- a message that reads like a transient
+condition to retry, and is the one failure SQLite's busy handler will NOT retry.
+Refusing converts that into a deterministic failure on the first execution, with
+a message naming the actual mistake and the actual fix (open the OUTER
+transaction as immediate). No lock upgrade is attempted; SQLite cannot do that.
+
+Deferred-inside-immediate stays legal and is deliberately pinned by a second
+test: it is the shipped hot path (`_require_one` inside `save_artifact`, on every
+artifact the engine saves), so over-restricting here would break real behaviour
+rather than protect it. Both new tests are mutation-verified: removing the guard
+gives `Failed: DID NOT RAISE <class 'RuntimeError'>`, and failing to record the
+outer's mode makes the guard misfire on a LEGAL nesting, reddening the
+over-restriction test. Research set **349 -> 351 passed / 0 failed**; full
+mutation set now **17 of 17 RED, 0 vacuous**; `./scripts/preflight.sh` green
+(the guard is a `raise`, not a diagnostic, so the inventory is unchanged).
+
 **Files**: `tldw_chatbook/Research_Interop/local_research_service.py`,
 `tldw_chatbook/Research_Interop/research_scope_service.py`,
 `tldw_chatbook/app.py`, `Tests/Research/test_local_research_service.py` (+11),
-`Tests/Research/test_local_research_service_lifecycle.py` (new, 10),
+`Tests/Research/test_local_research_service_lifecycle.py` (new, 12),
 `Tests/Research/test_research_scope_service.py` (+5),
 `Tests/Research/test_app_research_wiring.py` (+2),
 `Tests/DB/test_private_sqlite_interop_owners.py` (the research owner factory now

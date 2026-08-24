@@ -259,6 +259,10 @@ class LocalResearchService:
                 MINOR-1). It is also what makes read-check-write sequences
                 atomic now that callers can run on more than one thread.
 
+        Raises:
+            RuntimeError: When an ``immediate=True`` transaction is opened
+                INSIDE a deferred one. See the nesting rules below.
+
         A rollback that fails is swallowed (type name only) so it can never
         mask the exception that caused it.
         """
@@ -267,6 +271,32 @@ class LocalResearchService:
             # Nested use joins the open transaction: a second BEGIN on the same
             # connection is an error, and splitting the commit would break the
             # caller's atomicity.
+            #
+            # But the JOIN inherits the OUTER transaction's locking, and SQLite
+            # cannot upgrade a deferred transaction to a write one -- so a
+            # nested immediate body inside a deferred outer would run its
+            # read-then-write under a read snapshot and fail BUSY_SNAPSHOT,
+            # which is the exact failure ``immediate`` exists to prevent.
+            # Silently downgrading it is the worst option available: the fault
+            # only appears when another writer holds the lock, so it survives
+            # every single-threaded test and then surfaces intermittently in
+            # the field as "database is locked" -- a message that reads like a
+            # transient condition to retry, and is precisely the one SQLite
+            # will NOT retry. Refusing turns that into a deterministic failure
+            # on the first execution, naming the actual mistake.
+            #
+            # Deferred-inside-anything stays legal and is the common shipped
+            # case (``_require_one`` inside ``save_artifact``): a read under an
+            # already-held write lock is always safe.
+            if immediate and not getattr(state, "immediate", False):
+                raise RuntimeError(
+                    "cannot open an IMMEDIATE research transaction inside a "
+                    "DEFERRED one: the nested call would join the outer read "
+                    "snapshot and its write would fail BUSY_SNAPSHOT under "
+                    "contention. Open the OUTER transaction with "
+                    "immediate=True instead -- SQLite cannot upgrade a "
+                    "transaction's lock once it has begun."
+                )
             yield state.conn
             return
 
@@ -279,6 +309,9 @@ class LocalResearchService:
                 conn = self._begin(immediate=immediate)
                 state.depth = 1
                 state.conn = conn
+                # Recorded so a nested call can tell whether the lock it needs
+                # is already held (see the nesting rules above).
+                state.immediate = immediate
                 try:
                     yield conn
                     conn.execute("COMMIT")
@@ -288,6 +321,7 @@ class LocalResearchService:
                 finally:
                     state.depth = 0
                     state.conn = None
+                    state.immediate = False
             finally:
                 if serialise is not None:
                     serialise.release()
