@@ -9,6 +9,37 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Compare retained JSON after crossing its serialization boundary
+
+**TASK-20010, 2026-08-23.** Final first-principles evidence verification loaded
+the digest-pinned original statistics runner and directly compared its rebuilt
+Python summary with the parsed retained JSON. The comparison failed even though
+the values were identical: the runner returns interval pairs as tuples, while a
+JSON round trip necessarily restores them as lists. Serializing and parsing the
+rebuilt summary before comparison produced an exact match.
+
+**What to do.** When verifying persisted JSON against fresh producer output,
+compare canonical serialized bytes or JSON-normalize the producer output first.
+Use a separate in-memory contract assertion if tuple-versus-list type identity
+actually matters; otherwise direct Python-container equality can manufacture an
+evidence failure at a lossless serialization boundary.
+
+## Reproduce lock inversion with controlled events, not focused-test luck
+
+**TASK-20013, 2026-08-23.** The affected Console aggregate hung under load even
+though its standalone and focused tests passed. Captured thread stacks exposed
+an ABBA cycle: one thread held the config-file lock while waiting for the
+settings-rebuild lock, while another held the settings-rebuild lock and waited
+to re-enter the config-file path. An event-controlled child-process regression
+forced that ordering without timing sleeps; enforcing the single config-file →
+settings-rebuild → settings-cache lock order removed the cycle.
+
+**What to do.** When an aggregate-only hang suggests lock inversion, capture
+all thread stacks before interrupting it, encode the observed interleaving with
+events or barriers in a bounded child process, and enforce one documented
+global lock order. Focused green runs alone do not exercise the conflicting
+owners under representative load.
+
 ## A completed Textual product contract can still be cancelled by test-loop teardown
 
 **TASK-20009, 2026-08-21.** The real-provider three-turn Console benchmark
