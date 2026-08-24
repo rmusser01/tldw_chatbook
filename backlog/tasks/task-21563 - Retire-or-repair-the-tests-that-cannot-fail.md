@@ -1,7 +1,7 @@
 ---
 id: TASK-21563
 title: Retire or repair the tests that cannot fail
-status: In Progress
+status: Done
 assignee: []
 created_date: ''
 updated_date: '2026-08-24 17:18'
