@@ -496,6 +496,44 @@ async def test_hover_tooltip_clears_when_projection_reflows_hovered_line() -> No
 
 
 @pytest.mark.asyncio
+async def test_hover_clears_when_same_label_line_gets_a_different_stable_key() -> None:
+    raw = "Same " + "界🙂" * 20
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace("cursor", "Fits"),
+            _workspace("old", raw),
+        ),
+        expanded_workspace_ids=set(),
+    )
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tree.styles.width = 24
+        await pilot.pause()
+        tree.move_cursor(tree.workspace_nodes["cursor"])
+        old = tree.workspace_nodes["old"]
+        old_line = int(old._line)
+        tree.hover_line = old_line
+        await pilot.pause()
+        assert isinstance(tree.tooltip, Text)
+        assert tree.tooltip.plain == raw
+
+        tree.sync_projection(
+            (
+                _workspace("cursor", "Fits"),
+                _workspace("replacement", raw),
+            ),
+            expanded_workspace_ids=set(),
+        )
+        await pilot.pause()
+
+        replacement = tree.workspace_nodes["replacement"]
+        assert int(replacement._line) == old_line
+        assert tree.hover_line == -1
+        assert tree.tooltip is None
+
+
+@pytest.mark.asyncio
 async def test_long_literal_label_renders_on_one_ellipsized_physical_row() -> None:
     tree = ConsoleWorkspaceTree()
     raw = "[bold]" + "界🙂" * 30 + "\nsecond physical row"

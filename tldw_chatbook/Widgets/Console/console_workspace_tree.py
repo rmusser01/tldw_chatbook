@@ -319,6 +319,14 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         """Apply a keyed immutable projection without clearing the native Tree."""
 
         projection = tuple(workspaces)
+        hovered_node = (
+            self.get_node_at_line(self.hover_line) if self.hover_line >= 0 else None
+        )
+        hovered_key = (
+            hovered_node.data.key
+            if hovered_node is not None and hovered_node.data is not None
+            else None
+        )
         self._preferred_expanded_workspace_ids = set(expanded_workspace_ids)
         self._syncing = True
         try:
@@ -447,6 +455,15 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             self._pressed_node_key = None
             self._last_pointer_click_key = None
             self.post_message(WorkspaceTreeFocusRecoveryRequested())
+        if hovered_key is not None:
+            current_hovered_node = self.get_node_at_line(self.hover_line)
+            current_hovered_data = (
+                current_hovered_node.data
+                if current_hovered_node is not None
+                else None
+            )
+            if current_hovered_data is None or current_hovered_data.key != hovered_key:
+                self.hover_line = -1
         self._update_tooltip()
 
     def render_label(
