@@ -43,7 +43,8 @@ class WatchlistsPaneGrip(Button):
         )
         self.pane_region = region
         self.styles.width = PANE_GRIP_WIDTH
-        self.styles.min_width = 0
+        self.styles.min_width = PANE_GRIP_WIDTH
+        self.styles.max_width = PANE_GRIP_WIDTH
         self.styles.line_pad = 0
         self.set_reactive(WatchlistsPaneGrip.expanded, expanded)
         self._relabel()

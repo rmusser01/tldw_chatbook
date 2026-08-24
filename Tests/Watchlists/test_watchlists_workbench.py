@@ -16,7 +16,11 @@ from tldw_chatbook.UI.Watchlists_Modules.pane_grip import (
     RegionToggled,
     WatchlistsPaneGrip,
 )
-from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import (
+    Region,
+    RegionLayout,
+    resolve_effective_layout,
+)
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
     REGION_TITLES,
     WatchlistsWorkbench,
@@ -45,6 +49,63 @@ def _direct_child_ids(widget) -> list[str | None]:
     return [child.id for child in widget.children]
 
 
+_REAL_CSS_PATH = str(
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
+
+
+class _BoundaryGeometryApp(App[None]):
+    """Real-bundle harness for responsive workbench geometry."""
+
+    CSS_PATH = _REAL_CSS_PATH
+
+    def __init__(self, width: int, *, read_mode: bool) -> None:
+        super().__init__()
+        self.read_mode = read_mode
+        self.layout = resolve_effective_layout(
+            RegionLayout(),
+            width=width,
+            read_mode=read_mode,
+            article_focus=False,
+            priority_target=None,
+        )
+
+    def compose(self) -> ComposeResult:
+        yield WatchlistsWorkbench(
+            self.layout,
+            content={
+                Region.LEFT_RAIL: lambda: Static("navigation"),
+                Region.ITEMS: lambda: Static("management or feed items"),
+                Region.CONTENT: lambda: Static("permanent reader"),
+                Region.RIGHT_RAIL: lambda: Static("inspector"),
+            },
+            read_mode=self.read_mode,
+            id="wl-workbench",
+        )
+
+
+def _expected_boundary_child_ids(
+    layout: RegionLayout, *, read_mode: bool
+) -> list[str]:
+    expected: list[str] = []
+    if not layout.is_collapsed(Region.LEFT_RAIL):
+        expected.append("wl-region-left_rail")
+    expected.append("wl-grip-left_rail")
+    if read_mode:
+        if not layout.is_collapsed(Region.ITEMS):
+            expected.append("wl-region-items")
+        expected.extend(("wl-grip-items", "wl-region-content"))
+    else:
+        expected.append("wl-region-items")
+    expected.append("wl-grip-right_rail")
+    if not layout.is_collapsed(Region.RIGHT_RAIL):
+        expected.append("wl-region-right_rail")
+    return expected
+
+
 def test_region_titles_cover_exactly_the_live_regions() -> None:
     assert set(REGION_TITLES) == set(Region)
 
@@ -57,20 +118,79 @@ def test_region_titles_cover_exactly_the_live_regions() -> None:
         (".watchlists-region-right_rail", 34, 30),
     ],
 )
-def test_side_pane_css_keeps_approved_target_and_minimum_widths(
+@pytest.mark.asyncio
+async def test_real_bundle_keeps_approved_side_pane_targets_and_minimums(
     selector: str, target: int, minimum: int
 ) -> None:
-    css_path = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "features"
-        / "_watchlists.tcss"
-    )
-    block = css_path.read_text().split(f"{selector} {{", 1)[1].split("}", 1)[0]
+    app = _BoundaryGeometryApp(220, read_mode=True)
 
-    assert f"\n    width: {target};" in block
-    assert f"\n    min-width: {minimum};" in block
+    async with app.run_test(size=(220, 24)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(selector)
+
+        assert pane.styles.width is not None
+        assert pane.styles.width.value == target
+        assert pane.styles.min_width is not None
+        assert pane.styles.min_width.value == minimum
+        assert pane.region.width == target
+
+
+@pytest.mark.parametrize("width", (145, 144, 115, 114, 91, 90, 60, 59))
+@pytest.mark.parametrize("read_mode", (True, False), ids=("read", "management"))
+@pytest.mark.asyncio
+async def test_real_bundle_boundary_geometry_is_contained_and_keeps_centre(
+    width: int, read_mode: bool
+) -> None:
+    app = _BoundaryGeometryApp(width, read_mode=read_mode)
+
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause()
+        body = app.query_one("#wl-workbench-body", Horizontal)
+        workbench = app.query_one("#wl-workbench", WatchlistsWorkbench)
+        children = list(body.children)
+        expected = _expected_boundary_child_ids(
+            app.layout,
+            read_mode=read_mode,
+        )
+
+        assert _direct_child_ids(body) == expected
+        assert workbench.content_region.contains_region(body.region)
+        assert body.region.width == workbench.content_region.width == width
+        assert body.region.height == workbench.content_region.height
+        assert body.max_scroll_x == 0
+        assert body.virtual_size.width <= body.content_region.width
+        assert all(
+            body.content_region.contains_region(child.region) for child in children
+        )
+        assert all(
+            left.region.right <= right.region.x
+            for left, right in zip(children, children[1:])
+        )
+
+        grips = list(body.query(WatchlistsPaneGrip))
+        assert len(grips) == (3 if read_mode else 2)
+        assert all(grip.outer_size.width == grip.region.width == 5 for grip in grips)
+        assert all(grip.region.height == body.content_region.height for grip in grips)
+
+        minimums = {
+            "wl-region-left_rail": 24,
+            "wl-region-items": 32,
+            "wl-region-right_rail": 30,
+        }
+        for child in children:
+            if child.id in minimums and (read_mode or child.id != "wl-region-items"):
+                assert child.region.width >= minimums[child.id]
+
+        centre_id = "#wl-region-content" if read_mode else "#wl-region-items"
+        centre = app.query_one(centre_id)
+        assert centre.styles.min_width is not None
+        assert centre.styles.min_width.value == 0
+        occupied_by_siblings = sum(
+            child.region.width for child in children if child is not centre
+        )
+        assert centre.region.width == body.content_region.width - occupied_by_siblings
+        assert centre.region.width > 0
+        assert centre.region.height == body.content_region.height
 
 
 @pytest.mark.asyncio
@@ -606,14 +726,29 @@ async def test_reader_body_scroll_preserves_local_actions_footer_and_neighbours(
         left = app.query_one("#wl-region-left_rail")
         items = app.query_one("#wl-region-items")
         right = app.query_one("#wl-region-right_rail")
-        fixed = (actions.region, footer.region, left.region, items.region, right.region)
+        grips = tuple(app.query(WatchlistsPaneGrip))
+        fixed = (
+            actions.region,
+            footer.region,
+            left.region,
+            items.region,
+            right.region,
+            *(grip.region for grip in grips),
+        )
 
         assert body_scroll.max_scroll_y > 0
         body_scroll.scroll_end(animate=False)
         await pilot.pause()
 
         assert body_scroll.scroll_y == body_scroll.max_scroll_y
-        assert (actions.region, footer.region, left.region, items.region, right.region) == fixed
+        assert (
+            actions.region,
+            footer.region,
+            left.region,
+            items.region,
+            right.region,
+            *(grip.region for grip in grips),
+        ) == fixed
 
 
 @pytest.mark.asyncio
