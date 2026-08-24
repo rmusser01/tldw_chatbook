@@ -133,8 +133,6 @@ class MockApp:
         logger.info(f"[{severity.upper()}] {message}")
 
 
-@pytest.mark.asyncio
-
 # Every check below was written as `if ok: logger.success("✅ ...") else:
 # logger.error("❌ ...")`, and every function ended in `return True`. pytest
 # ignores a returned value, so all five tests passed unconditionally -- including
@@ -216,13 +214,16 @@ async def test_no_selected_sources_returns_none_and_tells_the_user():
 
 
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason=(
         "TASK-21564: the search double is not reached with this MockApp. MockApp predates the Console Library policy work, "
         "so `_authorize_local_results_for_prompt` reports "
         "`reason=not_currently_authorized` and the context is discarded. The "
         "assertions here are the ones the original test only logged; they are "
-        "kept visible rather than deleted so the harness gap stays tracked."
+        "kept visible rather than deleted so the harness gap stays tracked. "
+        "strict=True on purpose: this fails deterministically, not "
+        "intermittently, so an unexpected pass means the harness gap closed and "
+        "should be reported rather than absorbed."
     ),
 )
 @pytest.mark.asyncio
@@ -334,13 +335,16 @@ async def test_search_failure_returns_none_and_tells_the_user():
 
 
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason=(
         "TASK-21564: candidates are dropped by the Library prompt-authority gate. MockApp predates the Console Library policy work, "
         "so `_authorize_local_results_for_prompt` reports "
         "`reason=not_currently_authorized` and the context is discarded. The "
         "assertions here are the ones the original test only logged; they are "
-        "kept visible rather than deleted so the harness gap stays tracked."
+        "kept visible rather than deleted so the harness gap stays tracked. "
+        "strict=True on purpose: this fails deterministically, not "
+        "intermittently, so an unexpected pass means the harness gap closed and "
+        "should be reported rather than absorbed."
     ),
 )
 @pytest.mark.asyncio
