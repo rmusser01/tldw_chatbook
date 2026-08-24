@@ -11313,15 +11313,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             opened = False
         if not opened:
-            self.app.call_from_thread(self._notify_browser_open_failed)
-
-    def _notify_browser_open_failed(self) -> None:
-        """Report a browser worker failure from the Textual UI thread."""
-        self._notify_watchlists(
-            "Could not open this item in the system browser.",
-            severity="error",
-            markup=False,
-        )
+            self.app.call_from_thread(
+                self._notify_watchlists,
+                "Could not open this item in the system browser.",
+                "error",
+                markup=False,
+            )
 
     @on(NextUnreadRequested)
     def handle_next_unread_requested(self, event: NextUnreadRequested) -> None:

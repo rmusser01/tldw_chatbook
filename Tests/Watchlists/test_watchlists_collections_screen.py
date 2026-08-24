@@ -19,8 +19,8 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     InspectorPane,
     PreviewRequested,
+    ViewSnapshotRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules import inspector_pane as inspector_pane_module
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
@@ -79,14 +79,14 @@ class _InspectorActionsApp(App[None]):
     def __init__(self, entity: dict) -> None:
         super().__init__()
         self.entity = entity
-        self.snapshot_requests: list[object] = []
+        self.snapshot_requests: list[ViewSnapshotRequested] = []
 
     def compose(self) -> ComposeResult:
         pane = InspectorPane(id="watchlists-entity-inspector")
         pane.set_reactive(InspectorPane.selected_entity, self.entity)
         yield pane
 
-    def on_view_snapshot_requested(self, message) -> None:
+    def on_view_snapshot_requested(self, message: ViewSnapshotRequested) -> None:
         self.snapshot_requests.append(message)
 
 
@@ -118,10 +118,17 @@ async def test_item_inspector_keeps_advanced_actions(content_kind: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("button_id", "which"),
+    [
+        ("inspector-full-page-button", "full_page"),
+        ("inspector-previous-snapshot-button", "previous"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_inspector_previous_snapshot_posts_the_existing_request() -> None:
-    message_type = getattr(inspector_pane_module, "ViewSnapshotRequested", None)
-    assert message_type is not None, "Inspector must own the snapshot request"
+async def test_inspector_snapshot_actions_post_existing_request(
+    button_id: str, which: str
+) -> None:
     entity = {
         "entity_kind": "watchlist_item",
         "item_id": 7,
@@ -130,20 +137,18 @@ async def test_inspector_previous_snapshot_posts_the_existing_request() -> None:
     }
     app = _InspectorActionsApp(entity)
     async with app.run_test() as pilot:
-        await pilot.click("#inspector-previous-snapshot-button")
+        await pilot.click(f"#{button_id}")
         await pilot.pause()
 
         assert len(app.snapshot_requests) == 1
         request = app.snapshot_requests[0]
-        assert isinstance(request, message_type)
+        assert isinstance(request, ViewSnapshotRequested)
         assert request.item is entity
-        assert request.which == "previous"
+        assert request.which == which
 
 
 @pytest.mark.asyncio
 async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None:
-    message_type = getattr(inspector_pane_module, "ViewSnapshotRequested", None)
-    assert message_type is not None, "Inspector must own the snapshot request"
     app = _build_test_app()
     app.local_watchlists_service.get_url_snapshots = AsyncMock(
         return_value=[
@@ -161,7 +166,7 @@ async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = host.screen_stack[-1]
-        screen.post_message(message_type(item, "previous"))
+        screen.post_message(ViewSnapshotRequested(item, "previous"))
         await host.workers.wait_for_complete()
         await pilot.pause()
 
@@ -959,11 +964,20 @@ async def _open_item_and_get_url(pilot, screen, db, title: str, url: str) -> int
     return item_id
 
 
+def _successful_browser_recorder(opened: list[str]):
+    """Return a browser stub that records its URL and reports success."""
+    def record(url: str) -> bool:
+        opened.append(url)
+        return True
+
+    return record
+
+
 @pytest.mark.asyncio
 async def test_o_opens_the_open_items_url(monkeypatch):
     """`o` hands the open item's http URL to the system browser."""
     opened: list[str] = []
-    monkeypatch.setattr("webbrowser.open", opened.append)
+    monkeypatch.setattr("webbrowser.open", _successful_browser_recorder(opened))
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -974,18 +988,19 @@ async def test_o_opens_the_open_items_url(monkeypatch):
         await _open_item_and_get_url(
             pilot, screen, db, "Readable", "https://example.com/post"
         )
+        app.notify = Mock()
 
         await pilot.press("o")
-        await pilot.pause(0.2)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
         assert opened == ["https://example.com/post"]
+        app.notify.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_o_refuses_a_non_http_url(monkeypatch):
     """A `javascript:`/`file:`/empty URL is a remote-derived string reaching
     an OS primitive: it is refused with a notification, never passed on."""
-    from unittest.mock import Mock
-
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)
 
@@ -1017,7 +1032,7 @@ async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
     """A feed URL is remote-derived text: control bytes are stripped before
     the (already scheme- and host-validated) string reaches the OS."""
     opened: list[str] = []
-    monkeypatch.setattr("webbrowser.open", opened.append)
+    monkeypatch.setattr("webbrowser.open", _successful_browser_recorder(opened))
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -1028,13 +1043,13 @@ async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
         await _open_item_and_get_url(
             pilot, screen, db, "Control bytes", "https://example.com/po\x07st"
         )
+        app.notify = Mock()
 
         await pilot.press("o")
-        for _ in range(20):
-            await pilot.pause()
-            if opened:
-                break
+        await host.workers.wait_for_complete()
+        await pilot.pause()
         assert opened == ["https://example.com/post"]
+        app.notify.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1068,7 +1083,7 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
     )
 
     opened: list[str] = []
-    monkeypatch.setattr("webbrowser.open", opened.append)
+    monkeypatch.setattr("webbrowser.open", _successful_browser_recorder(opened))
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -1079,15 +1094,15 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
         await _open_item_and_get_url(
             pilot, screen, db, "Button-opened", "https://example.com/via-button"
         )
+        app.notify = Mock()
 
         screen.post_message(
             OpenInBrowserRequested(dict(screen._selected_content_item))
         )
-        for _ in range(20):
-            await pilot.pause()
-            if opened:
-                break
+        await host.workers.wait_for_complete()
+        await pilot.pause()
         assert opened == ["https://example.com/via-button"]
+        app.notify.assert_not_called()
 
 
 @pytest.mark.parametrize("activation", ["keyboard", "button"])
