@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -54,10 +55,12 @@ class RegionLayoutApplyFailed(Message):
     def __init__(
         self,
         *,
+        token: int,
         attempted: RegionLayout,
         fallback: RegionLayout,
     ) -> None:
         super().__init__()
+        self.token = token
         self.attempted = attempted
         self.fallback = fallback
 
@@ -65,8 +68,11 @@ class RegionLayoutApplyFailed(Message):
 class RegionLayoutApplied(Message):
     """Acknowledge a successful effective-layout transition."""
 
-    def __init__(self, *, previous: RegionLayout, layout: RegionLayout) -> None:
+    def __init__(
+        self, *, token: int, previous: RegionLayout, layout: RegionLayout
+    ) -> None:
         super().__init__()
+        self.token = token
         self.previous = previous
         self.layout = layout
 
@@ -80,7 +86,9 @@ class WatchlistsWorkbench(Vertical):
     Reader.
     """
 
-    region_layout: reactive[RegionLayout] = reactive(RegionLayout())
+    effective_layout_request: reactive[tuple[int, RegionLayout]] = reactive(
+        (0, RegionLayout())
+    )
 
     def __init__(
         self,
@@ -105,9 +113,32 @@ class WatchlistsWorkbench(Vertical):
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
         self._header = header
         self.read_mode = read_mode
+        self._rendered_layout = layout
+        self._layout_apply_lock = asyncio.Lock()
         self.set_class(self.read_mode, "watchlists-read-mode")
-        self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+        self.set_reactive(
+            WatchlistsWorkbench.effective_layout_request, (0, layout)
+        )
         self._sync_expanded_side_pane_class(layout=layout)
+
+    @property
+    def region_layout(self) -> RegionLayout:
+        """The effective layout currently represented by the mounted DOM."""
+        return self._rendered_layout
+
+    def request_region_layout(self, layout: RegionLayout, *, token: int) -> None:
+        """Request one correlated effective-layout transition."""
+        if layout == self._rendered_layout and not self._layout_apply_lock.locked():
+            self.set_reactive(
+                WatchlistsWorkbench.effective_layout_request, (token, layout)
+            )
+            self.post_message(
+                RegionLayoutApplied(
+                    token=token, previous=self._rendered_layout, layout=layout
+                )
+            )
+            return
+        self.effective_layout_request = (token, layout)
 
     def compose(self) -> ComposeResult:
         """Mount the header first and the horizontal workbench body second."""
@@ -164,14 +195,29 @@ class WatchlistsWorkbench(Vertical):
             id=f"wl-grip-{region.value}",
         )
 
-    async def watch_region_layout(
-        self, previous: RegionLayout, layout: RegionLayout
+    async def watch_effective_layout_request(
+        self,
+        _previous_request: tuple[int, RegionLayout],
+        request: tuple[int, RegionLayout],
     ) -> None:
         """Mount or remove only side bodies whose collapse state changed."""
+        async with self._layout_apply_lock:
+            await self._apply_effective_layout_request(request)
+
+    async def _apply_effective_layout_request(
+        self, request: tuple[int, RegionLayout]
+    ) -> None:
+        """Apply one request without racing a section-view reconciliation."""
+        token, layout = request
+        previous = self._rendered_layout
+        if request != self.effective_layout_request:
+            return
         if not self.is_mounted:
+            self._rendered_layout = layout
             return
         body = self._body()
         if body is None:
+            self._rendered_layout = layout
             return
         changed = [
             region
@@ -187,11 +233,12 @@ class WatchlistsWorkbench(Vertical):
                 ):
                     prepared[region] = self._region_body(region)
         except Exception:
-            self.set_reactive(WatchlistsWorkbench.region_layout, previous)
             self._sync_expanded_side_pane_class(layout=previous)
             logger.exception("Watchlists pane expansion factory failed")
             self.post_message(
-                RegionLayoutApplyFailed(attempted=layout, fallback=previous)
+                RegionLayoutApplyFailed(
+                    token=token, attempted=layout, fallback=previous
+                )
             )
             return
 
@@ -215,11 +262,12 @@ class WatchlistsWorkbench(Vertical):
             for node in prepared.values():
                 if node.is_mounted:
                     await node.remove()
-            self.set_reactive(WatchlistsWorkbench.region_layout, previous)
             self._sync_expanded_side_pane_class(layout=previous)
             logger.exception("Watchlists pane expansion mount failed")
             self.post_message(
-                RegionLayoutApplyFailed(attempted=layout, fallback=previous)
+                RegionLayoutApplyFailed(
+                    token=token, attempted=layout, fallback=previous
+                )
             )
             return
 
@@ -242,8 +290,11 @@ class WatchlistsWorkbench(Vertical):
             mounted = self._mounted_region_body(region)
             if mounted is not None:
                 mounted.focus()
+        self._rendered_layout = layout
         self._sync_expanded_side_pane_class(layout=layout)
-        self.post_message(RegionLayoutApplied(previous=previous, layout=layout))
+        self.post_message(
+            RegionLayoutApplied(token=token, previous=previous, layout=layout)
+        )
 
     @property
     def _grip_regions(self) -> tuple[Region, ...]:
@@ -283,39 +334,85 @@ class WatchlistsWorkbench(Vertical):
         *,
         layout: RegionLayout,
         read_mode: bool,
+        token: int,
         rebuild_regions: tuple[Region, ...] = (),
         rebuild_header: bool = False,
-    ) -> None:
+    ) -> bool:
         """Incrementally apply a Read/management section view."""
+        async with self._layout_apply_lock:
+            return await self._apply_section_view(
+                layout=layout,
+                read_mode=read_mode,
+                token=token,
+                rebuild_regions=rebuild_regions,
+                rebuild_header=rebuild_header,
+            )
+
+    async def _apply_section_view(
+        self,
+        *,
+        layout: RegionLayout,
+        read_mode: bool,
+        token: int,
+        rebuild_regions: tuple[Region, ...] = (),
+        rebuild_header: bool = False,
+    ) -> bool:
+        """Reconcile one section view while holding the layout lock."""
         next_read_mode = read_mode
+        previous = self._rendered_layout
+        self.set_reactive(
+            WatchlistsWorkbench.effective_layout_request, (token, previous)
+        )
         if not self.is_mounted:
             self.read_mode = next_read_mode
             self.set_class(self.read_mode, "watchlists-read-mode")
-            self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+            self._rendered_layout = layout
+            self.set_reactive(
+                WatchlistsWorkbench.effective_layout_request, (token, layout)
+            )
             self._sync_expanded_side_pane_class(
                 read_mode=next_read_mode, layout=layout
             )
-            return
+            self.post_message(
+                RegionLayoutApplied(token=token, previous=previous, layout=layout)
+            )
+            return True
 
-        replacement_header = (
-            self._header()
-            if rebuild_header and self._header is not None
-            else None
+        try:
+            replacement_header = (
+                self._header()
+                if rebuild_header and self._header is not None
+                else None
+            )
+            with self.app.batch_update():
+                await self._reconcile_body(
+                    read_mode=next_read_mode,
+                    layout=layout,
+                    rebuild_regions=rebuild_regions,
+                )
+                if replacement_header is not None:
+                    await self._replace_header(replacement_header)
+                self.read_mode = next_read_mode
+                self.set_class(self.read_mode, "watchlists-read-mode")
+                self._rendered_layout = layout
+                self.set_reactive(
+                    WatchlistsWorkbench.effective_layout_request, (token, layout)
+                )
+                self._sync_expanded_side_pane_class(
+                    read_mode=next_read_mode, layout=layout
+                )
+        except Exception:
+            logger.exception("Watchlists section-view factory failed")
+            self.post_message(
+                RegionLayoutApplyFailed(
+                    token=token, attempted=layout, fallback=previous
+                )
+            )
+            return False
+        self.post_message(
+            RegionLayoutApplied(token=token, previous=previous, layout=layout)
         )
-        with self.app.batch_update():
-            await self._reconcile_body(
-                read_mode=next_read_mode,
-                layout=layout,
-                rebuild_regions=rebuild_regions,
-            )
-            if replacement_header is not None:
-                await self._replace_header(replacement_header)
-            self.read_mode = next_read_mode
-            self.set_class(self.read_mode, "watchlists-read-mode")
-            self.set_reactive(WatchlistsWorkbench.region_layout, layout)
-            self._sync_expanded_side_pane_class(
-                read_mode=next_read_mode, layout=layout
-            )
+        return True
 
     async def _reconcile_body(
         self,
@@ -363,7 +460,14 @@ class WatchlistsWorkbench(Vertical):
             if child.id not in desired_ids:
                 region = self._region_from_body_id(child.id or "")
                 if region is not None and self._contains_focus(child):
-                    self.query_one(f"#wl-grip-{region.value}").focus()
+                    grip_id = f"wl-grip-{region.value}"
+                    if grip_id not in desired_ids:
+                        grip_id = next(
+                            node_id
+                            for node_id in desired_ids
+                            if node_id.startswith("wl-grip-")
+                        )
+                    self.query_one(f"#{grip_id}").focus()
                 await child.remove()
 
         for index, node_id in enumerate(desired_ids):

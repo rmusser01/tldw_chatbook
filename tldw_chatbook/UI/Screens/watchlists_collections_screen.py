@@ -989,8 +989,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._effective_region_layout = loaded_layout
         self._article_focus_active = False
         self._responsive_priority_target: Region | None = None
+        self._layout_request_generation = 0
+        self._current_layout_request_token = 0
+        # Avoid initializing the reactive (and its watcher) before Textual
+        # attaches this screen to an app; on_mount replaces this seed.
+        self._rendered_section = "items"
         self._manual_layout_rollback: tuple[
-            RegionLayout, RegionLayout, bool, Region | None
+            int, RegionLayout, RegionLayout, bool, Region | None
         ] | None = None
         self._items_view_anchor_id: str | None = None
         self._items_view_scroll_y = 0.0
@@ -1123,6 +1128,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # changes `region_layout` between construction and mount, or a
         # future caller) still gets the persistence reconciliation pass
         # `_apply_layout` performs for anything that genuinely did change.
+        self._rendered_section = self.active_section
         self._recompute_effective_layout()
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
@@ -2858,7 +2864,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
         return next((width for width in candidates if width > 0), 10_000)
 
-    def _recompute_effective_layout(self) -> None:
+    def _next_layout_request_token(self) -> int:
+        """Allocate the one current controller/workbench request token."""
+        self._layout_request_generation += 1
+        self._current_layout_request_token = self._layout_request_generation
+        self._manual_layout_rollback = None
+        return self._current_layout_request_token
+
+    def _recompute_effective_layout(self) -> int | None:
         """Resolve and push transient responsive/Article Focus state."""
         read_mode = self.active_section == "items"
         width = self._available_layout_width()
@@ -2892,9 +2905,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             workbench = self.query_one(WatchlistsWorkbench)
             if workbench.read_mode == read_mode:
-                workbench.region_layout = effective
+                token = self._next_layout_request_token()
+                workbench.request_region_layout(effective, token=token)
+                return token
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
+        return None
 
     def _capture_items_view_state(self) -> None:
         try:
@@ -3133,9 +3149,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         persist -- it from a keypress that has no visible relationship to
         either the rail or the tab strip the user is actually looking at.
         """
-        if self._focus_in_centre_header:
-            return
-        region = self.focused_region
+        node = self.focused
+        region: Region | None = None
+        while node is not None:
+            node_id = getattr(node, "id", None) or ""
+            for prefix in ("wl-region-", "wl-grip-"):
+                if node_id.startswith(prefix):
+                    try:
+                        region = Region(node_id.removeprefix(prefix))
+                    except ValueError:
+                        region = None
+                    break
+            if region is not None:
+                break
+            node = node.parent
         if region not in COLLAPSIBLE_REGIONS:
             return
         if self._refuse_region_gesture_off_read_tab(region):
@@ -3176,17 +3203,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 preferred = preferred.toggle_preferred(region)
             if self._responsive_priority_target is region:
                 self._responsive_priority_target = None
-        changed = preferred != self.region_layout
         self.region_layout = preferred
-        self._recompute_effective_layout()
+        token = self._recompute_effective_layout()
         self._manual_layout_rollback = (
+            token or self._current_layout_request_token,
             self._effective_region_layout,
             before[0],
             before[2],
             before[3],
         )
-        if changed:
-            self._schedule_layout_persist(preferred)
+        self._schedule_layout_persist(preferred)
 
     @on(RegionToggled)
     def _on_region_toggled(self, event: RegionToggled) -> None:
@@ -3203,14 +3229,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Correct screen preference only while the failed intent is current."""
         event.stop()
-        if self._effective_region_layout != event.attempted:
+        if event.token != self._current_layout_request_token:
             return
         rollback = self._manual_layout_rollback
-        if rollback is None or rollback[0] != event.attempted:
+        if rollback is None or rollback[0] != event.token:
             self._effective_region_layout = event.fallback
             return
         current_preferred = self.region_layout
-        _, preferred, article_focus, priority_target = rollback
+        _, _, preferred, article_focus, priority_target = rollback
         self.region_layout = preferred
         self._article_focus_active = article_focus
         self._responsive_priority_target = priority_target
@@ -3223,11 +3249,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _on_region_layout_applied(self, event: RegionLayoutApplied) -> None:
         """Restore pane-local view state after a successful remount."""
         event.stop()
-        if event.layout != self._effective_region_layout:
+        if event.token != self._current_layout_request_token:
             return
         if (
             self._manual_layout_rollback is not None
-            and self._manual_layout_rollback[0] == event.layout
+            and self._manual_layout_rollback[0] == event.token
         ):
             self._manual_layout_rollback = None
         if (
@@ -4121,12 +4147,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Textual has already re-homed focus (see `_restore_focus_after_swap`).
         rehome_focus = self._swap_will_destroy_focus()
         self._recompute_effective_layout()
-        await workbench.apply_section_view(
+        token = self._next_layout_request_token()
+        applied = await workbench.apply_section_view(
             read_mode=self.active_section == "items",
             layout=self._effective_region_layout,
+            token=token,
             rebuild_regions=(Region.ITEMS,),
             rebuild_header=True,
         )
+        if not applied or token != self._current_layout_request_token:
+            previous_section = self._rendered_section
+            self.set_reactive(
+                WatchlistsCollectionsScreen.active_section, previous_section
+            )
+            self._article_focus_active = False
+            self._effective_region_layout = workbench.region_layout
+            self._sync_backend_header_bar()
+            self._recompute_effective_layout()
+            return
+        self._rendered_section = self.active_section
         if rehome_focus:
             self._restore_focus_after_swap()
         self._reseed_active_section_pane()

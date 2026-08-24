@@ -24,6 +24,8 @@ from tldw_chatbook.UI.Watchlists_Modules.region_layout import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
     REGION_TITLES,
+    RegionLayoutApplied,
+    RegionLayoutApplyFailed,
     WatchlistsWorkbench,
 )
 
@@ -34,6 +36,7 @@ class _WorkbenchApp(App[None]):
         self.layout_state = layout
         self.read_mode = read_mode
         self.toggles: list[Region] = []
+        self.layout_events: list[RegionLayoutApplied | RegionLayoutApplyFailed] = []
 
     def compose(self) -> ComposeResult:
         yield WatchlistsWorkbench(
@@ -44,6 +47,14 @@ class _WorkbenchApp(App[None]):
 
     def on_region_toggled(self, message: RegionToggled) -> None:
         self.toggles.append(message.region)
+
+    def on_region_layout_applied(self, message: RegionLayoutApplied) -> None:
+        self.layout_events.append(message)
+
+    def on_region_layout_apply_failed(
+        self, message: RegionLayoutApplyFailed
+    ) -> None:
+        self.layout_events.append(message)
 
 
 def _direct_child_ids(widget) -> list[str | None]:
@@ -421,8 +432,8 @@ async def test_side_toggle_preserves_unaffected_bodies_all_grips_and_reader() ->
             )
         }
 
-        workbench.region_layout = RegionLayout(
-            collapsed=frozenset({Region.LEFT_RAIL})
+        workbench.request_region_layout(
+            RegionLayout(collapsed=frozenset({Region.LEFT_RAIL})), token=1
         )
         await pilot.pause()
 
@@ -442,7 +453,7 @@ async def test_expanding_inspector_mounts_body_after_permanent_grip() -> None:
         grip = app.query_one("#wl-grip-right_rail")
         reader = app.query_one("#wl-region-content")
 
-        workbench.region_layout = RegionLayout()
+        workbench.request_region_layout(RegionLayout(), token=1)
         await pilot.pause()
 
         body = app.query_one("#wl-workbench-body", Horizontal)
@@ -487,7 +498,7 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
         expanded_left = RegionLayout(
             collapsed=frozenset({Region.ITEMS, Region.RIGHT_RAIL})
         )
-        workbench.region_layout = expanded_left
+        workbench.request_region_layout(expanded_left, token=1)
         await pilot.pause()
 
         assert workbench.region_layout.is_collapsed(Region.LEFT_RAIL)
@@ -499,11 +510,63 @@ async def test_expansion_factory_failure_keeps_collapsed_grip_and_dom() -> None:
         assert app.is_running
 
         fail_rail = False
-        workbench.region_layout = expanded_left
+        workbench.request_region_layout(expanded_left, token=2)
         await pilot.pause()
         assert app.query("#wl-region-left_rail")
         assert grip.expanded is True
         assert workbench.has_class("watchlists-has-expanded-side-pane")
+
+
+@pytest.mark.asyncio
+async def test_layout_requests_acknowledge_same_layout_with_exact_token() -> None:
+    layout = RegionLayout()
+    app = _WorkbenchApp(layout)
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+
+        workbench.request_region_layout(layout, token=41)
+        workbench.request_region_layout(layout, token=42)
+        await pilot.pause()
+
+        applied = [
+            event for event in app.layout_events if isinstance(event, RegionLayoutApplied)
+        ]
+        assert [event.token for event in applied] == [41, 42]
+        assert all(event.previous == layout == event.layout for event in applied)
+
+
+@pytest.mark.asyncio
+async def test_failed_layout_request_reports_its_exact_token() -> None:
+    def broken_factory() -> Widget:
+        raise RuntimeError("rail build failed")
+
+    collapsed = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL}))
+
+    class _App(_WorkbenchApp):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                collapsed,
+                content={Region.LEFT_RAIL: broken_factory},
+                read_mode=True,
+                id="wl-workbench",
+            )
+
+    app = _App(collapsed)
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+
+        workbench.request_region_layout(RegionLayout(), token=73)
+        await pilot.pause()
+
+        failures = [
+            event
+            for event in app.layout_events
+            if isinstance(event, RegionLayoutApplyFailed)
+        ]
+        assert len(failures) == 1
+        assert failures[0].token == 73
+        assert failures[0].attempted == RegionLayout()
+        assert failures[0].fallback == collapsed
 
 
 @pytest.mark.asyncio
@@ -670,6 +733,7 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
         await workbench.apply_section_view(
             read_mode=False,
             layout=RegionLayout(),
+            token=1,
             rebuild_regions=(Region.ITEMS,),
         )
         await pilot.pause()
@@ -686,6 +750,7 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
         await workbench.apply_section_view(
             read_mode=True,
             layout=RegionLayout(),
+            token=2,
             rebuild_regions=(Region.ITEMS,),
         )
         await pilot.pause()
@@ -727,14 +792,15 @@ async def test_mode_switch_factory_failure_preserves_previous_read_view() -> Non
         reader = app.query_one("#reader-content")
         fail_items = True
 
-        with pytest.raises(RuntimeError, match="management centre failed"):
-            await workbench.apply_section_view(
-                read_mode=False,
-                layout=RegionLayout(),
-                rebuild_regions=(Region.ITEMS,),
-            )
+        applied = await workbench.apply_section_view(
+            read_mode=False,
+            layout=RegionLayout(),
+            token=7,
+            rebuild_regions=(Region.ITEMS,),
+        )
         await pilot.pause()
 
+        assert applied is False
         assert workbench.read_mode is True
         assert workbench.has_class("watchlists-read-mode")
         assert _direct_child_ids(body) == previous_ids
@@ -743,11 +809,13 @@ async def test_mode_switch_factory_failure_preserves_previous_read_view() -> Non
         assert app.is_running
 
         fail_items = False
-        await workbench.apply_section_view(
+        applied = await workbench.apply_section_view(
             read_mode=False,
             layout=RegionLayout(),
+            token=8,
             rebuild_regions=(Region.ITEMS,),
         )
+        assert applied is True
         assert workbench.read_mode is False
         assert not workbench.has_class("watchlists-read-mode")
         assert not app.query("#reader-content")
@@ -767,6 +835,7 @@ async def test_read_mode_class_tracks_incremental_mode_switches() -> None:
         await workbench.apply_section_view(
             read_mode=False,
             layout=rails_collapsed,
+            token=1,
         )
         assert not workbench.has_class("watchlists-read-mode")
         assert not workbench.has_class("watchlists-has-expanded-side-pane")
@@ -774,6 +843,7 @@ async def test_read_mode_class_tracks_incremental_mode_switches() -> None:
         await workbench.apply_section_view(
             read_mode=True,
             layout=rails_collapsed,
+            token=2,
         )
         assert workbench.has_class("watchlists-read-mode")
         assert workbench.has_class("watchlists-has-expanded-side-pane")

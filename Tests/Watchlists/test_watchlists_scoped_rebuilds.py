@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 import threading
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, ListView
@@ -36,6 +37,7 @@ from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
@@ -47,6 +49,8 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
     WatchlistTree,
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+    RegionLayoutApplied,
+    RegionLayoutApplyFailed,
     WatchlistsWorkbench,
 )
 
@@ -808,7 +812,8 @@ async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
         tree = screen.query_one("#wl-tree", WatchlistTree)
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
         content_region = screen.query_one("#wl-region-content")
-        screen.focused_region = Region.ITEMS
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
         with _RebuildCounter() as counted:
             screen.action_toggle_region()
             await _settle(pilot, host)
@@ -889,7 +894,8 @@ async def test_layout_keys_keep_independent_side_pane_state():
         screen.active_section = "sources"
         await _settle(pilot, host)
         before = screen.region_layout
-        screen.focused_region = Region.ITEMS
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
         screen.action_toggle_region()
         await _settle(pilot, host)
         assert screen.region_layout == before, (
@@ -1034,42 +1040,143 @@ async def test_z_targets_only_collapsible_side_panes() -> None:
         assert screen.region_layout == before
 
 
-async def test_article_focus_preserves_reader_and_article_list_state() -> None:
+async def test_z_ignores_stale_region_after_focus_moves_outside_workbench(
+    monkeypatch,
+) -> None:
+    writes: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: writes.append(layout) or True,
+    )
     app = _build_test_app()
-    watchlist_id = _seed(app, items=4)
+    async with _open(app) as (screen, pilot, host):
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
+        assert screen.focused_region is Region.ITEMS
+
+        outside = screen.query_one("#watchlists-backend-select")
+        outside.disabled = False
+        outside.focus()
+        await pilot.pause()
+        assert screen.focused is outside
+        before = (screen.region_layout, screen._effective_region_layout)
+        writes.clear()
+
+        await pilot.press("z")
+        await _settle(pilot, host)
+
+        assert (screen.region_layout, screen._effective_region_layout) == before
+        assert writes == []
+
+
+async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -> None:
+    app = _build_test_app()
+    watchlist_id = _seed(app, items=40)
     async with _open(app, watchlist_id) as (screen, pilot, host):
-        pane = screen.query_one("#watchlists-items-pane")
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         rows = pane.displayed_items()
         assert rows
         pane.select_and_reveal(rows[min(1, len(rows) - 1)])
         await _settle(pilot, host)
+        pane.status_filter = "unread"
+        pane.search_query = "Story"
+        await _settle(pilot, host)
+        reload_timer = getattr(screen, "_items_search_reload_timer", None)
+        if reload_timer is not None:
+            reload_timer.stop()
+            screen._items_search_reload_timer = None
         table = pane.query_one("#items-table", ListView)
+        table.scroll_to(y=6, animate=False)
         table.focus()
         await pilot.pause()
         selected_id = str(pane.selected_item["id"])
         anchor_id = getattr(table.highlighted_child, "item_id_key", None)
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
+        screen._selected_content_item["content"] = "\n".join(
+            f"Reader line {index}" for index in range(120)
+        )
+        reader.item = dict(screen._selected_content_item)
+        await pilot.pause()
+        reader.query_one("#content-body").styles.height = 200
+        await pilot.pause()
+        reader_scroll = reader.query_one("#content-body-scroll", VerticalScroll)
+        reader_scroll.scroll_to(y=8, animate=False)
+        await pilot.pause()
         scope = screen.tree_scope
-        page_index = screen._items_page_index
+        screen._items_page_index = 2
+        pane.page_number = 3
+        page_index = 2
+        list_scroll_y = float(table.scroll_y)
+        reader_scroll_y = float(reader_scroll.scroll_y)
+        assert list_scroll_y > 0
+        assert reader_scroll_y > 0
+
+        async def assert_restored() -> None:
+            restored = screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            )
+            restored_table = restored.query_one("#items-table", ListView)
+            assert str(restored.selected_item["id"]) == selected_id
+            assert restored.status_filter == "unread"
+            assert restored.search_query == "Story"
+            assert restored.page_number == 3
+            assert getattr(
+                restored_table.highlighted_child, "item_id_key", None
+            ) == anchor_id
+            assert float(restored_table.scroll_y) == list_scroll_y
+            assert restored_table.has_focus
+            assert screen.tree_scope == scope
+            assert screen._items_page_index == page_index
+            assert screen.query_one(
+                "#watchlists-content-pane", ContentPane
+            ) is reader
+            assert float(
+                reader.query_one("#content-body-scroll", VerticalScroll).scroll_y
+            ) == reader_scroll_y
+
+        for key in ("[", "]"):
+            items_identity = screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            )
+            await pilot.press(key)
+            await _settle(pilot, host)
+            assert screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ) is items_identity
+            await pilot.press(key)
+            await _settle(pilot, host)
+            assert screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ) is items_identity
+            await assert_restored()
+
+        await pilot.press("z")
+        await _settle(pilot, host)
+        assert screen.focused is screen.query_one("#wl-grip-items")
+        assert not screen.query("#watchlists-items-pane")
+        await pilot.press("z")
+        await _settle(pilot, host)
+        await assert_restored()
+
+        for _ in range(2):
+            await pilot.resize_terminal(90, 50)
+            await _settle(pilot, host)
+            assert screen.focused is screen.query_one("#wl-grip-items")
+            assert not screen.query("#watchlists-items-pane")
+            await pilot.resize_terminal(180, 50)
+            await _settle(pilot, host)
+            await assert_restored()
 
         screen.action_article_focus()
         await _settle(pilot, host)
         assert screen.focused is screen.query_one("#wl-grip-items")
         assert screen._items_view_anchor_id == anchor_id
         assert screen._items_view_had_focus is True
+        assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
 
         screen.action_article_focus()
         await _settle(pilot, host)
-        await pilot.pause(0.1)
-
-        restored = screen.query_one("#watchlists-items-pane")
-        restored_table = restored.query_one("#items-table", ListView)
-        assert str(restored.selected_item["id"]) == selected_id
-        assert getattr(restored_table.highlighted_child, "item_id_key", None) == anchor_id
-        assert restored_table.has_focus
-        assert screen.tree_scope == scope
-        assert screen._items_page_index == page_index
-        assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
+        await assert_restored()
 
 
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
@@ -1102,6 +1209,48 @@ async def test_layout_persistence_advances_only_after_current_success(
 
         assert screen._last_persisted_collapsed == screen.region_layout.collapsed
         assert screen._pending_persist_layout is None
+
+
+@pytest.mark.parametrize("failure", [False, OSError("disk full")])
+async def test_manual_focus_exit_retries_pending_preference_without_changing_it(
+    monkeypatch, failure,
+) -> None:
+    writes: list[RegionLayout] = []
+    results = iter([failure, True])
+
+    def save(layout: RegionLayout) -> bool:
+        writes.append(layout)
+        result = next(results)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        save,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        screen.action_toggle_right_rail()
+        await _settle(pilot, host)
+        pending = screen.region_layout
+        assert screen._pending_persist_layout == pending
+        assert len(writes) == 1
+
+        screen.action_article_focus()
+        await _settle(pilot, host)
+        assert len(writes) == 1, "Article Focus itself is never a retry gesture"
+        assert not pending.is_collapsed(Region.LEFT_RAIL)
+
+        screen.query_one("#wl-grip-left_rail", Button).press()
+        await _settle(pilot, host)
+
+        assert screen.region_layout == pending
+        assert screen._article_focus_active is False
+        assert writes == [pending, pending]
+        assert screen._last_persisted_collapsed == pending.collapsed
+        assert screen._pending_persist_layout is None
+        assert screen._manual_layout_rollback is None
 
 
 async def test_layout_persistence_rapid_toggles_drain_latest_request(
@@ -1140,6 +1289,47 @@ async def test_layout_persistence_rapid_toggles_drain_latest_request(
         assert screen._last_persisted_collapsed == newest.collapsed
         assert screen._pending_persist_layout is None
         assert screen._layout_persist_draining is False
+
+
+async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        layout = screen._effective_region_layout
+        token = screen._next_layout_request_token()
+        rollback = (
+            token,
+            layout,
+            screen.region_layout,
+            screen._article_focus_active,
+            screen._responsive_priority_target,
+        )
+        screen._manual_layout_rollback = rollback
+
+        screen.post_message(
+            RegionLayoutApplyFailed(
+                token=token - 1,
+                attempted=layout,
+                fallback=layout.toggle_preferred(Region.LEFT_RAIL),
+            )
+        )
+        screen.post_message(
+            RegionLayoutApplied(
+                token=token - 1,
+                previous=layout,
+                layout=layout,
+            )
+        )
+        await _settle(pilot, host)
+
+        assert screen._effective_region_layout == layout
+        assert screen._manual_layout_rollback == rollback
+
+        screen.post_message(
+            RegionLayoutApplied(token=token, previous=layout, layout=layout)
+        )
+        await _settle(pilot, host)
+
+        assert screen._manual_layout_rollback is None
 
 
 async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
@@ -1200,6 +1390,7 @@ async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
         newer = screen.region_layout
         workbench.post_message(
             RegionLayoutApplyFailed(
+                token=screen._current_layout_request_token - 1,
                 attempted=fallback,
                 fallback=fallback.toggle_preferred(Region.RIGHT_RAIL),
             )
@@ -1268,3 +1459,50 @@ async def test_management_expansion_failure_preserves_parked_feed_preference(
         assert workbench.region_layout == screen._effective_region_layout
         assert getattr(grip, "expanded") is True
         assert screen.query("#wl-region-left_rail")
+
+
+async def test_section_factory_failure_rolls_back_mode_and_can_retry(
+    monkeypatch,
+) -> None:
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: persisted.append(layout) or True,
+    )
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        workbench = screen.query_one(WatchlistsWorkbench)
+        reader = screen.query_one("#watchlists-content-pane", ContentPane)
+        items = screen.query_one("#watchlists-items-pane")
+        before_layout = screen._effective_region_layout
+        original_factory = workbench._content[Region.ITEMS]
+        fail = True
+
+        def flaky_factory():
+            if fail and screen.active_section == "sources":
+                raise RuntimeError("sources centre failed")
+            return original_factory()
+
+        workbench._content[Region.ITEMS] = flaky_factory
+        persisted.clear()
+
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+
+        assert screen.active_section == "items"
+        assert screen._effective_region_layout == before_layout
+        assert workbench.read_mode is True
+        assert workbench.region_layout == before_layout
+        assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
+        assert screen.query_one("#watchlists-items-pane") is items
+        assert persisted == []
+
+        fail = False
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+
+        assert screen.active_section == "sources"
+        assert workbench.read_mode is False
+        assert not screen.query("#watchlists-content-pane")
+        assert persisted == []
