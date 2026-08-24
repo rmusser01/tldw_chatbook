@@ -1,10 +1,11 @@
 ---
 id: TASK-21507
 title: Add Research shell authority and responsive Workspace foundation
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 05:54'
+updated_date: '2026-08-24 09:36'
 labels:
   - research
   - workspace
@@ -26,14 +27,14 @@ Add the durable Research destination and a real Workspace screen whose Local/Ser
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Research is a fourteenth shell destination after Library and before Artifacts; its primary route is `research_workspace`, direct `research` callers still mount Research Runs, existing destination shortcuts do not shift, and F10 opens Research Workspace.
-- [ ] #2 Workspace and Runs mount one shared Research mode bar and navigate between separate real screens while preserving each screen's own saved state.
-- [ ] #3 The Workspace screen exposes an explicit `Workspace data: Local | Server` selector and authority-qualified workspace identities; unavailable Server state fails closed with recovery and never reads, displays, or mutates Local as fallback.
-- [ ] #4 Local and Server adapters implement one normalized, capability-aware read/lifecycle contract without reusing `WorkspaceAuthority` as the data-source discriminator or merging results from both owners.
-- [ ] #5 Sources and Studio use exact `<---` / `--->` collapse/reveal labels, deterministic focus relocation, separate stored preference versus effective responsive state, and Chat maximizes when both side panes are closed.
-- [ ] #6 Wide, medium, narrow, and short-height layouts meet the approved pane-count and minimum-content contracts at the exact verification sizes, with hidden panes removed from the focus cycle and responsive overrides restoring preferences when width returns.
-- [ ] #7 A private, bounded, atomically written device-overlay store keys pane preferences by qualified authority/profile/principal/workspace identity, recovers per-record corruption without blocking the canonical workspace, and stores no secrets or canonical content.
-- [ ] #8 Targeted unit, mounted Textual, command-palette, navigation, persistence, inverse, and geometry checks pass; generated CSS is rebuilt from source and no full-suite claim is made.
+- [x] #1 Research is a fourteenth shell destination after Library and before Artifacts; its primary route is `research_workspace`, direct `research` callers still mount Research Runs, existing destination shortcuts do not shift, and F10 opens Research Workspace.
+- [x] #2 Workspace and Runs mount one shared Research mode bar and navigate between separate real screens while preserving each screen's own saved state.
+- [x] #3 The Workspace screen exposes an explicit `Workspace data: Local | Server` selector and authority-qualified workspace identities; unavailable Server state fails closed with recovery and never reads, displays, or mutates Local as fallback.
+- [x] #4 Local and Server adapters implement one normalized, capability-aware read/lifecycle contract without reusing `WorkspaceAuthority` as the data-source discriminator or merging results from both owners.
+- [x] #5 Sources and Studio use exact `<---` / `--->` collapse/reveal labels, deterministic focus relocation, separate stored preference versus effective responsive state, and Chat maximizes when both side panes are closed.
+- [x] #6 Wide, medium, narrow, and short-height layouts meet the approved pane-count and minimum-content contracts at the exact verification sizes, with hidden panes removed from the focus cycle and responsive overrides restoring preferences when width returns.
+- [x] #7 A private, bounded, atomically written device-overlay store keys pane preferences by qualified authority/profile/principal/workspace identity, recovers per-record corruption without blocking the canonical workspace, and stores no secrets or canonical content.
+- [x] #8 Targeted unit, mounted Textual, command-palette, navigation, persistence, inverse, and geometry checks pass; generated CSS is rebuilt from source and no full-suite claim is made.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,3 +48,24 @@ Reason: This task directly implements the accepted shell, authority, adapter, ov
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-foundation.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Completed the ADR-078 foundation with stable Research routing, normalized Local
+and Server adapters, qualified controller state, private device-only pane
+preferences, responsive Workspace/Run screens, and an explicit mounted
+`Workspace data: Local | Server` selector. Task 5 late-binds only the active
+foundation services; unavailable Server remains selected with typed recovery
+and makes no Local fallback call. The Task 5 file-list deviation is limited to
+the existing controller/header/screen/CSS modules required to make AC #3 a real
+interactive selector, plus the user-guide index needed to expose the new page.
+
+Focused Task 1–5 verification passed (`308 passed`, one known
+`RequestsDependencyWarning`); all six required inverse mutations went RED, CSS
+reproduction, Ruff, format, compile, diff, detector, and rendered geometry
+checks passed. The detector's brief-relative `.agents` path is absent from the
+isolated worktree, so the identical repository detector was run from the main
+checkout with no findings. Known unrelated Library failures in the broad
+navigation file were excluded by the approved selected-node boundary, and
+full pytest was not run. No new ADR was required; ADR-078 remains the governing
+decision.

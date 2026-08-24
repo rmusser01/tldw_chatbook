@@ -9419,7 +9419,43 @@ class TldwCli(
         wake-task-0-report.md``, P3b). Screens still die on navigation;
         only the runtime survives.
         """
+        if screen_name == TAB_RESEARCH_WORKSPACE:
+            return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
+
+    def _create_research_workspace_screen(self, screen_class: type):
+        """Late-bind the foundation to the currently active owner services."""
+
+        from .Research_Workspace import (
+            LocalResearchWorkspaceAdapter,
+            ResearchPresentationOverlayStore,
+            ResearchWorkspaceController,
+            ServerResearchWorkspaceAdapter,
+            WorkspaceDataSource,
+        )
+
+        ports = {}
+        local_service = getattr(self, "workspace_registry_service", None)
+        if local_service is not None:
+            ports[WorkspaceDataSource.LOCAL] = LocalResearchWorkspaceAdapter(
+                local_service
+            )
+        server_service = getattr(self, "server_notes_workspace_service", None)
+        server_context_provider = getattr(self, "server_context_provider", None)
+        if server_service is not None and server_context_provider is not None:
+            ports[WorkspaceDataSource.SERVER] = ServerResearchWorkspaceAdapter(
+                server_service,
+                server_context_provider,
+            )
+        controller = ResearchWorkspaceController(ports)
+        overlay_store = ResearchPresentationOverlayStore(
+            get_user_data_dir() / "research_workspace_overlay.json"
+        )
+        return screen_class(
+            self,
+            controller=controller,
+            overlay_store=overlay_store,
+        )
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""

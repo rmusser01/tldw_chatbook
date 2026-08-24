@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .contracts import (
+    CapabilityUnavailableError,
     QualifiedWorkspaceRef,
+    ResearchCapability,
     ResearchWorkspacePort,
     ResearchWorkspaceSummary,
     WorkspaceDataSource,
@@ -20,6 +22,15 @@ class ResearchRequestContext:
     context_revision: int
 
 
+@dataclass(frozen=True, slots=True)
+class ResearchWorkspaceCatalogState:
+    """One authority's qualified catalog or its typed recovery state."""
+
+    data_source: WorkspaceDataSource
+    workspaces: tuple[ResearchWorkspaceSummary, ...] = ()
+    recovery: ResearchCapability | None = None
+
+
 class ResearchWorkspaceController:
     """Own normalized state and prevent late async results from repainting."""
 
@@ -28,6 +39,10 @@ class ResearchWorkspaceController:
     ) -> None:
         self._ports = dict(ports)
         self._context_revision = 0
+        self._selected_data_source = WorkspaceDataSource.LOCAL
+        self._catalog_states: dict[
+            WorkspaceDataSource, ResearchWorkspaceCatalogState
+        ] = {}
         self._selected_ref: QualifiedWorkspaceRef | None = None
         self._capability_revision = ""
         self._canonical_workspaces: dict[
@@ -43,9 +58,77 @@ class ResearchWorkspaceController:
     def selected_ref(self) -> QualifiedWorkspaceRef | None:
         return self._selected_ref
 
+    @property
+    def selected_data_source(self) -> WorkspaceDataSource:
+        return self._selected_data_source
+
+    @property
+    def catalog_state(self) -> ResearchWorkspaceCatalogState | None:
+        return self._catalog_states.get(self._selected_data_source)
+
+    def port_for_data_source(
+        self, data_source: WorkspaceDataSource
+    ) -> ResearchWorkspacePort | None:
+        """Return the configured owner port without substituting another authority."""
+
+        return self._ports.get(WorkspaceDataSource(data_source))
+
+    def select_data_source(self, data_source: WorkspaceDataSource) -> int:
+        """Select one explicit catalog and clear the prior visible workspace."""
+
+        selected = WorkspaceDataSource(data_source)
+        if selected is self._selected_data_source:
+            return self._context_revision
+        self._selected_data_source = selected
+        self._selected_ref = None
+        self._capability_revision = ""
+        self.visible_workspace = None
+        self._context_revision += 1
+        return self._context_revision
+
+    async def refresh_workspace_catalog(self) -> ResearchWorkspaceCatalogState:
+        """Load only the selected authority or return its explicit recovery."""
+
+        data_source = self._selected_data_source
+        port = self._ports.get(data_source)
+        if port is None:
+            owner = data_source.value
+            state = ResearchWorkspaceCatalogState(
+                data_source=data_source,
+                recovery=ResearchCapability(
+                    available=False,
+                    reason_code=f"{owner}_service_unavailable",
+                    user_message=(
+                        f"The {data_source.value.title()} workspace service is unavailable."
+                    ),
+                    owner=owner,
+                    recovery_action=(
+                        "Restart after local storage is available."
+                        if data_source is WorkspaceDataSource.LOCAL
+                        else "Configure or choose a server, then retry."
+                    ),
+                ),
+            )
+        else:
+            try:
+                workspaces = await port.list_workspaces(include_archived=False)
+            except CapabilityUnavailableError as exc:
+                state = ResearchWorkspaceCatalogState(
+                    data_source=data_source,
+                    recovery=exc.capability,
+                )
+            else:
+                state = ResearchWorkspaceCatalogState(
+                    data_source=data_source,
+                    workspaces=tuple(workspaces),
+                )
+        self._catalog_states[data_source] = state
+        return state
+
     def select_workspace(
         self, ref: QualifiedWorkspaceRef, *, capability_revision: str = ""
     ) -> int:
+        self._selected_data_source = ref.data_source
         self._selected_ref = ref
         self._capability_revision = capability_revision.strip()
         self._context_revision += 1

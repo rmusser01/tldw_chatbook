@@ -1,0 +1,353 @@
+"""Production app wiring for the Research Workspace foundation."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from textual.widgets import Button, Static
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Research_Workspace import (
+    QualifiedWorkspaceRef,
+    ResearchPanePreferences,
+    WorkspaceDataSource,
+)
+from tldw_chatbook.UI.Screens.research_workspace_screen import (
+    ResearchWorkspaceScreen,
+)
+from tldw_chatbook.Workspaces.models import WorkspaceRecord
+from tldw_chatbook.app import TldwCli
+
+
+class _LocalWorkspaceService:
+    def __init__(self, workspace_id: str = "local-research") -> None:
+        self.workspace_id = workspace_id
+        self.list_calls = 0
+
+    def list_workspaces(self, *, include_archived: bool = False):
+        self.list_calls += 1
+        return [
+            WorkspaceRecord(
+                workspace_id=self.workspace_id,
+                name="Local notebook",
+                archived=False,
+            )
+        ]
+
+
+class _ServerWorkspaceService:
+    def __init__(self) -> None:
+        self.list_calls = 0
+
+    async def list_workspaces(self):
+        self.list_calls += 1
+        return [
+            {
+                "id": "server-research",
+                "name": "Server notebook",
+                "archived": False,
+                "version": 3,
+            }
+        ]
+
+
+class _ServerContextProvider:
+    def __init__(self, *, unavailable: bool = False) -> None:
+        capabilities = {
+            "server_configured": True,
+            "reachability": "unreachable" if unavailable else "reachable",
+            "auth_state": "authenticated",
+            "revision": "context-1",
+        }
+        self.context = SimpleNamespace(
+            active_server_id="server-profile-a",
+            auth_token="not-a-secret-test-token",
+            credential_source="test",
+            capabilities=capabilities,
+        )
+
+    def get_active_context(self):
+        return self.context
+
+
+def _unmounted_app(
+    *,
+    local_service: object | None,
+    server_service: object | None,
+    server_context_provider: object | None,
+) -> TldwCli:
+    app = TldwCli.__new__(TldwCli)
+    app.workspace_registry_service = local_service
+    app.server_notes_workspace_service = server_service
+    app.server_context_provider = server_context_provider
+    return app
+
+
+def _rendered_text(widget: Static) -> str:
+    return str(widget.render())
+
+
+def test_research_screen_dependencies_are_fresh_and_late_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    first_local = _LocalWorkspaceService("local-first")
+    first_server = _ServerWorkspaceService()
+    first_provider = _ServerContextProvider()
+    app = _unmounted_app(
+        local_service=first_local,
+        server_service=first_server,
+        server_context_provider=first_provider,
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+
+    first = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
+
+    first_local_port = first.controller.port_for_data_source(WorkspaceDataSource.LOCAL)
+    first_server_port = first.controller.port_for_data_source(
+        WorkspaceDataSource.SERVER
+    )
+    assert first_local_port._service is first_local
+    assert first_server_port._service is first_server
+    assert first_server_port._context_provider is first_provider
+    assert first.overlay_store.path == tmp_path / "research_workspace_overlay.json"
+    assert not first.overlay_store.path.exists()
+
+    second_local = _LocalWorkspaceService("local-second")
+    second_server = _ServerWorkspaceService()
+    second_provider = _ServerContextProvider()
+    app.workspace_registry_service = second_local
+    app.server_notes_workspace_service = second_server
+    app.server_context_provider = second_provider
+
+    second = app._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+
+    assert second is not first
+    assert (
+        second.controller.port_for_data_source(WorkspaceDataSource.LOCAL)._service
+        is second_local
+    )
+    assert (
+        second.controller.port_for_data_source(WorkspaceDataSource.SERVER)._service
+        is second_server
+    )
+    assert (
+        second.controller.port_for_data_source(
+            WorkspaceDataSource.SERVER
+        )._context_provider
+        is second_provider
+    )
+    assert second.controller is not first.controller
+    assert second.overlay_store is not first.overlay_store
+
+
+@pytest.mark.asyncio
+async def test_missing_foundation_services_return_typed_recovery_without_crashing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app = _unmounted_app(
+        local_service=None,
+        server_service=None,
+        server_context_provider=None,
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+
+    screen = app._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    local_state = await screen.controller.refresh_workspace_catalog()
+    screen.controller.select_data_source(WorkspaceDataSource.SERVER)
+    server_state = await screen.controller.refresh_workspace_catalog()
+
+    assert local_state.data_source is WorkspaceDataSource.LOCAL
+    assert local_state.workspaces == ()
+    assert local_state.recovery is not None
+    assert local_state.recovery.reason_code == "local_service_unavailable"
+    assert server_state.data_source is WorkspaceDataSource.SERVER
+    assert server_state.workspaces == ()
+    assert server_state.recovery is not None
+    assert server_state.recovery.reason_code == "server_service_unavailable"
+
+
+class _ResearchHarness(ConsolidatedCSSApp):
+    def __init__(self, screen: ResearchWorkspaceScreen) -> None:
+        super().__init__()
+        self._research_screen = screen
+
+    async def on_mount(self) -> None:
+        await self.push_screen(self._research_screen)
+
+
+@pytest.mark.asyncio
+async def test_mounted_selector_switches_controller_and_qualified_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    local = _LocalWorkspaceService()
+    server = _ServerWorkspaceService()
+    provider = _ServerContextProvider()
+    app_owner = _unmounted_app(
+        local_service=local,
+        server_service=server,
+        server_context_provider=provider,
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        assert screen.controller.selected_data_source is WorkspaceDataSource.LOCAL
+        local_state = screen.controller.catalog_state
+        assert local_state is not None
+        assert local_state.workspaces[0].ref.data_source is WorkspaceDataSource.LOCAL
+        assert local_state.workspaces[0].ref.workspace_id == "local-research"
+        assert "Local notebook" in _rendered_text(
+            screen.query_one("#research-workspace-selection", Static)
+        )
+
+        screen.query_one("#research-data-source-server", Button).press()
+        await pilot.pause(0.1)
+
+        assert screen.controller.selected_data_source is WorkspaceDataSource.SERVER
+        server_state = screen.controller.catalog_state
+        assert server_state is not None
+        server_ref = server_state.workspaces[0].ref
+        assert server_ref.data_source is WorkspaceDataSource.SERVER
+        assert server_ref.workspace_id == "server-research"
+        assert server_ref.server_profile_id == "server-profile-a"
+        assert server_ref.principal_id.startswith("credential-fingerprint:test:")
+        assert "not-a-secret-test-token" not in server_ref.principal_id
+        assert "Server notebook" in _rendered_text(
+            screen.query_one("#research-workspace-selection", Static)
+        )
+        assert screen.query_one("#research-data-source-server", Button).has_class(
+            "is-active"
+        )
+        assert "Server catalog ready" in _rendered_text(
+            screen.query_one("#research-workspace-status", Static)
+        )
+        assert local.list_calls == 1
+        assert server.list_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unavailable_server_stays_selected_with_recovery_and_no_local_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    local = _LocalWorkspaceService()
+    server = _ServerWorkspaceService()
+    provider = _ServerContextProvider(unavailable=True)
+    app_owner = _unmounted_app(
+        local_service=local,
+        server_service=server,
+        server_context_provider=provider,
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.1)
+        local_calls_before_switch = local.list_calls
+        screen.query_one("#research-data-source-server", Button).press()
+        await pilot.pause(0.1)
+
+        state = screen.controller.catalog_state
+        assert state is not None
+        assert state.data_source is WorkspaceDataSource.SERVER
+        assert state.workspaces == ()
+        assert state.recovery is not None
+        assert state.recovery.reason_code == "server_unavailable"
+        assert screen.query_one("#research-data-source-server", Button).has_class(
+            "is-active"
+        )
+        recovery = _rendered_text(
+            screen.query_one("#research-authority-recovery", Static)
+        )
+        assert "selected server is unavailable" in recovery.lower()
+        assert "retry or change" in recovery.lower()
+        status = _rendered_text(screen.query_one("#research-workspace-status", Static))
+        assert "Server selected" in status
+        assert "Recovery required" in status
+        assert local.list_calls == local_calls_before_switch
+        assert server.list_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_selected_workspace_loads_and_saves_device_only_pane_preferences(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    local_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local-research")
+    screen.overlay_store.save(
+        local_ref,
+        ResearchPanePreferences(sources_open=False, studio_open=True),
+        expected_revision=0,
+        timestamp="2026-08-24T00:00:00Z",
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        assert screen.controller.selected_ref == local_ref
+        assert screen.pane_preferences.sources_open is False
+        assert not screen.query_one("#research-sources-pane").display
+
+        screen.query_one("#research-sources-reveal", Button).press()
+        await pilot.pause(0.1)
+
+        saved = screen.overlay_store.load(local_ref)
+        assert saved is not None
+        assert saved.revision == 2
+        assert saved.preferences.sources_open is True
+
+
+def test_foundation_screen_does_not_construct_future_phase_coordinators(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+
+    for attribute in (
+        "source_coordinator",
+        "chat_coordinator",
+        "studio_coordinator",
+        "sharing_coordinator",
+        "transfer_coordinator",
+        "ingestion_coordinator",
+    ):
+        assert not hasattr(screen, attribute)
