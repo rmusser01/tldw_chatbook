@@ -131,6 +131,11 @@ Shared Global state uses the reserved internal scope
 `console_rail_state:global:layout`, which may already represent the built-in
 Default/unscoped workspace under the current key contract.
 
+Preference pruning recognizes `shared-layout-v1` as a retained live scope in
+addition to the existing `layout` and legacy `global` scopes. Cleanup must not
+delete the shared record, and ordinary workspace IDs cannot produce this key
+because their stored scope remains `layout`.
+
 When Global mode has no shared-layout record, the currently active workspace's
 effective saved layout seeds it once. If neither exists, product defaults apply.
 When Per workspace mode enters a workspace with no workspace record, the
@@ -188,10 +193,12 @@ Tools, Approvals, and Artifacts follow conditional disclosure:
   selected Global or Per workspace layout scope.
 - Promotion does not move keyboard focus to the group automatically.
 - Collapsing More does not hide an actionable group.
-- If a focused group demotes while More is open, focus stays on the same
-  descendant after it moves. If More is closed, focus moves to More's
-  disclosure control. No demotion moves focus into the transcript or another
-  Inspect group.
+- If a focused group demotes while More is open and the focused descendant
+  remains mounted and focusable, focus stays on that descendant after it moves.
+  If the descendant disappears or becomes disabled, focus falls back to the
+  demoted group header when that header is visible, then to More's disclosure
+  control. When More is closed, focus moves directly to its disclosure control.
+  No demotion moves focus into the transcript or another Inspect group.
 
 Source Readiness remains visible because a zero-source state changes the
 meaning of the next send. Detailed Run and Selected Conversation rows remain
@@ -238,6 +245,8 @@ Tests must prove:
 - Per-workspace is opt-in and restores distinct existing records.
 - the reserved shared-layout key cannot collide with existing Default,
   unscoped, named-workspace, or legacy records;
+- preference pruning retains the shared-layout scope while continuing to prune
+  stale conversation/session-scoped records;
 - first-use Global and missing-workspace seeding are deterministic and one-time;
 - scope switches do not delete inactive records;
 - compact responsive overrides do not mutate saved layouts;
@@ -254,6 +263,8 @@ Tests must prove:
 - each group promotes when actionable and demotes when cleared;
 - More defaults, pointer/keyboard disclosure, scoped persistence, fixed group
   order, and focus fallback are deterministic after promotion/demotion;
+- demotion recovers focus when the previously focused action disappears or is
+  disabled;
 - the pinned summary stays exactly six rows with long workspace, conversation,
   and scope values;
 - narrow and wide production geometry contains the pinned summary and both

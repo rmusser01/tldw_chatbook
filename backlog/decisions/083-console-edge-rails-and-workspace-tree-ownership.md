@@ -104,7 +104,9 @@ The shared record uses the collision-safe reserved key
 Default/unscoped `console_rail_state:global:layout` key. A workspace without a
 per-workspace record seeds once from the effective shared layout, or product
 defaults when none exists. Existing Default, named-workspace, legacy, and
-shared records remain lossless and independent.
+shared records remain lossless and independent. Preference pruning retains the
+reserved `shared-layout-v1` scope alongside the existing `layout` and legacy
+`global` scopes.
 
 Inspect pins a compact `What happens if I send now?` authority summary above its
 outer scroll owner. One existing atomic display snapshot supplies workspace and
@@ -114,7 +116,9 @@ groups do not repeat the same facts. Empty Tools, Approvals, and Artifacts group
 live under one More boundary and promote in fixed Tools/Approvals/Artifacts order
 whenever actionable or nonzero. More defaults collapsed, follows the selected
 layout scope, supports click/Enter/Space plus Left/Right, and owns deterministic
-focus recovery when a focused group demotes.
+focus recovery when a focused group demotes: preserve a still-mounted focusable
+descendant, otherwise use the visible demoted header, then More's disclosure
+control.
 
 This amendment changes the earlier clause that preserved the existing
 per-workspace rail-layout preference behavior and supersedes the original Tree
