@@ -397,6 +397,10 @@ def _rrf_merge_parallel_results(
     fused_results = []
     for entry in fused_entries:
         result = entry.item
+        fts_score = entry.fts_item.score if entry.fts_item is not None else None
+        vector_score = (
+            entry.vector_item.score if entry.vector_item is not None else None
+        )
         result.score = entry.score
         merged_metadata = dict(result.metadata or {})
         # When a doc surfaced in both legs the FTS item is primary; carry the
@@ -414,7 +418,13 @@ def _rrf_merge_parallel_results(
                 merged_metadata["_has_citations"] = True
         result.metadata = {
             **merged_metadata,
-            "hybrid_fusion": {**entry.provenance(), "alpha": alpha, "rrf_k": rrf_k},
+            "hybrid_fusion": {
+                **entry.provenance(),
+                "fts_score": fts_score,
+                "vector_score": vector_score,
+                "alpha": alpha,
+                "rrf_k": rrf_k,
+            },
         }
         fused_results.append(result)
 
