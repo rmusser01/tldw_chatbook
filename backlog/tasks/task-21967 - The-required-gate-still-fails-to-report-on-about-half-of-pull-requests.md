@@ -41,12 +41,36 @@ the extra runs are affordable, given queueing is already the binding constraint 
 earlier task accepted redundant runs as the cheaper trade.
 <!-- SECTION:DESCRIPTION:END -->
 
+## The same rule, unfixed, in the expensive workflow
+
+Found after filing, and it is the more wasteful half.
+
+TASK-21250 changed the small gate's rule so pull-request runs are not cancelled. The main
+test workflow still carries the original form, which cancels for any reference that is not
+the default branch — pull requests included. Since the platform recreates a pull request's
+merge reference every time the base moves, its test runs are cancelled repeatedly without
+anyone touching the branch, exactly as the earlier task described for the small gate.
+
+The consequence is now measurable, because the core job was recently split into six slices
+and one of them finishes in about half an hour. On a run observed after that change, one
+slice completed and **five were cancelled after between 55 and 86 minutes each** — well
+inside their time budget, and none of them produced a verdict. That is several hours of
+runner time per run, spent and discarded, on the pool that is already the binding constraint.
+
+The fix has a precedent in this repository: the same expression the small gate now uses.
+What differs is cost. The small gate is a minute and a half, so redundant runs were accepted
+without much thought; a full test run is far larger, and not cancelling means a rapidly
+updated pull request queues its runs rather than replacing them. That trade needs deciding
+rather than assuming — but the present state spends the compute and gets nothing, which is
+the worst of both.
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The proportion of required-gate runs that reach a verdict is measured before and after any change, over a comparable number of runs
 - [ ] #2 Whether a result recorded against the branch reference satisfies the requirement for a commit that also has a result from the merge reference is established by observation, not by reasoning about the platform's documented behaviour
 - [ ] #3 The change does not increase the queueing that is already the binding constraint, or the increase is measured and accepted explicitly
 - [ ] #4 If no safe change exists, that conclusion is recorded with its evidence so the next person does not repeat the investigation
+- [ ] #5 The main test workflow's cancellation rule is decided on the same evidence, including whether queueing rather than replacing runs is affordable on the current pool
 <!-- AC:END -->
 
 ## Notes
