@@ -256,8 +256,9 @@ class ChangeReviewFinalizationCoordinator:
 
         ``roots`` are trusted turn-admission outputs from the workspace registry,
         which validates, canonicalizes, and checks them for symlink drift before
-        they enter the Console snapshot. This coordinator normalizes ``Path`` and
-        string representations only; it is not another user-input boundary.
+        they enter the Console snapshot. This coordinator converts ``Path`` and
+        string representations to lane keys only; it is not another user-input
+        boundary.
 
         Args:
             roots: Registry-admitted workspace roots for one Console turn.
@@ -267,9 +268,7 @@ class ChangeReviewFinalizationCoordinator:
             The all-roots reservation, or ``None`` when no roots were supplied or
             the coordinator no longer accepts work.
         """
-        canonical = tuple(
-            dict.fromkeys(str(Path(root).expanduser().resolve()) for root in roots)
-        )
+        canonical = tuple(dict.fromkeys(str(root) for root in roots))
         if not canonical:
             return None
         with self._lock:
@@ -529,7 +528,7 @@ class ChangeReviewFinalizationCoordinator:
             return True
 
     def lane_depth(self, root: Path | str) -> int:
-        canonical = str(Path(root).expanduser().resolve())
+        canonical = str(root)
         with self._lock:
             return len(self._lanes.get(canonical, ()))
 
