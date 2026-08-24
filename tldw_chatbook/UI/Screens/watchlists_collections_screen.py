@@ -212,6 +212,7 @@ from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHan
 from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
 from ..Watchlists_Modules.watchlists_workbench import (
     REGION_TITLES,
+    RegionLayoutApplyFailed,
     RegionToggled,
     WatchlistsWorkbench,
 )
@@ -3199,6 +3200,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self._refuse_region_gesture_off_read_tab(event.region):
             return
         self._apply_layout(self.region_layout.toggle(event.region))
+
+    @on(RegionLayoutApplyFailed)
+    def _on_region_layout_apply_failed(
+        self, event: RegionLayoutApplyFailed
+    ) -> None:
+        """Correct screen preference only while the failed intent is current."""
+        event.stop()
+        if self.region_layout != event.attempted:
+            return
+        self._apply_layout(event.fallback)
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".

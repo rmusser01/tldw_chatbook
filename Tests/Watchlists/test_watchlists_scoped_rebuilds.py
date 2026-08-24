@@ -38,7 +38,7 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
-from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
     TreeScope,
@@ -865,3 +865,72 @@ async def test_a_collapsed_region_still_expands_from_its_grip_button() -> None:
             "clicking a collapsed region's grip must expand it"
         )
         assert screen.query("#wl-tree"), "and rebuild its content"
+
+
+async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
+    monkeypatch,
+) -> None:
+    """A real screen owns the same fallback that the workbench still renders."""
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        RegionLayoutApplyFailed,
+        WatchlistsWorkbench,
+    )
+
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        persisted.append,
+    )
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        if not screen.region_layout.is_collapsed(Region.LEFT_RAIL):
+            screen.action_toggle_left_rail()
+            await _settle(pilot, host)
+        fallback = screen.region_layout
+        persisted.clear()
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        grip = screen.query_one("#wl-grip-left_rail", Button)
+        original_factory = workbench._content[Region.LEFT_RAIL]
+        fail_factory = True
+
+        def flaky_factory():
+            if fail_factory:
+                raise RuntimeError("navigation failed")
+            return original_factory()
+
+        workbench._content[Region.LEFT_RAIL] = flaky_factory
+        grip.press()
+        await _settle(pilot, host)
+
+        assert screen.region_layout == fallback
+        assert workbench.region_layout == screen._rendered_region_layout()
+        assert getattr(grip, "expanded") is False
+        assert not screen.query("#wl-region-left_rail")
+        assert screen._pending_persist_layout == fallback
+        assert (
+            screen._last_persisted_collapsed
+            == fallback.collapsed_for_persistence()
+        )
+        assert persisted
+        assert persisted[-1] == fallback
+
+        fail_factory = False
+        grip.press()
+        await _settle(pilot, host)
+
+        assert not screen.region_layout.is_collapsed(Region.LEFT_RAIL)
+        assert workbench.region_layout == screen._rendered_region_layout()
+        assert getattr(grip, "expanded") is True
+        assert screen.query("#wl-region-left_rail")
+
+        newer = screen.region_layout
+        workbench.post_message(
+            RegionLayoutApplyFailed(
+                attempted=fallback,
+                fallback=fallback.toggle(Region.RIGHT_RAIL),
+            )
+        )
+        await _settle(pilot, host)
+        assert screen.region_layout == newer

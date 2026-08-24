@@ -9,6 +9,7 @@ from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
@@ -16,7 +17,12 @@ from textual.widgets import Static
 from .pane_grip import RegionToggled, WatchlistsPaneGrip
 from .region_layout import Region, RegionLayout
 
-__all__ = ["REGION_TITLES", "RegionToggled", "WatchlistsWorkbench"]
+__all__ = [
+    "REGION_TITLES",
+    "RegionLayoutApplyFailed",
+    "RegionToggled",
+    "WatchlistsWorkbench",
+]
 
 REGION_TITLES: dict[Region, str] = {
     Region.LEFT_RAIL: "Watchlists",
@@ -38,6 +44,20 @@ _MANAGEMENT_GRIP_REGIONS: tuple[Region, ...] = (
     Region.LEFT_RAIL,
     Region.RIGHT_RAIL,
 )
+
+
+class RegionLayoutApplyFailed(Message):
+    """Report a rejected layout so the screen can roll back its preference."""
+
+    def __init__(
+        self,
+        *,
+        attempted: RegionLayout,
+        fallback: RegionLayout,
+    ) -> None:
+        super().__init__()
+        self.attempted = attempted
+        self.fallback = fallback
 
 
 class WatchlistsWorkbench(Vertical):
@@ -165,6 +185,9 @@ class WatchlistsWorkbench(Vertical):
         except Exception:
             self.set_reactive(WatchlistsWorkbench.region_layout, previous)
             logger.exception("Watchlists pane expansion factory failed")
+            self.post_message(
+                RegionLayoutApplyFailed(attempted=layout, fallback=previous)
+            )
             return
 
         try:
@@ -182,6 +205,9 @@ class WatchlistsWorkbench(Vertical):
                     await node.remove()
             self.set_reactive(WatchlistsWorkbench.region_layout, previous)
             logger.exception("Watchlists pane expansion mount failed")
+            self.post_message(
+                RegionLayoutApplyFailed(attempted=layout, fallback=previous)
+            )
             return
 
         for region in changed:
