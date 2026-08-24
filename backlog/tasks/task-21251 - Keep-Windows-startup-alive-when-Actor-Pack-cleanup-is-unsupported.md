@@ -1,10 +1,10 @@
 ---
 id: TASK-21251
 title: Keep Windows startup alive when Actor Pack cleanup is unsupported
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-24 00:09'
-updated_date: '2026-08-24 00:35'
+updated_date: '2026-08-24 00:43'
 labels:
   - bug
   - actor-packs
