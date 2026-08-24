@@ -6,7 +6,10 @@ will be sent); collapsed paste tokens are single units for movement, deletion,
 and word boundaries.
 """
 
+from pathlib import Path
+
 import pytest
+from rich.cells import cell_len
 from textual.widgets import Static
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -586,3 +589,180 @@ async def test_console_prompt_insert_appends_at_end_regardless_of_caret():
 
         assert composer.draft_text() == "existing draft\nresolved body"
         assert composer.cursor_index == len("existing draft\nresolved body")
+
+
+# ---------------------------------------------------------------------------
+# TASK-21692: the blink tick must not arm a layout pass
+# ---------------------------------------------------------------------------
+
+
+class _CssTrueConsoleHarness(ConsoleHarness):
+    """ConsoleHarness that loads the real app CSS bundle.
+
+    The shared harness is a bare ``App`` -- none of the app's stylesheet
+    applies under it, so geometry conclusions made there are void (see
+    ``lessons-testing-evidence.md``). The blink-cost and blink-safety tests
+    below both assert about real geometry, so they need the real sheet.
+    """
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
+async def _focused_composer(pilot, console, draft: str) -> ConsoleComposerBar:
+    """Return a focused composer holding ``draft`` with the blink timer owned."""
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+    composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+    if draft:
+        composer.load_draft(draft)
+    composer.focus()
+    await pilot.pause(0.1)
+    # Own the blink phase: the test drives ticks itself so the free-running
+    # 0.53 s timer cannot add uncounted ticks mid-measurement.
+    composer._cursor_blink_timer.pause()
+    await pilot.pause(0.1)
+    await pilot.pause()
+    return composer
+
+
+async def _count_layout_passes(pilot, composer, rounds: int, *, blink: bool) -> int:
+    """Count real screen layout passes over ``rounds`` event-loop settles.
+
+    Counts ``Screen._refresh_layout`` -- the call that reflows the whole
+    compositor -- rather than asserting on ``refresh(layout=...)`` arguments,
+    so the assertion is about work performed, not about how it was requested.
+    """
+    screen = composer.screen
+    real_refresh_layout = screen._refresh_layout
+    calls = 0
+
+    def counting_refresh_layout(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_refresh_layout(*args, **kwargs)
+
+    screen._refresh_layout = counting_refresh_layout
+    try:
+        for _ in range(rounds):
+            if blink:
+                composer._toggle_cursor_blink()
+            await pilot.pause()
+            await pilot.pause()
+    finally:
+        del screen._refresh_layout
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_console_composer_blink_tick_arms_no_layout_pass():
+    """A blink phase flip costs no more layout work than an idle settle.
+
+    TASK-21692: ``Static.update`` defaults to ``layout=True``, so the 0.53 s
+    cursor-blink tick used to schedule a full ``Screen._refresh_layout`` /
+    ``Compositor.reflow`` ~2x/second for as long as the composer merely held
+    focus -- exactly what ``_render_visible_draft_only``'s own docstring says
+    must not happen.
+
+    The idle arm is the noise floor (this harness measures 0, but asserting
+    against the measured ambient rather than a bare 0 keeps the test from
+    turning into a flake if some unrelated timer starts firing).
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        composer = await _focused_composer(pilot, console, "hello world")
+
+        rounds = 6
+        ambient = await _count_layout_passes(pilot, composer, rounds, blink=False)
+        blinking = await _count_layout_passes(pilot, composer, rounds, blink=True)
+
+        assert blinking == ambient, (
+            f"{rounds} blink ticks cost {blinking - ambient} extra screen layout "
+            f"passes (idle floor {ambient})"
+        )
+
+        # The tick must still REPAINT -- a caret that stopped blinking would
+        # also score zero layout passes.
+        visible = composer.query_one("#console-command-visible-text", Static)
+        composer._cursor_visible = True
+        composer._toggle_cursor_blink()
+        await pilot.pause()
+        hidden_text = visible.renderable.plain
+        composer._toggle_cursor_blink()
+        await pilot.pause()
+        shown_text = visible.renderable.plain
+        assert "▌" not in hidden_text
+        assert "▌" in shown_text
+
+
+@pytest.mark.asyncio
+async def test_console_composer_blink_phases_are_geometry_identical():
+    """Both blink phases occupy identical geometry, at every wrap boundary.
+
+    This is the safety half of TASK-21692: ``layout=False`` is only sound
+    while the rendered size genuinely cannot change between phases. The
+    reserved caret cell (glyph when visible, space when hidden, wrapped in
+    the same pass) is what guarantees that, so the boundary cases that would
+    break it -- an empty draft, a draft filling the last cell, a draft
+    landing exactly at the wrap width so the caret spills a row, and a
+    double-width CJK draft -- are all exercised here.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        composer = await _focused_composer(pilot, console, "seed")
+        visible = composer.query_one("#console-command-visible-text", Static)
+        width = composer._draft_render_width()
+        assert width >= 8
+
+        drafts = {
+            "empty": "",
+            "short": "hello",
+            "fills-last-cell": "x" * (width - 1),
+            "exactly-at-width": "x" * width,
+            "one-past-width": "x" * (width + 1),
+            "wrapped": "word " * 40,
+            "cjk-double-width": "漢" * (width // 2),
+        }
+
+        for name, draft in drafts.items():
+            composer.load_draft(draft)
+            composer.focus()
+            await pilot.pause(0.1)
+            composer._cursor_blink_timer.pause()
+            await pilot.pause()
+
+            geometry = []
+            cell_counts = []
+            for _ in range(2):
+                composer._toggle_cursor_blink()
+                await pilot.pause()
+                await pilot.pause()
+                painted = visible.renderable.plain
+                geometry.append(
+                    (
+                        visible.outer_size,
+                        composer.outer_size,
+                        len(painted.split("\n")),
+                    )
+                )
+                cell_counts.append([cell_len(row) for row in painted.split("\n")])
+
+            assert geometry[0] == geometry[1], (
+                f"{name!r}: blink phases differ in size/row count -- "
+                f"{geometry[0]} vs {geometry[1]}"
+            )
+            assert cell_counts[0] == cell_counts[1], (
+                f"{name!r}: blink phases differ in painted cell widths -- "
+                f"{cell_counts[0]} vs {cell_counts[1]}"
+            )

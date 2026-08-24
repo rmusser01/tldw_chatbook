@@ -2875,14 +2875,37 @@ class ConsoleComposerBar(Horizontal):
     def _render_visible_draft_only(self) -> None:
         """Re-render the visible-draft Static without recomputing composer height.
 
-        Used by the cursor blink tick, which must stay cheap and must not
-        trigger a layout recompute on every blink phase.
+        Used by the cursor blink tick (its only caller), which must stay cheap
+        and must not trigger a layout recompute on every blink phase.
+
+        TASK-21692: ``Static.update`` defaults to ``layout=True``, so this
+        method used to arm a full screen layout pass ~2x/second for as long
+        as the composer merely held focus -- measured at 1 ``Screen.
+        _refresh_layout`` + 1 ``Compositor.reflow`` + 1 arrangement-cache
+        miss per tick. ``layout=False`` is sound here because the rendered
+        SIZE cannot differ between the two blink phases:
+
+        * ``_draft_renderable`` reserves exactly one display cell at the
+          caret position in BOTH phases -- the glyph while visible, a plain
+          space while hidden -- and wraps it in the same pass, so the two
+          phases are cell-identical by construction (see its comment). Both
+          ``CURSOR_GLYPH`` and its ASCII fallback ``|`` are single-width.
+        * The Static's geometry is pinned by inline styles rather than
+          derived from its content: ``width: 1fr``, ``text_wrap = "nowrap"``,
+          ``text_overflow = "clip"`` (set in ``compose``) and an explicit
+          ``height``/``min_height``/``max_height`` written by
+          ``_apply_draft_height``, which every size-changing path
+          (``_refresh_visible_draft``, resize, collapse) still goes through
+          with ``layout=True``. The blink tick changes no state those paths
+          read.
         """
         try:
             draft = self._display_draft_text()
             width = self._draft_render_width()
             renderable = self._current_visible_draft_renderable(draft, width)
-            self.query_one("#console-command-visible-text", Static).update(renderable)
+            self.query_one("#console-command-visible-text", Static).update(
+                renderable, layout=False
+            )
         except NoMatches:
             return
 

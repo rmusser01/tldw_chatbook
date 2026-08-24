@@ -8124,3 +8124,40 @@ is for (`"no such function" in str(exc)`) so any other failure propagates.
 A broad fallback under a perf fix is worse than no fallback: it turns "this is
 now fast" into "this is fast unless one row is corrupt, in which case it is
 silently as slow as before, forever."
+## A docstring is not a measurement — and `Static.update` lays out by default
+
+**TASK-21692, 2026-08-23.** `_render_visible_draft_only` in
+`Widgets/Console/console_composer_bar.py` carried a docstring saying it "must stay
+cheap and must not trigger a layout recompute on every blink phase". Its body called
+`self.query_one(...).update(renderable)`. Textual 8's
+`Static.update(content, *, layout: bool = True)` ends in `self.refresh(layout=layout)`
+— so the default did the exact thing the docstring forbade, on a 0.53 s timer, for as
+long as the composer merely held focus. Instrumenting the layout path under a real-CSS
+harness put a number on it: 6 driven blink ticks produced **6 `Screen._refresh_layout`
+calls, 6 full `Compositor.reflow`s, 396 `Widget.arrange` calls and 6 arrangement-cache
+misses** — 3–6.5 ms of layout per tick, identical across six draft shapes. With
+`layout=False` all six counters go to 0. Nothing was red before or after; the whole
+defect lived in a keyword default nobody had to type.
+
+Two things this cost, worth stealing:
+
+- **Count the operation, do not read the source.** "Does this line cause a layout?"
+  was answerable only by wrapping `Screen._refresh_layout` / `Compositor.reflow` /
+  `Widget.arrange` and driving the tick. The wrong-looking answer (`Widget._arrange`,
+  which does not exist in Textual 8 — it is `arrange`, and it is *cached*, so calls
+  and cache-misses are different numbers) would have been reasoned about wrongly from
+  the source in either direction.
+- **Assert against a measured idle floor, not against `0`.** The committed test runs
+  an A/A arm (the same number of event-loop settles with no blink) and asserts the
+  blink arm costs no more. A bare `== 0` would become a flake the day an unrelated
+  timer starts firing in that harness.
+
+And the safety half has its own trap: `layout=False` is only sound if the size cannot
+change. Here it is sound for two independent reasons — the caret cell is reserved in
+*both* phases (glyph or space, wrapped in the same pass), and the Static's geometry is
+pinned by inline styles (`width: 1fr`, `text_wrap: nowrap`, explicit
+`height`/`min_height`/`max_height` from `_apply_draft_height`). The second reason was
+discovered by mutation, not by reading: breaking the reserved cell changed the painted
+row count from 1 to 2 between phases while `outer_size` stayed `Size(93, 2)`. A test
+asserting only `outer_size` would have called that safe. Assert the **painted row
+count and per-row cell widths** too.
