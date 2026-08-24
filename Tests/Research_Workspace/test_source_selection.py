@@ -96,6 +96,28 @@ def test_corrupt_explicit_scope_payload_fails_closed(tmp_path) -> None:
     )
 
 
+def test_truncated_workspace_scope_fails_closed_after_restart(tmp_path) -> None:
+    registry = _registry(tmp_path)
+    registry.create_workspace(workspace_id="workspace-1", name="Research")
+    with registry.db.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            ("workspace-1", '{"version":2,"items":[', "t-corrupt"),
+        )
+
+    stored = _registry(tmp_path).get_workspace_scope("workspace-1")
+
+    assert stored == RagScope(
+        items=(), updated_at="t-corrupt", empty_is_scoped=True
+    )
+    assert (
+        resolve_effective_scope(None, stored, lambda _kind, ids: ids).state == "empty"
+    )
+
+
 def test_unlink_last_research_source_preserves_explicit_empty_scope(tmp_path) -> None:
     registry = _registry(tmp_path)
     registry.create_workspace(workspace_id="workspace-1", name="Research")

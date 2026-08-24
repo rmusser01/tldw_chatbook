@@ -2,17 +2,17 @@
 
 Review base:
 
-`7ad8db35bc88aa9c94db5af10a7df78b569b0e86`
+`ee7185115ba2d37e32d30f4e933bab934d51ae82`
 
 Expected commit subject:
 
-`feat: add Research source readiness and selection`
+`fix: harden Research source ownership boundaries`
 
 Exact review command after commit:
 
 ```bash
-git diff --stat 7ad8db35bc88aa9c94db5af10a7df78b569b0e86..HEAD
-git diff 7ad8db35bc88aa9c94db5af10a7df78b569b0e86..HEAD -- \
+git diff --stat ee7185115ba2d37e32d30f4e933bab934d51ae82..HEAD
+git diff ee7185115ba2d37e32d30f4e933bab934d51ae82..HEAD -- \
   ':!backlog/tasks/task-21508 - Add-Research-Sources-ingest-association-and-Quick-Notes.md'
 ```
 
@@ -47,13 +47,25 @@ this implementation or commit.
   current caches or visible state.
 - Unknown/missing capability projection must be discoverable typed unavailable,
   never inferred from method presence.
+- Existing malformed Workspace scope rows must resolve explicit empty while
+  ordinary Console zero-save and conversation metadata retain legacy behavior.
+- Missing Server media must retain association identity with no invented
+  canonical ID; rows/status beyond 100 remain valid within the finite owner cap.
+- Server duplicate association cannot become terminal until its desired
+  selection is version-reconciled; a failed update must retry after restart.
+- A public catalog page crossing a 100-row backing boundary cannot skip or
+  duplicate rows, and Local updated-time sorting must use owner vocabulary.
 
 ## Verification snapshot
 
-- Named Task 3/controller: `100 passed`.
-- Touched neighbors: `173 passed`, `138 deselected`.
+- Fix-round focused gate: `130 passed`.
+- Expanded restored-tree owner/consumer gate: `489 passed`, `1 skipped`
+  (existing Windows-only boundary).
 - Only accepted `RequestsDependencyWarning`.
-- Scoped Ruff, new-file format check, changed-production compileall,
-  `git diff --check`, and Impeccable detector pass.
-- Five inverse mutations turned their intended guards red and were reverted.
+- Scoped Ruff, readiness-copy format check, changed-production compileall,
+  `git diff --check`, and Impeccable detector pass. The whole changed-inventory
+  format probe still identifies 12 legacy whole-file reformat candidates; none
+  were mechanically reformatted into this fix.
+- Nine reviewed defect families turned their intended guards red and were
+  restored before the final gates.
 - Full pytest intentionally not run.

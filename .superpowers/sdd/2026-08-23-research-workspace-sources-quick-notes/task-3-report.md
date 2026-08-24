@@ -20,7 +20,7 @@ not a new owner or sync policy.
 | Domain field | Local owner and meaning | Server owner and meaning |
 | --- | --- | --- |
 | qualified workspace | `(local, workspace_id)` | `(server, profile_id, principal_id, workspace_id)` |
-| `catalog_item_id` | canonical `Media.id`, stored and transported as a decimal string | canonical server `Media.id`, stored and transported as a decimal string |
+| `catalog_item_id` | canonical `Media.id`, stored and transported as a decimal string | canonical server `Media.id`, stored and transported as a decimal string; readiness alone may report `None` for an attached `missing_media` row, never a fabricated `0` identity |
 | `catalog_item_version` | canonical Media version/last-modified projection when the Media owner exposes it | canonical Media version projection when the Media catalog seam exposes it; otherwise `None`, never copied from the association |
 | `workspace_source_id` | `WorkspaceMembership.membership_id`; identifies only the association row | workspace-source response `id`; identifies only the association row |
 | `workspace_source_version` | no independent Local association version; `None` | workspace-source response `version`; changes on update, selection, and reorder |
@@ -64,8 +64,9 @@ a Server workspace-source ID.
   the canonical payload. Ordinary Console zero-selection save remains its
   existing clear/unscoped behavior.
 - Readiness retry only clears the failed readiness receipt and refreshes the
-  already-associated canonical item. Recovery copy is limited to Refresh
-  status or Re-add; it never claims indexing was retriggered.
+  already-associated canonical item. Recovery copy may direct the user to
+  refresh status, re-add/restore the source, or review permissions; it never
+  claims indexing was retriggered.
 - Startup readiness work uses its own stage-specific SQL predicate before
   `LIMIT`, coexists with Task 2's association startup bound, and remains
   suppressed during bulk restore.
@@ -107,6 +108,34 @@ payloads remain readable. Ordinary Console zero-selection continues to clear
 the scope because its default flag remains false. No sentinel source ID or
 device-overlay owner was introduced.
 
+An existing malformed `workspace_rag_scopes` row now reads as that same
+explicit-empty state at the Workspace registry seam. The shared conversation
+codec remains unchanged: malformed conversation metadata still reads as
+legacy unscoped state.
+
+## Fix round 1 hardening
+
+- Removed the silent `ResearchSourceSummary.catalog_item_id` fallback so the
+  catalog and association identity axes cannot collapse.
+- Accepted the real unpaged Server source/status projections up to a finite
+  10,100-row owner bound (public pages and mutation requests remain at 100).
+  Local readiness receipts use a keyed membership lookup, so an association
+  after row 100 still converges without widening the public page.
+- Server catalog pages now validate page coordinates, row counts, and stable
+  totals, and stitch the next 100-row backing page when an offset/limit crosses
+  a boundary. Local `updated_*` sorts translate to the canonical Media owner's
+  `last_modified_*` vocabulary.
+- A non-`None` removal version fails typed before Local storage or Server
+  dispatch because neither real delete owner can enforce that precondition.
+- Server desired selection is reconciled with the association row's returned
+  version before the association receipt succeeds. A failed update preserves
+  catalog success and leaves association retryable across restart; the former
+  post-terminal adapter selection workaround was removed.
+- `missing_media` readiness preserves the workspace-source association ID while
+  carrying no canonical ID for `media_id=None/0`. Permission, missing-media,
+  and vector-failure recovery copy stays bounded and does not advertise a fake
+  retry endpoint.
+
 ## WebUI parity mapping retained for Task 4
 
 | Existing WebUI control | Task 3 foundation |
@@ -126,36 +155,46 @@ Search Server.
 
 ## Verification evidence
 
-- Named Task 3 plus controller gate: `100 passed, 1 warning in 1.38s`.
-- Touched-neighbor gate (association, RAG codecs/storage, Workspace registry,
-  Media normalizers, legacy client, relevant app restore/wiring):
-  `173 passed, 138 deselected, 1 warning in 5.73s`.
+- Fix-round focused gate (contracts, Local/Server adapters, association,
+  readiness, selection, Workspace scope storage, and source client):
+  `130 passed, 1 warning in 1.97s`.
+- Expanded restored-tree owner/consumer gate (RAG codecs/storage, Library
+  ingest runner, Media normalizers, Notes service/client, Research contracts,
+  controller, operations/adapters/coordinators, Workspace registry/scope, and
+  source client): `489 passed, 1 skipped, 1 warning in 22.49s`. The skip is
+  the existing Windows spawn/resource-tracker boundary.
 - The only warning is the accepted environment `RequestsDependencyWarning`;
   no new warning class appeared. Full pytest was not run.
-- Scoped Ruff on changed production and focused tests: pass. The entire legacy
-  `Tests/Library/test_library_ingest_runner.py` still reports its two unrelated
-  pre-existing Ruff findings outside the changed lines; they were not edited.
-- Ruff format check passes for all new Task 3 files. A whole changed-inventory
-  format probe reports existing unformatted legacy files, so they were not
-  mechanically reformatted into this already-large feature diff.
+- Scoped Ruff on all fix-round production and focused tests: pass. The format
+  probe still reports 12 existing legacy files as whole-file reformat
+  candidates, so they were not mechanically reformatted into this focused fix;
+  the changed readiness copy and its tests pass the format check.
 - Changed-production `compileall`, `git diff --check`, and the Impeccable
   detector on Research/user-facing recovery copy: pass.
 
 ## Inverse mutation evidence
 
-- Hybrid `fts and vector` → `fts or vector`: the mode matrix failed. The first
-  missing-embeddings probe initially stayed green because it used a Local
-  membership ID instead of the canonical Media ID; that false-positive fixture
-  was corrected and recorded in `lessons-testing-evidence.md`.
-- Removed `{ok: true}` validation: the false-response/no-refetch test failed.
-- Removed selection's source-generation invalidation: the late pre-write source
-  refresh repainted reconciled selection and its controller test failed.
-- Changed path quoting from `safe=""` to `safe="/"`: the Unicode/slash endpoint
-  trace test failed.
-- Dropped the parsed explicit-empty flag: the real SQLite restart test widened
-  the Research scope and failed.
+- Corrupt Workspace JSON returning legacy `None` made both the restart and
+  registry fail-closed guards red.
+- Inventing catalog ID `"0"` for `missing_media` made both nullable cases red.
+- Restoring the 100-row owner cap made Server list, readiness, and client
+  projection guards red; restoring first-page lookup made the keyed Local
+  row-101 adapter and durable receipt guards red.
+- Removing Local/Server delete precondition rejection made both storage and
+  dispatch guards red.
+- Removing duplicate-association selection/version reconciliation let the
+  association receipt become terminal before desired selection and made its
+  restart test red.
+- Disabling the second backing-page fetch truncated offset 90 / limit 25 and
+  made the cross-page stitch guard red.
+- Passing UI `updated_*` sort terms to the Local owner broke the real SQLite
+  order and exact owner-call trace.
+- Restoring the silent association-ID fallback for a missing catalog ID made
+  the distinct-identity constructor guard red.
+- Advertising `Retry indexing` made the exact recovery-copy and closed
+  lifecycle guards red because no source retry endpoint exists.
 
-All mutations were reverted before the final gates.
+All nine reviewed defect families were reverted before the restored-tree gates.
 
 ## Files and boundaries
 

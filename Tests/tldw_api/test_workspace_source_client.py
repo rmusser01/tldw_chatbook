@@ -14,6 +14,9 @@ from tldw_chatbook.tldw_api.notes_workspace_schemas import (
 )
 
 
+MAX_OWNER_ROWS = 10_100
+
+
 def source_row(**overrides):
     row = {
         "id": "source-1",
@@ -185,12 +188,35 @@ async def test_source_paths_reject_invalid_workspace_id_before_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_source_list_rejects_oversized_owner_response_without_truncating(
+async def test_source_list_accepts_more_than_one_public_page_without_truncating(
     monkeypatch,
 ) -> None:
     client = TLDWAPIClient("http://localhost:8000")
     request = AsyncMock(
-        return_value=[source_row(id=f"source-{index}") for index in range(101)]
+        return_value=[
+            source_row(id=f"source-{index}", position=index)
+            for index in range(101)
+        ]
+    )
+    monkeypatch.setattr(client, "_request", request)
+
+    rows = await client.list_workspace_sources("workspace-1")
+
+    assert len(rows) == 101
+    assert rows[-1]["id"] == "source-100"
+    assert rows[-1]["position"] == 100
+
+
+@pytest.mark.asyncio
+async def test_source_list_rejects_owner_response_above_finite_offset_cap(
+    monkeypatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    request = AsyncMock(
+        return_value=[
+            source_row(id=f"source-{index}")
+            for index in range(MAX_OWNER_ROWS + 1)
+        ]
     )
     monkeypatch.setattr(client, "_request", request)
 
@@ -339,7 +365,7 @@ async def test_preview_rejects_oversized_text_and_bool_bounds(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_status_accepts_exact_lifecycle_and_rejects_unknown_or_oversized(
+async def test_status_accepts_exact_lifecycle_and_rejects_unknown(
     monkeypatch,
 ) -> None:
     client = TLDWAPIClient("http://localhost:8000")
@@ -353,13 +379,36 @@ async def test_status_accepts_exact_lifecycle_and_rejects_unknown_or_oversized(
     request.return_value = status_payload(state="unknown_state")
     with pytest.raises(ValidationError):
         await client.get_workspace_source_status("workspace-1")
-    oversized = status_payload()
-    oversized["sources"] = [
-        oversized["sources"][0] | {"id": f"source-{index}"} for index in range(101)
+
+
+@pytest.mark.asyncio
+async def test_status_accepts_more_than_one_public_page_and_missing_media_ids(
+    monkeypatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    payload = status_payload()
+    source = payload["sources"][0]
+    payload["sources"] = [
+        source | {"id": f"source-{index}", "media_id": index + 1}
+        for index in range(101)
     ]
-    request.return_value = oversized
-    with pytest.raises(ValidationError):
-        await client.get_workspace_source_status("workspace-1")
+    payload["summary"] = payload["summary"] | {"total": 101, "selected": 101}
+    request = AsyncMock(return_value=payload)
+    monkeypatch.setattr(client, "_request", request)
+
+    result = await client.get_workspace_source_status("workspace-1")
+
+    assert len(result["sources"]) == 101
+
+    for missing_id in (None, 0):
+        request.return_value = status_payload(
+            media_id=missing_id,
+            state="missing_media",
+            status_reason="media_id_missing",
+            next_action="restore_or_readd_media",
+        )
+        result = await client.get_workspace_source_status("workspace-1")
+        assert result["sources"][0]["media_id"] == missing_id
 
 
 @pytest.mark.asyncio

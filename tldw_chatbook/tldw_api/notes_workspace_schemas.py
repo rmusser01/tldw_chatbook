@@ -337,6 +337,9 @@ class WorkspaceNoteResponse(BaseModel):
 
 
 MAX_WORKSPACE_SOURCE_ROWS = 100
+# GET sources/status are unpaged owner projections. This finite bound covers
+# the public offset contract (10_000) plus one maximum page (100).
+MAX_WORKSPACE_SOURCE_OWNER_ROWS = 10_100
 MAX_WORKSPACE_SOURCE_ID_CHARS = 1024
 MAX_WORKSPACE_SOURCE_TITLE_CHARS = 1000
 MAX_WORKSPACE_SOURCE_TEXT_CHARS = 12_000
@@ -391,7 +394,9 @@ class WorkspaceSourceCreateRequest(_WorkspaceSourceModel):
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
-    position: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS - 1)
+    position: StrictInt = Field(
+        0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1
+    )
     selected: StrictBool = True
 
     @field_validator("id", "title", "source_type", mode="before")
@@ -411,7 +416,9 @@ class WorkspaceSourceUpdateRequest(_WorkspaceSourceModel):
     title: Optional[str] = Field(None, max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: Optional[str] = Field(None, max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
-    position: Optional[StrictInt] = Field(None, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS - 1)
+    position: Optional[StrictInt] = Field(
+        None, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1
+    )
     selected: Optional[StrictBool] = None
     version: StrictInt = Field(..., ge=1)
 
@@ -437,7 +444,9 @@ class WorkspaceSourceResponse(_WorkspaceSourceModel):
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
-    position: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS - 1)
+    position: StrictInt = Field(
+        0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1
+    )
     selected: StrictBool = True
     added_at: Optional[str] = Field(None, max_length=128)
     version: StrictInt = Field(1, ge=1)
@@ -456,7 +465,7 @@ class WorkspaceSourceResponse(_WorkspaceSourceModel):
 
 class WorkspaceSourceListResponse(RootModel[list[WorkspaceSourceResponse]]):
     root: list[WorkspaceSourceResponse] = Field(
-        default_factory=list, max_length=MAX_WORKSPACE_SOURCE_ROWS
+        default_factory=list, max_length=MAX_WORKSPACE_SOURCE_OWNER_ROWS
     )
 
 
@@ -527,7 +536,7 @@ class WorkspaceSourceJobStatus(_WorkspaceSourceModel):
 class WorkspaceSourceStatusResponse(_WorkspaceSourceModel):
     id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
     workspace_id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
-    media_id: Optional[StrictInt] = Field(None, ge=1)
+    media_id: Optional[StrictInt] = Field(None, ge=0)
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
@@ -545,19 +554,21 @@ class WorkspaceSourceStatusResponse(_WorkspaceSourceModel):
 
 
 class WorkspaceSourceStatusSummary(_WorkspaceSourceModel):
-    total: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
-    selected: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
-    queryable: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
-    partially_queryable: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
-    processing: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
-    failed: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
-    missing: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_ROWS)
+    total: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
+    selected: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
+    queryable: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
+    partially_queryable: StrictInt = Field(
+        0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS
+    )
+    processing: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
+    failed: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
+    missing: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
 
 
 class WorkspaceSourceStatusListResponse(_WorkspaceSourceModel):
     workspace_id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
     sources: list[WorkspaceSourceStatusResponse] = Field(
-        default_factory=list, max_length=MAX_WORKSPACE_SOURCE_ROWS
+        default_factory=list, max_length=MAX_WORKSPACE_SOURCE_OWNER_ROWS
     )
     summary: WorkspaceSourceStatusSummary
 

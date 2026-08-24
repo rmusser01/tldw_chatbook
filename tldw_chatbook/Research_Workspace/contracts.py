@@ -193,9 +193,9 @@ class ResearchSourceSummary:
     source_id: str
     title: str
     source_type: str
+    catalog_item_id: str
     ready: bool = False
     version: int | None = None
-    catalog_item_id: str = ""
     catalog_item_version: int | None = None
     selected: bool = True
     position: int = 0
@@ -208,11 +208,10 @@ class ResearchSourceSummary:
         object.__setattr__(
             self, "source_type", _required_text(self.source_type, "source_type")
         )
-        catalog_item_id = self.catalog_item_id or self.source_id
         object.__setattr__(
             self,
             "catalog_item_id",
-            _required_text(catalog_item_id, "catalog_item_id"),
+            _required_text(self.catalog_item_id, "catalog_item_id"),
         )
         if type(self.ready) is not bool:
             raise TypeError("ready must be bool")
@@ -284,7 +283,7 @@ class SourceReadiness:
 
     ref: QualifiedWorkspaceRef
     source_id: str
-    catalog_item_id: str
+    catalog_item_id: str | None
     state: SourceReadinessState
     metadata_ready: bool = False
     text_ready: bool = False
@@ -302,11 +301,17 @@ class SourceReadiness:
         object.__setattr__(
             self, "source_id", _required_text(self.source_id, "source_id")
         )
-        object.__setattr__(
-            self,
-            "catalog_item_id",
-            _required_text(self.catalog_item_id, "catalog_item_id"),
-        )
+        if self.catalog_item_id is None:
+            if self.ref.data_source is not WorkspaceDataSource.SERVER:
+                raise ValueError(
+                    "catalog_item_id may be null only for Server readiness"
+                )
+        else:
+            object.__setattr__(
+                self,
+                "catalog_item_id",
+                _required_text(self.catalog_item_id, "catalog_item_id"),
+            )
         try:
             state = SourceReadinessState(self.state)
         except (TypeError, ValueError):
@@ -335,6 +340,8 @@ class SourceReadiness:
         """Return the authority-owned ID used by desired selection."""
 
         if self.ref.data_source is WorkspaceDataSource.LOCAL:
+            if self.catalog_item_id is None:
+                raise ValueError("Local readiness requires catalog_item_id")
             return self.catalog_item_id
         return self.source_id
 

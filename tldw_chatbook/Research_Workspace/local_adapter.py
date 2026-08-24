@@ -320,6 +320,10 @@ class LocalResearchWorkspaceAdapter:
         }
         if sort_by not in allowed_sorts:
             raise ValueError("sort_by is unsupported")
+        owner_sort = {
+            "updated_asc": "last_modified_asc",
+            "updated_desc": "last_modified_desc",
+        }.get(sort_by, sort_by)
         if len(source_types) > 25 or any(
             not isinstance(value, str) or not value.strip() or len(value) > 128
             for value in source_types
@@ -331,7 +335,7 @@ class LocalResearchWorkspaceAdapter:
             limit=page_limit,
             offset=page_offset,
             media_types=[value.strip() for value in source_types],
-            sort_by=sort_by,
+            sort_by=owner_sort,
         )
         raw_items = result.get("items") if isinstance(result, Mapping) else None
         if not isinstance(raw_items, list) or len(raw_items) > page_limit:
@@ -423,6 +427,18 @@ class LocalResearchWorkspaceAdapter:
         expected_version: int | None = None,
     ) -> bool:
         self._require_local_ref(ref)
+        if expected_version is not None:
+            raise CapabilityUnavailableError(
+                ResearchCapability(
+                    available=False,
+                    reason_code="version_precondition_unavailable",
+                    user_message=(
+                        "Version-checked source removal is unavailable for Local workspaces."
+                    ),
+                    owner="local",
+                    recovery_action="Refresh sources, then remove without a version check.",
+                )
+            )
         require_capability(_LOCAL_CAPABILITIES, "remove_source")
         membership = await self._membership_for_source(ref, source_id)
         return await asyncio.to_thread(
@@ -488,26 +504,47 @@ class LocalResearchWorkspaceAdapter:
         *,
         source_ids: tuple[str, ...] = (),
     ) -> tuple[SourceReadiness, ...]:
-        page = await self.list_sources(ref, limit=100, offset=0)
-        requested = set(source_ids)
-        if requested and not requested.issubset(
-            {row.source_id for row in page.items}
-        ):
-            raise ValueError("source_ids contains an unattached source")
-        rows = page.items if not requested else tuple(
-            row for row in page.items if row.source_id in requested
-        )
+        self._require_local_ref(ref)
+        require_capability(_LOCAL_CAPABILITIES, "get_readiness")
+        if not isinstance(source_ids, tuple) or len(source_ids) > 100:
+            raise ValueError("source_ids must be a bounded tuple")
+        normalized_ids = tuple(self._membership_id(item) for item in source_ids)
+        if len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("source_ids must be unique")
+        if normalized_ids:
+            memberships = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        self._service.get_workspace_source_membership,
+                        ref.workspace_id,
+                        source_id,
+                    )
+                    for source_id in normalized_ids
+                )
+            )
+            if any(membership is None for membership in memberships):
+                raise ValueError("source_ids contains an unattached source")
+            rows = tuple(
+                (membership.membership_id, membership.item_id)
+                for membership in memberships
+                if membership is not None
+            )
+        else:
+            page = await self.list_sources(ref, limit=100, offset=0)
+            rows = tuple(
+                (row.source_id, row.catalog_item_id) for row in page.items
+            )
         readiness: list[SourceReadiness] = []
-        for row in rows:
+        for source_id, catalog_item_id in rows:
             detail = await self._require_media_scope().get_media_detail(
                 mode=MediaReadingBackend.LOCAL,
-                media_id=row.catalog_item_id,
+                media_id=catalog_item_id,
             )
             readiness.append(
                 normalize_local_readiness(
                     ref=ref,
-                    source_id=row.source_id,
-                    catalog_item_id=row.catalog_item_id,
+                    source_id=source_id,
+                    catalog_item_id=catalog_item_id,
                     detail=detail,
                 )
             )
@@ -521,17 +558,23 @@ class LocalResearchWorkspaceAdapter:
         self._require_local_ref(ref)
         if len(source_ids) > 100 or len(set(source_ids)) != len(source_ids):
             raise ValueError("source_ids must be a unique bounded list")
-        memberships, total = await asyncio.to_thread(
-            self._service.list_workspace_source_memberships,
-            ref.workspace_id,
-            limit=100,
-            offset=0,
-        )
-        if total > 100:
-            raise ValueError("workspace has too many sources for one selection update")
-        attached_ids = {membership.item_id for membership in memberships}
         desired = {self._canonical_media_id(item) for item in source_ids}
-        if not desired.issubset(attached_ids):
+        membership_groups = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    self._service.get_item_memberships, "media", item_id
+                )
+                for item_id in desired
+            )
+        )
+        if any(
+            not any(
+                membership.workspace_id == ref.workspace_id
+                and membership.role == "source"
+                for membership in memberships
+            )
+            for memberships in membership_groups
+        ):
             raise ValueError("source_ids must use attached canonical Media ids")
         await asyncio.to_thread(
             self._service.set_workspace_scope,
@@ -593,18 +636,23 @@ class LocalResearchWorkspaceAdapter:
         )
 
     async def _membership_for_source(self, ref, source_id):
-        memberships, total = await asyncio.to_thread(
-            self._service.list_workspace_source_memberships,
+        membership = await asyncio.to_thread(
+            self._service.get_workspace_source_membership,
             ref.workspace_id,
-            limit=100,
-            offset=0,
+            self._membership_id(source_id),
         )
-        if total > 100:
-            raise ValueError("workspace source lookup exceeds the bounded page")
-        for membership in memberships:
-            if membership.membership_id == source_id:
-                return membership
+        if membership is not None:
+            return membership
         raise ValueError("Workspace source does not exist")
+
+    @staticmethod
+    def _membership_id(value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("source_ids must contain nonblank membership IDs")
+        normalized = value.strip()
+        if len(normalized) > 1024 or len(normalized.encode("utf-8")) > 4096:
+            raise ValueError("source_ids contain an oversized membership ID")
+        return normalized
 
     @staticmethod
     def _canonical_media_id(value: object) -> str:

@@ -54,6 +54,16 @@ def _strict_bool(row: Mapping[str, Any], field_name: str) -> bool:
     return value
 
 
+def _server_recovery_action(lifecycle: str) -> str:
+    if lifecycle == "blocked_by_permissions":
+        return "Review source permissions"
+    if lifecycle == "missing_media":
+        return "Restore or re-add source"
+    if lifecycle == "failed":
+        return "Re-add source"
+    return "Refresh status"
+
+
 def normalize_server_readiness(
     *, ref: QualifiedWorkspaceRef, status: Mapping[str, Any]
 ) -> SourceReadiness:
@@ -72,17 +82,18 @@ def normalize_server_readiness(
         state = SourceReadinessState.STALE
     source_id = str(status.get("id") or "").strip()
     media_id = status.get("media_id")
-    if type(media_id) is not int or media_id < 1:
+    if lifecycle == "missing_media" and (
+        media_id is None or (type(media_id) is int and media_id <= 0)
+    ):
+        catalog_item_id = None
+    elif type(media_id) is not int or media_id < 1:
         raise ValueError("server source media_id must be a positive integer")
-    next_action = (
-        "Re-add source"
-        if lifecycle in {"failed", "missing_media", "blocked_by_permissions"}
-        else "Refresh status"
-    )
+    else:
+        catalog_item_id = str(media_id)
     return SourceReadiness(
         ref=ref,
         source_id=source_id,
-        catalog_item_id=str(media_id),
+        catalog_item_id=catalog_item_id,
         state=state,
         metadata_ready=_strict_bool(readiness, "metadata_ready"),
         text_ready=_strict_bool(readiness, "text_extracted"),
@@ -93,7 +104,7 @@ def normalize_server_readiness(
         tool_ready=_strict_bool(readiness, "tool_accessible"),
         stale=stale,
         retry_eligible=retry_eligible,
-        next_action=next_action,
+        next_action=_server_recovery_action(lifecycle),
         detail=_safe_detail(status.get("status_reason")),
     )
 
@@ -222,7 +233,10 @@ class ResearchSourceReadinessCoordinator:
             if (
                 readiness.ref != ref
                 or readiness.source_id != operation.workspace_source_id
-                or readiness.catalog_item_id != operation.canonical_item_id
+                or (
+                    readiness.catalog_item_id is not None
+                    and readiness.catalog_item_id != operation.canonical_item_id
+                )
             ):
                 raise ValueError("readiness source identity mismatch")
         except Exception:

@@ -9,8 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
 from tldw_chatbook.Research_Workspace.contracts import (
     CapabilityUnavailableError,
@@ -174,9 +177,50 @@ async def test_local_catalog_search_is_bounded_deterministic_and_explicit_mode(
                 "limit": 25,
                 "offset": 0,
                 "media_types": ["pdf"],
-                "sort_by": "updated_desc",
+                "sort_by": "last_modified_desc",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_catalog_updated_sort_uses_real_owner_vocabulary_and_order(
+    tmp_path,
+) -> None:
+    media_db = MediaDatabase(
+        db_path=tmp_path / "media.sqlite", client_id="research-sort"
+    )
+    older_id, _, _ = media_db.add_media_with_keywords(
+        title="Older", content="older", media_type="article", keywords=[]
+    )
+    newer_id, _, _ = media_db.add_media_with_keywords(
+        title="Newer", content="newer", media_type="article", keywords=[]
+    )
+    assert older_id is not None and newer_id is not None
+    media_db.execute_query(
+        "UPDATE Media SET last_modified = ?, version = version + 1 WHERE id = ?",
+        ("2026-01-01 00:00:00", older_id),
+    )
+    media_db.execute_query(
+        "UPDATE Media SET last_modified = ?, version = version + 1 WHERE id = ?",
+        ("2026-02-01 00:00:00", newer_id),
+    )
+    media_scope = MediaReadingScopeService(
+        LocalMediaReadingService(media_db), SimpleNamespace()
+    )
+    adapter = LocalResearchWorkspaceAdapter(
+        local_registry(tmp_path), media_scope_service=media_scope
+    )
+
+    page = await adapter.search_catalog(
+        QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
+        sort_by="updated_asc",
+        limit=25,
+    )
+
+    assert [item.catalog_item_id for item in page.items] == [
+        str(older_id),
+        str(newer_id),
     ]
 
 
@@ -230,6 +274,87 @@ async def test_local_remove_unlinks_only_and_local_update_reorder_are_typed(
 
     assert update_error.value.capability.reason_code == "canonical_owner_required"
     assert reorder_error.value.capability.reason_code == "local_order_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_local_remove_refuses_unenforceable_version_before_storage_call(
+    tmp_path, monkeypatch
+) -> None:
+    registry = local_registry(tmp_path)
+    membership = registry.link_membership(
+        "workspace-1", item_type="media", item_id="7", role="source"
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(
+        registry,
+        "unlink_membership",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=RecordingMediaScope()
+    )
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.remove_source(
+            QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
+            membership.membership_id,
+            expected_version=3,
+        )
+
+    assert exc_info.value.capability.reason_code == "version_precondition_unavailable"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_local_requested_readiness_finds_source_after_public_page_100(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    for media_id in range(1, 101):
+        registry.link_membership(
+            "workspace-1", item_type="media", item_id=str(media_id), role="source"
+        )
+    target = registry.link_membership(
+        "workspace-1", item_type="media", item_id="9999", role="source"
+    )
+    scope = RecordingMediaScope()
+    scope.details.update(
+        {
+            str(media_id): {
+                "source_id": str(media_id),
+                "backing_media_id": media_id,
+                "title": f"Source {media_id}",
+                "media_type": "pdf",
+                "content": "ready",
+                "has_transcript": True,
+                "has_chunks": True,
+                "chunking_status": "completed",
+                "vector_processing": False,
+            }
+            for media_id in range(1, 101)
+        }
+    )
+    scope.details["9999"] = {
+        "source_id": "9999",
+        "backing_media_id": 9999,
+        "title": "Late source",
+        "media_type": "pdf",
+        "content": "ready",
+        "has_transcript": True,
+        "has_chunks": True,
+        "chunking_status": "completed",
+        "vector_processing": False,
+    }
+    adapter = LocalResearchWorkspaceAdapter(registry, media_scope_service=scope)
+
+    rows = await adapter.get_readiness(
+        QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
+        source_ids=(target.membership_id,),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].source_id == target.membership_id
+    assert rows[0].catalog_item_id == "9999"
 
 
 @pytest.mark.asyncio
@@ -474,6 +599,126 @@ async def test_server_catalog_uses_media_scope_server_mode_without_local_call() 
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_catalog_stitches_crossing_backing_pages_without_gaps() -> None:
+    provider = ContextProvider()
+
+    class PagedMediaScope(RecordingMediaScope):
+        async def search_backing_media_items(self, **kwargs):
+            self.calls.append(("search_backing_media_items", kwargs))
+            page = kwargs["page"]
+            start = (page - 1) * 100
+            return {
+                "items": [
+                    {
+                        "id": index,
+                        "title": f"Item {index}",
+                        "type": "pdf",
+                        "last_modified": "2026-08-24T00:00:00Z",
+                    }
+                    for index in range(start, min(start + 100, 150))
+                ],
+                "pagination": {
+                    "page": page,
+                    "results_per_page": 100,
+                    "total_items": 150,
+                    "total_pages": 2,
+                },
+            }
+
+    media_scope = PagedMediaScope()
+    adapter = ServerResearchWorkspaceAdapter(
+        RecordingServerSourceService(), provider, media_scope_service=media_scope
+    )
+
+    page = await adapter.search_catalog(
+        server_ref(provider), limit=25, offset=90
+    )
+
+    assert [item.catalog_item_id for item in page.items] == [
+        str(index) for index in range(90, 115)
+    ]
+    assert page.offset + len(page.items) == 115
+    assert page.has_more is True
+    assert [call[1]["page"] for call in media_scope.calls] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_server_owner_rows_over_100_are_valid_but_public_page_stays_bounded() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    service.rows = [
+        service.rows[0]
+        | {"id": f"source-{index}", "media_id": index + 1, "position": index}
+        for index in range(101)
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    page = await adapter.list_sources(server_ref(provider), limit=100)
+
+    assert len(page.items) == 100
+    assert page.total == 101
+    assert page.has_more is True
+
+
+@pytest.mark.asyncio
+async def test_server_readiness_owner_projection_over_100_is_valid() -> None:
+    provider = ContextProvider()
+
+    class ManyStatusService(RecordingServerSourceService):
+        async def get_workspace_source_status(self, workspace_id):
+            self.calls.append(("status", workspace_id))
+            sources = []
+            for index in range(101):
+                sources.append(
+                    {
+                        "id": f"source-{index}",
+                        "workspace_id": workspace_id,
+                        "media_id": index + 1,
+                        "state": "partially_queryable",
+                        "status_reason": "vector_index_pending",
+                        "readiness": {
+                            "metadata_ready": True,
+                            "text_extracted": True,
+                            "fts_ready": True,
+                            "vector_ready": False,
+                            "citation_ready": True,
+                            "summary_ready": False,
+                            "tool_accessible": True,
+                        },
+                        "retry_eligible": False,
+                        "stale": False,
+                    }
+                )
+            return {
+                "workspace_id": workspace_id,
+                "sources": sources,
+                "summary": {"total": 101},
+            }
+
+    adapter = ServerResearchWorkspaceAdapter(ManyStatusService(), provider)
+
+    rows = await adapter.get_readiness(server_ref(provider))
+
+    assert len(rows) == 101
+    assert rows[-1].source_id == "source-100"
+
+
+@pytest.mark.asyncio
+async def test_server_remove_refuses_unenforceable_version_before_dispatch() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.remove_source(
+            server_ref(provider), "source-1", expected_version=5
+        )
+
+    assert exc_info.value.capability.reason_code == "version_precondition_unavailable"
+    assert service.calls == []
 
 
 @pytest.mark.asyncio

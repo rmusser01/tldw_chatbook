@@ -863,6 +863,32 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows), total
 
+    def get_workspace_source_membership(
+        self, workspace_id: str, membership_id: str
+    ) -> WorkspaceMembership | None:
+        """Return one source membership by its association identity."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_membership_id = _normalize_required_text(
+            membership_id, "membership_id"
+        )
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND membership_id = ?
+                        AND item_type = 'media'
+                        AND role = 'source'
+                    """,
+                    (safe_workspace_id, safe_membership_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return _membership_from_row(row) if row is not None else None
+
     def list_workspace_conversations(
         self,
         workspace_id: str,
@@ -1201,17 +1227,17 @@ class LocalWorkspaceRegistryService:
         section 2). Guarded end to end, mirroring
         ``Chat.rag_scope.read_conversation_scope``: a missing row, malformed
         payload JSON, a non-dict payload, or a malformed/forward-versioned
-        scope payload (``parse_scope``'s own guards) all read as unscoped
-        (``None``) rather than raising. A stored zero-item scope also reads
-        as ``None`` -- same "no distinct scoped-with-nothing state" contract
-        as the conversation level.
+        scope payload (``parse_scope``'s own guards) all fail closed to an
+        explicit empty scope. A missing row remains unscoped. An ordinary
+        stored zero-item scope still reads as ``None``; only Research's
+        explicit-empty encoding and corrupt existing rows narrow retrieval.
 
         Args:
             workspace_id: Workspace identifier.
 
         Returns:
-            The stored ``RagScope``, or ``None`` when unscoped, missing,
-            malformed, or empty.
+            The stored ``RagScope``; ``None`` only when missing, cleared, or
+            ordinarily empty. Malformed existing rows return explicit empty.
 
         Raises:
             WorkspaceRegistryServiceError: If the underlying read fails.
@@ -1222,7 +1248,7 @@ class LocalWorkspaceRegistryService:
             with self.db.connection() as conn:
                 row = conn.execute(
                     """
-                    SELECT payload
+                    SELECT payload, updated_at
                     FROM workspace_rag_scopes
                     WHERE workspace_id = ?
                     """,
@@ -1236,21 +1262,24 @@ class LocalWorkspaceRegistryService:
             raw = json.loads(row["payload"])
         except (TypeError, ValueError):
             logger.warning(
-                "workspace rag_scope payload malformed for {}; treating as unscoped",
+                "workspace rag_scope payload malformed for {}; failing closed",
                 safe_workspace_id,
             )
-            return None
-        scope = parse_scope(raw)
-        if (
-            scope is None
-            and isinstance(raw, dict)
-            and raw.get("version") == 2
-            and raw.get("empty_is_scoped") is True
-        ):
-            safe_stamp = raw.get("updated_at")
             return RagScope(
                 items=(),
-                updated_at=safe_stamp if isinstance(safe_stamp, str) else "corrupt",
+                updated_at=str(row["updated_at"] or "corrupt"),
+                empty_is_scoped=True,
+            )
+        scope = parse_scope(raw)
+        if scope is None:
+            safe_stamp = raw.get("updated_at") if isinstance(raw, dict) else None
+            return RagScope(
+                items=(),
+                updated_at=(
+                    safe_stamp
+                    if isinstance(safe_stamp, str)
+                    else str(row["updated_at"] or "corrupt")
+                ),
                 empty_is_scoped=True,
             )
         if scope is not None and not scope.items and not scope.empty_is_scoped:
@@ -1263,8 +1292,9 @@ class LocalWorkspaceRegistryService:
         ``scope=None`` deletes the stored row entirely. A zero-item scope
         also normalizes to a delete, mirroring
         ``Chat.rag_scope.write_conversation_scope``'s "save with zero
-        selected clears the scope" contract (design spec section 4) -- there
-        is no "scoped with nothing selected" state.
+        selected clears the scope" contract (design spec section 4). Research
+        explicitly opts into a distinct zero-item scope with
+        ``empty_is_scoped=True``; ordinary Console callers do not.
 
         Deleting a scope for a workspace id that has none (or that does not
         exist) is a harmless no-op. Setting a non-empty scope for a

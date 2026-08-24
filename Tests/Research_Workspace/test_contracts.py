@@ -65,6 +65,7 @@ def test_normalized_rows_are_frozen_and_authority_qualified() -> None:
     source = ResearchSourceSummary(
         ref=ref,
         source_id="source-1",
+        catalog_item_id="catalog-1",
         title="Paper",
         source_type="pdf",
     )
@@ -73,6 +74,18 @@ def test_normalized_rows_are_frozen_and_authority_qualified() -> None:
     assert source.ref == ref
     with pytest.raises(FrozenInstanceError):
         workspace.name = "Changed"  # type: ignore[misc]
+
+
+def test_source_summary_requires_distinct_catalog_identity() -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    with pytest.raises(TypeError, match="catalog_item_id"):
+        ResearchSourceSummary(  # type: ignore[call-arg]
+            ref=ref,
+            source_id="membership-1",
+            title="Paper",
+            source_type="pdf",
+        )
 
 
 def test_bounded_page_rejects_unbounded_limits() -> None:

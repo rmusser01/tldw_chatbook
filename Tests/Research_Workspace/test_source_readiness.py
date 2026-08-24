@@ -3,6 +3,9 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Research_Workspace.local_adapter import (
+    LocalResearchWorkspaceAdapter,
+)
 from tldw_chatbook.Research_Workspace.contracts import (
     QualifiedWorkspaceRef,
     RetrievalMode,
@@ -28,6 +31,7 @@ from tldw_chatbook.Research_Workspace.source_operations import (
     SourceOperationStage,
     SourceOperationStatus,
 )
+from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 
 REF = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
@@ -145,7 +149,12 @@ def test_server_lifecycle_maps_to_closed_normalized_vocabulary(
     )
 
     assert row.state is expected
-    assert row.next_action in {"Refresh status", "Re-add source"}
+    assert row.next_action in {
+        "Refresh status",
+        "Re-add source",
+        "Restore or re-add source",
+        "Review source permissions",
+    }
     assert "retry" not in row.next_action.lower()
 
 
@@ -199,6 +208,94 @@ def test_unknown_server_lifecycle_fails_closed() -> None:
                 "readiness": {},
             },
         )
+
+
+@pytest.mark.parametrize("media_id", [None, 0])
+def test_missing_server_media_has_no_invented_catalog_identity(media_id) -> None:
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-1",
+        server_profile_id="profile-1",
+        principal_id="principal-1",
+    )
+
+    row = normalize_server_readiness(
+        ref=ref,
+        status={
+            "id": "source-1",
+            "media_id": media_id,
+            "state": "missing_media",
+            "status_reason": "media_id_missing",
+            "readiness": {},
+            "retry_eligible": True,
+            "stale": False,
+            "next_action": "restore_or_readd_media",
+        },
+    )
+
+    assert row.state is SourceReadinessState.UNAVAILABLE
+    assert row.catalog_item_id is None
+    assert row.desired_id == "source-1"
+    assert row.next_action == "Restore or re-add source"
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "status_reason", "server_action", "expected"),
+    [
+        (
+            "blocked_by_permissions",
+            "source_permission_denied",
+            "check_source_permissions",
+            "Review source permissions",
+        ),
+        (
+            "partially_queryable",
+            "vector_index_failed",
+            "retry_vector_indexing",
+            "Refresh status",
+        ),
+        (
+            "failed",
+            "job_failed",
+            "retry_ingestion_or_readd_source",
+            "Re-add source",
+        ),
+    ],
+)
+def test_server_recovery_copy_never_claims_an_unsupported_retry(
+    lifecycle, status_reason, server_action, expected
+) -> None:
+    ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-1",
+        server_profile_id="profile-1",
+        principal_id="principal-1",
+    )
+
+    row = normalize_server_readiness(
+        ref=ref,
+        status={
+            "id": "source-1",
+            "media_id": 12,
+            "state": lifecycle,
+            "status_reason": status_reason,
+            "readiness": {
+                "metadata_ready": True,
+                "text_extracted": lifecycle == "partially_queryable",
+                "fts_ready": lifecycle == "partially_queryable",
+                "vector_ready": False,
+                "citation_ready": False,
+                "summary_ready": False,
+                "tool_accessible": False,
+            },
+            "retry_eligible": True,
+            "stale": False,
+            "next_action": server_action,
+        },
+    )
+
+    assert row.next_action == expected
+    assert "retry" not in row.next_action.lower()
 
 
 def test_readiness_diagnostics_do_not_expose_secret_material() -> None:
@@ -319,6 +416,133 @@ async def test_pending_indexing_stays_pending_for_restart_resume(tmp_path) -> No
         store.get(operation.operation_id).readiness_status
         is SourceOperationStatus.PENDING
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_server_media_keeps_association_identity_and_fails_unavailable(
+    tmp_path,
+) -> None:
+    store = ResearchSourceOperationStore(WorkspaceDB(tmp_path / "workspace.sqlite"))
+    server_ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-1",
+        server_profile_id="profile-1",
+        principal_id="principal-1",
+    )
+    operation = store.create(
+        ResearchSourceOperation(
+            operation_id="operation-server-missing",
+            idempotency_key="server:workspace-1:missing",
+            data_source=WorkspaceDataSource.SERVER,
+            workspace_id="workspace-1",
+            server_profile_id="profile-1",
+            principal_id="principal-1",
+            canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+            desired_selected=True,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        canonical_item_id="101",
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.ASSOCIATION,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        workspace_source_id="source-1",
+    )
+    adapter = ReadinessAdapter(
+        [
+            SourceReadiness(
+                ref=server_ref,
+                source_id="source-1",
+                catalog_item_id=None,
+                state=SourceReadinessState.UNAVAILABLE,
+                retry_eligible=True,
+                next_action="Restore or re-add source",
+            )
+        ]
+    )
+
+    settled = await ResearchSourceReadinessCoordinator(
+        operation_store=store,
+        adapters={WorkspaceDataSource.SERVER: adapter},
+    ).resume(operation.operation_id)
+
+    assert settled.readiness_status is SourceOperationStatus.FAILED
+    assert settled.error_code == "source_unavailable"
+    assert adapter.calls == [(server_ref, ("source-1",))]
+
+
+@pytest.mark.asyncio
+async def test_local_readiness_receipt_converges_for_membership_after_row_100(
+    tmp_path,
+) -> None:
+    database = WorkspaceDB(tmp_path / "workspace.sqlite")
+    store = ResearchSourceOperationStore(database)
+    registry = LocalWorkspaceRegistryService(database)
+    registry.create_workspace(workspace_id="workspace-1", name="Research")
+    for media_id in range(1, 101):
+        registry.link_membership(
+            "workspace-1", item_type="media", item_id=str(media_id), role="source"
+        )
+    target = registry.link_membership(
+        "workspace-1", item_type="media", item_id="9999", role="source"
+    )
+    operation = store.create(
+        ResearchSourceOperation(
+            operation_id="operation-local-row-101",
+            idempotency_key="local:workspace-1:row-101",
+            data_source=WorkspaceDataSource.LOCAL,
+            workspace_id="workspace-1",
+            canonical_item_type=CanonicalItemType.LOCAL_LIBRARY,
+            desired_selected=True,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        canonical_item_id="9999",
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.ASSOCIATION,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        workspace_source_id=target.membership_id,
+    )
+
+    class TargetMediaScope:
+        async def get_media_detail(self, **kwargs):
+            assert kwargs["media_id"] == "9999"
+            return {
+                "content": "ready",
+                "has_transcript": True,
+                "has_chunks": True,
+                "chunking_status": "completed",
+                "vector_processing": False,
+            }
+
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=TargetMediaScope()
+    )
+
+    settled = await ResearchSourceReadinessCoordinator(
+        operation_store=store,
+        adapters={WorkspaceDataSource.LOCAL: adapter},
+    ).resume(operation.operation_id)
+
+    assert settled.readiness_status is SourceOperationStatus.SUCCEEDED
 
 
 @pytest.mark.asyncio

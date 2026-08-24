@@ -324,6 +324,7 @@ async def test_server_done_uses_remote_media_and_durable_server_target(
                 "media_id": kwargs["media_id"],
                 "title": kwargs["title"],
                 "source_type": kwargs["source_type"],
+                "selected": kwargs["selected"],
                 "version": 1,
             }
 
@@ -361,6 +362,111 @@ async def test_server_done_uses_remote_media_and_durable_server_target(
             "version": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_duplicate_reconciles_selection_before_success_and_retry_restart(
+    tmp_path: Path,
+) -> None:
+    store = _operation_store(tmp_path)
+    jobs = LibraryIngestJobRegistry()
+    context = SimpleNamespace(
+        active_server_id="server-profile-a",
+        auth_token="fixture-token-a",
+        credential_source="fixture",
+    )
+    operation = store.create(
+        _operation(
+            operation_id="research-op-server-selection-retry",
+            data_source=WorkspaceDataSource.SERVER,
+            workspace_id="remote-workspace-7",
+            server_profile_id="server-profile-a",
+            principal_id=event_principal_id_from_active_context(context) or "",
+            desired_selected=True,
+        )
+    )
+    job = jobs.submit(
+        source_path="paper.pdf",
+        title="Paper",
+        detected_type="pdf",
+        origin="server",
+        research_source_operation_id=operation.operation_id,
+    )
+    jobs.mark_remote_done(job.job_id, remote_media_id="884")
+    store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.IN_PROGRESS,
+        expected_revision=operation.revision,
+        ingest_job_id=job.job_id,
+    )
+
+    class DuplicateServerService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+            self.fail_update = True
+
+        async def save_workspace_source(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if kwargs["version"] is None:
+                return {
+                    "id": kwargs["source_id"],
+                    "workspace_id": kwargs["workspace_id"],
+                    "media_id": 884,
+                    "title": "Paper",
+                    "source_type": "pdf",
+                    "selected": False,
+                    "version": 4,
+                }
+            if self.fail_update:
+                raise RuntimeError("selection update unavailable")
+            return {
+                "id": kwargs["source_id"],
+                "workspace_id": kwargs["workspace_id"],
+                "media_id": 884,
+                "title": "Paper",
+                "source_type": "pdf",
+                "selected": kwargs["selected"],
+                "version": 5,
+            }
+
+    class NoLocalRegistry:
+        def link_membership(self, *args, **kwargs):
+            raise AssertionError("Server association must not blend Local state.")
+
+    service = DuplicateServerService()
+    context_provider = SimpleNamespace(get_active_context=lambda: context)
+    failed = await ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=jobs,
+        local_registry=NoLocalRegistry(),
+        server_service=service,
+        server_context_provider=context_provider,
+    ).resume(operation.operation_id)
+
+    assert failed.catalog_status is SourceOperationStatus.SUCCEEDED
+    assert failed.association_status is SourceOperationStatus.FAILED
+    assert failed.error_code == "association_failed"
+
+    service.fail_update = False
+    reloaded_store = ResearchSourceOperationStore(
+        WorkspaceDB(
+            tmp_path / "workspaces.sqlite", client_id="association-restart"
+        )
+    )
+    retried = await ResearchSourceAssociationCoordinator(
+        operation_store=reloaded_store,
+        ingest_jobs=jobs,
+        local_registry=NoLocalRegistry(),
+        server_service=service,
+        server_context_provider=context_provider,
+    ).retry(operation.operation_id, stage=SourceOperationStage.ASSOCIATION)
+
+    assert retried.catalog_status is SourceOperationStatus.SUCCEEDED
+    assert retried.association_status is SourceOperationStatus.SUCCEEDED
+    assert [call["version"] for call in service.calls] == [None, 4, None, 4]
+    assert service.calls[1]["selected"] is True
+    assert service.calls[3]["selected"] is True
 
 
 @pytest.mark.asyncio

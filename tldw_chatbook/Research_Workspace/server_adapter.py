@@ -22,6 +22,9 @@ from tldw_chatbook.tldw_api.exceptions import (
     APIResponseError,
     AuthenticationError,
 )
+from tldw_chatbook.tldw_api.notes_workspace_schemas import (
+    MAX_WORKSPACE_SOURCE_OWNER_ROWS,
+)
 
 from .contracts import (
     BoundedPageResult,
@@ -90,6 +93,31 @@ def _page_bounds(limit: object, offset: object) -> tuple[int, int]:
     if type(offset) is not int or not 0 <= offset <= 10_000:
         raise ValueError("offset must be between 0 and 10000")
     return limit, offset
+
+
+def _catalog_backing_page(
+    result: object, *, expected_page: int
+) -> tuple[list[Mapping[str, Any]], int]:
+    raw_items = result.get("items") if isinstance(result, Mapping) else None
+    pagination = result.get("pagination") if isinstance(result, Mapping) else None
+    if (
+        not isinstance(raw_items, list)
+        or len(raw_items) > 100
+        or any(not isinstance(item, Mapping) for item in raw_items)
+        or not isinstance(pagination, Mapping)
+        or type(pagination.get("page")) is not int
+        or pagination["page"] != expected_page
+        or type(pagination.get("results_per_page")) is not int
+        or pagination["results_per_page"] != 100
+        or type(pagination.get("total_items")) is not int
+        or pagination["total_items"] < 0
+    ):
+        raise ValueError("Server catalog returned an invalid bounded page")
+    total = pagination["total_items"]
+    expected_count = min(100, max(total - ((expected_page - 1) * 100), 0))
+    if len(raw_items) != expected_count:
+        raise ValueError("Server catalog returned an inconsistent bounded page")
+    return raw_items, total
 
 
 class ServerResearchWorkspaceAdapter:
@@ -293,7 +321,10 @@ class ServerResearchWorkspaceAdapter:
         rows = await self._server_call(
             self._service.list_workspace_sources(ref.workspace_id), context=context
         )
-        if not isinstance(rows, list) or len(rows) > 100:
+        if (
+            not isinstance(rows, list)
+            or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS
+        ):
             raise ValueError("Server source list is not a bounded page")
         normalized = tuple(self._source_summary(ref, row) for row in rows)
         page = normalized[page_offset : page_offset + page_limit]
@@ -351,19 +382,28 @@ class ServerResearchWorkspaceAdapter:
             ),
             context=context,
         )
-        raw_items = result.get("items") if isinstance(result, Mapping) else None
-        pagination = result.get("pagination") if isinstance(result, Mapping) else None
-        if (
-            not isinstance(raw_items, list)
-            or len(raw_items) > 100
-            or not isinstance(pagination, Mapping)
-            or type(pagination.get("total_items")) is not int
-            or pagination["total_items"] < 0
-        ):
-            raise ValueError("Server catalog returned an invalid bounded page")
-        selected = raw_items[page_inner_offset : page_inner_offset + page_limit]
+        raw_items, total = _catalog_backing_page(
+            result, expected_page=server_page
+        )
+        combined = list(raw_items[page_inner_offset:])
+        if len(combined) < page_limit and page_offset + len(combined) < total:
+            next_result = await self._server_call(
+                media_scope.search_backing_media_items(
+                    mode=MediaReadingBackend.SERVER,
+                    page=server_page + 1,
+                    results_per_page=100,
+                    **filters,
+                ),
+                context=context,
+            )
+            next_items, next_total = _catalog_backing_page(
+                next_result, expected_page=server_page + 1
+            )
+            if next_total != total:
+                raise ValueError("Server catalog total changed between pages")
+            combined.extend(next_items)
+        selected = combined[:page_limit]
         items = tuple(self._catalog_item(ref, row) for row in selected)
-        total = pagination["total_items"]
         return BoundedPageResult(
             items=items,
             limit=page_limit,
@@ -443,7 +483,6 @@ class ServerResearchWorkspaceAdapter:
         settled = await self._association_scheduler.resume(operation.operation_id)
         if settled is None:
             raise RuntimeError("Durable source attachment did not settle")
-        await self._persist_operation_selection(ref, settled)
         return settled
 
     async def remove_source(
@@ -453,6 +492,19 @@ class ServerResearchWorkspaceAdapter:
         *,
         expected_version: int | None = None,
     ) -> bool:
+        self._context_for_ref(ref)
+        if expected_version is not None:
+            raise CapabilityUnavailableError(
+                ResearchCapability(
+                    available=False,
+                    reason_code="version_precondition_unavailable",
+                    user_message=(
+                        "The server cannot enforce a version check when removing a source."
+                    ),
+                    owner="server",
+                    recovery_action="Refresh sources, then remove without a version check.",
+                )
+            )
         source_id = self._association_id(source_id)
         await self._require_source_action(ref, "add_sources")
         context = self._context_for_ref(ref)
@@ -539,7 +591,10 @@ class ServerResearchWorkspaceAdapter:
             context=context,
         )
         rows = payload.get("sources") if isinstance(payload, Mapping) else None
-        if not isinstance(rows, list) or len(rows) > 100:
+        if (
+            not isinstance(rows, list)
+            or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS
+        ):
             raise ValueError("Server readiness returned invalid rows")
         requested = set(source_ids)
         normalized = tuple(normalize_server_readiness(ref=ref, status=row) for row in rows)
@@ -758,33 +813,6 @@ class ServerResearchWorkspaceAdapter:
             and operation.desired_selected is desired_selected
             and operation.catalog_status is SourceOperationStatus.SUCCEEDED
             and operation.canonical_item_id == canonical_id
-        )
-
-    async def _persist_operation_selection(
-        self, ref: QualifiedWorkspaceRef, operation: ResearchSourceOperation
-    ) -> None:
-        context = self._context_for_ref(ref)
-        rows = await self._server_call(
-            self._service.list_workspace_sources(ref.workspace_id), context=context
-        )
-        selected_ids = [
-            str(row.get("id"))
-            for row in rows
-            if row.get("selected") and str(row.get("id") or "")
-        ]
-        if operation.desired_selected:
-            if operation.workspace_source_id not in selected_ids:
-                selected_ids.append(operation.workspace_source_id)
-        else:
-            selected_ids = [
-                item for item in selected_ids if item != operation.workspace_source_id
-            ]
-        context = self._context_for_ref(ref)
-        await self._server_call(
-            self._service.set_workspace_source_selection(
-                ref.workspace_id, selected_ids
-            ),
-            context=context,
         )
 
     @staticmethod

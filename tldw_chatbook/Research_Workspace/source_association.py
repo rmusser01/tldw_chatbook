@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -308,15 +309,49 @@ class ResearchSourceAssociationCoordinator:
                 selected=operation.desired_selected,
                 version=None,
             )
-            if (
-                str(row.get("id") or "") != source_id
-                or str(row.get("workspace_id") or "") != operation.workspace_id
-                or int(row.get("media_id")) != media_id
+            if not self._server_row_matches(
+                row,
+                operation=operation,
+                source_id=source_id,
+                media_id=media_id,
             ):
                 return await self._association_failed(
                     operation,
                     error_code="server_association_mismatch",
                 )
+            if row["selected"] is not operation.desired_selected:
+                context = self._server_context_provider.get_active_context()
+                if (
+                    str(getattr(context, "active_server_id", "") or "").strip()
+                    != operation.server_profile_id
+                    or (event_principal_id_from_active_context(context) or "")
+                    != operation.principal_id
+                ):
+                    return await self._association_failed(
+                        operation,
+                        error_code="server_context_changed",
+                    )
+                previous_version = row["version"]
+                row = await self._server_service.save_workspace_source(
+                    workspace_id=operation.workspace_id,
+                    source_id=source_id,
+                    selected=operation.desired_selected,
+                    version=previous_version,
+                )
+                if (
+                    not self._server_row_matches(
+                        row,
+                        operation=operation,
+                        source_id=source_id,
+                        media_id=media_id,
+                    )
+                    or row["selected"] is not operation.desired_selected
+                    or row["version"] <= previous_version
+                ):
+                    return await self._association_failed(
+                        operation,
+                        error_code="server_association_mismatch",
+                    )
         except Exception:
             return await self._association_failed(operation)
         return await self._advance_stage(
@@ -325,6 +360,25 @@ class ResearchSourceAssociationCoordinator:
             status=SourceOperationStatus.SUCCEEDED,
             expected_revision=operation.revision,
             workspace_source_id=source_id,
+        )
+
+    @staticmethod
+    def _server_row_matches(
+        row: object,
+        *,
+        operation: ResearchSourceOperation,
+        source_id: str,
+        media_id: int,
+    ) -> bool:
+        return bool(
+            isinstance(row, Mapping)
+            and str(row.get("id") or "") == source_id
+            and str(row.get("workspace_id") or "") == operation.workspace_id
+            and type(row.get("media_id")) is int
+            and row["media_id"] == media_id
+            and type(row.get("selected")) is bool
+            and type(row.get("version")) is int
+            and row["version"] >= 1
         )
 
     def _persist_local_desired_scope(
