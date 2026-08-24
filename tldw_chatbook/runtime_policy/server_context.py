@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import UUID
 
 from loguru import logger
@@ -168,18 +168,55 @@ class RuntimeServerContextProvider:
         *,
         runtime_context: RuntimePolicyContext,
         target_store: ConfiguredServerTargetStore,
-        credential_store: ServerCredentialStore,
+        credential_store: ServerCredentialStore | None = None,
+        credential_store_factory: Callable[[], ServerCredentialStore] | None = None,
         app_config: Mapping[str, Any] | None,
     ) -> None:
+        """Compose the runtime server-context provider.
+
+        Args:
+            runtime_context: The app's runtime policy context.
+            target_store: Configured server target store.
+            credential_store: A ready credential store. Mutually exclusive
+                with ``credential_store_factory``.
+            credential_store_factory: A zero-argument builder called the
+                first time ``credential_store`` is read, and memoized. The
+                app passes this so building the store -- which performs OS
+                keyring backend discovery -- stays off the startup path
+                (TASK-21111(b)).
+            app_config: The loaded application config, or None.
+
+        Raises:
+            ValueError: If neither or both of ``credential_store`` and
+                ``credential_store_factory`` are supplied.
+        """
+        if (credential_store is None) == (credential_store_factory is None):
+            raise ValueError(
+                "exactly one of credential_store / credential_store_factory "
+                "must be supplied"
+            )
         self.runtime_context = runtime_context
         self.target_store = target_store
-        self.credential_store = credential_store
+        self._credential_store = credential_store
+        self._credential_store_factory = credential_store_factory
         self.app_config = app_config or {}
         self._legacy_cleared_server_ids: set[str] = set()
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
         self._cached_character_authority: _CachedCharacterAuthority | None = None
         self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
+
+    @property
+    def credential_store(self) -> ServerCredentialStore:
+        """The credential store, built on first read when deferred."""
+        if self._credential_store is None:
+            assert self._credential_store_factory is not None  # __init__ invariant
+            self._credential_store = self._credential_store_factory()
+        return self._credential_store
+
+    @credential_store.setter
+    def credential_store(self, store: ServerCredentialStore) -> None:
+        self._credential_store = store
 
     def get_active_context(self) -> ActiveServerContext:
         active_server_id = self._require_active_server_id()

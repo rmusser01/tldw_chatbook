@@ -488,6 +488,19 @@ silently edited.
    the same equality search the no-stats planner already prefers while also covering the GROUP
    BY and the DISTINCT: 23.4 ms at 200k, 122.8 ms at 1M. **Any future "add an index" finding
    in this repo needs a query-plan check with `sqlite_stat1` absent, not just present.**
+3. **Finding 21111(b) named three keyring sites and missed the only expensive one.** The
+   review attributed "~13 ms + Security.framework ctypes load" to server credentials, with
+   skills trust ×2 alongside. Traced by stack at the pin: the FIRST keyring touch of every
+   boot is `Video_Generation/config._keyring_get`, reached from `VideoStore.enforce_retention()`
+   in `TldwCli.__init__` — a real `keyring.get_password("tldw_chatbook_videogen", "minimax")`
+   costing **18.2 ms** (11.3 ms of backend discovery plus a live macOS Keychain query). Because
+   `keyring.get_keyring()` memoizes the backend, the three sites the review named cost
+   **0.33 / 0.41 / 0.04 ms** between them — fixing only those would have banked **zero** and
+   still passed a "no keyring from server credentials at boot" assertion. All four had to go;
+   `TldwCli` construction then fell **77.0 → 60.9 ms** (median of 8 warm runs per arm).
+   Corollary found inside the same fix: deferring the skills stack to a lazy app property
+   merely **relocated** 16.45 ms into Chat-screen mount, because
+   `ChatScreen._ensure_console_agent_bridge` reads `skills_scope_service` there.
 
 ---
 

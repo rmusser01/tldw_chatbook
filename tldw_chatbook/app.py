@@ -2262,14 +2262,51 @@ class LibraryIngestQueueMixin:
         self._ingest_shutdown: bool = False
 
     def _restore_ingest_jobs(self) -> None:
-        """One-time on_mount restore of persisted ingest job history."""
+        """Start the one-time restore of persisted ingest job history.
+
+        Returns immediately: the store open (schema create/migrate on first
+        run), the read, the plan and the reconcile writes all run on a worker
+        thread, and only the in-memory registry seeding comes back to the UI
+        thread (TASK-21111(c) -- measured 1.7-11.6 ms of synchronous
+        ``on_mount`` work depending on history size, x3-5 on constrained
+        hardware).
+
+        Never raises, on either thread: a corrupt or unreadable store leaves
+        the registry empty and store-less, exactly as before.
+        """
+        if getattr(self, "_ingest_shutdown", False):
+            return
+        self.run_worker(
+            self._restore_ingest_jobs_off_thread,
+            name="restore_ingest_jobs",
+            group="ingest_restore",
+            thread=True,
+            exclusive=True,
+            # The body already catches and logs everything; `exit_on_error`
+            # is off so no future edit to it can turn a history-restore
+            # failure into an app exit. Restoring history must never be able
+            # to prevent boot -- that was true of the synchronous version and
+            # stays true here.
+            exit_on_error=False,
+        )
+
+    def _restore_ingest_jobs_off_thread(self) -> None:
+        """Worker body for :meth:`_restore_ingest_jobs`. Runs on a thread.
+
+        Catches everything. A worker that raised would surface as an uncaught
+        ``WorkerFailed`` and take the app down -- the failure mode this
+        function's synchronous predecessor could not have.
+        """
         from datetime import datetime, timezone
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
 
         try:
+            # `LibraryIngestJobsDB` opens with `check_same_thread=False`, so
+            # the connection this thread creates stays usable from the UI
+            # thread once the store is attached. Nothing else touches the
+            # store until then.
             store = LibraryIngestJobsDB(get_library_ingest_jobs_db_path())
-            self._library_ingest_jobs_store = store
             # Do ALL fallible work -- corrupt read, plan, and the store
             # reconcile writes -- BEFORE touching the in-memory registry, so any
             # failure leaves the registry empty + store unattached: a clean
@@ -2284,12 +2321,47 @@ class LibraryIngestQueueMixin:
                 store.upsert_job(job)
             for job_id in plan.delete_ids:
                 store.delete_job(job_id)
-            self.library_ingest_jobs.restore(plan.jobs, plan.next_id)
-            self.library_ingest_jobs.attach_store(store)
         except Exception:
             logger.opt(exception=True).warning(
                 "Failed to restore persisted ingest job history; starting empty."
             )
+            return
+
+        try:
+            self.call_from_thread(self._apply_ingest_job_restore, store, plan)
+        except Exception:
+            # The app stopped (quit during startup) or the callback itself
+            # failed. Either way the registry stays store-less; close the
+            # connection this thread opened rather than leaking it.
+            logger.opt(exception=True).debug(
+                "Ingest job history restore could not be applied; discarding."
+            )
+            try:
+                store.close()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Ingest job store close after failed restore failed."
+                )
+
+    def _apply_ingest_job_restore(self, store: Any, plan: Any) -> None:
+        """Seed the registry from a completed restore plan. UI thread only.
+
+        Args:
+            store: The opened ``LibraryIngestJobsDB`` to attach as the
+                registry's write-through sink.
+            plan: The ``RestorePlan`` produced off-thread.
+
+        The registry is documented UI-thread-only, so the seeding and the
+        store attach stay here even though the I/O moved. Uses
+        ``merge_restored`` rather than ``restore`` so a job submitted in the
+        few milliseconds between ``on_mount`` and this callback survives.
+        """
+        if getattr(self, "_ingest_shutdown", False):
+            store.close()
+            return
+        self._library_ingest_jobs_store = store
+        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
+        self.library_ingest_jobs.attach_store(store)
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.
@@ -5677,7 +5749,13 @@ class TldwCli(
         # Track startup timing
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
-        self.server_credential_store_unavailable_reason: str | None = None
+        # Real per-task durations of the phase-3 parallel initializers,
+        # stamped on the worker thread by `_timed_init_task` (TASK-21111).
+        self._startup_parallel_tasks: dict[str, float] = {}
+        # Backing slots for the lazily-resolved credential store
+        # (TASK-21111(b)); see the `server_credential_store` property.
+        self._server_credential_store: Any | None = None
+        self._server_credential_store_unavailable_reason: str | None = None
 
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
@@ -5865,32 +5943,58 @@ class TldwCli(
         user_name_for_notes = settings.get("USERS_NAME", "default_tui_user")
         self.notes_user_id = user_name_for_notes
 
-        # Run independent initializations in parallel
+        # Run independent initializations in parallel.
+        #
+        # TASK-21111(a): each task is timed AROUND ITS OWN EXECUTION, on the
+        # worker thread, and the duration is stashed in
+        # `self._startup_parallel_tasks`. The previous shape started the clock
+        # in the `as_completed` loop immediately before `future.result()` --
+        # by which point `as_completed` had already yielded the future
+        # *because it was done*, so `result()` returned instantly and every
+        # task logged 0.000s. The parallel phase (measured here at 82% of
+        # construction on a fresh profile) could not be attributed at all.
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             # Submit all independent initialization tasks
             futures = {
                 executor.submit(
-                    self._init_notes_service, user_name_for_notes
+                    self._timed_init_task,
+                    "notes_service",
+                    self._init_notes_service,
+                    user_name_for_notes,
                 ): "notes_service",
-                executor.submit(self._init_providers_models): "providers_models",
-                executor.submit(self._init_prompts_service): "prompts_service",
-                executor.submit(self._init_media_db): "media_db",
+                executor.submit(
+                    self._timed_init_task,
+                    "providers_models",
+                    self._init_providers_models,
+                ): "providers_models",
+                executor.submit(
+                    self._timed_init_task,
+                    "prompts_service",
+                    self._init_prompts_service,
+                ): "prompts_service",
+                executor.submit(
+                    self._timed_init_task, "media_db", self._init_media_db
+                ): "media_db",
             }
 
-            # Wait for all tasks to complete and log individual timings
+            # Wait for all tasks to complete and log their real durations.
             for future in concurrent.futures.as_completed(futures):
                 task_name = futures[future]
                 try:
-                    task_start = time.perf_counter()
                     future.result()
-                    task_duration = time.perf_counter() - task_start
-                    logger.info(
-                        f"Parallel init task '{task_name}' completed in {task_duration:.3f}s"
-                    )
                 except Exception as e:
+                    # The duration is still recorded (the wrapper stamps it in
+                    # a `finally`), and a slow FAILING task is exactly the one
+                    # worth timing.
                     logger.opt(exception=True).error(
-                        f"Parallel init task '{task_name}' failed: {e}"
+                        f"Parallel init task '{task_name}' failed after "
+                        f"{self._startup_parallel_tasks.get(task_name, 0.0):.3f}s: {e}"
                     )
+                    continue
+                logger.info(
+                    f"Parallel init task '{task_name}' completed in "
+                    f"{self._startup_parallel_tasks.get(task_name, 0.0):.3f}s"
+                )
 
         # Log total parallel phase time
         parallel_duration = time.perf_counter() - phase_start
@@ -6109,10 +6213,50 @@ class TldwCli(
                     (duration / total_init_time) * 100 if total_init_time > 0 else 0
                 )
                 logger.info(f"  {phase}: {duration:.3f}s ({percentage:.1f}%)")
+                if phase == "parallel_init":
+                    # Sub-phases: these overlap each other and their parent,
+                    # so they are indented and NOT additive with the phases
+                    # above (TASK-21111).
+                    for task, task_duration in sorted(
+                        self._startup_parallel_tasks.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    ):
+                        task_share = (
+                            (task_duration / duration) * 100 if duration > 0 else 0
+                        )
+                        logger.info(
+                            f"    - {task}: {task_duration:.3f}s "
+                            f"({task_share:.1f}% of parallel_init)"
+                        )
         logger.info("==============================")
 
         # Final memory check
         log_resource_usage()
+
+    def _timed_init_task(self, task_name: str, func: Callable[..., Any], *args: Any):
+        """Run one phase-3 initializer and record how long IT took.
+
+        Args:
+            task_name: Key under which the duration is recorded in
+                ``self._startup_parallel_tasks``.
+            func: The initializer to run.
+            *args: Positional arguments forwarded to ``func``.
+
+        Returns:
+            Whatever ``func`` returns.
+
+        The timing is taken on the worker thread, around the call itself, so
+        it survives however long the future then sits completed before
+        ``as_completed`` yields it (TASK-21111). Recorded in a ``finally`` so
+        a failing task is timed too. ``dict`` item assignment is atomic under
+        the GIL and each task writes a distinct key, so no lock is needed.
+        """
+        task_start = time.perf_counter()
+        try:
+            return func(*args)
+        finally:
+            self._startup_parallel_tasks[task_name] = time.perf_counter() - task_start
 
     def _construct_notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
         """Build the application-owned lasting-sync runtime (TASK-21108).
@@ -6411,23 +6555,164 @@ class TldwCli(
             get_user_data_dir() / "mcp_server_targets.json",
         )
         self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
+        self.server_context_provider = RuntimeServerContextProvider(
+            runtime_context=self.runtime_policy,
+            target_store=self.unified_mcp_target_store,
+            credential_store_factory=lambda: self.server_credential_store,
+            app_config=self.app_config,
+        )
+
+    def _build_local_skill_trust_service(self) -> Any:
+        """Build the skill trust service. Performs OS keyring discovery.
+
+        Split out of the eager wiring (TASK-21111(b)): it is the only part
+        of the local skills stack that touches the keyring -- twice, once
+        for the rollback marker store's secure-backend probe and once for
+        the trust key cache -- and nothing at startup asks a trust question.
+        Deferring the whole SERVICE was not enough on its own: the Console's
+        agent bridge takes the skills scope facade during Chat screen mount,
+        which merely relocated the discovery from ``__init__`` to mount.
+        ``LocalSkillsService`` therefore takes this as a FACTORY and calls it
+        on the first trust decision.
+        """
+        local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
+        trust_store_dir = default_trust_store_dir(local_skills_store_dir)
+        trust_account_scope = skill_trust_account_scope(trust_store_dir)
+        skill_trust_marker_store, reduced_rollback_protection = (
+            build_skill_trust_marker_store_with_fallback(
+                fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
+                store_dir=trust_store_dir,
+                account_scope=trust_account_scope,
+            )
+        )
+        return SkillTrustService(
+            skills_dir=local_skills_store_dir / "skills",
+            trust_store=SkillTrustStore(
+                store_dir=trust_store_dir,
+                marker_store=skill_trust_marker_store,
+            ),
+            key_cache=build_default_skill_trust_key_cache(
+                account_scope=trust_account_scope
+            ),
+            keyring_convenience_enabled=False,
+            reduced_rollback_protection=reduced_rollback_protection,
+        )
+
+    def _build_local_skills_stack(self) -> None:
+        """Build the local skills service + scope facade. Idempotent.
+
+        Body moved out of ``_wire_watchlists_and_notifications_services``
+        (TASK-21111(b)). Keyring-free: the trust service is handed over as a
+        factory. The collaborators it reads were captured at construction
+        time, not re-read now, so deferring changes WHEN it runs and not
+        WHAT it binds (the TASK-21108 trap).
+
+        Each slot is filled only if still unset, so an injected double (a
+        test assigning one of them between construction and first read) is
+        never clobbered by a later sibling access.
+        """
+        if None not in (self._local_skills_service, self._skills_scope_service):
+            return
+        policy_enforcer, server_skills_service = self._local_skills_stack_inputs
+        if self._local_skills_service is None:
+            self._local_skills_service = LocalSkillsService(
+                store_dir=default_local_skills_store_dir(get_user_data_dir()),
+                policy_enforcer=policy_enforcer,
+                trust_service_factory=lambda: self.local_skill_trust_service,
+            )
+        if self._skills_scope_service is None:
+            self._skills_scope_service = SkillsScopeService(
+                local_service=self._local_skills_service,
+                server_service=server_skills_service,
+                policy_enforcer=policy_enforcer,
+            )
+
+    @property
+    def local_skill_trust_service(self) -> Any:
+        """Local skill trust service, built on first access (TASK-21111(b))."""
+        if self._local_skill_trust_service is None:
+            self._local_skill_trust_service = self._build_local_skill_trust_service()
+        return self._local_skill_trust_service
+
+    @local_skill_trust_service.setter
+    def local_skill_trust_service(self, service: Any) -> None:
+        self._local_skill_trust_service = service
+
+    @property
+    def local_skills_service(self) -> Any:
+        """Local skills service, built on first access (TASK-21111(b))."""
+        self._build_local_skills_stack()
+        return self._local_skills_service
+
+    @local_skills_service.setter
+    def local_skills_service(self, service: Any) -> None:
+        self._local_skills_service = service
+
+    @property
+    def skills_scope_service(self) -> Any:
+        """Skills scope facade, built on first access (TASK-21111(b))."""
+        self._build_local_skills_stack()
+        return self._skills_scope_service
+
+    @skills_scope_service.setter
+    def skills_scope_service(self, service: Any) -> None:
+        self._skills_scope_service = service
+
+    def _resolve_server_credential_store(self) -> None:
+        """Build the OS-backed credential store, or the unavailable stand-in.
+
+        The body ``_wire_server_context_provider`` used to run inline. It is
+        deferred because ``build_default_server_credential_store()`` calls
+        ``keyring.get_keyring()``, whose first invocation performs backend
+        discovery (11.3 ms on macOS, including the Security.framework ctypes
+        load) -- work no boot needs unless the user actually uses server
+        mode. TASK-21111(b).
+
+        Sets both ``_server_credential_store`` and
+        ``_server_credential_store_unavailable_reason``; the fallback choice
+        and its warning are unchanged, only their timing.
+        """
         try:
-            self.server_credential_store = build_default_server_credential_store()
-            self.server_credential_store_unavailable_reason = None
+            self._server_credential_store = build_default_server_credential_store()
+            self._server_credential_store_unavailable_reason = None
         except CredentialStoreUnavailable as exc:
-            self.server_credential_store = UnavailableServerCredentialStore(str(exc))
-            self.server_credential_store_unavailable_reason = str(exc)
+            self._server_credential_store = UnavailableServerCredentialStore(str(exc))
+            self._server_credential_store_unavailable_reason = str(exc)
             logger.warning(
                 "No secure OS credential store available; server tokens will "
                 "remain config-only (reason={}).",
                 str(exc),
             )
-        self.server_context_provider = RuntimeServerContextProvider(
-            runtime_context=self.runtime_policy,
-            target_store=self.unified_mcp_target_store,
-            credential_store=self.server_credential_store,
-            app_config=self.app_config,
+
+    @property
+    def server_credential_store(self) -> Any:
+        """The app's credential store, resolved on first use (TASK-21111(b))."""
+        if self._server_credential_store is None:
+            self._resolve_server_credential_store()
+        return self._server_credential_store
+
+    @server_credential_store.setter
+    def server_credential_store(self, store: Any) -> None:
+        """Inject a credential store (tests, explicit reconfiguration).
+
+        Keeps the reason consistent with the store, so the pair can never
+        disagree the way two independently-assigned attributes could.
+        """
+        self._server_credential_store = store
+        self._server_credential_store_unavailable_reason = (
+            store.message if isinstance(store, UnavailableServerCredentialStore) else None
         )
+
+    @property
+    def server_credential_store_unavailable_reason(self) -> str | None:
+        """Why no OS credential store is in use, or None. Resolves on read."""
+        if self._server_credential_store is None:
+            self._resolve_server_credential_store()
+        return self._server_credential_store_unavailable_reason
+
+    @server_credential_store_unavailable_reason.setter
+    def server_credential_store_unavailable_reason(self, reason: str | None) -> None:
+        self._server_credential_store_unavailable_reason = reason
 
     def open_study_screen(
         self,
@@ -7796,37 +8081,22 @@ class TldwCli(
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
-        trust_store_dir = default_trust_store_dir(local_skills_store_dir)
-        trust_account_scope = skill_trust_account_scope(trust_store_dir)
-        skill_trust_marker_store, reduced_rollback_protection = (
-            build_skill_trust_marker_store_with_fallback(
-                fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
-                store_dir=trust_store_dir,
-                account_scope=trust_account_scope,
-            )
-        )
-        self.local_skill_trust_service = SkillTrustService(
-            skills_dir=local_skills_store_dir / "skills",
-            trust_store=SkillTrustStore(
-                store_dir=trust_store_dir,
-                marker_store=skill_trust_marker_store,
-            ),
-            key_cache=build_default_skill_trust_key_cache(
-                account_scope=trust_account_scope
-            ),
-            keyring_convenience_enabled=False,
-            reduced_rollback_protection=reduced_rollback_protection,
-        )
-        self.local_skills_service = LocalSkillsService(
-            store_dir=local_skills_store_dir,
-            policy_enforcer=self.service_policy_enforcer,
-            trust_service=self.local_skill_trust_service,
-        )
-        self.skills_scope_service = SkillsScopeService(
-            local_service=self.local_skills_service,
-            server_service=self.server_skills_service,
-            policy_enforcer=self.service_policy_enforcer,
+        # The local skills stack (trust service -> local service -> scope
+        # facade) is built on first access, not here: constructing the trust
+        # service performs OS keyring backend discovery TWICE (marker store +
+        # key cache) for a feature most boots never touch (TASK-21111(b)).
+        # Every consumer reads these through `getattr(app_instance, ...)` at
+        # UI time, so a property is a drop-in.
+        self._local_skill_trust_service: Any | None = None
+        self._local_skills_service: Any | None = None
+        self._skills_scope_service: Any | None = None
+        # Captured NOW, at the timing the eager build had: `_build_local_
+        # skills_stack` must not re-read collaborators that a test (or a
+        # later boot step) may reassign between construction and first use
+        # (the TASK-21108 deferral trap).
+        self._local_skills_stack_inputs = (
+            self.service_policy_enforcer,
+            self.server_skills_service,
         )
         try:
             self.server_tools_service = ServerToolsService.from_config(
