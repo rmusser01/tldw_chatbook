@@ -29,8 +29,12 @@ OPT_OUT = "TLDW_TEST_ALLOW_HF_DOWNLOADS"
 #: developer who asked for live fetches should not get a red suite for it. They
 #: skip rather than `return`, so the opt-out is visible in the run's summary
 #: instead of looking like three tests that passed while asserting nothing.
+#: Matches the root conftest and `Tests/RAG_Search/conftest.py`: this flag is
+#: truthy, not exactly "1" (TASK-21562.1).
+_TRUTHY = {"1", "true", "yes", "on"}
+
 pytestmark = pytest.mark.skipif(
-    os.environ.get(OPT_OUT) == "1",
+    os.environ.get(OPT_OUT, "").strip().lower() in _TRUTHY,
     reason=f"{OPT_OUT}=1: this session deliberately permits model downloads",
 )
 
@@ -55,10 +59,16 @@ def test_huggingface_hub_actually_reports_itself_offline() -> None:
     version, that should be a loud failure telling us to re-check how offline
     mode is decided, not a silently skipped assertion.
     """
-    from huggingface_hub import constants, is_offline_mode
+    hub = pytest.importorskip(
+        "huggingface_hub",
+        reason=(
+            "huggingface_hub is not installed, so nothing can reach the hub and "
+            "there is no offline latch to check"
+        ),
+    )
 
-    assert constants.HF_HUB_OFFLINE is True
-    assert is_offline_mode() is True
+    assert hub.constants.HF_HUB_OFFLINE is True
+    assert hub.is_offline_mode() is True
 
 
 def test_the_autouse_fixture_covers_an_already_imported_module() -> None:
@@ -68,10 +78,15 @@ def test_the_autouse_fixture_covers_an_already_imported_module() -> None:
     fixture's `sys.modules` lookup succeeds. Ordering makes this cheap: nothing
     here imports the hub stack on its own account.
     """
-    constants = sys.modules.get("huggingface_hub.constants")
-    assert constants is not None, (
-        "the previous test imported huggingface_hub, so it must be in sys.modules "
-        "-- if it is not, these tests were reordered and this one no longer "
-        "checks the already-imported path it exists for"
+    # Import it here rather than relying on a previous test having done so.
+    # The original leaned on declaration order and returned early when the
+    # lookup missed -- so running this test alone, or reordering the file,
+    # silently checked nothing (TASK-21562.1).
+    pytest.importorskip(
+        "huggingface_hub",
+        reason="huggingface_hub is not installed; the fixture has nothing to patch",
     )
+
+    constants = sys.modules.get("huggingface_hub.constants")
+    assert constants is not None, "importorskip above must have populated sys.modules"
     assert constants.HF_HUB_OFFLINE is True
