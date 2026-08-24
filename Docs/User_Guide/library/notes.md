@@ -200,10 +200,11 @@ fail closed, leave the root in attention or recovery, and do not escape the
 configured sync folder.
 
 **Manage sync folders** lists active, paused, passive, offline, attention,
-recovery, stopped, and migrated-candidate states. The declared next action is
-shown first—for example **Review migration**, **Review attention**, **Sync
-now**, **Pause**, or **Resume**. **Retarget** and **Disconnect** remain visibly
-disabled with an unavailable-in-this-release reason; no files or notes change.
+recovery, stopped, and migrated-candidate states. Use **Check changes** to scan
+an available root. **Review** appears when its changes need attention;
+legacy candidates use **Review migration**. **Pause** and **Resume** control an
+active root. **Retarget** and **Disconnect** remain visibly disabled with an
+unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
 
@@ -261,7 +262,7 @@ receipt afterward.
    synced**.
 3. Choose a local folder, direction, and local destination. Server sync remains
    unavailable until its separate capability is installed.
-4. Choose **Check folder** and review the exact safe, attention, skipped, and
+4. Choose **Check changes** and review the exact safe, attention, skipped, and
    deletion-like effects.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead.

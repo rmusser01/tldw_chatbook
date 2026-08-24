@@ -156,6 +156,7 @@ def _conflict_review(
         ),
         can_apply=blocker is LastingSyncApplyBlocker.NONE,
         apply_blocker=blocker,
+        source="root",
     )
 
 
@@ -392,14 +393,13 @@ async def test_queued_choice_keeps_button_binding_identity_across_row_replacemen
     )
 
 
-async def test_collapsed_conflict_labels_are_literal_and_history_is_durably_gated() -> (
+async def test_collapsed_conflict_labels_are_literal_and_history_stays_reachable() -> (
     None
 ):
     snapshot = replace(
         initial_lasting_sync_snapshot(lasting_available=True),
         phase="review",
         review=_conflict_review(),
-        history_available=False,
     )
     app = _Host(snapshot)
     async with app.run_test(size=(60, 20)) as pilot:
@@ -407,13 +407,30 @@ async def test_collapsed_conflict_labels_are_literal_and_history_is_durably_gate
         assert "Release [red]note[/red]" in _frame(app)
         assert "notes/release.md" in _frame(app)
         history = app.query_one("#notes-sync-history-open", Button)
-        assert history.disabled is True
-        assert "No durable conflict resolutions" in str(history.tooltip)
-
-        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
-        canvas.sync_state(replace(snapshot, history_available=True))
-        await pilot.pause()
         assert history.disabled is False
+        assert history.tooltip is None
+
+        history.press()
+        await pilot.pause()
+        assert any(
+            type(message).__name__ == "HistoryRequested" for message in app.messages
+        )
+
+
+async def test_unavailable_history_view_keeps_return_reachable() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="history",
+        review=_conflict_review(),
+        history=LastingSyncHistory("root-1", (), 1, False, True),
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+
+        assert "Resolution history is unavailable. Try again." in _frame(app)
+        assert app.query_one("#notes-sync-history-return", Button).disabled is False
 
 
 @pytest.mark.parametrize("size", ((60, 20), (120, 36)))
@@ -997,7 +1014,6 @@ async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20(
         phase="review",
         review=_conflict_review(),
         receipts=(receipt,),
-        history_available=True,
     )
     app = _Host(review_snapshot)
     async with app.run_test(size=size) as pilot:

@@ -879,7 +879,15 @@ Expected: exact TASK-97 is Done with all nine ACs checked, the worktree is clean
   a `datetime` timestamp, the active-only Notes reader hid a successfully
   written tombstone, and a restarted partial review rejected its terminal
   `NO_CHANGE` rows. Focused RED tests reproduced each before the narrow fixes.
-- The exact 12-file matrix passed: **732 passed, 8 warnings in 176.21s**. The
+- A follow-up cumulative gate added RED regressions for no-op-only Apply,
+  conflict-free duplicate observation, transient history gating, and shipped
+  control labels. The narrow fixes require a genuinely executable safe action
+  (including `MOVE_FILE`) or a non-Skip conflict choice, skip label authority
+  when no eligible conflict exists, and keep persisted-root history reachable
+  while its paged read reports empty or unavailable state. The transient
+  history probe was deleted from the runtime, controller port, and snapshot.
+- The corrected exact 12-file matrix passed: **742 passed, 8 warnings in
+  172.86s**. The
   focused private-SQLite owner/backup, legacy cutover/startup, privacy, and
   unsupported-write governance nodes passed within that matrix; the earlier
   isolated governance rerun was **10 passed, 7 warnings in 19.55s**.
@@ -893,14 +901,14 @@ Expected: exact TASK-97 is Done with all nine ACs checked, the worktree is clean
   receipt Dismiss/Undo, restart, and durable history. The shared config,
   ChaChaNotes DB, and Notes sync-state DB SHA-256 manifests match exactly before
   and after; only the four expected scratch-root files were accessed.
-- Cumulative merge-base review found and fixed the restarted mixed-plan defect
-  above plus one inaccurate draft-doc claim that recovery was encrypted.
+- Cumulative merge-base review found and fixed the restarted mixed-plan defect,
+  the inaccurate draft-doc encryption claim, and the four follow-up P2s above;
+  the correction self-review also caught and covered executable `MOVE_FILE`.
   Correctness, privacy, recovery, restart truth, focus/keyboard reachability,
   and plan/spec compliance have no remaining P0-P2 findings. The full ponytail
   pass retained the joined fixture helpers as test boundary setup, added no
-  dependency or abstraction, and reduced the production fixes to boundary
-  normalization, tombstone verification, and accepting reviewed no-ops without
-  executing or counting them.
+  dependency or abstraction, and deleted the redundant transient-history
+  query rather than replacing it.
 
 ---
 

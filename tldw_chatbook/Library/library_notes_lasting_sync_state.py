@@ -474,7 +474,6 @@ class LibraryNotesLastingSyncSnapshot:
     history: LastingSyncHistory = LastingSyncHistory()
     root_page: int = 1
     root_page_count: int = 1
-    history_available: bool = False
     conflict_focus_binding_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -506,8 +505,6 @@ class LibraryNotesLastingSyncSnapshot:
             raise TypeError("receipts_unavailable must be a boolean")
         if type(self.history) is not LastingSyncHistory:
             raise TypeError("history must be a LastingSyncHistory")
-        if type(self.history_available) is not bool:
-            raise TypeError("history_available must be a boolean")
         if self.conflict_focus_binding_id is not None:
             validate_notes_sync_opaque_id(
                 self.conflict_focus_binding_id,
@@ -786,7 +783,17 @@ def _apply_blocker(
         for attention in plan.attention
     ):
         return LastingSyncApplyBlocker.UNSUPPORTED_ATTENTION
-    if not plan.safe_actions and not any(
+    if not any(
+        action.kind
+        in {
+            NotesSyncActionKind.CREATE_NOTE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            NotesSyncActionKind.CREATE_FILE,
+            NotesSyncActionKind.UPDATE_FILE,
+            NotesSyncActionKind.MOVE_FILE,
+        }
+        for action in plan.safe_actions
+    ) and not any(
         selection.choice is not NotesSyncConflictChoice.SKIP for selection in selections
     ):
         return LastingSyncApplyBlocker.NOTHING_SELECTED

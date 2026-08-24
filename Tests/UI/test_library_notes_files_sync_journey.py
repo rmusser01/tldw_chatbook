@@ -659,10 +659,6 @@ async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_mo
             assert (root_id, observation_token) == ("root-1", "c" * 64)
             return (RuntimeConflictLabel("bind-1", "Release note", "notes/release.md"),)
 
-        async def conflict_history_available(self, root_id: str) -> bool:
-            assert root_id == "root-1"
-            return True
-
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
     app.notes_sync_runtime_owner = _ComparisonRuntime()
@@ -782,10 +778,6 @@ async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
         ) -> tuple[RuntimeConflictLabel, ...]:
             assert (root_id, observation_token) == ("root-1", token)
             return ()
-
-        async def conflict_history_available(self, root_id: str) -> bool:
-            assert root_id == "root-1"
-            return bool(self.receipts)
 
         async def active_conflict_receipts(
             self, root_id: str
@@ -911,10 +903,6 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         ) -> tuple[RuntimeConflictLabel, ...]:
             del root_id, observation_token
             return ()
-
-        async def conflict_history_available(self, root_id: str) -> bool:
-            del root_id
-            return False
 
         async def abandon_setup(self, root_id: str) -> None:
             self.calls.append(("abandon_setup", root_id))
@@ -1087,9 +1075,6 @@ async def test_check_again_routes_to_its_rendered_review_source(
         ) -> tuple[RuntimeConflictLabel, ...]:
             return ()
 
-        async def conflict_history_available(self, _root_id: str) -> bool:
-            return False
-
         async def apply_reviewed(self, *_args: object) -> ConflictApplyResult:
             raise ValueError("stale_review")
 
@@ -1204,9 +1189,6 @@ async def test_failed_persisted_check_again_uses_rendered_source_in_mounted_scre
             self, _root_id: str, _token: str
         ) -> tuple[RuntimeConflictLabel, ...]:
             return ()
-
-        async def conflict_history_available(self, _root_id: str) -> bool:
-            return False
 
     runtime = _FailedCheckRuntime()
     app = _build_test_app()

@@ -76,6 +76,12 @@ def test_setup_contract_rejects_global_winner_and_automatic_interval_policy() ->
     assert "auto_sync" not in names
 
 
+def test_snapshot_has_no_transient_history_availability_gate() -> None:
+    snapshot = initial_lasting_sync_snapshot(lasting_available=True)
+
+    assert "history_available" not in {field.name for field in fields(type(snapshot))}
+
+
 def test_review_projects_bounded_safe_attention_skip_and_managed_move_rows() -> None:
     plan = ReconciliationPlan(
         root_id="root-1",
@@ -133,6 +139,58 @@ def test_review_page_is_bounded() -> None:
     assert [row.item_id for row in build_reconciliation_review(plan, page=99).rows] == [
         "b-4"
     ]
+
+
+def test_no_change_rows_never_enable_a_fictitious_apply() -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-noop", NotesSyncActionKind.NO_CHANGE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    review = build_reconciliation_review(plan)
+
+    assert review.can_apply is False
+    assert review.apply_blocker.value == "nothing_selected"
+
+
+def test_no_change_beside_a_real_safe_action_keeps_apply_enabled() -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-noop", NotesSyncActionKind.NO_CHANGE, "bind-1"),
+            NotesSyncAction("act-real", NotesSyncActionKind.UPDATE_NOTE, "bind-2"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    assert build_reconciliation_review(plan).can_apply is True
+
+
+def test_move_file_safe_action_keeps_apply_enabled() -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-move", NotesSyncActionKind.MOVE_FILE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    assert build_reconciliation_review(plan).can_apply is True
 
 
 @pytest.mark.parametrize(
@@ -380,13 +438,11 @@ def test_conflict_row_and_snapshot_bound_review_labels_and_focus_request() -> No
     )
     snapshot = replace(
         initial_lasting_sync_snapshot(),
-        history_available=True,
         conflict_focus_binding_id="bind-1",
     )
 
     assert row.conflict_title == "Release [red]note[/red]"
     assert row.conflict_relative_path == "notes/release.md"
-    assert snapshot.history_available is True
     assert snapshot.conflict_focus_binding_id == "bind-1"
     with pytest.raises(ValueError, match="conflict_title"):
         replace(row, conflict_title="x" * 161)

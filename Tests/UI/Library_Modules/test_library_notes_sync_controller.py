@@ -32,12 +32,15 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
     NotesSyncRootRuntimeSnapshot,
+    NotesSyncRuntimeOwner,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictHistoryRow,
     RuntimeConflictLabel,
     RuntimeConflictReceipt,
 )
 from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+    InertLastingSyncRuntime,
+    LastingSyncRuntimePort,
     LibraryNotesSyncController,
 )
 
@@ -48,6 +51,12 @@ TOKEN_2 = "c" * 64
 
 async def test_runtime_snapshot_is_the_only_availability_source() -> None:
     assert "lasting_available" not in signature(LibraryNotesSyncController).parameters
+
+
+async def test_history_reachability_has_no_transient_runtime_probe() -> None:
+    assert not hasattr(LastingSyncRuntimePort, "conflict_history_available")
+    assert not hasattr(InertLastingSyncRuntime, "conflict_history_available")
+    assert not hasattr(NotesSyncRuntimeOwner, "conflict_history_available")
 
 
 @dataclass
@@ -217,10 +226,6 @@ class _Runtime:
         self.calls.append(("resolution_history", root_id, limit, offset))
         return self.history.get(offset, ())
 
-    async def conflict_history_available(self, root_id: str) -> bool:
-        self.calls.append(("conflict_history_available", root_id))
-        return bool(self.history.get(0, ()))
-
     async def activate_root(
         self, root_id: str, authorization: object
     ) -> NotesSyncControlResult:
@@ -332,15 +337,107 @@ async def test_check_and_apply_reviewed_use_observation_token_and_selected_actio
 
     assert runtime.calls == [
         ("check_root", "root-1"),
-        ("conflict_labels", "root-1", TOKEN),
-        ("conflict_history_available", "root-1"),
         ("apply_reviewed", "root-1", TOKEN, ("act-1",), ()),
         ("active_conflict_receipts", "root-1"),
-        ("conflict_labels", "root-1", TOKEN_2),
-        ("conflict_history_available", "root-1"),
     ]
     assert controller.snapshot.phase == "receipt"
     assert "1 applied" in controller.snapshot.receipt_line
+
+
+async def test_conflict_free_check_skips_the_second_authority_scan() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_root("root-1")
+
+    assert [call[0] for call in runtime.calls].count("check_root") == 1
+    assert not any(call[0] == "conflict_labels" for call in runtime.calls)
+
+
+async def test_eligible_conflict_check_loads_labels_exactly_once() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_root("root-1")
+
+    assert [call[0] for call in runtime.calls].count("check_root") == 1
+    assert [call[0] for call in runtime.calls].count("conflict_labels") == 1
+
+
+async def test_no_change_only_review_cannot_apply_or_create_a_receipt() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-noop", NotesSyncActionKind.NO_CHANGE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_root("root-1")
+    await controller.apply_reviewed("root-1", TOKEN)
+
+    assert controller.snapshot.review.can_apply is False
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.receipts == ()
+    assert not any(call[0] == "apply_reviewed" for call in runtime.calls)
+
+
+async def test_mixed_no_change_and_real_action_counts_only_the_real_action() -> None:
+    runtime = _Runtime()
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-noop", NotesSyncActionKind.NO_CHANGE, "bind-1"),
+            NotesSyncAction("act-real", NotesSyncActionKind.UPDATE_NOTE, "bind-2"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+    runtime.check_plan = plan
+    runtime.apply_result = ConflictApplyResult(
+        (
+            NotesSyncExecutionResult(
+                "operation-1", NotesSyncOperationState.COMPLETED, False
+            ),
+        ),
+        1,
+        0,
+        0,
+        False,
+        False,
+        False,
+        replace(plan, observation_token=TOKEN_2, safe_actions=()),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_root("root-1")
+    await controller.apply_reviewed("root-1", TOKEN)
+
+    apply = next(call for call in runtime.calls if call[0] == "apply_reviewed")
+    assert apply[3] == ("act-noop", "act-real")
+    assert controller.snapshot.receipt_line.startswith("1 applied")
 
 
 async def test_migration_review_is_activation_typed_and_uses_activate_path() -> None:
@@ -368,8 +465,6 @@ async def test_migration_review_is_activation_typed_and_uses_activate_path() -> 
     assert controller.snapshot.review.activation is True
     assert runtime.calls == [
         ("check_root", root_id),
-        ("conflict_labels", root_id, TOKEN),
-        ("conflict_history_available", root_id),
         ("activate_root", root_id, TOKEN),
     ]
 
@@ -823,9 +918,7 @@ async def test_conflict_selection_stages_without_runtime_and_survives_paging() -
     assert controller.snapshot.review.rows[0].selected_label == "Selected: Keep both"
 
 
-async def test_check_projects_exact_collapsed_labels_and_durable_history_availability() -> (
-    None
-):
+async def test_check_projects_exact_collapsed_labels() -> None:
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan()
     runtime.labels = (
@@ -853,14 +946,10 @@ async def test_check_projects_exact_collapsed_labels_and_durable_history_availab
         "Release note",
         "notes/release.md",
     )
-    assert controller.snapshot.history_available is True
     assert ("conflict_labels", "root-1", TOKEN) in runtime.calls
-    assert ("conflict_history_available", "root-1") in runtime.calls
 
 
-async def test_failed_review_fact_projection_disables_history_without_calling_compare() -> (
-    None
-):
+async def test_failed_review_fact_projection_stays_read_only() -> None:
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan()
 
@@ -868,7 +957,6 @@ async def test_failed_review_fact_projection_disables_history_without_calling_co
         raise RuntimeError("unavailable")
 
     runtime.conflict_labels = unavailable
-    runtime.conflict_history_available = unavailable
     controller = LibraryNotesSyncController(
         runtime=runtime, import_controller=_ImportController()
     )
@@ -876,7 +964,6 @@ async def test_failed_review_fact_projection_disables_history_without_calling_co
     await controller.check_root("root-1")
 
     assert controller.snapshot.review.rows[0].conflict_title == ""
-    assert controller.snapshot.history_available is False
     assert not any(call[0] == "compare_conflict" for call in runtime.calls)
 
 
@@ -1631,10 +1718,7 @@ async def test_out_of_order_root_checks_and_remounted_error_publish_nothing_stal
     assert len(published) == count
 
 
-@pytest.mark.parametrize("delayed_fact", ("labels", "history"))
-async def test_superseded_review_facts_cannot_clobber_new_root_projection(
-    delayed_fact: str,
-) -> None:
+async def test_superseded_review_labels_cannot_clobber_new_root_projection() -> None:
     runtime = _Runtime()
     facts_started = asyncio.Event()
     release_facts = asyncio.Event()
@@ -1646,20 +1730,13 @@ async def test_superseded_review_facts_cannot_clobber_new_root_projection(
         )
 
     async def labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
-        if root_id == "root-1" and delayed_fact == "labels":
+        if root_id == "root-1":
             facts_started.set()
             await release_facts.wait()
         return (RuntimeConflictLabel("bind-1", root_id, f"{token}.md"),)
 
-    async def history_available(root_id: str) -> bool:
-        if root_id == "root-1" and delayed_fact == "history":
-            facts_started.set()
-            await release_facts.wait()
-        return root_id == "root-2"
-
     runtime.check_root = check
     runtime.conflict_labels = labels
-    runtime.conflict_history_available = history_available
     published: list[object] = []
     controller = LibraryNotesSyncController(
         runtime=runtime,
@@ -2513,6 +2590,26 @@ async def test_history_sentinel_failure_fails_closed() -> None:
     assert controller.snapshot.history.unavailable is True
     assert controller.snapshot.history.rows == ()
     assert controller.snapshot.history.has_next is False
+
+
+async def test_transient_history_read_failure_keeps_return_to_review_safe() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+
+    async def unavailable(*_args: object, **_kwargs: object):
+        raise OSError("history unavailable")
+
+    runtime.resolution_history = unavailable
+
+    assert await controller.open_resolution_history("root-1", TOKEN) is True
+    assert controller.snapshot.phase == "history"
+    assert controller.snapshot.history.unavailable is True
+    assert controller.return_from_resolution_history("root-1", TOKEN, 1) is True
+    assert controller.snapshot.phase == "review"
 
 
 async def test_stale_history_sentinel_cannot_overwrite_newer_page() -> None:

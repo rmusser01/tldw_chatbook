@@ -100,8 +100,6 @@ class LastingSyncRuntimePort(Protocol):
         now: int | None = None,
     ) -> tuple[RuntimeConflictHistoryRow, ...]: ...
 
-    async def conflict_history_available(self, root_id: str) -> bool: ...
-
     async def activate_root(
         self, root_id: str, authorization: object
     ) -> NotesSyncControlResult: ...
@@ -186,9 +184,6 @@ class InertLastingSyncRuntime:
         offset: int = 0,
         now: int | None = None,
     ) -> tuple[RuntimeConflictHistoryRow, ...]:
-        return await self._blocked()
-
-    async def conflict_history_available(self, root_id: str) -> bool:
         return await self._blocked()
 
     async def activate_root(
@@ -361,14 +356,7 @@ class LibraryNotesSyncController:
 
     async def _load_review_facts(
         self, plan: ReconciliationPlan
-    ) -> tuple[dict[str, RuntimeConflictLabel], bool]:
-        labels = await self._runtime.conflict_labels(
-            plan.root_id, plan.observation_token
-        )
-        if type(labels) is not tuple or any(
-            type(label) is not RuntimeConflictLabel for label in labels
-        ):
-            raise RuntimeError("invalid conflict label projection")
+    ) -> dict[str, RuntimeConflictLabel]:
         managed = {effect.binding_id for effect in plan.managed_placement_effects}
         eligible = {
             attention.binding_id
@@ -380,18 +368,19 @@ class LibraryNotesSyncController:
                 managed=attention.binding_id in managed,
             )
         }
+        if not eligible:
+            return {}
+        labels = await self._runtime.conflict_labels(
+            plan.root_id, plan.observation_token
+        )
+        if type(labels) is not tuple or any(
+            type(label) is not RuntimeConflictLabel for label in labels
+        ):
+            raise RuntimeError("invalid conflict label projection")
         projected = {label.binding_id: label for label in labels}
         if len(projected) != len(labels) or set(projected) != eligible:
             raise RuntimeError("incomplete conflict label projection")
-        try:
-            history_available = await self._runtime.conflict_history_available(
-                plan.root_id
-            )
-            if type(history_available) is not bool:
-                raise RuntimeError("invalid conflict history availability")
-        except Exception:
-            history_available = False
-        return projected, history_available
+        return projected
 
     async def _install_review(
         self,
@@ -406,7 +395,7 @@ class LibraryNotesSyncController:
         try:
             if expected_root_id is not None and plan.root_id != expected_root_id:
                 raise RuntimeError("review root changed")
-            labels, history_available = await self._load_review_facts(plan)
+            labels = await self._load_review_facts(plan)
         except Exception:
             if not self._lifecycle_is_current(expected_root_id, epoch):
                 return None
@@ -419,7 +408,6 @@ class LibraryNotesSyncController:
                 review=build_reconciliation_review(
                     plan, stale=True, activation=activation
                 ),
-                history_available=False,
                 conflict_focus_binding_id=None,
             )
             self._state = replace(
@@ -446,17 +434,9 @@ class LibraryNotesSyncController:
                 labels=labels,
                 selections=selections,
             ),
-            history_available=history_available,
             conflict_focus_binding_id=None,
         )
         return True
-
-    async def _history_available(self, root_id: str) -> bool:
-        try:
-            available = await self._runtime.conflict_history_available(root_id)
-        except Exception:
-            return False
-        return available if type(available) is bool else False
 
     @staticmethod
     def _first_conflict_focus(plan: ReconciliationPlan) -> tuple[str, int] | None:
@@ -533,7 +513,6 @@ class LibraryNotesSyncController:
             receipts=(),
             receipts_unavailable=False,
             history=LastingSyncHistory(),
-            history_available=False,
         )
 
     def _switch_projection_root(self, root_id: str) -> None:
@@ -1522,9 +1501,6 @@ class LibraryNotesSyncController:
                 row for row in self._state.receipts if row.operation_id != operation_id
             )
             unavailable = self._state.receipts_unavailable
-        history_available = await self._history_available(root_id)
-        if not self._lifecycle_is_current(root_id, epoch):
-            return
         self._state = replace(
             self._state,
             receipts=receipts,
@@ -1534,7 +1510,6 @@ class LibraryNotesSyncController:
                 if not unavailable
                 else "Receipt dismissed; fresh receipts are unavailable."
             ),
-            history_available=history_available,
         )
         self._publish()
 
@@ -1647,9 +1622,6 @@ class LibraryNotesSyncController:
             status = "Undo finished, but its fresh projection is unavailable."
         if unavailable:
             status = "Undo finished; fresh receipts are unavailable."
-        history_available = await self._history_available(root_id)
-        if not self._lifecycle_is_current(root_id, epoch):
-            return
         self.refresh_roots(publish=False)
         self._state = replace(
             self._state,
@@ -1663,7 +1635,6 @@ class LibraryNotesSyncController:
                 else self._disable_local_history_action(operation_id, undone=True)
             ),
             status_line=status,
-            history_available=history_available,
         )
         self._publish()
 
@@ -1744,16 +1715,10 @@ class LibraryNotesSyncController:
             root_id, epoch
         ) or not self._history_is_current(root_id, page, generation):
             return
-        history_available = await self._history_available(root_id)
-        if not self._lifecycle_is_current(
-            root_id, epoch
-        ) or not self._history_is_current(root_id, page, generation):
-            return
         self._state = replace(
             self._state,
             phase="history",
             history=history,
-            history_available=history_available,
             status_line=status,
         )
         self._publish()

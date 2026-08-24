@@ -963,6 +963,7 @@ async def test_conflict_labels_reobserve_exact_authority_without_building_conten
     assert labels == (
         RuntimeConflictLabel("binding-1", "Private title", "binding-1.md"),
     )
+    assert adapter.observe_calls == ["root-1"]
     assert adapter.label_builds == 1
     assert adapter.comparison_builds == 0
     assert adapter.released == [token]

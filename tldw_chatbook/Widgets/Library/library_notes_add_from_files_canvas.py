@@ -860,11 +860,14 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     )
             root_id = self._root_id()
             if root_id:
-                history_available = self.snapshot.history_available
+                history_reachable = self.snapshot.review.source in {
+                    "root",
+                    "migration",
+                }
                 yield _ReviewActionButton(
                     (
                         "Resolution history"
-                        if history_available
+                        if history_reachable
                         else "○ Resolution history"
                     ),
                     review_root_id=root_id,
@@ -873,11 +876,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     id="notes-sync-history-open",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=not history_available,
+                    disabled=not history_reachable,
                     tooltip=(
                         None
-                        if history_available
-                        else "No durable conflict resolutions are available for this root."
+                        if history_reachable
+                        else "Resolution history starts after this root is activated."
                     ),
                 )
             yield Button(
@@ -889,11 +892,14 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         elif phase == "receipt":
             root_id = self._root_id()
             if root_id:
-                history_available = self.snapshot.history_available
+                history_reachable = self.snapshot.review.source in {
+                    "root",
+                    "migration",
+                }
                 yield _ReviewActionButton(
                     (
                         "Resolution history"
-                        if history_available
+                        if history_reachable
                         else "○ Resolution history"
                     ),
                     review_root_id=root_id,
@@ -902,11 +908,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     id="notes-sync-history-open",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=not history_available,
+                    disabled=not history_reachable,
                     tooltip=(
                         None
-                        if history_available
-                        else "No durable conflict resolutions are available for this root."
+                        if history_reachable
+                        else "Resolution history starts after this root is activated."
                     ),
                 )
             yield Button(
@@ -1025,16 +1031,15 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         history = self.query("#notes-sync-history-open")
         if history:
             history_button = history.first(Button)
-            history_button.disabled = not snapshot.history_available
+            history_reachable = snapshot.review.source in {"root", "migration"}
+            history_button.disabled = not history_reachable
             history_button.label = (
-                "Resolution history"
-                if snapshot.history_available
-                else "○ Resolution history"
+                "Resolution history" if history_reachable else "○ Resolution history"
             )
             history_button.tooltip = (
                 None
-                if snapshot.history_available
-                else "No durable conflict resolutions are available for this root."
+                if history_reachable
+                else "Resolution history starts after this root is activated."
             )
 
         comparison = snapshot.comparison

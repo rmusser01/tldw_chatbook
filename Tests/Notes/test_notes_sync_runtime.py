@@ -2289,13 +2289,23 @@ async def test_manual_apply_accepts_reviewed_no_change_rows_without_executing_th
     tmp_path: Path,
 ) -> None:
     unchanged = _input(file_digest=_A, note_digest=_A)
-    adapter = _Adapter([unchanged, unchanged, unchanged, unchanged])
+    changed = replace(
+        unchanged.bindings[0],
+        binding_id="binding-2",
+        note_id="note-2",
+        relative_path="second.md",
+        baseline_relative_path="second.md",
+        file_digest=_B,
+    )
+    mixed = replace(unchanged, bindings=(*unchanged.bindings, changed))
+    adapter = _Adapter([mixed, mixed, mixed, mixed])
     owner, _, _ = _owner(store=_store(tmp_path), admitted=True, adapter=adapter)
     await owner.start()
     adapter.executor.executed.clear()
     reviewed = await owner.check_root("root-1")
     assert [action.kind for action in reviewed.safe_actions] == [
-        NotesSyncActionKind.NO_CHANGE
+        NotesSyncActionKind.NO_CHANGE,
+        NotesSyncActionKind.UPDATE_NOTE,
     ]
 
     result = await owner.apply_reviewed(
@@ -2304,9 +2314,11 @@ async def test_manual_apply_accepts_reviewed_no_change_rows_without_executing_th
         tuple(action.action_id for action in reviewed.safe_actions),
     )
 
-    assert result.safe_completed == 0
+    assert result.safe_completed == 1
     assert result.attention_remains is False
-    assert adapter.executor.executed == []
+    assert [action.kind for action in adapter.executor.executed] == [
+        NotesSyncActionKind.UPDATE_NOTE
+    ]
     await owner.shutdown()
 
 

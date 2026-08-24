@@ -1163,19 +1163,6 @@ class NotesSyncRuntimeOwner:
             )
         return tuple(projected)
 
-    async def conflict_history_available(self, root_id: str) -> bool:
-        """Report whether durable conflict history contains at least one row."""
-
-        validate_notes_sync_opaque_id(root_id, field_name="root_id")
-        records = await asyncio.to_thread(
-            self._store.list_resolution_history,
-            root_id,
-            limit=1,
-            offset=0,
-            now=time.time_ns(),
-        )
-        return bool(records)
-
     async def _inspect_resolution_undo(
         self,
         executor: NotesSyncExecutor | None,
