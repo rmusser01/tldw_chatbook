@@ -28,6 +28,8 @@ The live Chat-RAG pipeline merge in `RAG_Search/pipeline_builder_simple.py` repl
 
 ## Implementation Plan
 
+Detailed execution plan: `Docs/superpowers/plans/2026-08-24-task-3501-pipeline-fusion-provenance.md`
+
 1. Record and review the narrow call-site design in `Docs/superpowers/specs/2026-08-24-task-3501-pipeline-fusion-provenance-design.md`.
 2. Extend the real parallel `rrf_merge` regression with distinct raw scores for overlapping, FTS-only, and vector-only rows; prove the pre-fix path fails the provenance assertions and each absent leg is recorded as `None`.
 3. Snapshot each available leg score before mutating the selected result, then add those snapshots to the existing `hybrid_fusion` metadata without changing selection, ranking, citations, or non-hybrid merges.
