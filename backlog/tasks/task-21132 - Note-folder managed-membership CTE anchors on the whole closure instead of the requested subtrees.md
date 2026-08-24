@@ -26,3 +26,33 @@ so latency not freeze).
 
 - [ ] The CTE anchor is seeded from the requested ids' subtrees; results identical on existing fixtures
 - [ ] A timing probe on a deep synthetic tree shows the reduction
+
+## Re-verification against dev 2be18842a (2026-08-23) — RECOMMEND CANCEL
+
+An independent read-only pass re-checked this finding. **The mechanism is real; the cost is
+effectively zero for the default user; and the rewrite is a query inversion, not a filter.**
+
+**Confirmed**: `Notes/note_folder_repository.py:1889-1919` — the recursive anchor selects all
+managed memberships and applies the requested ids only at the end. Called twice per tree refresh
+(`:383-385`, `:654-656`, with `library_screen.py:12096-12180` issuing two `load_batch` calls).
+
+**But the magnitude does not hold up.** The recursion walks **upward** (child → parent), so the
+closure is bounded by *distinct managed folders x tree depth* — not by the folder tree and not by
+note count. Managed memberships exist only where a notes-sync owner has placed notes. For a user
+with no sync owners — the default, and TASK-21112 has since made zero-profile boots create no sync
+state at all — the anchor is **empty**, served by the partial index
+`idx_note_folder_memberships_managed_owner`, and the query costs one index probe. It is also
+already off the event loop: `Notes/notes_scope_service.py:248-250` wraps the call in
+`asyncio.to_thread`. So "every Notes-tree interaction walks the entire managed-membership closure"
+is true only for a heavy sync user, and even then it is milliseconds on a worker thread.
+
+**And the fix is riskier than billed.** Because the recursion runs upward, seeding it with the
+requested ids means *inverting* it to descend via `parent_id` — a different query, not a filtered
+one. Equivalence hinges on a quirk: the current query tests `folder.deleted = 0` on the *source*
+row, so a deleted parent still enters the result set but cannot recurse further. A naive downward
+rewrite will not reproduce that, and "results identical on existing fixtures" is too weak a bar —
+it would need fixtures with a deleted intermediate folder, a deleted leaf-managed folder, and a
+managed membership under a deleted ancestor.
+
+**Recommendation**: cancel, or downgrade to a "clean this up when someone is next in this file"
+note. This is a correctness-of-shape improvement, not a performance fix.
