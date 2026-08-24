@@ -27,9 +27,13 @@ _UNSET = object()
 # operation degrades to a warning instead of hanging application shutdown.
 _LIFECYCLE_SETTLE_TIMEOUT = 5.0
 
-# Held connections are keyed by thread id. Worker pools reuse threads, so this
-# map stays small; the purge only runs once it grows past this many entries.
-_CONNECTION_PURGE_THRESHOLD = 32
+# Held connections are keyed by thread id and released by close(). There is no
+# dead-thread reaper: the scope service dispatches every backend call onto ONE
+# executor thread (see writing_scope_service._backend_executor), so the map
+# holds one entry for all UI-driven work. A reaper was tried and removed in
+# review -- "dead" via threading.enumerate() cannot see a
+# _thread.start_new_thread worker, so it could close a LIVE connection, and
+# recycled OS thread ids meant its own trigger never fired.
 
 _ENTITY_TABLES = {
     "project": ("writing_projects", "project"),
@@ -135,34 +139,25 @@ class LocalWritingService:
                 return held
 
         opened = self._open_connection()
-        stale: list[sqlite3.Connection] = []
+        superseded: sqlite3.Connection | None = None
         with self._lifecycle:
             existing = self._connections.get(ident)
             if existing is not None:
-                stale.append(opened)
+                superseded = opened
                 opened = existing
             else:
                 self._connections[ident] = opened
-                stale.extend(self._purge_finished_threads_locked())
-        for conn in stale:
-            self._close_quietly(conn)
+        if superseded is not None:
+            self._close_quietly(superseded)
         return opened
 
-    def _purge_finished_threads_locked(self) -> list[sqlite3.Connection]:
-        """Detach connections whose owning thread has exited.
-
-        Called under ``_lifecycle``. Returns the detached connections so the
-        caller can close them outside the lock.
-        """
-        if len(self._connections) <= _CONNECTION_PURGE_THRESHOLD:
-            return []
-        live = {thread.ident for thread in threading.enumerate()}
-        detached: list[sqlite3.Connection] = []
-        for ident, conn in list(self._connections.items()):
-            if ident not in live:
+    def _discard_connection(self, conn: sqlite3.Connection) -> None:
+        """Detach a connection this thread can no longer use, and close it."""
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._connections.get(ident) is conn:
                 self._connections.pop(ident, None)
-                detached.append(conn)
-        return detached
+        self._close_quietly(conn)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a raw connection without the first-use schema ensure.
@@ -227,12 +222,11 @@ class LocalWritingService:
 
         self._begin_operation()
         try:
-            conn = self._connect()
             serialise = self._memory_tx_lock if self._is_memory else None
             if serialise is not None:
                 serialise.acquire()
             try:
-                conn.execute("BEGIN")
+                conn = self._begin()
                 state.depth = 1
                 state.conn = conn
                 try:
@@ -249,6 +243,37 @@ class LocalWritingService:
                     serialise.release()
         finally:
             self._end_operation()
+
+    def _begin(self) -> sqlite3.Connection:
+        """Open a transaction on this thread's connection, healing it if needed.
+
+        Two states can outlive an operation and would otherwise poison the held
+        connection for the rest of the process:
+
+        - the connection was closed by ``close()`` between operations -- the
+          store re-arms, so the stale handle is dropped and a fresh one opened;
+        - a transaction was left open because a COMMIT *and* its ROLLBACK both
+          failed -- rolling back here clears it instead of failing every later
+          operation on this thread with "within a transaction".
+
+        Both heal once and then retry; a second failure propagates.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN")
+            return conn
+        except sqlite3.ProgrammingError:
+            self._discard_connection(conn)
+            conn = self._connect()
+        except sqlite3.OperationalError as exc:
+            if "within a transaction" not in str(exc):
+                raise
+            logger.debug(
+                "Local writing store found a transaction left open; clearing it"
+            )
+            self._rollback_quietly(conn)
+        conn.execute("BEGIN")
+        return conn
 
     def _begin_operation(self) -> None:
         """Admit one operation, waiting out an in-flight close()."""
@@ -298,6 +323,17 @@ class LocalWritingService:
         autosave running on a worker thread, so this waits for operations owned
         by other threads before it touches anything. The store re-arms: a later
         operation transparently reopens.
+
+        If the wait expires, the still-busy threads KEEP their connections
+        (review fix: closing them anyway produced ``ProgrammingError: Cannot
+        operate on a closed database`` inside the wedged operation, surfacing as
+        an unretrieved-task traceback). Those connections are released when the
+        operation finishes and the process exits; committed data is already
+        durable under WAL and an open transaction rolls back on exit.
+
+        Blocking: this waits up to ``_LIFECYCLE_SETTLE_TIMEOUT``. Callers on the
+        event loop must run it through ``asyncio.to_thread`` -- see
+        ``TldwCli._close_local_writing_service``.
         """
         ident = threading.get_ident()
         with self._lifecycle:
@@ -317,18 +353,30 @@ class LocalWritingService:
                     ),
                     timeout=_LIFECYCLE_SETTLE_TIMEOUT,
                 )
-                connections = list(self._connections.values())
-                self._connections.clear()
-                memory_conn = self._memory_conn
-                self._memory_conn = None
-                if self._is_memory:
-                    # The in-memory database dies with its connection, so the
-                    # re-armed store has to rebuild the schema.
-                    self._schema_ready = False
+                busy = {owner for owner in self._active_operations if owner != ident}
+                connections = [
+                    conn
+                    for owner, conn in list(self._connections.items())
+                    if owner not in busy
+                ]
+                for owner in list(self._connections):
+                    if owner not in busy:
+                        self._connections.pop(owner, None)
+                # The shared in-memory connection can only be released when no
+                # other thread is mid-transaction on it.
+                memory_conn = None
+                if not busy:
+                    memory_conn = self._memory_conn
+                    self._memory_conn = None
+                    if self._is_memory:
+                        # The in-memory database dies with its connection, so
+                        # the re-armed store has to rebuild the schema.
+                        self._schema_ready = False
             if not settled:
                 logger.warning(
-                    "Local writing store closed with operations still in "
-                    f"flight after {_LIFECYCLE_SETTLE_TIMEOUT}s"
+                    f"Local writing store left {len(busy)} connection(s) open: "
+                    "operations were still in flight after "
+                    f"{_LIFECYCLE_SETTLE_TIMEOUT}s"
                 )
             for conn in connections:
                 self._close_quietly(conn)

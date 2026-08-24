@@ -12527,21 +12527,25 @@ class TldwCli(
         if client is not None and getattr(client, "sessions", None):
             await client.disconnect_all()
 
-    def _close_local_writing_service(self) -> None:
+    async def _close_local_writing_service(self) -> None:
         """Release the writing suite's held SQLite connections (TASK-21125).
 
         Peeks the slot rather than reading through any accessor: a service that
-        was never wired must not be constructed purely to close it. ``close()``
-        itself waits for an autosave still running on a worker thread, and the
-        store re-arms, so a late operation reopens instead of hitting a closed
-        connection. A close failure is logged (type name only) and never
-        allowed to abort the rest of unmount.
+        was never wired must not be constructed purely to close it. A close
+        failure is logged (type name only) and never allowed to abort the rest
+        of unmount.
+
+        Runs on a thread, NOT inline. ``close()`` waits for an autosave still
+        running on a worker thread, and a synchronous call here froze the event
+        loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
+        ticker fired zero times) -- which also starved the very operation it was
+        waiting for.
         """
         service = getattr(self, "local_writing_service", None)
         if service is None:
             return
         try:
-            service.close()
+            await asyncio.to_thread(service.close)
         except Exception as exc:
             self.loguru_logger.error(
                 f"Error closing local writing service: {type(exc).__name__}"
@@ -13160,7 +13164,7 @@ class TldwCli(
             store.close()
 
         # Release the writing suite's held SQLite connections (TASK-21125).
-        self._close_local_writing_service()
+        await self._close_local_writing_service()
 
         # Nothing this app owns is left to ask; a signal from here on has
         # no orderly path to offer and should unwind the main thread.

@@ -1,3 +1,4 @@
+import asyncio
 import threading
 
 import pytest
@@ -870,3 +871,102 @@ async def test_writing_scope_service_awaits_async_backends_without_a_thread_hop(
     await scope.list_projects(mode="server")
 
     assert calls == [loop_thread]
+
+
+# --- TASK-21125 review: the offloaded backend stays serialised -------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_version_updates_do_not_silently_lose_one(
+    tmp_path, monkeypatch
+):
+    """MAJOR-1 regression: exactly one of N same-version writers may win.
+
+    `_update_row` reads + version-checks in one committed transaction and
+    UPDATEs in the next. On base every scope call ran inline on the event loop,
+    so those halves could never interleave; dispatching on the default thread
+    pool reintroduced the window as a real lost update (measured 59/60: both
+    writers told "saved", `version` advanced once, one writer's content gone).
+    The single-thread backend executor restores the ordering guarantee.
+
+    The window is widened deterministically: every writer parks on a barrier
+    inside the version check. Serialised, the first writer times out alone and
+    the rest then see the advanced version. Concurrent, they all clear the check
+    holding the same stale version -- which is the defect.
+    """
+    writers = 8
+    gate = threading.Barrier(writers, timeout=0.25)
+    original_check = LocalWritingService._check_version
+
+    def _synchronised_check(row, expected_version):
+        try:
+            gate.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return original_check(row, expected_version)
+
+    monkeypatch.setattr(
+        LocalWritingService, "_check_version", staticmethod(_synchronised_check)
+    )
+
+    service = LocalWritingService(tmp_path / "writing.db")
+    scope = WritingScopeService(local_service=service, server_service=None)
+    project = await scope.create_project(mode="local", title="Novel")
+    base_version = int(project["version"])
+
+    results = await asyncio.gather(
+        *(
+            scope.update_project(
+                mode="local",
+                project_id=project["id"],
+                expected_version=base_version,
+                synopsis=f"writer {index}",
+            )
+            for index in range(writers)
+        ),
+        return_exceptions=True,
+    )
+
+    winners = [item for item in results if not isinstance(item, BaseException)]
+    conflicts = [item for item in results if isinstance(item, ValueError)]
+    stored = service.get_project(project["id"])
+    service.close()
+
+    assert len(winners) == 1, (
+        f"{len(winners)} concurrent writers all reported success -- "
+        "a lost update slipped through"
+    )
+    assert len(conflicts) == writers - 1
+    assert all("version conflict" in str(item) for item in conflicts)
+    # The surviving row is the winner's, and the version advanced exactly once.
+    assert int(stored["version"]) == base_version + 1
+    assert stored["synopsis"] == winners[0]["synopsis"]
+
+
+@pytest.mark.asyncio
+async def test_offloaded_backend_uses_one_connection_for_concurrent_calls(
+    tmp_path, monkeypatch
+):
+    """The backend thread is single: concurrent scope calls share one connection."""
+    opened: list[str] = []
+    real_connect = local_writing_service.connect_private_sqlite
+
+    def _counting_connect(*args, **kwargs):
+        opened.append(threading.current_thread().name)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(
+        local_writing_service, "connect_private_sqlite", _counting_connect
+    )
+    service = LocalWritingService(tmp_path / "writing.db")
+    scope = WritingScopeService(local_service=service, server_service=None)
+    project = await scope.create_project(mode="local", title="Novel")
+
+    opened.clear()
+    await asyncio.gather(
+        *(scope.get_project(mode="local", project_id=project["id"]) for _ in range(12))
+    )
+
+    assert opened == [], "a concurrent call opened another connection"
+    assert len(service._connections) == 1, service._connections
+    service.close()

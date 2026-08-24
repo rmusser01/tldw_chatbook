@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import inspect
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from enum import Enum
 from typing import Any
@@ -48,15 +51,55 @@ def is_async_callable(candidate: Any) -> bool:
     return call is not None and inspect.iscoroutinefunction(call)
 
 
+_BACKEND_EXECUTOR: ThreadPoolExecutor | None = None
+_BACKEND_EXECUTOR_LOCK = threading.Lock()
+
+
+def _backend_executor() -> ThreadPoolExecutor:
+    """The single thread every synchronous writing-backend call runs on.
+
+    ONE worker, deliberately (review fix, TASK-21125). The local backend's
+    update/delete/restore/reorder paths read-and-version-check in one committed
+    transaction and write in the next; before the offload every scope call ran
+    inline on the event loop, so those two halves could never interleave. A
+    default-pool dispatch reintroduced that window as a real lost update
+    (measured: 59 of 60 concurrent same-version writes silently discarded one
+    writer's content while both were told they succeeded). Serialising the
+    backend on one thread restores the loop's ordering guarantee and keeps the
+    whole latency win -- the work simply happens off the loop instead of on it.
+    """
+    global _BACKEND_EXECUTOR
+    if _BACKEND_EXECUTOR is None:
+        with _BACKEND_EXECUTOR_LOCK:
+            if _BACKEND_EXECUTOR is None:
+                _BACKEND_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="writing-backend",
+                )
+    return _BACKEND_EXECUTOR
+
+
+async def _run_on_backend_thread(call: Any) -> Any:
+    """Await ``call()`` on the shared single backend thread.
+
+    Mirrors ``asyncio.to_thread``'s contextvar propagation, which
+    ``run_in_executor`` does not do on its own.
+    """
+    loop = asyncio.get_running_loop()
+    context = contextvars.copy_context()
+    return await loop.run_in_executor(
+        _backend_executor(), functools.partial(context.run, call)
+    )
+
+
 class _ThreadOffloadedBackend:
-    """Runs a synchronous writing backend's calls on a worker thread.
+    """Runs a synchronous writing backend's calls on the backend thread.
 
     TASK-21125: the local backend is plain blocking SQLite, and every scope
     method invoked it inline -- so an outline click or an autosave opened,
     queried and committed on the Textual event loop. Wrapping the backend here
     (rather than at each of the ~70 call sites) keeps every scope method's
-    ``_maybe_await`` seam working unchanged: the wrapper returns the coroutine
-    that ``asyncio.to_thread`` produces.
+    ``_maybe_await`` seam working unchanged: the wrapper returns a coroutine.
 
     Backends that are already asynchronous pass straight through, so the server
     backend never pays a thread hop.
@@ -74,7 +117,7 @@ class _ThreadOffloadedBackend:
 
         @functools.wraps(attribute)
         def _offloaded(*args: Any, **kwargs: Any) -> Any:
-            return asyncio.to_thread(attribute, *args, **kwargs)
+            return _run_on_backend_thread(functools.partial(attribute, *args, **kwargs))
 
         return _offloaded
 

@@ -148,4 +148,93 @@ outside these ACs): `WritingController` calls six methods --
 `move_scene`, `restore_version_to_working_state` -- that exist on neither
 `WritingScopeService` nor `LocalWritingService`, so those screen paths only work
 against the test fake.
+
+### Review fix round (adversarial review, pre-merge)
+
+The reviewer verified the core change (100 opens -> 0, ~50x; both headline tests
+mutation-confirmed; the `async def` census across all 71 data-facing scope
+methods; exception type and traceback survive the proxy) and returned FIX-FIRST
+on the lifecycle scaffolding built around it. All four findings fixed.
+
+- **MAJOR-3 (loop freeze + unretrieved-task traceback).** `on_unmount` called
+  `service.close()` inline, so the 5 s settle wait ran ON the event loop
+  (measured: a 50 ms ticker fired zero times) and starved the very operation it
+  was waiting for, which then hit a closed connection. Two fixes:
+  `_close_local_writing_service` is now `async` and does
+  `await asyncio.to_thread(service.close)`; and `close()` no longer closes a
+  connection whose thread still has an operation registered -- on a settle
+  timeout the busy thread KEEPS its connection (committed data is durable under
+  WAL, an open transaction rolls back at exit). I did **not** take the suggested
+  "swallow `ProgrammingError` in `_transaction`": suppressing it would let
+  `_soft_delete` return `True` for a delete that never happened -- the
+  "app asserts outcomes it did not produce" family. Removing the error at its
+  source is strictly stronger. Two regression tests:
+  `test_app_unmount_close_never_freezes_the_loop_or_breaks_an_autosave`
+  (mutation: inline close -> "the event loop was frozen during close() (0
+  ticks)") and `test_close_leaves_a_wedged_operations_connection_open`
+  (mutation: close busy connections anyway -> the exact 21101
+  `ProgrammingError: Cannot operate on a closed database`).
+
+- **MAJOR-2 (dead-thread purge).** **Deleted**, not repaired. Three reasons:
+  its trigger provably never fired (recycled OS thread ids send new threads down
+  the reuse branch -- reviewer measured 40 purge calls / 0 detached); its
+  liveness test (`threading.enumerate()`) cannot see a
+  `_thread.start_new_thread` worker, so when it did fire it could close a LIVE
+  connection; and MAJOR-1's single-thread executor reduces the map to ONE entry
+  for all UI-driven work, so the growth it existed to bound cannot happen. The
+  rationale is recorded as a comment where the threshold constant was, so it is
+  not re-added. The narrow, safe part was kept as `_discard_connection`, used by
+  the new `_begin` heal path.
+
+- **MAJOR-1 (check-then-write TOCTOU became a real lost update).** Taken as
+  recommended: synchronous backend calls now run on a **single-thread**
+  `ThreadPoolExecutor` (`_backend_executor`) instead of the default pool, which
+  restores exactly the serialization the event loop was silently providing and
+  keeps the whole latency win (re-measured after the change: still 0 opens and
+  0.0058 s, now on `writing-backend_0`). `_run_on_backend_thread` copies the
+  context the way `asyncio.to_thread` does, which `run_in_executor` does not.
+  The regression test parks all 8 writers on a `threading.Barrier` INSIDE the
+  version check to make the window deterministic -- a plain `gather` passed 3/3
+  against a deliberately broken 8-worker pool, while the barrier version fails
+  it every time with `assert 8 == 1` (eight writers all reporting success).
+  A second test pins that 12 concurrent scope calls open zero extra connections
+  and the held map stays at 1.
+
+- **MINOR-4 (missing backend API).** Filed as **TASK-21295** (id swept across
+  all refs + all worktrees: 21251/21252/21280/21281/21311/21351/21381/21411 were
+  already taken by other sessions, so 21295 sits off that ladder). The reviewer
+  was right that I undersold it: there are **seven** methods, not six
+  (`reorder_items` at writing_controller.py:232), absent from
+  `WritingScopeService`, `LocalWritingService` AND `ServerWritingService`, none
+  of which defines `__getattr__`. `get_project_structure` is on the live,
+  unguarded click path (`_handle_project_selected` -> `load_project_structure`,
+  neither with a try/except), so the outline click this task's docstring cites
+  cannot actually be performed in the shipped app. The lessons footnote was
+  rewritten to point at the task rather than stand in for it.
+
+Noted, not fixed (recorded here so the next reader does not rediscover them):
+
+- **MINOR-1**: with `isolation_level=None` and a deferred `BEGIN`, a
+  SELECT-before-write body would hit `OperationalError: database is locked`
+  where base succeeded -- SQLite's busy handler does not retry `BUSY_SNAPSHOT`,
+  and `_open_connection` sets no explicit `busy_timeout`. Zero current bodies
+  have that shape, but it is why merging check+write into one transaction (the
+  naive MAJOR-1 fix) would need `BEGIN IMMEDIATE`.
+- **MINOR-2**: `_transaction`'s re-entrancy branch is untested dead code --
+  nesting does not occur anywhere in the file (verified by AST scan). It is kept
+  as a guard because a future nested call would otherwise fail with "cannot start
+  a transaction within a transaction".
+- **MINOR-3**: a connection left mid-transaction used not to self-heal, because
+  `BEGIN` sat outside the rollback `try`. Incidentally fixed by the new `_begin`
+  helper (it clears a stray open transaction and retries once) since that method
+  had to be written for the MAJOR-3 stale-connection heal anyway.
+
+Fix-round evidence: writing + private-sqlite + service-composition set **145
+passed / 0 failed**; `Tests/App` + `Tests/ProductionApp` + import-diet **245
+passed / 4 failed**, the same four A/B-proven on base `fb0a9601e` (transformers
+cache, two reactive-maturity scanners, retired-destination state -- none
+writing-related, signatures unchanged); collect sweep **57,698** with the same 4
+pre-existing optional-dep errors; `ruff check` and `ruff format --check` clean on
+every touched file; `./scripts/preflight.sh` green after reviewing the one new
+inventory row (+1 debug call, both new strings constants/integers only).
 <!-- SECTION:NOTES:END -->
