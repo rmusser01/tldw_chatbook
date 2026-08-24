@@ -2336,11 +2336,18 @@ async def test_destination_action_buttons_explain_their_outcome(route):
             "this audit when tooltips are added (tracked as a UX follow-up)."
         )
     app = _build_test_app()
+    if route == "library":
+        app.notes_scope_service = StaticLibraryNotesScopeService([])
+        app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+        app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
+        if route == "library":
+            await _wait_for_library_snapshot(screen, pilot)
+        else:
+            await pilot.pause(0.1)
 
         missing_tooltips = [
             button.id
@@ -2348,8 +2355,7 @@ async def test_destination_action_buttons_explain_their_outcome(route):
             # Library's lifecycle entry controls are orientation actions,
             # not destination outcome actions. Their behavior and focus
             # contracts live in Tests/UI/test_library_shell.py.
-            if button.id
-            not in {"library-rail-explore-all", "library-hub-retry-evidence"}
+            if button.id != "library-rail-explore-all"
             if str(getattr(button, "tooltip", None)).strip().lower() in {"", "none"}
         ]
         assert not missing_tooltips, (

@@ -317,6 +317,8 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
     monkeypatch,
 ) -> None:
     """Server-labelled Read never leaks local rows or local Reader queries."""
+    import asyncio
+
     controller = AsyncMock()
     controller.get_overview_data = AsyncMock(return_value={})
     local_rows = [
@@ -329,7 +331,15 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
             "created_at": "2026-08-23T12:00:00+00:00",
         }
     ]
-    controller.list_items = AsyncMock(return_value=local_rows)
+    local_load_entered = asyncio.Event()
+    release_local_load = asyncio.Event()
+
+    async def blocked_local_load(**_kwargs):
+        local_load_entered.set()
+        await release_local_load.wait()
+        return local_rows
+
+    controller.list_items = AsyncMock(side_effect=blocked_local_load)
     controller.check_all = AsyncMock(return_value={"checked": 0, "failed": []})
     app = _build_test_app()
     bundle = app.watchlist_bundle_service
@@ -395,7 +405,21 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         ).items
 
         switch.press()
-        await pilot.pause(0.4)
+        assert await _wait_until(pilot, local_load_entered.is_set)
+
+        assert screen.runtime_backend == "local"
+        assert selector.value == "local"
+        assert screen.query("#watchlists-read-local-only"), (
+            "the recovery centre must remain until the normal load commits"
+        )
+        assert screen.query_one("#watchlists-switch-local", Button).disabled is False
+        assert screen.query("#watchlists-read-local-only-copy")
+        assert not screen.query("#watchlists-content-pane")
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+
+        release_local_load.set()
         await host.workers.wait_for_complete()
         await pilot.pause()
 
@@ -418,6 +442,48 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         assert screen.query("#watchlists-content-pane")
         assert not screen.query("#watchlists-read-local-only")
         assert screen._selected_content_item is None
+
+
+@pytest.mark.asyncio
+async def test_failed_switch_to_local_keeps_recovery_mounted_and_actionable() -> None:
+    controller = AsyncMock()
+    controller.get_overview_data = AsyncMock(return_value={})
+    controller.list_items = AsyncMock(side_effect=RuntimeError("local read failed"))
+    app = _build_test_app()
+    app.notify = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        screen._controller = controller
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        selector = screen.query_one("#watchlists-backend-select")
+        selector.value = "server"
+        await pilot.pause(0.3)
+        screen.active_section = "items"
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        controller.list_items.assert_not_awaited()
+
+        screen.query_one("#watchlists-switch-local", Button).press()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.runtime_backend == "local"
+        assert selector.value == "local"
+        controller.list_items.assert_awaited_once()
+        assert screen.query("#watchlists-read-local-only")
+        assert screen.query_one("#watchlists-switch-local", Button).disabled is False
+        assert screen.query("#watchlists-read-local-only-copy")
+        assert not screen.query("#watchlists-content-pane")
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+        assert "Failed to load watchlist items." in str(app.notify.call_args.args[0])
 
 
 # --- Task 7: scope-driven scoped rows, with real seeded data ---------------

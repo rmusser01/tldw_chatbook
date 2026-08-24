@@ -4693,7 +4693,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         local_read_is_active = read_is_active and self.runtime_backend == "local"
         self._reset_items_paging_for_context(loading=local_read_is_active)
         if read_is_active:
-            self._request_surface_refresh(self._SURFACE_READER)
             self._load_tree_data()
             if local_read_is_active:
                 self.run_worker(self._load_items(), exclusive=True, group="wc_items")
@@ -9725,6 +9724,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._items_page_loading = False
             self._push_items_pager_state()
             self._restore_items_view_state()
+            if self._dom_is_live and self.query("#watchlists-read-local-only"):
+                self._request_surface_refresh(self._SURFACE_READER)
         return True
 
     def _items_load_is_current(
