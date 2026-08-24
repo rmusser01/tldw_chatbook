@@ -134,11 +134,6 @@ def outcome_first_recipe() -> BlockArtifactDefinition:
     user_specs = (
         ("goal", "Goal", "State the user-visible outcome."),
         (
-            "success-criteria",
-            "Success criteria",
-            "List what must be true before the answer is complete.",
-        ),
-        (
             "context-evidence",
             "Context and evidence",
             "Add available facts, sources, examples, or inputs.",
@@ -152,6 +147,11 @@ def outcome_first_recipe() -> BlockArtifactDefinition:
             "output",
             "Output",
             "Describe the required answer shape, length, and tone.",
+        ),
+        (
+            "success-criteria",
+            "Success criteria",
+            "List what must be true before the answer is complete.",
         ),
         (
             "stop-rules",

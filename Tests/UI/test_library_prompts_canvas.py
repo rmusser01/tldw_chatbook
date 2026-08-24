@@ -39,7 +39,7 @@ from textual.app import App
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import (
     ConflictError,
@@ -5488,6 +5488,17 @@ async def _open_prompt_editor(screen, pilot, prompt_id: int) -> None:
     await pilot.pause()
 
 
+def _choose_shared_save_action(screen: Any, action: str) -> None:
+    """Choose one valid action from the embedded editor's native Save menu."""
+
+    menu = screen.query_one("#prompt-editor-save-menu", Select)
+    offered = [
+        value for _label, value in menu._options if value is not Select.NULL
+    ]
+    assert action in offered
+    menu.value = action
+
+
 @pytest.mark.asyncio
 async def test_library_prompt_mode_switch_is_targeted_and_remembered(
     tmp_path,
@@ -9938,7 +9949,7 @@ async def test_library_save_recipe_respects_explicit_starter_content_choice(
         screen.query_one(
             "#library-prompt-name", Input
         ).value = f"Saved recipe {include_starter}"
-        screen.query_one("#prompt-editor-save-recipe", Button).press()
+        _choose_shared_save_action(screen, "recipe")
         status_text = await _wait_for_prompt_status(screen, pilot)
 
         assert status_text == "Recipe saved as a new artifact."
@@ -9989,7 +10000,7 @@ async def test_library_embedded_save_prompt_adopts_complete_new_identity(tmp_pat
         assert screen._library_prompt_detail["uuid"] == source_uuid
 
         screen.query_one("#library-prompt-name", Input).value = "Embedded saved copy"
-        screen.query_one("#prompt-editor-save-prompt", Button).press()
+        _choose_shared_save_action(screen, "prompt")
         for _ in range(200):
             persisted = db.fetch_prompt_details("Embedded saved copy")
             state = screen._library_prompt_history_state
@@ -12789,10 +12800,14 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
             content_identity
         )
         outer_update = screen.query_one("#library-prompt-save", Button)
-        shared_update = screen.query_one("#prompt-editor-update-original", Button)
+        shared_save = screen.query_one("#prompt-editor-save-menu", Select)
         assert str(outer_update.label) == "Save changes"
         assert outer_update.disabled is False
-        assert shared_update.disabled is False
+        assert "update" in [
+            value
+            for _label, value in shared_save._options
+            if value is not Select.NULL
+        ]
         assert (
             str(screen.query_one("#prompt-editor-update-reason", Static).renderable)
             == ""

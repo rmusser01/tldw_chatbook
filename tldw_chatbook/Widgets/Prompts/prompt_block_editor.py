@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Literal
 
 from textual import events, on
@@ -43,12 +44,16 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 
 BlockField = Literal["title", "syntax", "xml_tag", "content"]
 BlockAction = Literal["move_up", "move_down", "duplicate", "delete", "add"]
+SaveAction = Literal["prompt", "recipe", "update"]
 
 _NARROW_WIDTH = 90
 _STACKED_FOOTER_WIDTH = 120
 _SAFE_WIDGET_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 RECIPE_MAPPED_CONTEXT_BLOCKED_COPY = (
     "Recipe save unavailable — delete the mapped Additional context block first."
+)
+UPDATE_ORIGINAL_UNAVAILABLE_COPY = (
+    "Update unavailable — this source has no guarded version update; save as new."
 )
 
 
@@ -270,6 +275,14 @@ class PromptBlockEditor(Vertical):
     #prompt-editor-body {
         width: 100%; height: auto; min-height: 0;
     }
+    #prompt-editor-guided-summary {
+        width: 100%; height: auto; min-height: 1; color: $ds-text-muted;
+    }
+    #prompt-editor-show-optional {
+        width: 100%; height: 3; border: none;
+        background: $ds-surface-raised; color: $ds-text-primary;
+    }
+    #prompt-editor-show-optional:focus { outline: heavy $ds-action-focus; }
     .prompt-lane {
         width: 100%; height: auto; margin: 0 0 1 0;
         border: round $ds-grid-line; background: $ds-surface-panel;
@@ -310,18 +323,22 @@ class PromptBlockEditor(Vertical):
 
     .prompt-lane-add,
     .prompt-block-action,
-    .prompt-editor-action {
+    .prompt-editor-action,
+    #prompt-editor-save-menu {
         height: 3; border: none;
         background: $ds-surface-raised; color: $ds-text-primary;
     }
     .prompt-lane-add { width: 100%; }
     .prompt-block-action { width: auto; min-width: 8; padding: 0 1; }
     .prompt-editor-action { width: auto; min-width: 6; padding: 0; }
+    #prompt-editor-save-menu { width: 18; min-width: 18; }
     .prompt-lane-add:focus,
     .prompt-block-action:focus,
-    .prompt-editor-action:focus { outline: heavy $ds-action-focus; }
+    .prompt-editor-action:focus,
+    #prompt-editor-save-menu:focus { outline: heavy $ds-action-focus; }
     .prompt-block-action:disabled,
-    .prompt-editor-action:disabled {
+    .prompt-editor-action:disabled,
+    #prompt-editor-save-menu:disabled {
         background: $ds-surface-field; color: $ds-text-disabled;
     }
 
@@ -361,7 +378,7 @@ class PromptBlockEditor(Vertical):
 
     BINDINGS = [
         ("ctrl+enter", "apply", "Apply selected lanes"),
-        ("ctrl+s", "save_prompt", "Save as Prompt"),
+        ("ctrl+s", "save_menu", "Save menu"),
     ]
 
     class BlockFieldChanged(Message):
@@ -449,15 +466,34 @@ class PromptBlockEditor(Vertical):
         apply_system_unavailable_reason: str = "",
         embedded: bool = False,
         host_owned_lifecycle: bool = False,
+        show_back: bool = True,
+        allow_save_prompt: bool = True,
+        allow_save_recipe: bool = True,
+        save_prompt_unavailable_reason: str = "",
+        save_recipe_unavailable_reason: str = "",
+        initially_hidden_block_ids: Iterable[str] = (),
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self._state = state
         self._can_update_original = can_update_original
+        self._update_original_unavailable_reason = UPDATE_ORIGINAL_UNAVAILABLE_COPY
         self._allow_apply_system = bool(allow_apply_system)
         self._apply_system_unavailable_reason = apply_system_unavailable_reason.strip()
         self._embedded = bool(embedded)
         self._host_owned_lifecycle = bool(host_owned_lifecycle)
+        self._show_back = bool(show_back)
+        self._allow_save_prompt = bool(allow_save_prompt)
+        self._allow_save_recipe = bool(allow_save_recipe)
+        self._save_prompt_unavailable_reason = save_prompt_unavailable_reason.strip()
+        self._save_recipe_unavailable_reason = save_recipe_unavailable_reason.strip()
+        available_block_ids = {
+            block.id for lane in state.definition.lanes for block in lane.blocks
+        }
+        self._hidden_block_ids = frozenset(initially_hidden_block_ids).intersection(
+            available_block_ids
+        )
+        self._last_save_menu_options: tuple[tuple[str, SaveAction], ...] = ()
         self.set_class(self._embedded, "embedded")
         self._block_widgets: dict[str, PromptBlockCard] = {}
 
@@ -466,12 +502,35 @@ class PromptBlockEditor(Vertical):
         """Return the immutable editor working copy."""
         return self._state
 
-    def set_update_original_available(self, available: bool) -> None:
+    def set_update_original_available(
+        self, available: bool, *, unavailable_reason: str = ""
+    ) -> None:
         """Refresh a host-owned guarded-update capability in place."""
         available = bool(available)
-        if available == self._can_update_original:
+        reason = unavailable_reason.strip() or UPDATE_ORIGINAL_UNAVAILABLE_COPY
+        if (
+            available == self._can_update_original
+            and reason == self._update_original_unavailable_reason
+        ):
             return
         self._can_update_original = available
+        self._update_original_unavailable_reason = reason
+        if self.is_mounted:
+            self._sync_footer()
+
+    def set_save_capabilities(
+        self,
+        *,
+        prompt: bool,
+        recipe: bool,
+        prompt_unavailable_reason: str = "",
+        recipe_unavailable_reason: str = "",
+    ) -> None:
+        """Refresh host-owned Prompt/Recipe persistence capabilities in place."""
+        self._allow_save_prompt = bool(prompt)
+        self._allow_save_recipe = bool(recipe)
+        self._save_prompt_unavailable_reason = prompt_unavailable_reason.strip()
+        self._save_recipe_unavailable_reason = recipe_unavailable_reason.strip()
         if self.is_mounted:
             self._sync_footer()
 
@@ -496,6 +555,16 @@ class PromptBlockEditor(Vertical):
         body_class = Vertical if self._embedded else VerticalScroll
         body_id = "prompt-editor-body" if self._embedded else "prompt-editor-scroll"
         with body_class(id=body_id):
+            if self._hidden_block_ids:
+                yield Static(
+                    "Start with the four essentials: Goal, Context and evidence, Constraints, and Output.",
+                    id="prompt-editor-guided-summary",
+                    markup=False,
+                )
+                yield Button(
+                    f"Show {len(self._hidden_block_ids)} optional blocks",
+                    id="prompt-editor-show-optional",
+                )
             for lane in self._state.definition.lanes:
                 with Collapsible(
                     title=f"{lane.id.title()} · {len(lane.blocks)} blocks",
@@ -540,7 +609,7 @@ class PromptBlockEditor(Vertical):
             lane_options.display = not self._host_owned_lifecycle
             with lane_options:
                 system = Checkbox(
-                    "Apply system prompt to this session",
+                    "Replace this session's System prompt",
                     value=False,
                     id="prompt-editor-apply-system",
                     disabled=not self._allow_apply_system,
@@ -563,26 +632,8 @@ class PromptBlockEditor(Vertical):
                     id="prompt-editor-back",
                     classes="prompt-editor-action",
                 )
-                back.display = not self._host_owned_lifecycle
+                back.display = not self._host_owned_lifecycle and self._show_back
                 yield back
-                yield Button(
-                    "Save Prompt",
-                    id="prompt-editor-save-prompt",
-                    classes="prompt-editor-action",
-                )
-                yield Button(
-                    "Save Recipe",
-                    id="prompt-editor-save-recipe",
-                    classes="prompt-editor-action",
-                )
-                update_original = Button(
-                    "Update original",
-                    id="prompt-editor-update-original",
-                    classes="prompt-editor-action",
-                    disabled=not self._can_update_original,
-                )
-                update_original.display = not self._host_owned_lifecycle
-                yield update_original
                 apply = Button(
                     "Apply",
                     id="prompt-editor-apply",
@@ -590,6 +641,18 @@ class PromptBlockEditor(Vertical):
                 )
                 apply.display = not self._host_owned_lifecycle
                 yield apply
+                save_menu = Select(
+                    self._save_menu_options(),
+                    prompt="Save…",
+                    allow_blank=True,
+                    value=Select.NULL,
+                    id="prompt-editor-save-menu",
+                    compact=True,
+                )
+                save_menu.styles.width = 18
+                save_menu.styles.min_width = 18
+                save_menu.styles.max_width = 18
+                yield save_menu
 
     def on_mount(self) -> None:
         self._set_responsive(self.size.width or self.app.size.width)
@@ -624,6 +687,7 @@ class PromptBlockEditor(Vertical):
             is_first=is_first,
             is_last=is_last,
         )
+        card.display = block.id not in self._hidden_block_ids
         self._block_widgets[block.id] = card
         return card
 
@@ -720,7 +784,9 @@ class PromptBlockEditor(Vertical):
             collapsible.collapsed = False
 
     def _sync_card(self, block: PromptBlock, *, is_first: bool, is_last: bool) -> None:
-        self._block_widgets[block.id].sync(
+        card = self._block_widgets[block.id]
+        card.display = block.id not in self._hidden_block_ids
+        card.sync(
             block,
             issues=self._issues_for(block.id),
             dirty=block.id in self._state.dirty_block_ids,
@@ -794,34 +860,68 @@ class PromptBlockEditor(Vertical):
                 and self._apply_system_unavailable_reason
                 else "Ready — Apply changes only the selected non-empty lanes."
             )
+        if (
+            self._state.compiled_system
+            and self._allow_apply_system
+            and not issue_count
+            and not no_selected_content
+        ):
+            reason = "Ready — System changes only on Apply in this active session."
         apply_reason.update(reason)
         apply_reason.set_class(issue_count > 0 or no_selected_content, "blocked")
 
-        self.query_one("#prompt-editor-save-prompt", Button).disabled = bool(
-            issue_count
-        )
-        save_recipe = self.query_one("#prompt-editor-save-recipe", Button)
-        recipe_conversion_blocked = not self._state.can_save_as_recipe
-        save_recipe.disabled = bool(issue_count) or recipe_conversion_blocked
-        save_recipe.tooltip = (
-            RECIPE_MAPPED_CONTEXT_BLOCKED_COPY if recipe_conversion_blocked else None
-        )
-        update = self.query_one("#prompt-editor-update-original", Button)
-        update.disabled = bool(issue_count) or not self._can_update_original
         self.query_one("#prompt-editor-apply", Button).disabled = bool(
             issue_count or no_selected_content
         )
+        save_menu = self.query_one("#prompt-editor-save-menu", Select)
+        save_options = self._save_menu_options()
+        if save_options != self._last_save_menu_options:
+            save_menu.set_options(save_options)
+            self._last_save_menu_options = save_options
+        save_menu.disabled = not save_options
+        save_menu.tooltip = self._save_menu_tooltip(issue_count)
         update_reason = self.query_one("#prompt-editor-update-reason", Static)
         if not self._can_update_original:
-            update_copy = (
-                "Update unavailable — this source has no guarded version update; "
-                "save as new."
-            )
+            update_copy = self._update_original_unavailable_reason
         elif issue_count:
             update_copy = "Update unavailable — resolve the block errors above."
         else:
             update_copy = ""
         update_reason.update(update_copy)
+
+    def _save_menu_options(self) -> tuple[tuple[str, SaveAction], ...]:
+        """Return only persistence actions valid for the current working copy."""
+        if self._state.issues:
+            return ()
+        options: list[tuple[str, SaveAction]] = []
+        if self._allow_save_prompt:
+            options.append(("Save as Prompt", "prompt"))
+        if self._allow_save_recipe and self._state.can_save_as_recipe:
+            options.append(("Save as Recipe", "recipe"))
+        if self._can_update_original:
+            options.append(("Update original", "update"))
+        return tuple(options)
+
+    def _save_menu_tooltip(self, issue_count: int) -> str | None:
+        """Explain omitted Save choices without rendering disabled menu rows."""
+        if issue_count:
+            return "Save unavailable — resolve the block errors above."
+        unavailable: list[str] = []
+        if not self._allow_save_prompt:
+            unavailable.append(
+                self._save_prompt_unavailable_reason
+                or "Save as Prompt is unavailable for this source."
+            )
+        if not self._allow_save_recipe:
+            unavailable.append(
+                self._save_recipe_unavailable_reason
+                or "Save as Recipe is unavailable for this source."
+            )
+        elif not self._state.can_save_as_recipe:
+            unavailable.append(RECIPE_MAPPED_CONTEXT_BLOCKED_COPY)
+        if not self._can_update_original:
+            unavailable.append(self._update_original_unavailable_reason)
+        return " ".join(unavailable) or None
 
     def _issues_for(self, block_id: str) -> tuple[PromptBlockValidationIssue, ...]:
         return tuple(
@@ -899,6 +999,22 @@ class PromptBlockEditor(Vertical):
         event.stop()
         self._sync_footer()
 
+    @on(Select.Changed, "#prompt-editor-save-menu")
+    def _save_menu_changed(self, event: Select.Changed) -> None:
+        """Dispatch a selected persistence action, then reset the menu label."""
+        event.stop()
+        value = event.value
+        if value is Select.NULL:
+            return
+        with event.select.prevent(Select.Changed):
+            event.select.value = Select.NULL
+        if value == "prompt":
+            self._request_save("prompt")
+        elif value == "recipe":
+            self._request_save("recipe")
+        elif value == "update":
+            self._request_update()
+
     @on(Button.Pressed)
     async def _button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -908,17 +1024,17 @@ class PromptBlockEditor(Vertical):
         if button_id == "prompt-editor-back":
             self.post_message(self.BackRequested())
             return
-        if button_id == "prompt-editor-save-prompt":
-            self._request_save("prompt")
-            return
-        if button_id == "prompt-editor-save-recipe":
-            self._request_save("recipe")
-            return
-        if button_id == "prompt-editor-update-original":
-            self._request_update()
-            return
         if button_id == "prompt-editor-apply":
             self._request_apply()
+            return
+        if button_id == "prompt-editor-show-optional":
+            self._hidden_block_ids = frozenset()
+            for card in self._block_widgets.values():
+                card.display = True
+            event.button.display = False
+            self.query_one("#prompt-editor-guided-summary", Static).update(
+                "Optional blocks are shown and remain fully editable."
+            )
             return
         if button_id.startswith("prompt-lane-add-"):
             lane_id = button_id.removeprefix("prompt-lane-add-")
@@ -1041,3 +1157,11 @@ class PromptBlockEditor(Vertical):
     def action_save_prompt(self) -> None:
         """Attempt Save as Prompt and focus the first blocking field."""
         self._request_save("prompt")
+
+    def action_save_menu(self) -> None:
+        """Focus and open the contextual persistence menu."""
+        save_menu = self.query_one("#prompt-editor-save-menu", Select)
+        if save_menu.disabled:
+            return
+        save_menu.focus()
+        save_menu.action_show_overlay()

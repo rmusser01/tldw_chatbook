@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     BlockArtifactDefinition,
@@ -89,12 +89,14 @@ class BlockEditorHarness(App[None]):
         can_update_original: bool = False,
         embedded: bool = False,
         host_owned_lifecycle: bool = False,
+        initially_hidden_block_ids: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__()
         self.state = state
         self.can_update_original = can_update_original
         self.embedded = embedded
         self.host_owned_lifecycle = host_owned_lifecycle
+        self.initially_hidden_block_ids = initially_hidden_block_ids
         self.messages: list[object] = []
 
     def compose(self) -> ComposeResult:
@@ -103,6 +105,7 @@ class BlockEditorHarness(App[None]):
             can_update_original=self.can_update_original,
             embedded=self.embedded,
             host_owned_lifecycle=self.host_owned_lifecycle,
+            initially_hidden_block_ids=self.initially_hidden_block_ids,
             id="editor",
         )
 
@@ -164,14 +167,42 @@ async def test_lanes_stack_and_nonempty_lanes_start_expanded(
         )
         assert len(editor.query(".prompt-block-card")) == 3
         for selector in (
-            "#prompt-editor-save-prompt",
-            "#prompt-editor-save-recipe",
-            "#prompt-editor-update-original",
             "#prompt-editor-apply",
+            "#prompt-editor-save-menu",
         ):
             region = editor.query_one(selector).region
             assert region.x >= 0 and region.right <= size[0]
             assert region.y >= 0 and region.bottom <= size[1]
+        assert not editor.query("#prompt-editor-save-prompt")
+        assert not editor.query("#prompt-editor-save-recipe")
+        assert not editor.query("#prompt-editor-update-original")
+
+
+@pytest.mark.asyncio
+async def test_optional_blocks_use_keyboard_reachable_progressive_disclosure() -> None:
+    app = BlockEditorHarness(
+        _state(),
+        initially_hidden_block_ids=frozenset({"role", "context"}),
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        summary = app.query_one("#prompt-editor-guided-summary", Static)
+        reveal = app.query_one("#prompt-editor-show-optional", Button)
+        assert "Start with the four essentials" in str(summary.renderable)
+        assert "Show 2 optional blocks" == str(reveal.label)
+        assert app.query_one("#prompt-block-role").display is False
+        assert app.query_one("#prompt-block-context").display is False
+
+        reveal.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert reveal.display is False
+        assert app.query_one("#prompt-block-role").display is True
+        assert app.query_one("#prompt-block-context").display is True
+        assert "Optional blocks are shown" in str(summary.renderable)
 
 
 @pytest.mark.asyncio
@@ -190,7 +221,7 @@ async def test_genuinely_wide_editor_keeps_readable_single_row_footer() -> None:
         for checkbox, label in (
             (
                 editor.query_one("#prompt-editor-apply-system", Checkbox),
-                "Apply system prompt to this session",
+                "Replace this session's System prompt",
             ),
             (
                 editor.query_one("#prompt-editor-apply-user", Checkbox),
@@ -214,7 +245,7 @@ async def test_genuinely_wide_editor_keeps_readable_single_row_footer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_embedded_host_owned_lifecycle_keeps_only_structured_save_actions():
+async def test_embedded_host_owned_lifecycle_keeps_only_structured_save_menu():
     app = BlockEditorHarness(
         _state(),
         embedded=True,
@@ -225,11 +256,9 @@ async def test_embedded_host_owned_lifecycle_keeps_only_structured_save_actions(
         await pilot.pause()
         editor = app.query_one("#editor", PromptBlockEditor)
 
-        assert editor.query_one("#prompt-editor-save-prompt", Button).display
-        assert editor.query_one("#prompt-editor-save-recipe", Button).display
+        assert editor.query_one("#prompt-editor-save-menu", Select).display
         for selector in (
             "#prompt-editor-back",
-            "#prompt-editor-update-original",
             "#prompt-editor-apply",
             "#prompt-editor-lane-options",
         ):
@@ -403,7 +432,7 @@ async def test_update_original_validation_reason_explains_recovery() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
-        assert app.query_one("#prompt-editor-update-original", Button).disabled
+        assert app.query_one("#prompt-editor-save-menu", Select).disabled
         reason = str(
             app.query_one("#prompt-editor-update-reason", Static).renderable
         ).lower()
@@ -418,7 +447,10 @@ async def test_update_original_source_unavailable_reason_is_preserved() -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        assert app.query_one("#prompt-editor-update-original", Button).disabled
+        menu = app.query_one("#prompt-editor-save-menu", Select)
+        assert "update" not in [
+            value for _label, value in menu._options if value is not Select.NULL
+        ]
         reason = str(
             app.query_one("#prompt-editor-update-reason", Static).renderable
         ).lower()
@@ -433,9 +465,11 @@ async def test_host_can_enable_guarded_update_without_reconstructing_editor() ->
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         editor = app.query_one("#editor", PromptBlockEditor)
-        update = app.query_one("#prompt-editor-update-original", Button)
+        menu = app.query_one("#prompt-editor-save-menu", Select)
 
-        assert update.disabled is True
+        assert "update" not in [
+            value for _label, value in menu._options if value is not Select.NULL
+        ]
         assert (
             "no guarded version update"
             in str(
@@ -446,11 +480,13 @@ async def test_host_can_enable_guarded_update_without_reconstructing_editor() ->
         editor.set_update_original_available(True)
         await pilot.pause()
 
-        assert update.disabled is False
+        assert "update" in [
+            value for _label, value in menu._options if value is not Select.NULL
+        ]
         assert (
             str(app.query_one("#prompt-editor-update-reason", Static).renderable) == ""
         )
-        update.press()
+        menu.value = "update"
         await pilot.pause()
 
         assert [type(message) for message in app.messages] == [
@@ -466,7 +502,7 @@ async def test_update_original_source_unavailable_reason_precedes_validation() -
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
 
-        assert app.query_one("#prompt-editor-update-original", Button).disabled
+        assert app.query_one("#prompt-editor-save-menu", Select).disabled
         reason = str(
             app.query_one("#prompt-editor-update-reason", Static).renderable
         ).lower()
@@ -659,13 +695,11 @@ async def test_footer_controls_emit_distinct_typed_navigation_and_save_messages(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        for selector in (
-            "#prompt-editor-back",
-            "#prompt-editor-save-prompt",
-            "#prompt-editor-save-recipe",
-            "#prompt-editor-update-original",
-        ):
-            app.query_one(selector, Button).press()
+        app.query_one("#prompt-editor-back", Button).press()
+        await pilot.pause()
+        save_menu = app.query_one("#prompt-editor-save-menu", Select)
+        for value in ("prompt", "recipe", "update"):
+            save_menu.value = value
             await pilot.pause()
 
         assert [type(message) for message in app.messages] == [
@@ -673,6 +707,30 @@ async def test_footer_controls_emit_distinct_typed_navigation_and_save_messages(
             PromptBlockEditor.SaveAsPromptRequested,
             PromptBlockEditor.SaveAsRecipeRequested,
             PromptBlockEditor.UpdateOriginalRequested,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_ctrl_s_opens_save_menu_and_keyboard_chooses_first_action() -> None:
+    app = BlockEditorHarness(_state())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        menu = app.query_one("#prompt-editor-save-menu", Select)
+
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        assert menu.has_focus_within
+        assert menu.expanded is True
+
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert menu.expanded is False
+        assert [type(message) for message in app.messages] == [
+            PromptBlockEditor.SaveAsPromptRequested
         ]
 
 

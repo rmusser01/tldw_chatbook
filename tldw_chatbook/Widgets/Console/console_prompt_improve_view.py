@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -10,6 +11,19 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Static, TextArea
 
 from .console_composer_bar import ComposerDraftSnapshot, ComposerModelProjection
+
+
+SYSTEM_ANALYSIS_LABEL = "Let the improver read the current System prompt"
+SYSTEM_ANALYSIS_DISCLOSURE = (
+    "Used only to improve the draft. It does not change this session."
+)
+SYSTEM_ANALYSIS_ABSENT_DISCLOSURE = (
+    "There is no current System prompt to read. Improvement will use only the "
+    "unsent message and will not change this session."
+)
+SYSTEM_ANALYSIS_ABSENT_TOOLTIP = (
+    "Unavailable — this session has no current System prompt."
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +39,7 @@ class ConsolePromptImprovementContext:
     model_label: str
     endpoint_label: str = ""
     model_unavailable_reason: str = ""
+    unavailable_recovery: Literal["provider", "draft", "reopen"] = "provider"
     pinned_resolution: object | None = field(default=None, repr=False)
 
 
@@ -48,21 +63,17 @@ class ConsolePromptImproveView(Widget):
     }
     .console-prompts-context-preview { width: 100%; height: 5; }
     #console-prompts-improve-options {
-        width: 100%; height: auto; min-height: 3; margin-top: 1;
+        layout: vertical; width: 100%; height: auto; min-height: 9; margin-top: 1;
     }
-    #console-prompts-improve-options Button { width: 1fr; min-width: 18; }
+    #console-prompts-improve-options Button { width: 100%; min-width: 18; }
     #console-prompts-provider-summary,
+    #console-prompts-analysis-context-disclosure,
     #console-prompts-improvement-status { width: 100%; height: auto; min-height: 1; }
+    #console-prompts-configure-provider { width: auto; min-width: 24; }
     #console-prompts-improvement-actions { width: 100%; height: 3; }
     #console-prompts-improvement-cancel,
     #console-prompts-improvement-retry,
     #console-prompts-persistence-retry { display: none; }
-    ConsolePromptsModal.-narrow #console-prompts-improve-options {
-        layout: vertical; min-height: 9;
-    }
-    ConsolePromptsModal.-narrow #console-prompts-improve-options Button {
-        width: 100%;
-    }
     """
 
     def __init__(
@@ -70,11 +81,15 @@ class ConsolePromptImproveView(Widget):
         context: ConsolePromptImprovementContext,
         *,
         model_unavailable_reason: str = "",
+        show_configure_provider: bool = False,
+        include_system_context: bool | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self.context = context
         self.model_unavailable_reason = model_unavailable_reason.strip()
+        self.show_configure_provider = show_configure_provider
+        self.include_system_context = include_system_context
 
     def compose(self) -> ComposeResult:
         projection = self.context.current_user_projection
@@ -107,18 +122,40 @@ class ConsolePromptImproveView(Widget):
                 id="console-prompts-provider-summary",
                 markup=False,
             )
-            yield Checkbox(
-                "Include system prompt as analysis context",
-                value=bool(self.context.current_system_prompt),
+            if self.model_unavailable_reason and self.show_configure_provider:
+                yield Button(
+                    "Configure provider / model",
+                    id="console-prompts-configure-provider",
+                )
+            include_system = self.include_system_context
+            if include_system is None:
+                include_system = bool(self.context.current_system_prompt)
+            has_system = bool(self.context.current_system_prompt)
+            analysis_context = Checkbox(
+                SYSTEM_ANALYSIS_LABEL,
+                value=include_system,
                 id="console-prompts-include-system",
-                disabled=not bool(self.context.current_system_prompt),
+                disabled=not has_system,
+            )
+            if not has_system:
+                analysis_context.tooltip = SYSTEM_ANALYSIS_ABSENT_TOOLTIP
+            yield analysis_context
+            yield Static(
+                SYSTEM_ANALYSIS_DISCLOSURE
+                if has_system
+                else SYSTEM_ANALYSIS_ABSENT_DISCLOSURE,
+                id="console-prompts-analysis-context-disclosure",
+                markup=False,
             )
             with Horizontal(id="console-prompts-improve-options"):
                 for label, button_id in (
-                    ("Analyze and auto-improve", "console-prompts-auto-improve"),
-                    ("Analyze and user review", "console-prompts-review-improve"),
+                    ("Replace draft automatically", "console-prompts-auto-improve"),
                     (
-                        "Create or follow a structured recipe",
+                        "Analyze and user review (Recommended)",
+                        "console-prompts-review-improve",
+                    ),
+                    (
+                        "Build a reusable prompt",
                         "console-prompts-structured-recipe",
                     ),
                 ):
@@ -138,5 +175,9 @@ class ConsolePromptImproveView(Widget):
 __all__ = [
     "ConsolePromptImprovementContext",
     "ConsolePromptImproveView",
+    "SYSTEM_ANALYSIS_ABSENT_DISCLOSURE",
+    "SYSTEM_ANALYSIS_ABSENT_TOOLTIP",
+    "SYSTEM_ANALYSIS_DISCLOSURE",
+    "SYSTEM_ANALYSIS_LABEL",
     "improvement_provider_summary",
 ]
