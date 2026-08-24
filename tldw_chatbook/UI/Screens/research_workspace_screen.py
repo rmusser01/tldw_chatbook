@@ -1,0 +1,176 @@
+"""Responsive, compose-once Research Workspace foundation screen."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.events import Resize
+from textual.widgets import Button, Static
+
+from ...Research_Workspace.layout_state import (
+    ResearchPaneLayout,
+    ResearchPanePreferences,
+    derive_research_pane_layout,
+    toggle_research_pane,
+)
+from ..Navigation.base_app_screen import BaseAppScreen
+from ..Research_Workspace_Modules import (
+    ResearchChatRegion,
+    ResearchHeaderRegion,
+    ResearchPaneHandle,
+    ResearchPaneModeStrip,
+    ResearchSourcesRegion,
+    ResearchStudioRegion,
+)
+from ..Research_Workspace_Modules.pane_handle import ResearchSidePane
+
+
+ResearchPaneName = Literal["sources", "chat", "studio"]
+
+
+class ResearchWorkspaceScreen(BaseAppScreen):
+    """Sources, Grounded Chat, and Studio shell with in-place responsive layout."""
+
+    CSS_PATH = None
+    BINDINGS = []
+
+    def __init__(self, app_instance: Any, **kwargs: Any) -> None:
+        super().__init__(app_instance, "research_workspace", **kwargs)
+        self.pane_preferences = ResearchPanePreferences()
+        self.active_pane: ResearchPaneName = "chat"
+        self._pane_layout: ResearchPaneLayout | None = None
+
+    def compose_content(self) -> ComposeResult:
+        with Vertical(id="research-workspace-shell"):
+            yield ResearchHeaderRegion(id="research-workspace-header")
+            yield ResearchPaneModeStrip(id="research-pane-mode-strip")
+            with Horizontal(id="research-workspace-grid"):
+                yield ResearchSourcesRegion(
+                    id="research-sources-pane", classes="research-workspace-pane"
+                )
+                yield ResearchPaneHandle("sources", id="research-sources-handle")
+                yield ResearchChatRegion(
+                    id="research-chat-pane", classes="research-workspace-pane"
+                )
+                yield ResearchPaneHandle("studio", id="research-studio-handle")
+                yield ResearchStudioRegion(
+                    id="research-studio-pane", classes="research-workspace-pane"
+                )
+            yield Static(
+                "Foundation ready · Workspace service setup required · No operation active",
+                id="research-workspace-status",
+                markup=False,
+            )
+
+    def on_mount(self) -> None:
+        """Derive initial layout after every compose-once child is mounted."""
+        self._apply_pane_layout(max(1, self.size.width))
+
+    def on_resize(self, event: Resize) -> None:
+        """Patch effective visibility and focus from the pure width reducer."""
+        self._apply_pane_layout(max(1, event.size.width), relocate_hidden_focus=True)
+
+    @on(ResearchPaneHandle.Toggled)
+    def toggle_side_pane(self, message: ResearchPaneHandle.Toggled) -> None:
+        """Apply an explicit wide/medium side-pane preference change."""
+        width = max(1, self.size.width)
+        if width < 100:
+            self.active_pane = message.pane
+            self._apply_pane_layout(width)
+            self._focus_pane(message.pane)
+            return
+
+        self.pane_preferences = toggle_research_pane(
+            self.pane_preferences, message.pane, width=width
+        )
+        self._apply_pane_layout(width)
+        if message.reveal:
+            self._focus_pane(message.pane)
+        else:
+            self._focus_reveal(message.pane)
+
+    @on(ResearchPaneModeStrip.Selected)
+    def select_pane_mode(self, message: ResearchPaneModeStrip.Selected) -> None:
+        """Reveal the selected pane according to the current responsive band."""
+        width = max(1, self.size.width)
+        if width < 100:
+            self.active_pane = message.pane
+        elif (
+            message.pane != "chat"
+            and message.pane
+            not in derive_research_pane_layout(
+                width, self.pane_preferences
+            ).visible_panes
+        ):
+            self.pane_preferences = toggle_research_pane(
+                self.pane_preferences, message.pane, width=width
+            )
+        self._apply_pane_layout(width)
+        self._focus_pane(message.pane)
+
+    def _apply_pane_layout(
+        self, width: int, *, relocate_hidden_focus: bool = False
+    ) -> None:
+        focused_pane = self._pane_for_widget(self.app.focused)
+        layout = derive_research_pane_layout(
+            width, self.pane_preferences, active_pane=self.active_pane
+        )
+        self._pane_layout = layout
+
+        grid = self.query_one("#research-workspace-grid")
+        for mode in ("wide", "medium", "narrow"):
+            grid.set_class(layout.mode == mode, f"layout-{mode}")
+        shell = self.query_one("#research-workspace-shell")
+        shell.set_class(self.size.height < 24, "height-compact")
+
+        for pane in ("sources", "chat", "studio"):
+            self.query_one(f"#research-{pane}-pane").display = (
+                pane in layout.visible_panes
+            )
+
+        handles_visible = layout.mode != "narrow"
+        for pane in ("sources", "studio"):
+            handle = self.query_one(f"#research-{pane}-handle", ResearchPaneHandle)
+            handle.display = handles_visible
+            handle.sync_expanded(pane in layout.visible_panes)
+
+        mode_strip = self.query_one("#research-pane-mode-strip", ResearchPaneModeStrip)
+        mode_strip.display = layout.mode != "wide"
+        mode_strip.sync_visible_panes(layout.visible_panes)
+
+        if (
+            relocate_hidden_focus
+            and focused_pane is not None
+            and focused_pane not in layout.visible_panes
+        ):
+            button = self.query_one(f"#research-pane-mode-{focused_pane}", Button)
+            if button.display:
+                button.focus()
+                self.notify(
+                    f"Layout changed; {focused_pane.title()} pane is hidden. "
+                    "Use the pane mode controls to restore it."
+                )
+
+    def _pane_for_widget(self, widget: object | None) -> ResearchPaneName | None:
+        current = widget
+        while current is not None:
+            widget_id = getattr(current, "id", None)
+            for pane in ("sources", "chat", "studio"):
+                if widget_id == f"research-{pane}-pane":
+                    return pane
+            current = getattr(current, "parent", None)
+        return None
+
+    def _focus_pane(self, pane: ResearchPaneName) -> None:
+        target = self.query_one(f"#research-{pane}-pane")
+        if target.display:
+            target.focus()
+
+    def _focus_reveal(self, pane: ResearchSidePane) -> None:
+        handle = self.query_one(f"#research-{pane}-handle", ResearchPaneHandle)
+        button = handle.query_one(f"#research-{pane}-reveal", Button)
+        if handle.display and button.display:
+            button.focus()

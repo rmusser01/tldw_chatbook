@@ -410,6 +410,24 @@ def test_research_route_resolves_to_research_screen():
     assert canonical_tab == "research"
 
 
+def test_research_workspace_route_resolves_without_repointing_runs():
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    workspace = resolve_screen_target("research_workspace")
+    runs = resolve_screen_target("research")
+
+    assert workspace == (
+        "research_workspace",
+        "research_workspace",
+        ResearchWorkspaceScreen,
+    )
+    assert runs[2] is ResearchScreen
+
+
 def test_media_route_resolves_to_library_screen():
     """task-2851: the legacy standalone Media Library screen is retired.
 
@@ -485,6 +503,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "home": "HomeScreen",
         "chat": "ChatScreen",
         "library": "LibraryScreen",
+        "research_workspace": "ResearchWorkspaceScreen",
         "artifacts": "ArtifactsScreen",
         "personas": "PersonasScreen",
         "watchlists_collections": "WatchlistsCollectionsScreen",
@@ -3655,6 +3674,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-home", "\u23031 Home"),
         ("nav-console", "\u23032 Console"),
         ("nav-library", "\u23033 Library"),
+        ("nav-research", "F10 Research"),
         ("nav-artifacts", "\u23034 Artifacts"),
         ("nav-personas", "\u23035 Roleplay"),
         ("nav-watchlists_collections", "\u23036 Watchlists"),
@@ -4922,13 +4942,8 @@ async def test_generic_reentry_returns_to_library_landing():
 
 
 @pytest.mark.asyncio
-async def test_nav_bar_no_destination_truncates_at_160_cols():
-    """NV-01 (TASK-2154.21): the strip fits all 13 destinations at 160 cols.
-
-    The hotkey-prefixed labels (``⌃1 Home`` … ``F9 Settings``) need ~153
-    cells, so the everything-fits threshold sits between 150 and 160; 160
-    gives a clean margin.
-    """
+async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
+    """Fourteen destinations keep full labels through the overflow control."""
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
     class TestApp(ConsolidatedCSSApp):
@@ -4942,18 +4957,11 @@ async def test_nav_bar_no_destination_truncates_at_160_cols():
         strip = nav.query_one("#nav-destination-strip")
         hint = nav.query_one("#nav-overflow-hint", Button)
 
-        # Everything fits, so the overflow affordance hides instead of
-        # re-clipping the strip (the old 14-cell static hint is what cut
-        # "Settings" down to "Set").
-        assert not hint.display
-        assert strip.virtual_size.width <= strip.region.width
-        strip_right = strip.region.x + strip.region.width
+        assert hint.display
+        assert strip.virtual_size.width > strip.region.width
         for destination in SHELL_DESTINATION_ORDER:
             button = nav.query_one(f"#nav-{destination.destination_id}")
-            assert button.region.x >= strip.region.x
-            assert button.region.x + button.region.width <= strip_right, (
-                f"{destination.destination_id} clips at 160 cols: {button.region}"
-            )
+            assert str(button.label).endswith(destination.label)
 
 
 @pytest.mark.asyncio
@@ -4988,6 +4996,10 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
         # (Lab/Logs/Settings), hotkey prefixes survive on the first ten, and
         # the active one is marked.
         assert str(menu.query_one("#nav-overflow-lab", Button).label) == "F7 Lab"
+        assert (
+            str(menu.query_one("#nav-overflow-research", Button).label)
+            == "F10 Research"
+        )
         assert str(menu.query_one("#nav-overflow-logs", Button).label) == "F8 Logs"
         assert str(menu.query_one("#nav-overflow-settings", Button).label) == "F9 Settings"
         assert str(menu.query_one("#nav-overflow-home", Button).label).startswith("⌃1 Home")

@@ -6,6 +6,21 @@ import pytest
 from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
 from tldw_chatbook.UI.Research_Window import ResearchWindow, _parse_limits_text
 
+
+def test_runs_screen_composes_shared_research_mode_strip_before_window():
+    from tldw_chatbook.UI.Research_Workspace_Modules.mode_bar import (
+        ResearchModeStrip,
+    )
+    from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
+
+    screen = ResearchScreen(SimpleNamespace())
+    children = list(screen.compose_content())
+
+    assert isinstance(children[0], ResearchModeStrip)
+    assert children[0].active_route == "research"
+    assert isinstance(children[1], ResearchWindow)
+
+
 # NOTE (task-16322, ADR-068): ``ResearchScreen`` is back -- the local
 # research execution engine drives launched local runs, so the window is
 # reachable from navigation again under the "research" route id (the

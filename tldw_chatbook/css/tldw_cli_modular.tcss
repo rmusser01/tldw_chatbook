@@ -23599,6 +23599,291 @@ InstalledView Button:disabled {
     background: $surface-darken-1;
 }
 
+/* ===== MODULE: features/_research_workspace.tcss ===== */
+/* Research Workspace: established Neon Workbench extension.
+ * All regions mount once; responsive classes only change display and sizing.
+ */
+
+#research-workspace-shell {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    background: $background;
+}
+
+#research-workspace-header {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    background: $panel;
+}
+
+#research-workspace-header .workbench-header {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: none;
+}
+
+#research-mode-strip {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    overflow: hidden;
+    background: $panel;
+}
+
+#research-mode-strip .research-mode-label {
+    width: 10;
+    height: 1;
+    min-height: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#research-mode-strip Button.research-mode-chip {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+
+#research-mode-strip .research-mode-chip.is-active,
+#research-mode-strip .research-mode-chip.is-active:focus {
+    border: none;
+    background: $primary;
+    color: $text;
+    text-style: bold underline;
+    outline: none;
+}
+
+#research-mode-strip .research-mode-chip:focus {
+    border: none;
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+    outline: none;
+}
+
+#research-authority-summary {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+#research-authority-summary Static {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-right: 2;
+    color: $text-muted;
+}
+
+#research-data-source {
+    color: $accent;
+    text-style: bold;
+}
+
+#research-workspace-menu {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#research-workspace-selection {
+    width: 1fr;
+    height: 1;
+    color: $text-muted;
+}
+
+#research-manage-workspaces {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface;
+    color: $text;
+}
+
+#research-manage-workspaces:focus {
+    border: none;
+    outline: none;
+    background: $primary;
+    color: $text;
+    text-style: bold underline;
+}
+
+#research-pane-mode-strip {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $surface-darken-1;
+    align-horizontal: center;
+}
+
+#research-pane-mode-strip .research-pane-mode-button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+
+#research-pane-mode-strip .research-pane-mode-button.is-active {
+    border: none;
+    background: $primary-darken-1;
+    color: $text;
+    text-style: bold;
+}
+
+#research-pane-mode-strip .research-pane-mode-button:focus {
+    border: none;
+    outline: none;
+    background: $primary;
+    color: $text;
+    text-style: bold underline;
+}
+
+#research-workspace-grid {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    background: $background;
+    overflow: hidden;
+}
+
+.research-workspace-pane {
+    height: 100%;
+    min-height: 0;
+    padding: 1;
+    border: round $surface-lighten-1;
+    background: $panel;
+    color: $text;
+}
+
+.research-workspace-pane:focus {
+    border: round $accent;
+    outline: none;
+}
+
+.research-pane-title {
+    height: 1;
+    min-height: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+.research-pane-summary {
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
+}
+
+.research-pane-empty {
+    height: auto;
+    margin-top: 1;
+    color: $text;
+}
+
+#research-sources-pane {
+    width: 1fr;
+    min-width: 32;
+    max-width: 38;
+}
+
+#research-chat-pane {
+    width: 4fr;
+    min-width: 58;
+}
+
+#research-studio-pane {
+    width: 2fr;
+    min-width: 42;
+    max-width: 50;
+}
+
+ResearchPaneHandle {
+    width: 4;
+    min-width: 4;
+    max-width: 4;
+    height: 100%;
+    min-height: 0;
+    background: $surface-darken-1;
+    align: center middle;
+}
+
+ResearchPaneHandle .research-pane-handle-button {
+    width: 4;
+    min-width: 4;
+    max-width: 4;
+    height: 3;
+    min-height: 3;
+    padding: 0;
+    border: none;
+    background: $surface;
+    color: $text-muted;
+}
+
+ResearchPaneHandle .research-pane-handle-button:focus {
+    border: none;
+    outline: heavy $accent;
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+#research-workspace-grid.layout-medium #research-sources-pane,
+#research-workspace-grid.layout-medium #research-studio-pane {
+    width: 2fr;
+    min-width: 32;
+    max-width: 42;
+}
+
+#research-workspace-grid.layout-medium #research-chat-pane {
+    width: 4fr;
+    min-width: 58;
+}
+
+#research-workspace-grid.layout-narrow .research-workspace-pane {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+#research-workspace-status {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+#research-workspace-shell.height-compact #research-destination-header {
+    height: 2;
+    min-height: 2;
+}
+
+#research-workspace-shell.height-compact #workbench-header-subtitle {
+    display: none;
+}
+
 /* ===== MODULE: features/_logs.tcss ===== */
 /* ========================================
  * FEATURES: Logs
