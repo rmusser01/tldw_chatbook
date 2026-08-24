@@ -258,49 +258,59 @@ def _replace_chunk_rows(
     """
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     client_id = getattr(media_db, "client_id", "local")
+    # TASK-21134: built as one parameter list and inserted with executemany.
+    # ``Connection.execute`` builds a fresh Cursor per call, so the old
+    # per-chunk loop paid that construction 5,000 times for a 5,000-chunk
+    # document. ``chunk_index`` still comes from the enumerate index, so a
+    # skipped invalid chunk leaves the same gap in the sequence it always did.
+    rows: List[tuple] = []
+    for index, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict) or chunk.get("text") is None:
+            logger.warning(
+                f"Skipping invalid chunk index {index} for media_id {media_id}"
+            )
+            continue
+        rows.append(
+            (
+                media_id,
+                chunk["text"],
+                index,
+                chunk.get("start_char"),
+                chunk.get("end_char"),
+                chunk.get("chunk_type"),
+                created,
+                created,
+                False,
+                json.dumps(chunk.get("metadata"))
+                if isinstance(chunk.get("metadata"), dict)
+                else None,
+                template_name,
+                template_params,
+                # task-13 (spec §10.2): the stamp IS the point -- these
+                # rows leave the "legacy" report population.
+                ENGINE_VERSION,
+                media_db._generate_uuid(),
+                created,
+                1,
+                client_id,
+                0,
+                None,
+                None,
+            )
+        )
     with media_db.transaction() as conn:
         conn.execute(
             "DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?", (media_id,)
         )
-        for index, chunk in enumerate(chunks):
-            if not isinstance(chunk, dict) or chunk.get("text") is None:
-                logger.warning(
-                    f"Skipping invalid chunk index {index} for media_id {media_id}"
-                )
-                continue
-            conn.execute(
+        if rows:
+            conn.executemany(
                 "INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, "
                 "chunk_index, start_char, end_char, chunk_type, creation_date, "
                 "last_modified_orig, is_processed, metadata, chunking_template, "
                 "chunking_params, chunk_engine_version, uuid, last_modified, "
                 "version, client_id, deleted, prev_version, merge_parent_uuid) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    media_id,
-                    chunk["text"],
-                    index,
-                    chunk.get("start_char"),
-                    chunk.get("end_char"),
-                    chunk.get("chunk_type"),
-                    created,
-                    created,
-                    False,
-                    json.dumps(chunk.get("metadata"))
-                    if isinstance(chunk.get("metadata"), dict)
-                    else None,
-                    template_name,
-                    template_params,
-                    # task-13 (spec §10.2): the stamp IS the point -- these
-                    # rows leave the "legacy" report population.
-                    ENGINE_VERSION,
-                    media_db._generate_uuid(),
-                    created,
-                    1,
-                    client_id,
-                    0,
-                    None,
-                    None,
-                ),
+                rows,
             )
 
 

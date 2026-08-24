@@ -1166,3 +1166,133 @@ def test_rechunk_one_item_reindex_default_off_and_opt_in(media_db, monkeypatch):
     assert opt_in["status"] == "rechunked"
     assert calls == [{"media_id": media_id, "rag_service": rag, "indexing_db": None}]
     assert opt_in["reindexed"] == {"status": "reindexed"}
+
+
+# ---------------------------------------------------------------------------
+# TASK-21134: chunk rows go in as one statement, not one statement per chunk
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_rows_are_inserted_in_one_statement(media_db, monkeypatch):
+    """One executemany, not one execute per chunk.
+
+    ``Connection.execute`` builds a fresh Cursor per call, so the per-chunk
+    loop paid that construction once per chunk. Measured over 7 replacements
+    of the same document: 5,000 chunks 139.7 -> 116.2 ms, 500 chunks
+    10.55 -> 8.89 ms.
+    """
+    from tldw_chatbook.Library import library_rechunk_service as service
+
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Batch", media_type="document", content="x" * 400, keywords=[]
+    )
+    chunks = [
+        {
+            "text": f"body {index}",
+            "start_char": index,
+            "end_char": index + 1,
+            "chunk_type": "text",
+            "metadata": {"index": index},
+        }
+        for index in range(40)
+    ]
+
+    inserts = {"execute": 0, "executemany": 0}
+    real_transaction = MediaDatabase.transaction
+
+    class _CountingConnection:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args, **kwargs):
+            if "INSERT INTO UnvectorizedMediaChunks" in sql:
+                inserts["execute"] += 1
+            return self._inner.execute(sql, *args, **kwargs)
+
+        def executemany(self, sql, seq, *args, **kwargs):
+            if "INSERT INTO UnvectorizedMediaChunks" in sql:
+                inserts["executemany"] += 1
+            return self._inner.executemany(sql, seq, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def counting_transaction(self, *args, **kwargs):
+        with real_transaction(self, *args, **kwargs) as conn:
+            yield _CountingConnection(conn)
+
+    monkeypatch.setattr(MediaDatabase, "transaction", counting_transaction)
+
+    service._replace_chunk_rows(
+        media_db, media_id, chunks, template_name="t", template_params="{}"
+    )
+
+    assert inserts == {"execute": 0, "executemany": 1}
+
+    monkeypatch.undo()
+    with media_db.transaction() as conn:
+        stored = conn.execute(
+            "SELECT chunk_index, chunk_text FROM UnvectorizedMediaChunks "
+            "WHERE media_id = ? ORDER BY chunk_index",
+            (media_id,),
+        ).fetchall()
+    assert [row["chunk_index"] for row in stored] == list(range(40))
+    assert [row["chunk_text"] for row in stored] == [f"body {i}" for i in range(40)]
+
+
+def test_an_invalid_chunk_is_skipped_and_leaves_its_index_gap(media_db):
+    """Batching must not renumber the survivors around a skipped chunk."""
+    from tldw_chatbook.Library import library_rechunk_service as service
+
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Gap", media_type="document", content="x" * 400, keywords=[]
+    )
+
+    service._replace_chunk_rows(
+        media_db,
+        media_id,
+        [
+            {"text": "first"},
+            {"text": None},  # invalid: skipped
+            "not-a-dict",  # invalid: skipped
+            {"text": "fourth"},
+        ],
+        template_name=None,
+        template_params=None,
+    )
+
+    with media_db.transaction() as conn:
+        stored = conn.execute(
+            "SELECT chunk_index, chunk_text FROM UnvectorizedMediaChunks "
+            "WHERE media_id = ? ORDER BY chunk_index",
+            (media_id,),
+        ).fetchall()
+    assert [(row["chunk_index"], row["chunk_text"]) for row in stored] == [
+        (0, "first"),
+        (3, "fourth"),
+    ]
+
+
+def test_replacing_with_no_valid_chunks_still_clears_the_old_rows(media_db):
+    """The DELETE is unconditional; only the INSERT is skipped when empty."""
+    from tldw_chatbook.Library import library_rechunk_service as service
+
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Empty", media_type="document", content="x" * 400, keywords=[]
+    )
+    service._replace_chunk_rows(
+        media_db, media_id, [{"text": "old"}], template_name=None, template_params=None
+    )
+    service._replace_chunk_rows(
+        media_db, media_id, [], template_name=None, template_params=None
+    )
+
+    with media_db.transaction() as conn:
+        remaining = conn.execute(
+            "SELECT count(*) AS n FROM UnvectorizedMediaChunks WHERE media_id = ?",
+            (media_id,),
+        ).fetchone()["n"]
+    assert remaining == 0
