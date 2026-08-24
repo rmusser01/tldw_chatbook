@@ -1827,18 +1827,20 @@ class TestSummarizeToolResultAllWeakNotice:
             _summarize_tool_result,
         )
 
-        rows = [{
-            "id": 1,
-            "score": 0.016,
-            "metadata": {
-                "hybrid_fusion": {
-                    "fts_rank": 1,
-                    "vector_rank": 1,
-                    "fts_score": 0.001,
-                    "vector_score": 0.8,
+        rows = [
+            {
+                "id": 1,
+                "score": 0.016,
+                "metadata": {
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.8,
+                    },
                 },
-            },
-        }]
+            }
+        ]
 
         extracted = _extract_scored_rows(rows)
 
@@ -1846,7 +1848,10 @@ class TestSummarizeToolResultAllWeakNotice:
         assert extracted[0].score_kind == "hybrid_fusion"
         assert extracted[0].vector_score == pytest.approx(0.8)
         _, interpretation = _summarize_tool_result(
-            ok=True, duration_ms=50, source="local", result=rows,
+            ok=True,
+            duration_ms=50,
+            source="local",
+            result=rows,
         )
         assert interpretation is None
 
@@ -1953,12 +1958,13 @@ class TestSummarizeToolResultAllWeakNotice:
             assert extracted[0].score_kind == score_kind
             assert extracted[0].vector_score == vector_score
             _, interpretation = _summarize_tool_result(
-                ok=True, duration_ms=50, source="local", result=[row],
+                ok=True,
+                duration_ms=50,
+                source="local",
+                result=[row],
             )
             assert interpretation == (
-                LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
-                if expects_weak_notice
-                else None
+                LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX if expects_weak_notice else None
             )
 
     def test_malformed_scores_are_unscored_and_never_reported_weak(self):
@@ -2001,7 +2007,10 @@ class TestSummarizeToolResultAllWeakNotice:
                 assert extracted is not None
                 assert getattr(extracted[0], score_field) is None
                 _, interpretation = _summarize_tool_result(
-                    ok=True, duration_ms=50, source="local", result=[row],
+                    ok=True,
+                    duration_ms=50,
+                    source="local",
+                    result=[row],
                 )
                 assert interpretation is None
 

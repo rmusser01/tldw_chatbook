@@ -81,7 +81,9 @@ async def test_profile_plain_routes_to_keyword_without_resolving_shared_runtime(
     )
     service = SimplifiedRAGSearchService(media_db)
 
-    monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "plain")
+    monkeypatch.setattr(
+        search_service, "resolve_active_rag_search_mode", lambda: "plain"
+    )
     monkeypatch.setattr(
         search_service,
         "get_shared_rag_service",
@@ -282,9 +284,14 @@ class TestSemanticSearchEnhancedMapping:
         service = SimplifiedRAGSearchService(media_db)
         stub = _StubEnhancedRAGService([])
         service.rag_service = stub
-        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: mode)
+        monkeypatch.setattr(
+            search_service, "resolve_active_rag_search_mode", lambda: mode
+        )
 
-        assert await service.profile_search("anything", limit=5, media_types=media_types) == []
+        assert (
+            await service.profile_search("anything", limit=5, media_types=media_types)
+            == []
+        )
         assert stub.calls == [
             (
                 "anything",
@@ -417,7 +424,9 @@ class TestSemanticSearchFallback:
         assert results[0]["id"] == media_id
 
     @pytest.mark.asyncio
-    async def test_raises_on_failure_instead_of_returning_empty(self, media_db, monkeypatch):
+    async def test_raises_on_failure_instead_of_returning_empty(
+        self, media_db, monkeypatch
+    ):
         service = SimplifiedRAGSearchService(media_db)
         monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: None)
 
@@ -466,7 +475,10 @@ class TestEnhancedRuntimeLifecycle:
         first_results = await service.semantic_search("first")
         second_results = await service.semantic_search("second")
 
-        assert [first_results[0]["metadata"]["source"], second_results[0]["metadata"]["source"]] == [
+        assert [
+            first_results[0]["metadata"]["source"],
+            second_results[0]["metadata"]["source"],
+        ] == [
             "first",
             "second",
         ]
@@ -563,7 +575,9 @@ class TestProfileRuntimeModeReconciliation:
         runtime.config = SimpleNamespace(
             search=SimpleNamespace(default_search_mode="plain")
         )
-        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "semantic")
+        monkeypatch.setattr(
+            search_service, "resolve_active_rag_search_mode", lambda: "semantic"
+        )
         monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: runtime)
         service = SimplifiedRAGSearchService(media_db)
 
@@ -580,7 +594,9 @@ class TestProfileRuntimeModeReconciliation:
         runtime.config = SimpleNamespace(
             search=SimpleNamespace(default_search_mode="hybrid")
         )
-        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "semantic")
+        monkeypatch.setattr(
+            search_service, "resolve_active_rag_search_mode", lambda: "semantic"
+        )
         monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: runtime)
         service = SimplifiedRAGSearchService(media_db)
 
@@ -599,11 +615,15 @@ class TestProfileRuntimeModeReconciliation:
                 return False
 
         runtime = _FalseyService([])
-        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "hybrid")
+        monkeypatch.setattr(
+            search_service, "resolve_active_rag_search_mode", lambda: "hybrid"
+        )
         monkeypatch.setattr(
             search_service,
             "get_shared_rag_service",
-            lambda: pytest.fail("falsey injected service must not resolve shared runtime"),
+            lambda: pytest.fail(
+                "falsey injected service must not resolve shared runtime"
+            ),
         )
         service = SimplifiedRAGSearchService(media_db)
         service.rag_service = runtime
@@ -632,7 +652,9 @@ class TestProfileRuntimeModeReconciliation:
         ]
 
     @pytest.mark.asyncio
-    async def test_production_getter_runs_off_event_loop_thread(self, media_db, monkeypatch):
+    async def test_production_getter_runs_off_event_loop_thread(
+        self, media_db, monkeypatch
+    ):
         runtime = _StubEnhancedRAGService([])
         getter_thread_ids = []
         event_loop_thread_id = threading.get_ident()
@@ -641,7 +663,9 @@ class TestProfileRuntimeModeReconciliation:
             getter_thread_ids.append(threading.get_ident())
             return runtime
 
-        monkeypatch.setattr(search_service, "get_shared_rag_service", _get_shared_runtime)
+        monkeypatch.setattr(
+            search_service, "get_shared_rag_service", _get_shared_runtime
+        )
         service = SimplifiedRAGSearchService(media_db)
 
         assert await service.semantic_search("anything") == []

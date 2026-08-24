@@ -264,9 +264,12 @@ def test_resolve_profile_search_mode_delegates_normalization(monkeypatch):
         raising=False,
     )
 
-    assert rag_service_module._resolve_profile_search_mode(
-        _ProfileRagService(mode="runtime-mode")
-    ) == "controlled"
+    assert (
+        rag_service_module._resolve_profile_search_mode(
+            _ProfileRagService(mode="runtime-mode")
+        )
+        == "controlled"
+    )
     assert received == ["runtime-mode"]
 
 

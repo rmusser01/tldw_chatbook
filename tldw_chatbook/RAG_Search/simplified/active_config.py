@@ -47,7 +47,9 @@ _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k"
 
 def normalize_rag_search_mode(value: object) -> str:
     """Return a supported exact search mode, defaulting to ``semantic``."""
-    return value if isinstance(value, str) and value in _RAG_SEARCH_MODES else "semantic"
+    return (
+        value if isinstance(value, str) and value in _RAG_SEARCH_MODES else "semantic"
+    )
 
 
 def _manager():

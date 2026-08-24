@@ -128,9 +128,8 @@ def _metadata_filter_value_matches(actual: Any, expected: Any) -> bool:
     if set(expected) != {"$in"}:
         return False
     allowed = expected["$in"]
-    if (
-        not isinstance(allowed, abc.Collection)
-        or isinstance(allowed, (str, bytes, bytearray, abc.Mapping))
+    if not isinstance(allowed, abc.Collection) or isinstance(
+        allowed, (str, bytes, bytearray, abc.Mapping)
     ):
         return False
     try:
@@ -1338,7 +1337,9 @@ class RAGService:
             if cached_result is not None:
                 results, context = cached_result
                 log_counter("rag_search_cache_hit", labels={"type": search_type})
-                logger.info(f"[{correlation_id}] Cache hit for query: '{query[:50]}...'")
+                logger.info(
+                    f"[{correlation_id}] Cache hit for query: '{query[:50]}...'"
+                )
                 return results
             log_counter("rag_search_cache_miss", labels={"type": search_type})
 
