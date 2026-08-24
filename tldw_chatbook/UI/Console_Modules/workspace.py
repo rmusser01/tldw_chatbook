@@ -103,7 +103,10 @@ def persist_console_workspace_tree_expansion_preferences(
             list(workspace_ids),
         )
     except Exception as exc:
-        logger.warning("Failed to persist Workspace Tree disclosure: {}", exc)
+        logger.warning(
+            "Failed to persist Workspace Tree disclosure (exception_type={})",
+            type(exc).__name__,
+        )
 
 
 class UnknownMembership:
