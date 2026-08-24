@@ -6,7 +6,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button
 
-from .region_layout import PANE_GRIP_WIDTH, Region
+from .region_layout import Region
 
 
 _PANE_NAMES: dict[Region, str] = {
@@ -42,9 +42,6 @@ class WatchlistsPaneGrip(Button):
             compact=True,
         )
         self.pane_region = region
-        self.styles.width = PANE_GRIP_WIDTH
-        self.styles.min_width = PANE_GRIP_WIDTH
-        self.styles.max_width = PANE_GRIP_WIDTH
         self.styles.line_pad = 0
         self.set_reactive(WatchlistsPaneGrip.expanded, expanded)
         self._relabel()

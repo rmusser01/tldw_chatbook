@@ -63,7 +63,7 @@ def test_grip_direction_matches_pane_side_and_state(
         (Region.RIGHT_RAIL, "Inspector"),
     ],
 )
-def test_grip_exposes_actionable_copy_and_compact_geometry(
+def test_grip_exposes_actionable_copy_and_compact_behavior(
     region: Region, pane_name: str
 ) -> None:
     grip = WatchlistsPaneGrip(region, expanded=False)
@@ -72,12 +72,6 @@ def test_grip_exposes_actionable_copy_and_compact_geometry(
     assert grip.tooltip == f"Expand {pane_name}"
     assert grip.name == f"Expand {pane_name}"
     assert grip.compact
-    assert grip.styles.width is not None
-    assert grip.styles.width.value == 5
-    assert grip.styles.min_width is not None
-    assert grip.styles.min_width.value == 5
-    assert grip.styles.max_width is not None
-    assert grip.styles.max_width.value == 5
     assert grip.styles.line_pad == 0
     assert grip.has_class("watchlists-pane-grip")
 

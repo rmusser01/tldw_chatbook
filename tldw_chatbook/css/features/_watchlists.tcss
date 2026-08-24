@@ -85,8 +85,9 @@
 }
 
 .watchlists-region-left_rail {
-    width: 28;
+    width: 1fr;
     min-width: 24;
+    max-width: 28;
     height: 100%;
     border: round $ds-grid-line;
 }
@@ -97,8 +98,9 @@
  * pane, is the survivor.
  */
 .watchlists-region-right_rail {
-    width: 34;
+    width: 1fr;
     min-width: 30;
+    max-width: 34;
     height: 100%;
     border: round $ds-grid-line;
 }
@@ -145,9 +147,9 @@
     border: none;
 }
 
-/* ITEMS is the management canvas, but a fixed Feed Items side pane on Read. */
+/* ITEMS is the management canvas, but a bounded Feed Items side pane on Read. */
 .watchlists-region-items {
-    width: 1fr;
+    width: 3fr;
     min-width: 0;
     height: 100%;
     min-height: 0;
@@ -155,8 +157,9 @@
 }
 
 .watchlists-read-mode .watchlists-region-items {
-    width: 40;
+    width: 2fr;
     min-width: 32;
+    max-width: 40;
     height: 100%;
     overflow: hidden;
 }
@@ -190,7 +193,7 @@
 
 /* Reader is the permanent flexing centre; only its article body scrolls. */
 .watchlists-region-content {
-    width: 1fr;
+    width: 3fr;
     min-width: 0;
     height: 100%;
     min-height: 0;

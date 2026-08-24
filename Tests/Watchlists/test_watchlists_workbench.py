@@ -110,87 +110,172 @@ def test_region_titles_cover_exactly_the_live_regions() -> None:
     assert set(REGION_TITLES) == set(Region)
 
 
-@pytest.mark.parametrize(
-    ("selector", "target", "minimum"),
-    [
-        (".watchlists-region-left_rail", 28, 24),
-        (".watchlists-read-mode .watchlists-region-items", 40, 32),
-        (".watchlists-region-right_rail", 34, 30),
-    ],
-)
 @pytest.mark.asyncio
-async def test_real_bundle_keeps_approved_side_pane_targets_and_minimums(
-    selector: str, target: int, minimum: int
-) -> None:
+async def test_real_bundle_keeps_approved_wide_targets_and_minimums() -> None:
     app = _BoundaryGeometryApp(220, read_mode=True)
 
     async with app.run_test(size=(220, 24)) as pilot:
         await pilot.pause()
-        pane = app.query_one(selector)
+        expected = {
+            ".watchlists-region-left_rail": (28, 24),
+            ".watchlists-read-mode .watchlists-region-items": (40, 32),
+            ".watchlists-region-right_rail": (34, 30),
+        }
+        for selector, (target, minimum) in expected.items():
+            pane = app.query_one(selector)
+            assert pane.styles.min_width is not None
+            assert pane.styles.min_width.value == minimum
+            assert pane.styles.max_width is not None
+            assert pane.styles.max_width.value == target
+            assert pane.region.width == target
 
-        assert pane.styles.width is not None
-        assert pane.styles.width.value == target
-        assert pane.styles.min_width is not None
-        assert pane.styles.min_width.value == minimum
-        assert pane.region.width == target
 
-
-@pytest.mark.parametrize("width", (145, 144, 115, 114, 91, 90, 60, 59))
-@pytest.mark.parametrize("read_mode", (True, False), ids=("read", "management"))
-@pytest.mark.asyncio
-async def test_real_bundle_boundary_geometry_is_contained_and_keeps_centre(
-    width: int, read_mode: bool
+def _assert_real_bundle_geometry(
+    app: _BoundaryGeometryApp,
+    *,
+    width: int,
+    read_mode: bool,
+    expected_widths: dict[str, int],
 ) -> None:
-    app = _BoundaryGeometryApp(width, read_mode=read_mode)
+    """Assert one mounted real-bundle frame is contained and non-overlapping."""
+    body = app.query_one("#wl-workbench-body", Horizontal)
+    workbench = app.query_one("#wl-workbench", WatchlistsWorkbench)
+    children = list(body.children)
+    expected_order = _expected_boundary_child_ids(app.layout, read_mode=read_mode)
+
+    assert _direct_child_ids(body) == expected_order
+    assert workbench.content_region.contains_region(body.region)
+    assert body.region.width == workbench.content_region.width == width
+    assert body.region.height == workbench.content_region.height
+    assert body.max_scroll_x == 0
+    assert body.virtual_size.width <= body.content_region.width
+    assert all(body.content_region.contains_region(child.region) for child in children)
+    assert all(
+        left.region.right <= right.region.x
+        for left, right in zip(children, children[1:])
+    )
+
+    grips = list(body.query(WatchlistsPaneGrip))
+    assert len(grips) == (3 if read_mode else 2)
+    assert all(grip.outer_size.width == grip.region.width == 5 for grip in grips)
+    assert all(grip.region.height == body.content_region.height for grip in grips)
+
+    centre_id = "wl-region-content" if read_mode else "wl-region-items"
+    centre = app.query_one(f"#{centre_id}")
+    assert centre.styles.min_width is not None
+    assert centre.styles.min_width.value == 0
+    assert centre.region.width == body.content_region.width - sum(
+        child.region.width for child in children if child is not centre
+    )
+    assert centre.region.width > 0
+    assert centre.region.height == body.content_region.height
+    actual_widths = {child.id: child.region.width for child in children}
+    assert {
+        node_id: actual_widths[node_id] for node_id in expected_widths
+    } == expected_widths
+
+
+@pytest.mark.parametrize(
+    ("width", "collapsed", "expected_widths"),
+    [
+        (
+            145,
+            frozenset(),
+            {
+                "wl-region-left_rail": 24,
+                "wl-region-items": 32,
+                "wl-region-content": 44,
+                "wl-region-right_rail": 30,
+            },
+        ),
+        (144, frozenset({Region.RIGHT_RAIL}), {}),
+        (
+            115,
+            frozenset({Region.RIGHT_RAIL}),
+            {
+                "wl-region-left_rail": 24,
+                "wl-region-items": 32,
+                "wl-region-content": 44,
+            },
+        ),
+        (114, frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}), {}),
+        (
+            91,
+            frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}),
+            {"wl-region-items": 32, "wl-region-content": 44},
+        ),
+        (90, frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}), {}),
+        (60, frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}), {}),
+        (
+            40,
+            frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}),
+            {"wl-region-content": 25},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_read_real_bundle_threshold_geometry(
+    width: int,
+    collapsed: frozenset[Region],
+    expected_widths: dict[str, int],
+) -> None:
+    app = _BoundaryGeometryApp(width, read_mode=True)
 
     async with app.run_test(size=(width, 24)) as pilot:
         await pilot.pause()
-        body = app.query_one("#wl-workbench-body", Horizontal)
-        workbench = app.query_one("#wl-workbench", WatchlistsWorkbench)
-        children = list(body.children)
-        expected = _expected_boundary_child_ids(
-            app.layout,
-            read_mode=read_mode,
+        assert app.layout.collapsed == collapsed
+        _assert_real_bundle_geometry(
+            app,
+            width=width,
+            read_mode=True,
+            expected_widths=expected_widths,
         )
 
-        assert _direct_child_ids(body) == expected
-        assert workbench.content_region.contains_region(body.region)
-        assert body.region.width == workbench.content_region.width == width
-        assert body.region.height == workbench.content_region.height
-        assert body.max_scroll_x == 0
-        assert body.virtual_size.width <= body.content_region.width
-        assert all(
-            body.content_region.contains_region(child.region) for child in children
-        )
-        assert all(
-            left.region.right <= right.region.x
-            for left, right in zip(children, children[1:])
-        )
 
-        grips = list(body.query(WatchlistsPaneGrip))
-        assert len(grips) == (3 if read_mode else 2)
-        assert all(grip.outer_size.width == grip.region.width == 5 for grip in grips)
-        assert all(grip.region.height == body.content_region.height for grip in grips)
+@pytest.mark.parametrize(
+    ("width", "collapsed", "expected_widths"),
+    [
+        (
+            108,
+            frozenset(),
+            {
+                "wl-region-left_rail": 24,
+                "wl-region-items": 44,
+                "wl-region-right_rail": 30,
+            },
+        ),
+        (107, frozenset({Region.RIGHT_RAIL}), {}),
+        (
+            78,
+            frozenset({Region.RIGHT_RAIL}),
+            {"wl-region-left_rail": 24, "wl-region-items": 44},
+        ),
+        (77, frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}), {}),
+        (76, frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}), {}),
+        (
+            40,
+            frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}),
+            {"wl-region-items": 30},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_management_real_bundle_threshold_geometry(
+    width: int,
+    collapsed: frozenset[Region],
+    expected_widths: dict[str, int],
+) -> None:
+    app = _BoundaryGeometryApp(width, read_mode=False)
 
-        minimums = {
-            "wl-region-left_rail": 24,
-            "wl-region-items": 32,
-            "wl-region-right_rail": 30,
-        }
-        for child in children:
-            if child.id in minimums and (read_mode or child.id != "wl-region-items"):
-                assert child.region.width >= minimums[child.id]
-
-        centre_id = "#wl-region-content" if read_mode else "#wl-region-items"
-        centre = app.query_one(centre_id)
-        assert centre.styles.min_width is not None
-        assert centre.styles.min_width.value == 0
-        occupied_by_siblings = sum(
-            child.region.width for child in children if child is not centre
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause()
+        assert app.layout.collapsed == collapsed
+        _assert_real_bundle_geometry(
+            app,
+            width=width,
+            read_mode=False,
+            expected_widths=expected_widths,
         )
-        assert centre.region.width == body.content_region.width - occupied_by_siblings
-        assert centre.region.width > 0
-        assert centre.region.height == body.content_region.height
 
 
 @pytest.mark.asyncio
