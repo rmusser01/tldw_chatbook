@@ -225,6 +225,8 @@ class ActorPackImportService:
                 self._staging_root, create=True, application_owned=True
             )
             if not privacy.verified_private:
+                if privacy.usable:
+                    return 0
                 raise ValueError
             removed = 0
             examined = 0
@@ -947,7 +949,7 @@ def _canonical_object(data: bytes) -> dict[str, Any]:
 def _preflight_space(root: Path, required: int) -> None:
     privacy = secure_private_directory(root, create=True, application_owned=True)
     if not privacy.verified_private:
-        raise ValueError
+        raise ActorPackImportError("actor_pack_import_disk_unavailable")
     if shutil.disk_usage(root).free < required * 2 + 1024 * 1024:
         raise ActorPackImportError("actor_pack_import_disk_unavailable")
 
