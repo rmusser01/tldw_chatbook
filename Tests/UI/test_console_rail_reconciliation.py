@@ -2767,7 +2767,7 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         assert observed == burst, (
             f"a coalesced {notches}-notch wheel burst forced "
             f"{len(observed) - len(burst)} whole-rail layout refreshes: "
-            f"{observed[len(burst):]}"
+            f"{observed[len(burst) :]}"
         )
 
         assert inspector._outer_owner_reconcile_count == owner_passes
@@ -2864,7 +2864,9 @@ def _assert_outer_fold_contract(
     assert outer.scroll_y <= max(0, outer.max_scroll_y)
     expected_copy = (
         OUTER_HINT
-        if hint.display and outer.max_scroll_y > 0 and outer.scroll_y < outer.max_scroll_y
+        if hint.display
+        and outer.max_scroll_y > 0
+        and outer.scroll_y < outer.max_scroll_y
         else ""
     )
     assert str(hint.renderable) == expected_copy
