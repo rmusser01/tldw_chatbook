@@ -134,12 +134,15 @@ creation and shows an error toast with `markup=False`:
 The pane derives this message from its rendered form contract and UI labels;
 backend services do not depend on presentation labels. For the rejected value,
 it first uses the broader existing source-type label registry, so `playlist`
-renders as `Playlist`. If no label is registered, it displays a stripped,
-sanitized, bounded version of the submitted machine value, falling back to
-`Unknown` when nothing displayable remains. Toast markup remains disabled, so
-arbitrary stale values are rendered as text. Other validation or unexpected
-failures retain the existing generic creation-failure copy rather than being
-misclassified as source-type errors.
+renders as `Playlist`. If no label is registered, the fallback is computed
+exactly as follows: coerce the submitted value to text, remove terminal control
+characters with the existing `strip_control_characters` helper, collapse every
+whitespace run to one ASCII space, and trim the result. If it exceeds 40
+characters, retain the first 39 and append `…`; if it is empty, display
+`Unknown`. Toast markup remains disabled, so arbitrary stale values are
+rendered as inert text. Other validation or unexpected failures retain the
+existing generic creation-failure copy rather than being misclassified as
+source-type errors.
 
 ## Testing
 
@@ -160,7 +163,8 @@ Focused tests will prove:
 6. Backend validators still reject values outside their complete service
    contracts before Local DB or Server client dispatch.
 7. Exact backend-specific recovery copy is emitted with markup disabled for a
-   known legacy label and for a sanitized arbitrary machine value.
+   known legacy label and for unregistered machine values containing controls,
+   whitespace, excessive length, or no displayable text.
 8. A submitted request, destination filing, and confirmation remain bound to
    the backend shown when Create was pressed even if the selector changes
    before the worker executes; the visible backend is the one refreshed.
