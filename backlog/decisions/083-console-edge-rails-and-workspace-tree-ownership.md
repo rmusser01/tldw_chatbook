@@ -69,6 +69,47 @@ Existing workspace/conversation storage, Default-workspace meaning, rail-open
 preferences, responsive widths, explicit-toggle authority, focus handoff, and
 session-local scroll-offset rules remain unchanged.
 
+## Amendment (2026-08-24): deliberate activation, global layout, and pinned authority
+
+UAT of the production-shaped Context rail found that activating a section could
+move the Tree between mouse-down and Textual's final coordinate-derived click,
+retargeting a workspace press to a neighboring conversation. The same review
+found that per-workspace disclosure layouts silently changed Context's spatial
+arrangement during navigation and that Inspect buried next-send authority below
+duplicated telemetry.
+
+Tree selection and activation are now deliberately separate. A single pointer
+click selects a row and expands a collapsed workspace without activating it. A
+rapid double-click, using Textual's native click chain, or Enter activates the
+selected workspace or conversation. Space and disclosure-glyph gestures toggle
+workspace disclosure; Left and Right retain branch navigation. The node's stable
+key at press time owns the entire gesture, so rail reconciliation cannot retarget
+it. Full-label tooltips exist only for actually truncated rows and are cleared or
+recomputed after reflow.
+
+Rail disclosure layout is global by default. Console Behavior offers an
+explicit per-workspace mode; existing workspace-scoped records remain stored and
+become authoritative again when that mode is selected. A missing global record
+is seeded once from the active workspace's effective saved layout, otherwise
+product defaults apply. Scope changes never persist transient scroll, focus,
+search disclosure, Tree selection, or tooltip state and never delete the
+inactive scope's records. Responsive compact-collapse remains a rendering
+override rather than a preference mutation.
+
+Inspect pins a compact `What happens if I send now?` authority summary above its
+outer scroll owner. One existing atomic display snapshot supplies workspace and
+conversation identity, next-send scope, run state, staged-source count, and
+pending approvals. Lower groups do not repeat the same facts. Empty Tools,
+Approvals, and Artifacts groups live under one More boundary and promote into
+the ordinary visible sequence whenever they become actionable or nonzero.
+
+This amendment changes the earlier clause that preserved the existing
+per-workspace rail-layout preference behavior and supersedes the original Tree
+interaction statement that pointer label selection or Enter immediately
+switched workspaces. Edge ownership, section ceilings, workspace/conversation
+data ownership, responsive width authority, and session-local scroll-offset
+rules remain unchanged.
+
 ## Context
 
 The current Console visually nests both rails inside a framed workspace, so
