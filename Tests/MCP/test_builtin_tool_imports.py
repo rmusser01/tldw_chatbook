@@ -218,12 +218,23 @@ def test_implemented_legacy_manifest_tool_names_and_order_are_stable():
         "conversation_id",
         "format",
     }
-    assert set(by_name["search_rag"]["inputSchema"]["properties"]) == {
+    search_rag = by_name["search_rag"]
+    assert list(search_rag["inputSchema"]["properties"]) == [
         "query",
         "limit",
         "media_types",
         "use_semantic",
-    }
+    ]
+    use_semantic = search_rag["inputSchema"]["properties"]["use_semantic"]
+    assert use_semantic["default"] is True
+    assert (
+        use_semantic["description"]
+        == "False forces media keyword search; true or omission follows the active RAG profile's plain, semantic, or hybrid search mode."
+    )
+    assert (
+        search_rag["description"]
+        == "Search media using the active RAG profile unless keyword search is forced."
+    )
 
 
 @pytest.mark.parametrize("setting_value", [False, True])

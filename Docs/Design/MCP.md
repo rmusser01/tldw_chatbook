@@ -198,11 +198,16 @@ Have conversations with specific characters.
 
 #### `search_rag`
 Search the RAG (Retrieval-Augmented Generation) database.
+
+`use_semantic` remains a boolean compatibility switch: `false` forces media
+keyword search; `true` or omission follows the active RAG profile's `plain`,
+`semantic`, or `hybrid` search mode.
+
 - **Parameters**:
   - `query`: Search query
   - `limit`: Maximum results (default: 10)
   - `media_types`: Optional media type filter
-  - `use_semantic`: Use semantic search if available
+  - `use_semantic`: Enable profile-driven RAG search (default: `true`)
 - **Returns**: List of search results with content and metadata
 
 #### `search_conversations`

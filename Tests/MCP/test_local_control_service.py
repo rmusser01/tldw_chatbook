@@ -14,6 +14,7 @@ from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 from tldw_chatbook.MCP.server import (
+    _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION,
     _signature_to_input_schema,
     _signature_to_prompt_arguments,
     describe_local_mcp_capabilities,
@@ -622,10 +623,12 @@ def test_local_control_service_uses_real_local_manifest_helper_by_default():
     manifest = describe_local_mcp_capabilities()
 
     assert inventory == manifest
-    assert any(tool["name"] == "search_rag" for tool in inventory["tools"])
-    assert any(
-        tool["description"] == "Search the RAG database for relevant content."
-        for tool in inventory["tools"]
+    search_rag = next(
+        tool for tool in inventory["tools"] if tool["name"] == "search_rag"
+    )
+    assert (
+        search_rag["description"]
+        == "Search media using the active RAG profile unless keyword search is forced."
     )
     assert any(
         resource["uri"] == "note://{note_id}" for resource in inventory["resources"]
@@ -677,9 +680,12 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                     # functions/decorators), not
                                     # re-deriving the schema mapping rules a
                                     # second time.
-                                    entry["inputSchema"] = _signature_to_input_schema(
-                                        nested
-                                    )
+                                    input_schema = _signature_to_input_schema(nested)
+                                    if nested.name == "search_rag":
+                                        input_schema["properties"]["use_semantic"][
+                                            "description"
+                                        ] = _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION
+                                    entry["inputSchema"] = input_schema
                                 elif decorator_name == "prompt":
                                     entry["arguments"] = _signature_to_prompt_arguments(
                                         nested
@@ -1925,9 +1931,18 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
 # generic MCP trigger retained as the fallback seam for unknown names.
 
 _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
-    "library_list_media": ("media.reading.list.local", "media_reading_ingestion_sources"),
-    "library_get_media": ("media.reading.detail.local", "media_reading_ingestion_sources"),
-    "library_search_media": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_list_media": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_get_media": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_search_media": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
     "library_list_notes": ("notes.list.local", "notes_workspaces"),
     "library_get_note": ("notes.detail.local", "notes_workspaces"),
     "library_search_notes": ("notes.list.local", "notes_workspaces"),
@@ -1940,9 +1955,18 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_list_conversations": ("chat.list.local", "chat"),
     "library_get_conversation": ("chat.detail.local", "chat"),
     "library_search_conversations": ("chat.list.local", "chat"),
-    "library_list_collections": ("library.collections.list.local", "library_collections"),
-    "library_get_collection": ("library.collections.detail.local", "library_collections"),
-    "library_search_collections": ("library.collections.list.local", "library_collections"),
+    "library_list_collections": (
+        "library.collections.list.local",
+        "library_collections",
+    ),
+    "library_get_collection": (
+        "library.collections.detail.local",
+        "library_collections",
+    ),
+    "library_search_collections": (
+        "library.collections.list.local",
+        "library_collections",
+    ),
     # chunking-agent-tools siblings: the read tools ride the existing media
     # read path (spec §6 "no new verbs") at the matching LEVEL -- structure
     # and chunk fetch are single-item detail reads (by id, like get), spec
@@ -1950,9 +1974,18 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     # action (Task 4's deadline carry: the moment the save handler went
     # live, the provisional derived READ mapping had to stop -- a live
     # write must never resolve to a read action under policy).
-    "library_get_media_structure": ("media.reading.detail.local", "media_reading_ingestion_sources"),
-    "library_get_media_chunk": ("media.reading.detail.local", "media_reading_ingestion_sources"),
-    "library_list_chunk_specs": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_get_media_structure": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_get_media_chunk": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_list_chunk_specs": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
     "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
     "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),
     # student-workflow (Task 1, spec §4): the note write resolves to its OWN
@@ -2049,7 +2082,6 @@ def test_control_service_forwards_its_policy_enforcer_to_the_default_delegate():
     lazily-composed shared Library service (and through it the chunk tools)
     is gated on the local MCP surface."""
     from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
-    from tldw_chatbook.MCP.local_store import LocalMCPStore
 
     enforcer = object()
     service = LocalMCPControlService(

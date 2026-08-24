@@ -1820,6 +1820,200 @@ class TestSummarizeToolResultAllWeakNotice:
     """Pure, UI-harness-free coverage of `_summarize_tool_result()` --
     mirrors `test_error_shape_detection()`'s pattern below."""
 
+    def test_extract_scored_rows_reads_nested_hybrid_vector_score(self):
+        """Fusion's RRF score is not a vector-similarity value."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        rows = [
+            {
+                "id": 1,
+                "score": 0.016,
+                "metadata": {
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.8,
+                    },
+                },
+            }
+        ]
+
+        extracted = _extract_scored_rows(rows)
+
+        assert extracted is not None
+        assert extracted[0].score_kind == "hybrid_fusion"
+        assert extracted[0].vector_score == pytest.approx(0.8)
+        _, interpretation = _summarize_tool_result(
+            ok=True,
+            duration_ms=50,
+            source="local",
+            result=rows,
+        )
+        assert interpretation is None
+
+    def test_score_provenance_controls_all_weak_notice(self):
+        """Only actual vector similarities participate in weak-match bands."""
+        from tldw_chatbook.Library.library_rag_state import (
+            LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+        )
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        cases = (
+            (
+                {"id": "vector", "score": 0.1, "metadata": {}},
+                "vector_similarity",
+                None,
+                True,
+            ),
+            (
+                {
+                    "id": "hybrid-strong-vector",
+                    "score": 0.016,
+                    "metadata": {
+                        "hybrid_fusion": {
+                            "fts_rank": 1,
+                            "vector_rank": 1,
+                            "fts_score": 0.001,
+                            "vector_score": 0.8,
+                        },
+                    },
+                },
+                "hybrid_fusion",
+                0.8,
+                False,
+            ),
+            (
+                {
+                    "id": "hybrid-weak-vector",
+                    "score": 0.016,
+                    "metadata": {
+                        "hybrid_fusion": {
+                            "fts_rank": 1,
+                            "vector_rank": 1,
+                            "fts_score": 0.001,
+                            "vector_score": 0.1,
+                        },
+                    },
+                },
+                "hybrid_fusion",
+                0.1,
+                True,
+            ),
+            (
+                {
+                    "id": "fts-only-hybrid",
+                    "score": 0.016,
+                    "metadata": {
+                        "hybrid_fusion": {
+                            "fts_rank": 1,
+                            "vector_rank": None,
+                            "fts_score": 0.001,
+                            "vector_score": None,
+                        },
+                    },
+                },
+                "hybrid_fusion",
+                None,
+                False,
+            ),
+            (
+                {
+                    "id": "reranked",
+                    "score": 7.5,
+                    "metadata": {"rerank_score": 7.5},
+                },
+                "reranker",
+                None,
+                False,
+            ),
+            (
+                {"id": "keyword", "score": None, "metadata": {}},
+                "vector_similarity",
+                None,
+                False,
+            ),
+            (
+                {
+                    "id": "reranking-skipped",
+                    "score": 0.1,
+                    "metadata": {"reranking_skipped": "no credentials"},
+                },
+                "vector_similarity",
+                None,
+                True,
+            ),
+        )
+
+        for row, score_kind, vector_score, expects_weak_notice in cases:
+            extracted = _extract_scored_rows([row])
+
+            assert extracted is not None
+            assert extracted[0].score_kind == score_kind
+            assert extracted[0].vector_score == vector_score
+            _, interpretation = _summarize_tool_result(
+                ok=True,
+                duration_ms=50,
+                source="local",
+                result=[row],
+            )
+            assert interpretation == (
+                LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX if expects_weak_notice else None
+            )
+
+    def test_malformed_scores_are_unscored_and_never_reported_weak(self):
+        """Untrusted booleans and non-finite values are not similarities."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        invalid_scores = (
+            True,
+            False,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            10**309,
+            -(10**309),
+        )
+        for score in invalid_scores:
+            vector_row = {"id": "vector", "score": score, "metadata": {}}
+            hybrid_row = {
+                "id": "hybrid",
+                "score": 0.016,
+                "metadata": {
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": score,
+                    },
+                },
+            }
+
+            for row, score_field in (
+                (vector_row, "score"),
+                (hybrid_row, "vector_score"),
+            ):
+                extracted = _extract_scored_rows([row])
+
+                assert extracted is not None
+                assert getattr(extracted[0], score_field) is None
+                _, interpretation = _summarize_tool_result(
+                    ok=True,
+                    duration_ms=50,
+                    source="local",
+                    result=[row],
+                )
+                assert interpretation is None
+
     def test_all_rows_scoring_below_moderate_threshold_adds_all_weak_notice(self):
         from tldw_chatbook.Library.library_rag_state import (
             LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,

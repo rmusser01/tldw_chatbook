@@ -20,6 +20,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, tim
 from .enhanced_rag_service import EnhancedRAGService
 from .rag_service import MetadataAllowlist
 from .config import RAGConfig
+from .data_models import IndexingResult
 from .vector_store import SearchResult, SearchResultWithCitations
 from ..reranker import create_reranker_from_config
 from ..parallel_processor import (
@@ -27,6 +28,7 @@ from ..parallel_processor import (
     create_chunking_processor,
     ProcessingConfig,
 )
+
 # task-21160: import config_profiles lazily. The module-level from-import
 # created a circular-import edge -- ``config_profiles`` imports
 # ``.simplified.config``, which executes ``simplified/__init__``, which
@@ -52,9 +54,6 @@ def _config_profiles():
     from .. import config_profiles
 
     return config_profiles
-
-
-from .data_models import IndexingResult
 
 
 def _tag_first_result(
@@ -116,7 +115,9 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         # Handle different config types
         if isinstance(config, str):
             # Load profile by name
-            self.profile_manager = profile_manager or _config_profiles().get_profile_manager()
+            self.profile_manager = (
+                profile_manager or _config_profiles().get_profile_manager()
+            )
             profile = self.profile_manager.get_profile(config)
             if not profile:
                 raise ValueError(f"Profile '{config}' not found")
@@ -137,13 +138,17 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             self.reranking_config = config.reranking_config
             self.processing_config = config.processing_config
             config = config.rag_config
-            self.profile_manager = profile_manager or _config_profiles().get_profile_manager()
+            self.profile_manager = (
+                profile_manager or _config_profiles().get_profile_manager()
+            )
         else:
             # Direct RAG config
             self.profile = None
             self.reranking_config = None
             self.processing_config = None
-            self.profile_manager = profile_manager or _config_profiles().get_profile_manager()
+            self.profile_manager = (
+                profile_manager or _config_profiles().get_profile_manager()
+            )
 
         # Initialize base service
         super().__init__(config, enable_parent_retrieval)
@@ -152,21 +157,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         self.enable_reranking = enable_reranking
         self.enable_parallel_processing = enable_parallel_processing
 
-        # Initialize reranker if enabled. A broken reranking config (bad
-        # strategy, bad provider settings, etc.) must not take the whole
-        # service construction down with it -- fall back to no reranker and
-        # let `search()` return unreranked results instead.
-        self.reranker = None
-        if self.enable_reranking and self.reranking_config:
-            try:
-                self.reranker = create_reranker_from_config(self.reranking_config)
-                logger.info(f"Initialized {self.reranking_config.strategy} reranker")
-            except Exception as exc:
-                logger.warning(
-                    f"Failed to construct {self.reranking_config.strategy} reranker "
-                    f"({exc}); continuing without reranking"
-                )
-                self.reranker = None
+        self._configure_reranker()
 
         # Initialize parallel processors if enabled
         self.embedding_processor = None
@@ -193,6 +184,25 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 "parallel": str(self.enable_parallel_processing),
             },
         )
+
+    def _configure_reranker(self) -> None:
+        """Initialize the configured reranker, retaining safe failure detail."""
+        self.reranker = None
+        self._reranker_unavailable_reason = None
+        if not (self.enable_reranking and self.reranking_config):
+            return
+        try:
+            self.reranker = create_reranker_from_config(self.reranking_config)
+            logger.info(f"Initialized {self.reranking_config.strategy} reranker")
+        except Exception as exc:
+            exception_name = type(exc).__name__
+            self._reranker_unavailable_reason = (
+                f"reranker construction failed ({exception_name})"
+            )
+            logger.warning(
+                f"Failed to construct {self.reranking_config.strategy} reranker "
+                f"({exception_name}); continuing without reranking"
+            )
 
     @classmethod
     def from_profile(
@@ -317,47 +327,80 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         # discloses when a result WAS actually reranked; this
         # `reranking_skipped` tag is the counterpart that discloses when it
         # was attempted and skipped.
-        should_rerank = rerank if rerank is not None else self.enable_reranking
-        if should_rerank and self.reranker and len(results) > 1:
-            rerank_start = time.time()
-            try:
-                # Use experiment profile's reranking config if available
-                if experiment_profile and experiment_profile.reranking_config:
-                    # Create temporary reranker with experiment config
-                    active_reranker = create_reranker_from_config(
-                        experiment_profile.reranking_config
-                    )
-                else:
+        if rerank is not None:
+            should_rerank = rerank
+        elif experiment_profile is not None:
+            should_rerank = experiment_profile.reranking_config is not None
+        else:
+            should_rerank = self.enable_reranking
+        reranked = False
+        if should_rerank and results:
+            active_reranker = None
+            unavailable_reason = None
+            if experiment_profile is not None:
+                if experiment_profile.reranking_config:
+                    try:
+                        active_reranker = create_reranker_from_config(
+                            experiment_profile.reranking_config
+                        )
+                    except Exception as exc:
+                        exception_name = type(exc).__name__
+                        unavailable_reason = (
+                            f"reranker construction failed ({exception_name})"
+                        )
+                        logger.warning(
+                            f"Failed to construct {experiment_profile.reranking_config.strategy} "
+                            f"reranker ({exception_name}); returning unreranked results"
+                        )
+                # A selected experiment with no reranking config explicitly
+                # opts out by default, but an explicit override may inherit it.
+                elif rerank is True:
                     active_reranker = self.reranker
-                outcome = await active_reranker.rerank(query, results)
-                results = outcome.results
+                    unavailable_reason = self._reranker_unavailable_reason
+            else:
+                active_reranker = self.reranker
+                unavailable_reason = self._reranker_unavailable_reason
+            if active_reranker is not None and len(results) > 1:
+                rerank_start = time.time()
+                try:
+                    outcome = await active_reranker.rerank(query, results)
+                    results = outcome.results
+                    reranked = outcome.failed < outcome.total
 
-                rerank_time = time.time() - rerank_start
-                log_histogram("rag_reranking_time", rerank_time)
-                logger.debug(f"Reranking completed in {rerank_time:.3f}s")
+                    rerank_time = time.time() - rerank_start
+                    log_histogram("rag_reranking_time", rerank_time)
+                    logger.debug(f"Reranking completed in {rerank_time:.3f}s")
 
-                # rerank() can return NORMALLY while having silently scored
-                # nothing (or almost nothing) -- e.g. every per-result LLM
-                # call exhausting retries under a missing provider
-                # credential -- which looks identical to "nothing needed
-                # reranking" (an unchanged ordering, no exception) unless
-                # disclosed here.
-                #
-                # These counts come from THIS call's return value, never
-                # from the reranker object: `self.reranker` is a singleton
-                # shared by every concurrent search(), so reading counters
-                # off it after rerank() returned let another search's
-                # failures be attributed to this search's tag (TASK-3502
-                # AC#4 -- scoped, not locked; see RerankOutcome).
-                if outcome.degraded:
-                    detail = f"{outcome.failed}/{outcome.total} scorings failed"
-                    logger.warning(f"Reranking degraded: {detail}")
-                    results = _tag_first_result(results, "reranking_degraded", detail)
-            except Exception as exc:
-                logger.warning(
-                    f"Reranking failed ({exc}); returning unreranked results"
+                    # rerank() can return NORMALLY while having silently scored
+                    # nothing (or almost nothing) -- e.g. every per-result LLM
+                    # call exhausting retries under a missing provider
+                    # credential -- which looks identical to "nothing needed
+                    # reranking" (an unchanged ordering, no exception) unless
+                    # disclosed here.
+                    #
+                    # These counts come from THIS call's return value, never
+                    # from the reranker object: `self.reranker` is a singleton
+                    # shared by every concurrent search(), so reading counters
+                    # off it after rerank() returned let another search's
+                    # failures be attributed to this search's tag (TASK-3502
+                    # AC#4 -- scoped, not locked; see RerankOutcome).
+                    if outcome.degraded:
+                        detail = f"{outcome.failed}/{outcome.total} scorings failed"
+                        logger.warning(f"Reranking degraded: {detail}")
+                        results = _tag_first_result(
+                            results, "reranking_degraded", detail
+                        )
+                except Exception as exc:
+                    exception_name = type(exc).__name__
+                    detail = f"reranking failed ({exception_name})"
+                    logger.warning(
+                        f"Reranking failed ({exception_name}); returning unreranked results"
+                    )
+                    results = _tag_first_result(results, "reranking_skipped", detail)
+            elif unavailable_reason:
+                results = _tag_first_result(
+                    results, "reranking_skipped", unavailable_reason
                 )
-                results = _tag_first_result(results, "reranking_skipped", str(exc))
 
         # Record experiment metrics if active
         if self._current_experiment and user_id:
@@ -366,7 +409,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 "search_latency": search_time * 1000,  # Convert to ms
                 "results_returned": len(results),
                 "search_type": search_type,
-                "reranked": should_rerank,
+                "reranked": reranked,
             }
 
             # Add result quality metrics
@@ -450,18 +493,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         self.reranking_config = profile.reranking_config
         self.processing_config = profile.processing_config
 
-        # Reinitialize components if needed. Same guard as __init__: a
-        # broken reranking config on the new profile must not raise out of
-        # switch_profile -- fall back to no reranker.
-        if self.enable_reranking and self.reranking_config:
-            try:
-                self.reranker = create_reranker_from_config(self.reranking_config)
-            except Exception as exc:
-                logger.warning(
-                    f"Failed to construct {self.reranking_config.strategy} reranker "
-                    f"for profile '{profile_name}' ({exc}); continuing without reranking"
-                )
-                self.reranker = None
+        self._configure_reranker()
 
         logger.info(f"Switched to profile: {profile_name}")
         log_counter("rag_profile_switch", labels={"profile": profile_name})

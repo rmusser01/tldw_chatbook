@@ -121,6 +121,23 @@ DEFAULT_BATCH_SIZE = _rag_service_config.get(
 )  # This one matches the rag.embedding.batch_size
 
 
+def _metadata_filter_value_matches(actual: Any, expected: Any) -> bool:
+    """Match exact values plus the existing single-key ``$in`` form."""
+    if not isinstance(expected, abc.Mapping) or "$in" not in expected:
+        return actual == expected
+    if set(expected) != {"$in"}:
+        return False
+    allowed = expected["$in"]
+    if not isinstance(allowed, abc.Collection) or isinstance(
+        allowed, (str, bytes, bytearray, abc.Mapping)
+    ):
+        return False
+    try:
+        return actual in allowed
+    except (TypeError, ValueError):
+        return False
+
+
 # The keyword leg's sub-leg vocabulary. These MUST stay byte-identical to
 # `ingestion_indexing.ITEM_TYPE_*` (the singular `media`/`note`/
 # `conversation` the vector leg stamps): `_fusion_doc_key` compares the raw
@@ -1173,9 +1190,10 @@ class RAGService:
             query: Search query text
             top_k: Number of results to return (default from config)
             search_type: Type of search to perform
-            filter_metadata: Metadata filters to apply (Python-side equality
-                post-filter, applied after the store call; unchanged from
-                before, kept for backward compatibility)
+            filter_metadata: Metadata exact-equality filters, plus the
+                single-key ``{"$in": collection}`` membership form
+                (Python-side post-filter, applied after the store call;
+                unchanged otherwise for backward compatibility).
             include_citations: Whether to include citations (default from config)
             score_threshold: Minimum score threshold (default from config)
             metadata_allowlist: Metadata key -> allowed values, pushed down
@@ -1298,24 +1316,32 @@ class RAGService:
         if search_type in ("hybrid", "keyword"):
             fts_match_construction_key = self._resolved_fts_match_construction()
 
-        # Check cache first
-        cached_result = await self.cache.get_async(
-            query,
-            search_type,
-            top_k,
-            filter_metadata,
-            metadata_allowlist,
-            keyword_source_types=keyword_source_types,
-            hybrid_fusion=hybrid_fusion_key,
-            fts_match_construction=fts_match_construction_key,
-        )
-        if cached_result is not None:
-            results, context = cached_result
-            log_counter("rag_search_cache_hit", labels={"type": search_type})
-            logger.info(f"[{correlation_id}] Cache hit for query: '{query[:50]}...'")
-            return results
+        try:
+            json.dumps(filter_metadata, sort_keys=True)
+            filter_metadata_is_cacheable = True
+        except (TypeError, ValueError):
+            filter_metadata_is_cacheable = False
 
-        log_counter("rag_search_cache_miss", labels={"type": search_type})
+        # Check cache first
+        if filter_metadata_is_cacheable:
+            cached_result = await self.cache.get_async(
+                query,
+                search_type,
+                top_k,
+                filter_metadata,
+                metadata_allowlist,
+                keyword_source_types=keyword_source_types,
+                hybrid_fusion=hybrid_fusion_key,
+                fts_match_construction=fts_match_construction_key,
+            )
+            if cached_result is not None:
+                results, context = cached_result
+                log_counter("rag_search_cache_hit", labels={"type": search_type})
+                logger.info(
+                    f"[{correlation_id}] Cache hit for query: '{query[:50]}...'"
+                )
+                return results
+            log_counter("rag_search_cache_miss", labels={"type": search_type})
 
         self._searches_performed += 1
         start_time = time.time()
@@ -1390,21 +1416,21 @@ class RAGService:
                 f"[{correlation_id}] Search completed in {elapsed:.2f}s, found {len(results)} results"
             )
 
-            # Cache the results
-            # For caching, we need to extract a simple context string
-            context = self._extract_context_from_results(results)
-            await self.cache.put_async(
-                query,
-                search_type,
-                top_k,
-                results,
-                context,
-                filter_metadata,
-                metadata_allowlist,
-                keyword_source_types=keyword_source_types,
-                hybrid_fusion=hybrid_fusion_key,
-                fts_match_construction=fts_match_construction_key,
-            )
+            if filter_metadata_is_cacheable:
+                # For caching, we need to extract a simple context string
+                context = self._extract_context_from_results(results)
+                await self.cache.put_async(
+                    query,
+                    search_type,
+                    top_k,
+                    results,
+                    context,
+                    filter_metadata,
+                    metadata_allowlist,
+                    keyword_source_types=keyword_source_types,
+                    hybrid_fusion=hybrid_fusion_key,
+                    fts_match_construction=fts_match_construction_key,
+                )
 
             return results
 
@@ -1451,8 +1477,9 @@ class RAGService:
         Args:
             query: Search query text.
             top_k: Number of results to return.
-            filter_metadata: Metadata equality filters applied after the
-                store call.
+            filter_metadata: Metadata exact-equality filters, plus the
+                single-key ``{"$in": collection}`` membership form, applied
+                after the store call.
             include_citations: Whether to fetch citations from the store.
             score_threshold: Minimum similarity score to keep.
             metadata_allowlist: One AND-group, or a union of them.
@@ -1506,9 +1533,11 @@ class RAGService:
         Args:
             query: Search query text.
             top_k: Number of results to return.
-            filter_metadata: Metadata equality filters applied *after* the
-                store call (Python-side post-filter, unchanged from before
-                this parameter existed). Kept for backward compatibility;
+            filter_metadata: Metadata exact-equality filters, plus the
+                single-key ``{"$in": collection}`` membership form, applied
+                *after* the store call (Python-side post-filter, unchanged
+                otherwise from before this parameter existed). Kept for
+                backward compatibility;
                 prefer ``metadata_allowlist`` for scoping, since a narrow
                 post-filter can starve top-k on large corpora.
             include_citations: Whether to fetch citations from the store.
@@ -1550,7 +1579,10 @@ class RAGService:
             results = [
                 r
                 for r in results
-                if all(r.metadata.get(k) == v for k, v in filter_metadata.items())
+                if all(
+                    _metadata_filter_value_matches(r.metadata.get(k), v)
+                    for k, v in filter_metadata.items()
+                )
             ]
 
         return results[:top_k]
@@ -1626,7 +1658,8 @@ class RAGService:
         Args:
             query: Raw user query (escaped for FTS5 downstream).
             top_k: Maximum rows the merged leg returns.
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             include_citations: Whether to build citation-carrying rows.
             keyword_source_types: Source types to serve, in the engine's
                 vocabulary (``media``/``note``/``conversation``/``prompt``).
@@ -1825,7 +1858,8 @@ class RAGService:
         Args:
             query: Raw user query (escaped for FTS5 downstream).
             top_k: Maximum rows this sub-leg contributes.
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             include_citations: Whether to build citation-carrying rows.
             allowed_ids: Media ids this sub-leg may return (TASK-15020/B1).
                 ``None`` is unrestricted -- today's behavior for every caller
@@ -1958,7 +1992,8 @@ class RAGService:
         Args:
             query: Raw user query (escaped for FTS5 downstream).
             top_k: Maximum rows each sub-leg contributes.
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             include_citations: Whether to build citation-carrying rows.
             source_types: Which of ``note``/``conversation`` to run
                 (TASK-14751). ``None`` runs both. An unselected sub-query is
@@ -2447,7 +2482,8 @@ class RAGService:
         Args:
             query: Raw user query (escaped for FTS5 downstream).
             top_k: Maximum rows this sub-leg contributes.
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             include_citations: Whether to build citation-carrying rows.
             allowed_ids: Prompt ids this sub-leg may return
                 (TASK-15020/B1's shape). Always ``None`` in practice today:
@@ -3093,7 +3129,8 @@ class RAGService:
 
         Args:
             search_results: Raw sub-leg rows, best first.
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             top_k: Maximum rows to return.
             source_type: Which sub-leg produced these rows.
         """
@@ -3109,7 +3146,7 @@ class RAGService:
                     "author": item.get("author"),
                 }
                 if not all(
-                    item_meta.get(k) == v
+                    _metadata_filter_value_matches(item_meta.get(k), v)
                     for k, v in filter_metadata.items()
                     if k in item_meta
                 ):
@@ -3144,7 +3181,8 @@ class RAGService:
         Args:
             search_results: Raw sub-leg rows, best first.
             query: Raw user query (used to locate citation spans).
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             top_k: Maximum rows to return.
             source_type: Which sub-leg produced these rows.
         """
@@ -3207,7 +3245,8 @@ class RAGService:
         Args:
             item: One raw sub-leg row.
             query: Raw user query (used to locate citation spans).
-            filter_metadata: Optional metadata equality filters.
+            filter_metadata: Optional metadata exact-equality filters, plus
+                the single-key ``{"$in": collection}`` membership form.
             source_type: Which sub-leg produced this row.
 
         Returns:
@@ -3222,7 +3261,7 @@ class RAGService:
                 "author": item.get("author"),
             }
             if not all(
-                item_meta.get(k) == v
+                _metadata_filter_value_matches(item_meta.get(k), v)
                 for k, v in filter_metadata.items()
                 if k in item_meta
             ):
