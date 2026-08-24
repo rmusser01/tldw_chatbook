@@ -255,6 +255,24 @@ def test_resolve_profile_search_mode_defaults_when_the_runtime_has_no_config():
     assert _resolve_profile_search_mode(FakeRagService()) == "semantic"
 
 
+def test_resolve_profile_search_mode_delegates_normalization(monkeypatch):
+    received = []
+    monkeypatch.setattr(
+        rag_service_module,
+        "normalize_rag_search_mode",
+        lambda value: received.append(value) or "controlled",
+        raising=False,
+    )
+
+    assert (
+        rag_service_module._resolve_profile_search_mode(
+            _ProfileRagService(mode="runtime-mode")
+        )
+        == "controlled"
+    )
+    assert received == ["runtime-mode"]
+
+
 # --- Dispatch arms ----------------------------------------------------------
 
 

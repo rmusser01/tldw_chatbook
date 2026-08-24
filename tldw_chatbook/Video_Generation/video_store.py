@@ -39,7 +39,7 @@ from loguru import logger
 
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.config import (
-    get_video_generation_config,
+    get_video_store_policy,
 )
 from tldw_chatbook.Video_Generation.video_formats import (
     SUPPORTED_VIDEO_FORMATS,
@@ -181,7 +181,16 @@ class VideoStore:
         return max(1, int(getattr(config, "max_store_mb", 2048))) * 1024 * 1024
 
     def _get_config(self):
-        return self._config if self._config is not None else get_video_generation_config()
+        """Retention/capacity settings for this store.
+
+        An injected ``config`` (tests, explicit callers) still wins. Otherwise
+        this reads the secrets-free ``VideoStorePolicy`` rather than the full
+        ``VideoGenerationConfig``: the store only ever reads ``retention``,
+        ``retention_ttl_hours`` and ``max_store_mb``, and the full config's
+        secret resolution put an OS-keyring read on the app's startup path
+        (TASK-21111(b)).
+        """
+        return self._config if self._config is not None else get_video_store_policy()
 
     @property
     def _lease_path(self) -> Path:

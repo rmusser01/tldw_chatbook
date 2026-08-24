@@ -627,6 +627,45 @@ class LibraryIngestJobRegistry:
         self._next_id = next_id
         self._notify_listeners()
 
+    def merge_restored(self, jobs: list[LibraryIngestJob], next_id: int) -> None:
+        """Seed from persisted history WITHOUT discarding jobs submitted since.
+
+        Args:
+            jobs: The persisted jobs, seq-ascending, exactly as ``restore``
+                takes them.
+            next_id: The next sequence number implied by ``jobs``.
+
+        Identical to :meth:`restore` when the registry is still empty, which
+        is the normal startup case. It exists because TASK-21111 moved the
+        app's persisted-history read off the UI thread: the read now finishes
+        a few milliseconds after ``on_mount`` returns, opening a (narrow)
+        window in which a job could already have been submitted. Plain
+        ``restore`` would silently delete it.
+
+        Live jobs are kept and ordered AFTER the restored ones (they are, by
+        definition, newer). A restored job whose ``job_id`` collides with a
+        live one is dropped rather than duplicated -- both sessions allocate
+        ids from ``ingest-job-1`` upward, so a collision in that window is
+        the likely case, and two entries sharing a ``job_id`` would make
+        every id-keyed mutation ambiguous. ``_next_id`` takes the maximum so
+        no future allocation can collide either.
+        """
+        live = self._jobs
+        if not live:
+            self.restore(jobs, next_id)
+            return
+        live_ids = {job.job_id for job in live}
+        restored = [_copy_job(job) for job in jobs if job.job_id not in live_ids]
+        logger.warning(
+            "Ingest job history restored alongside {} job(s) submitted during "
+            "startup; dropped {} colliding persisted id(s).",
+            len(live),
+            len(jobs) - len(restored),
+        )
+        self._jobs = restored + live
+        self._next_id = max(next_id, self._next_id)
+        self._notify_listeners()
+
     # -- listeners -----------------------------------------------------
 
     def add_listener(self, callback: Callable[[], None]) -> None:

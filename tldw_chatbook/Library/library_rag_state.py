@@ -1717,9 +1717,8 @@ def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
     Args:
         rows: Evidence rows to inspect. Read by duck typing (`.score`, and
             optionally `.score_kind`/`.vector_score`) rather than by type:
-            `mcp_inspector._ScoredRow` is a `__slots__ = ("score",)` shim
-            that feeds this same canonical check, so the two newer
-            attributes are read with `getattr` defaults.
+            `mcp_inspector._ScoredRow` carries all three fields and feeds
+            this same canonical check.
 
     Returns:
         Whether every similarity-bearing row among `rows` bands weak.

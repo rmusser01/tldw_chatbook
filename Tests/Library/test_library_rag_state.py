@@ -1589,6 +1589,23 @@ class TestLibraryRagResultRowScoreKind:
         assert row.score_kind == "hybrid_fusion"
         assert row.vector_score is None
 
+    @pytest.mark.parametrize(
+        "vector_score",
+        (True, False, float("nan"), float("inf"), float("-inf"), 10**309, -(10**309)),
+    )
+    def test_hybrid_row_rejects_untrusted_vector_score(self, vector_score):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {"hybrid_fusion": {"vector_score": vector_score}},
+            }
+        )
+
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score is None
+        assert library_rag_all_matches_weak((row,)) is False
+
     def test_reranker_channel_is_read_from_provenance(self):
         row = LibraryRagResultRow.from_result(
             {"title": "A", "score": 7.5, "provenance": {"_final_score_kind": "reranker"}}

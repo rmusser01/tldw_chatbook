@@ -3185,7 +3185,57 @@ def _samira_seed_preflight(db: Any) -> dict[str, Any]:
     return {"terminal": False, "card": card}
 
 
+_SAMIRA_CARD_BY_BUILTIN_ID_SQL = """
+    SELECT id, name, extensions, deleted
+      FROM character_cards
+     WHERE CASE WHEN json_valid(extensions)
+                THEN json_extract(extensions, '$."tldw/builtin_id"')
+           END = 'samira'
+     ORDER BY id
+     LIMIT 1
+"""
+
+
 def _find_builtin_samira_card(db: Any) -> dict[str, Any] | None:
+    """Return the bundled Samira card row, or ``None``.
+
+    Runs on every boot (``ensure_builtin_samira``'s preflight), so it asks
+    SQLite the question instead of reading the whole table into Python and
+    parsing every card's ``extensions`` JSON (TASK-21111(d)): measured 3.0x
+    faster at 2,000 cards (4.29 ms -> 1.43 ms) and 2.8x at 100 (0.185 ms ->
+    0.067 ms).
+
+    Two details make the SQL agree with the Python loop it replaced on the
+    rows the loop tolerated:
+
+    * ``json_extract`` RAISES ``malformed JSON`` on an unparseable
+      ``extensions`` value (verified on SQLite 3.49.1), where the loop simply
+      skipped that row -- so the ``json_valid`` guard is load-bearing, not
+      decoration, and is written as a ``CASE`` so the language, not the query
+      planner, guarantees it is evaluated first. ``json_valid`` also rejects
+      the ``NaN``/``Infinity`` constants ``_reject_json_constant`` rejects,
+      and ``json_extract`` yields NULL (no match) for non-object JSON,
+      matching the loop's ``isinstance(..., dict)`` check.
+    * ``ORDER BY id LIMIT 1`` preserves "lowest id wins".
+
+    Falls back to the historical Python scan only when the SQLite build has
+    no JSON1 functions. The fallback is deliberately NOT a catch-all: an
+    every-boot silent full scan is exactly the cost this function exists to
+    remove, so any other failure propagates (``seed_builtin_content`` already
+    contains it) rather than hiding behind a slow path.
+    """
+    try:
+        row = db.execute_query(_SAMIRA_CARD_BY_BUILTIN_ID_SQL).fetchone()
+    except Exception as exc:  # noqa: BLE001 - inspected and re-raised below
+        if "no such function" not in str(exc).lower():
+            raise
+        logger.debug("samira_card_lookup_fallback category={}", type(exc).__name__)
+        return _find_builtin_samira_card_by_scan(db)
+    return dict(row) if row is not None else None
+
+
+def _find_builtin_samira_card_by_scan(db: Any) -> dict[str, Any] | None:
+    """Full-table fallback for SQLite builds without the JSON1 extension."""
     rows = db.execute_query(
         "SELECT id, name, extensions, deleted FROM character_cards ORDER BY id"
     ).fetchall()

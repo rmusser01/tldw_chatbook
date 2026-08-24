@@ -1787,6 +1787,13 @@ changed (`_console_provider_recovery_action`, `_build_console_setup_card_state`,
 ...) and run the full files that reference them — renamed or
 indirectly-exercised callers are exactly where stale expectations hide.
 
+**TASK-3500 recurrence (2026-08-24).** The planned lifecycle command used
+`-k shared_rag_service`; pytest selected **0/50** tests and exited **5** because
+the owning tests are named `TestSharedRagService*`. Correcting it to
+`-k SharedRagService` selected and passed **10** tests (with 40 deselected)
+and exited **0**. Treat a keyword-filtered green result as evidence only after
+asserting both a nonzero selected/passed count and a successful exit status.
+
 ---
 
 ## Classifying user copy by loose substring invents the blocker you name first
@@ -8054,3 +8061,66 @@ matters most for the wall-clock half of a perf claim: the memory numbers here
 were byte-stable across every ordering (1,013,84x,xxx vs 92,24x,xxx every
 single run), which is exactly why an allocation-peak claim survives sloppy
 scheduling and a wall-time claim does not.
+---
+
+## A memoized global makes N deferral sites ONE unit of work — fixing all but one banks nothing (TASK-21111, 2026-08-23)
+
+**What happened.** The perf review filed four... three, it thought: "2–3
+`keyring.get_keyring()` backend discoveries run during `__init__` (server
+credentials ~13 ms; skills trust ×2)". A stack-tracing probe over a real
+`TldwCli()` found **four** sites, and the ~13 ms did not belong to any of the
+three named ones. The first keyring touch of every boot was
+`Video_Generation/config._keyring_get`, reached from
+`VideoStore.enforce_retention()` — a genuine `keyring.get_password` Keychain
+query, 18.2 ms. The three named sites measured **0.33, 0.41 and 0.04 ms**.
+
+The reason is the shape, not the accident: `keyring.get_keyring()` memoizes
+its discovered backend in module state, so the expensive part is paid **once,
+by whoever calls first**. Per-site timings therefore say nothing about what a
+site COSTS; they say who happened to run first. Deferring the three cheap
+sites would have promoted the fourth to first place, moved 0 ms, and still
+passed an assertion of the form "no keyring from server credentials at boot".
+
+**What to do.**
+
+1. When the resource behind N call sites is a **memoized global** (a keyring
+   backend, a lazily-populated config cache, a first-open DB connection, an
+   import-time module init), stop attributing cost per site. Measure the
+   aggregate — "how many touches, how many total ms, across import + construct
+   + mount" — and make the ACCEPTANCE CRITERION that aggregate: *zero*, not
+   *this site is lazy*. A per-site AC is satisfiable while the user pays
+   exactly as much as before.
+2. Write the guard as a spy on the **shared entry point** (here
+   `keyring.core.get_keyring` and `get_password`), not on the individual
+   callers. That guard caught, unprompted, the two later relocation bugs below.
+3. Trace before you fix. The stack of the FIRST call is the finding; the
+   others are consequences of it.
+
+**Corollary, same task, same day: a deferral inside the boot-to-interactive
+span is not a removal.** Moving the skills-trust construction out of
+`TldwCli.__init__` into a lazy `skills_scope_service` property looked complete
+— zero keyring calls in the construction probe. The mounted-app probe (Textual
+`run_test`, spy still installed) then reported **16.45 ms of `get_keyring`
+during MOUNT**: `ChatScreen._ensure_console_agent_bridge` reads
+`skills_scope_service` when the default Chat destination mounts. The user's
+time-to-interactive was unchanged. Only pushing the laziness one level further
+— `LocalSkillsService` taking a `trust_service_factory` it calls on the first
+trust decision — actually removed it. **`__init__` is not the boundary; first
+paint is.** Any deferral probe that stops at construction can certify a
+relocation as a win (see also TASK-21200's "deferring at the CONSUMER can move
+the cost instead of removing it").
+
+**Second corollary: a catch-all fallback can hide the mutant that proves your
+test is blind.** The same task replaced a Python full-table scan with a
+`json_valid`-guarded `json_extract` query, keeping the old scan as a
+JSON1-less fallback behind `except Exception`. Two deliberate mutants — drop
+the `json_valid` guard entirely, and demote it from `CASE` to an `AND` — both
+**passed** the new differential test. Reason: `json_extract` really does raise
+`malformed JSON`, the catch-all swallowed it, and the fallback scan returned
+the right answer. The test was asserting the fallback's correctness, not the
+query's. Two fixes were needed: assert `len(db.queries) == 1` (a fallback is
+observable as a second query), and narrow the `except` to the one condition it
+is for (`"no such function" in str(exc)`) so any other failure propagates.
+A broad fallback under a perf fix is worse than no fallback: it turns "this is
+now fast" into "this is fast unless one row is corrupt, in which case it is
+silently as slow as before, forever."

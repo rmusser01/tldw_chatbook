@@ -124,6 +124,11 @@ _AST_SIMPLE_TYPES = {
     "bool": "boolean",
 }
 
+_SEARCH_RAG_USE_SEMANTIC_DESCRIPTION = (
+    "False forces media keyword search; true or omission follows the active RAG "
+    "profile's plain, semantic, or hybrid search mode."
+)
+
 
 def _annotation_to_property(node: ast.expr | None) -> dict:
     """Best-effort JSON-schema fragment for one annotation AST node.
@@ -236,7 +241,12 @@ def _extract_registered_entries(
                         ):
                             entry["uri"] = first_arg.value
                     if decorator_name == "tool":
-                        entry["inputSchema"] = _signature_to_input_schema(nested)
+                        input_schema = _signature_to_input_schema(nested)
+                        if nested.name == "search_rag":
+                            input_schema["properties"]["use_semantic"][
+                                "description"
+                            ] = _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION
+                        entry["inputSchema"] = input_schema
                     elif decorator_name == "prompt":
                         entry["arguments"] = _signature_to_prompt_arguments(nested)
                     entries.append(entry)
@@ -664,7 +674,18 @@ class TldwMCPServer:
             media_types: Optional[List[str]] = None,
             use_semantic: bool = True,
         ) -> List[Dict[str, Any]]:
-            """Search the RAG database for relevant content."""
+            """Search media using the active RAG profile unless keyword search is forced.
+
+            Args:
+                query: Search query.
+                limit: Maximum number of results.
+                media_types: Optional media types to include.
+                use_semantic: Follow the active profile when true; force keyword
+                    search when false.
+
+            Returns:
+                Media search results.
+            """
             return await self.tools.perform_rag_search(
                 query=query,
                 limit=limit,

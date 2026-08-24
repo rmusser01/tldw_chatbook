@@ -341,7 +341,7 @@ def _build_test_app(
                 return_value=user_data_dir,
             ),
             patch(
-                "tldw_chatbook.Video_Generation.video_store.get_video_generation_config",
+                "tldw_chatbook.Video_Generation.video_store.get_video_store_policy",
                 return_value=SimpleNamespace(
                     retention="session",
                     retention_ttl_hours=24,

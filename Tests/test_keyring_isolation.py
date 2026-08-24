@@ -62,6 +62,12 @@ def test_a_constructed_app_records_the_store_as_unavailable() -> None:
 
     This is the assertion that would have caught the original gap -- it exercises
     `_wire_server_context_provider` itself rather than the env var it depends on.
+
+    Since TASK-21111(b) the store is resolved lazily, so reading either attribute
+    below is what triggers `build_default_server_credential_store()`. That is the
+    point of the test, not a hole in it: the fallback decision still has to come
+    out the same. `Tests/App/test_startup_init_hygiene.py` pins the complementary
+    property -- that construction alone reaches no keyring at all.
     """
     from Tests.UI.app_factory import _build_test_app
 

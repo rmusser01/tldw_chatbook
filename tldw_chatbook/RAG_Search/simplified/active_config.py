@@ -30,6 +30,7 @@ from ..reranker import RerankingConfig
 
 DEFAULT_PROFILE = "hybrid_basic"
 _IMPORTED_ID = "imported_settings"
+_RAG_SEARCH_MODES = frozenset({"plain", "semantic", "hybrid"})
 
 # Legacy TOML keys (task-495): non-index-determining query-time settings a
 # user may have hand-set under the deprecated [AppRAGSearchConfig.rag.search]
@@ -42,6 +43,20 @@ _IMPORTED_ID = "imported_settings"
 # SP1 adopts the legacy collection under.
 _LEGACY_SEARCH_KEYS = ("default_top_k", "score_threshold", "include_citations")
 _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k")
+
+
+def normalize_rag_search_mode(value: object) -> str:
+    """Return a supported exact search mode.
+
+    Args:
+        value: Candidate search mode.
+
+    Returns:
+        ``value`` when it is a supported mode; otherwise ``"semantic"``.
+    """
+    return (
+        value if isinstance(value, str) and value in _RAG_SEARCH_MODES else "semantic"
+    )
 
 
 def _manager():
@@ -195,6 +210,21 @@ def resolve_active_rag_top_k() -> int:
     return _env_top_k(int(base))
 
 
+def resolve_active_rag_search_mode() -> str:
+    """Resolve the active profile's search mode without building a full config.
+
+    Returns:
+        The normalized active search mode after applying ``RAG_SEARCH_MODE``.
+    """
+    profile = _resolved_active_profile()
+    base = (
+        profile.rag_config.search.default_search_mode
+        if profile
+        else RAGConfig().search.default_search_mode
+    )
+    return normalize_rag_search_mode(os.getenv("RAG_SEARCH_MODE") or base)
+
+
 def _apply_env_overrides(config: RAGConfig,
                          override_embedding_model: Optional[str] = None,
                          override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
@@ -262,7 +292,9 @@ def _apply_env_overrides(config: RAGConfig,
 
     # Search overrides
     config.search.default_top_k = _env_top_k(config.search.default_top_k)
-    config.search.default_search_mode = os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+    config.search.default_search_mode = normalize_rag_search_mode(
+        os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+    )
 
     # Pipeline overrides
     config.pipeline.default_pipeline = os.getenv("RAG_DEFAULT_PIPELINE") or config.pipeline.default_pipeline
