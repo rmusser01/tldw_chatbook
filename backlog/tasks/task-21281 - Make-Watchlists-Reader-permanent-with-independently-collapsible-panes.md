@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-23 22:11'
-updated_date: '2026-08-24 14:36'
+updated_date: '2026-08-24 17:15'
 labels:
   - watchlists
   - ux
@@ -68,8 +68,12 @@ amendment; this task directly implements it without changing the architecture bo
 - Modified areas: Watchlists screen/controller, Watchlists-local pane/layout/store
   modules, Watchlists CSS and generated CSS bundle, and focused Watchlists/UI tests.
   No database/schema/migration, Media, or shared split-pane framework changes were
-  made. Implementation commit range: `e986e8c..753739f`, including the final
-  test-only lint cleanup.
+  made. Implementation commit range: `e986e8c..2c77eac`, including the final
+  test-only lint cleanup and review fixes.
+- Final review hardening made Server-backed Read query-free both during mounted
+  transitions and cold/deep-linked entry, parks the local navigation/snapshot model
+  while recovery is visible, and restores it when moving to a management tab. It
+  also tightened compact-width controls and migrated stale layout contracts.
 - Verification on `753739f`: focused Watchlists/UI suite collected 888 tests and
   passed 887 with one pre-existing Personas tooltip-audit skip and two dependency
   warnings in 460.59s; the lint-cleanup files passed 143 focused tests; scoped Ruff,
@@ -79,6 +83,11 @@ amendment; this task directly implements it without changing the architecture bo
   widths 145, 144, 115, 114, 91, 90, 60, and 40 without overlap, horizontal overflow,
   or compositor exceptions. Self-review confirmed state survival, retry behavior,
   permanent-centre boundaries, production CSS use, and Watchlists-only ownership.
+- Final verification on `2c77eac`: all 87 collections-screen tests passed in 81.02s;
+  the focused five-test Server recovery/switch set passed; scoped Ruff and
+  `git diff --check` passed. Independent final code review reported no Critical or
+  Important findings. Pytest emitted unrelated dependency and temporary-directory
+  cleanup warnings only.
 - Verification deviation: at the user's explicit direction, the repository-wide
   58,117-test suite was skipped as a completion gate in favor of tests related to the
   modified functionality/code. A superseded broad run was terminated at 71% without
