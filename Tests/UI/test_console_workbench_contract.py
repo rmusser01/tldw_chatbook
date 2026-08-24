@@ -633,14 +633,22 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert not list(rail.query("#console-staged-context-tray"))
 
         # Project-instruction status is the one-line Inspector preamble;
-        # staged context follows it and remains above Source Readiness.
+        # staged context starts the scroll body below pinned authority.
         tray = console.query_one("#console-staged-context-tray")
         project_status = console.query_one("#console-project-instruction-status")
+        inspector_rail = console.query_one("#console-right-rail")
         rail_body = console.query_one("#console-inspector-rail-body")
+        assert tuple(child.id for child in inspector_rail.children) == (
+            "console-inspector-rail-header",
+            "console-project-instruction-status",
+            "console-send-authority-summary",
+            "console-inspector-rail-body",
+            "console-inspector-outer-scroll-hint",
+        )
+        assert project_status.parent is inspector_rail
         assert tray.parent is rail_body
         children = list(rail_body.children)
-        assert children.index(project_status) == 0
-        assert children.index(tray) == children.index(project_status) + 1
+        assert children[0] is tray
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work_section = console.query_one("#console-live-work-section")
         assert live_work_section in readiness.ancestors
@@ -728,6 +736,24 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
         )
         assert "Run recipe" in text
         assert "Sources" in text
+        assert "More" in text
+        assert "Tools" not in text
+        assert "Approvals" not in text
+        assert "Artifacts" not in text
+
+        more_body = inspector.query_one("#console-inspector-more-body")
+        for owner in ("tools", "approvals", "artifacts"):
+            heading = inspector.query_one(f"#console-inspector-{owner}-heading")
+            assert more_body in heading.ancestors
+
+        more_toggle = inspector.query_one("#console-inspector-more-toggle")
+        more_toggle.focus()
+        await pilot.press("enter")
+        text = " ".join(
+            _widget_text(child)
+            for child in inspector.walk_children()
+            if _is_displayed(child)
+        )
         assert "Tools" in text
         assert "Approvals" in text
         assert "Artifacts" in text

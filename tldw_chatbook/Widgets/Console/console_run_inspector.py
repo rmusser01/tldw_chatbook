@@ -92,7 +92,10 @@ class _ConsoleInspectorMore(Vertical):
             "More", id="console-inspector-more-toggle", compact=True
         )
         body = Vertical(*children, id="console-inspector-more-body")
+        body.display = open
+        body.styles.display = "block" if open else "none"
         super().__init__(toggle, body, id="console-inspector-more")
+        self.styles.height = "auto" if open else 2
 
     def on_mount(self) -> None:
         self._apply_open()
@@ -101,6 +104,7 @@ class _ConsoleInspectorMore(Vertical):
         body = self.query_one("#console-inspector-more-body", Vertical)
         body.display = self.open
         body.styles.display = "block" if self.open else "none"
+        self.styles.height = "auto" if self.open else 2
         for heading in body.query(".console-inspector-group-heading"):
             heading.can_focus = self.open
 
@@ -169,6 +173,9 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self._on_reconcile = on_reconcile
         self._on_more_focus_removed = on_more_focus_removed
         self._more_open = more_open
+        self._pending_conditional_focus: tuple[str, str | None] | None = None
+        self._pending_more_focus_recovery = False
+        self._pending_more_focus_section_id: str | None = None
         self._report_unowned_content(ownership)
         self.styles.height = "auto"
         self.styles.min_height = 0
@@ -223,24 +230,36 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             or structural_change
             or not self._apply_row_updates(previous, previous_ownership)
         ):
+            self._pending_conditional_focus = focus_snapshot
+            self._pending_more_focus_recovery = recover_removed_more_focus
+            self._pending_more_focus_section_id = more_focus_section_id
             self.recompose_count += 1
             self.refresh(recompose=True)
-            self.call_after_refresh(self._request_sections_reconcile)
-            if recover_removed_more_focus:
-                self.call_after_refresh(
-                    self._on_more_focus_removed,
-                    more_focus_section_id,
-                )
-            if focus_snapshot is not None:
-                self.call_after_refresh(
-                    self._recover_conditional_focus, *focus_snapshot
-                )
             return
         # Deferred to match the recompose path's timing: a wholesale
         # recompose lands on the NEXT refresh cycle, i.e. after any rail
         # cascade the owning screen applies later in the same sync tick.
         self.call_after_refresh(self._restore_rail_cascade_visibility)
         self.call_after_refresh(self._request_sections_reconcile)
+
+    async def recompose(self) -> None:
+        """Reconcile the replacement sections after their DOM is committed."""
+
+        await super().recompose()
+        self._request_sections_reconcile()
+        focus_snapshot = self._pending_conditional_focus
+        recover_removed_more_focus = self._pending_more_focus_recovery
+        more_focus_section_id = self._pending_more_focus_section_id
+        self._pending_conditional_focus = None
+        self._pending_more_focus_recovery = False
+        self._pending_more_focus_section_id = None
+        if recover_removed_more_focus and self._on_more_focus_removed is not None:
+            self.call_after_refresh(
+                self._on_more_focus_removed,
+                more_focus_section_id,
+            )
+        if focus_snapshot is not None:
+            self.call_after_refresh(self._recover_conditional_focus, *focus_snapshot)
 
     def _report_unowned_content(self, ownership: InspectorOwnedContent) -> None:
         """Log one privacy-safe diagnostic for each unknown fingerprint."""
@@ -410,7 +429,15 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     def _recover_conditional_focus(self, owner: str, focused_id: str | None) -> None:
         if not self.is_mounted:
             return
-        _promoted, more = self._group_projection(self._ownership)
+        promoted, more = self._group_projection(self._ownership)
+        if focused_id and owner in promoted:
+            try:
+                same = self.query_one(f"#{focused_id}", Widget)
+            except (NoMatches, QueryError):
+                same = None
+            if same is not None and self._focusable(same):
+                same.focus()
+                return
         if self._more_open and owner in more:
             if focused_id:
                 try:

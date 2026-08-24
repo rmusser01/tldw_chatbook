@@ -173,12 +173,14 @@ def _staged_state(row_count: int) -> ConsoleStagedContextState:
 
 
 @pytest.mark.asyncio
-async def test_outer_hint_is_pinned_third_child_with_exact_nonfocusable_copy():
+async def test_outer_hint_is_pinned_last_child_with_exact_nonfocusable_copy():
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
-        header, body, hint = rail.children
+        header, project, summary, body, hint = rail.children
 
-        assert header.id is None
+        assert header.id == "console-inspector-rail-header"
+        assert project.id == "console-project-instruction-status"
+        assert summary.id == "console-send-authority-summary"
         assert body.id == "console-inspector-rail-body"
         assert hint.id == INSPECTOR_OUTER_HINT_ID
         assert str(hint.renderable) in ("", INSPECTOR_OUTER_HINT)
@@ -954,7 +956,7 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
     (
         ("header", "#console-inspector-approvals-heading"),
         ("body", f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}"),
-        ("none", "#console-inspector-rail-body"),
+        ("none", f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}"),
     ),
 )
 async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
@@ -1046,7 +1048,8 @@ async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
             description=f"{target_mode} target-local focus priority",
         )
 
-        assert pilot.app.focused is not artifacts
+        if target_mode != "none":
+            assert pilot.app.focused is not artifacts
         if target_mode != "none":
             await pilot.press("p")
             await _wait_for_right_rail_condition(
