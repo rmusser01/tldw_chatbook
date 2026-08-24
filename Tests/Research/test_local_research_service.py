@@ -1,7 +1,12 @@
 import sqlite3
+import threading
+import time
 
 import pytest
 
+from tldw_chatbook.Research_Interop import (
+    local_research_service as local_research_service_module,
+)
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
 
 
@@ -503,3 +508,303 @@ def test_a_database_from_a_future_schema_version_is_refused(tmp_path):
     service = LocalResearchService(db_path)
     with pytest.raises(RuntimeError, match="newer"):
         service.list_runs()
+
+
+# ---------------------------------------------------------------------------
+# TASK-21127: held connections, transaction atomicity, shutdown lifecycle.
+# ---------------------------------------------------------------------------
+
+
+def _count_opens(monkeypatch):
+    """Count connections opened through the private-sqlite seam."""
+    opened: list[str] = []
+    real = local_research_service_module.connect_private_sqlite
+
+    def _counting(*args, **kwargs):
+        opened.append(threading.current_thread().name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        local_research_service_module, "connect_private_sqlite", _counting
+    )
+    return opened
+
+
+def test_file_backed_service_holds_one_connection_for_many_operations(
+    tmp_path, monkeypatch
+):
+    """TASK-21127: the store used to open (and GC-leak) a fresh connection per
+    operation -- 87 per engine run. One held connection per thread now serves
+    every operation, so the seam is entered once."""
+    service = LocalResearchService(tmp_path / "research.db")
+    service.list_runs()  # first use: schema + this thread's held connection
+
+    opened = _count_opens(monkeypatch)
+    run = service.launch_run(query="held connections")
+    for index in range(10):
+        service.save_artifact(
+            run["id"],
+            artifact_name=f"a{index}.json",
+            content_type="application/json",
+            content={"i": index},
+        )
+        service.update_run_progress(run["id"], progress_percent=float(index))
+        service.get_run(run["id"])
+
+    assert opened == [], f"expected zero further opens, got {opened}"
+    assert len(service.list_artifacts(run["id"])) == 10
+    service.close()
+
+
+def test_held_connection_keeps_wal_and_normal_synchronous(tmp_path):
+    """The pragmas must hold on the LIVE held connection, not merely be issued
+    once at open, and WAL must be persistent in the file itself."""
+    db_path = tmp_path / "research.db"
+    service = LocalResearchService(db_path)
+    service.list_runs()
+
+    conn = service._connect()
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+    assert conn.isolation_level is None
+
+    independent = sqlite3.connect(db_path)
+    try:
+        assert independent.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        independent.close()
+    service.close()
+
+
+def test_close_waits_for_an_in_flight_operation_on_another_thread(tmp_path):
+    """TASK-21101's class: shutdown must not close a connection out from under
+    an operation still running on a worker thread."""
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="in flight")
+
+    entered = threading.Event()
+    release = threading.Event()
+    worker_error: list[BaseException] = []
+
+    def _slow_operation():
+        try:
+            with service._transaction(immediate=True) as conn:
+                entered.set()
+                release.wait(5)
+                conn.execute(
+                    "UPDATE research_runs SET progress_message = ? WHERE id = ?",
+                    ("done", run["id"]),
+                )
+        except BaseException as exc:  # noqa: BLE001 - reported to the assertion
+            worker_error.append(exc)
+
+    worker = threading.Thread(target=_slow_operation)
+    worker.start()
+    assert entered.wait(5)
+
+    closed = threading.Event()
+
+    def _close():
+        service.close()
+        closed.set()
+
+    closer = threading.Thread(target=_close)
+    closer.start()
+    assert not closed.wait(0.3), "close() returned while an operation was in flight"
+    release.set()
+    worker.join(5)
+    closer.join(5)
+    assert closed.is_set()
+    assert not worker_error, worker_error
+    assert service.get_run(run["id"])["progress_message"] == "done"
+    service.close()
+
+
+def test_close_leaves_a_wedged_operations_connection_open(tmp_path, monkeypatch):
+    """On a settle timeout the busy thread KEEPS its connection: closing it
+    anyway turns a slow shutdown into ProgrammingError inside live work."""
+    monkeypatch.setattr(
+        local_research_service_module, "_LIFECYCLE_SETTLE_TIMEOUT", 0.15
+    )
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="wedged")
+
+    entered = threading.Event()
+    release = threading.Event()
+    worker_error: list[BaseException] = []
+
+    def _wedged():
+        try:
+            with service._transaction(immediate=True) as conn:
+                entered.set()
+                release.wait(5)
+                conn.execute(
+                    "UPDATE research_runs SET progress_message = ? WHERE id = ?",
+                    ("survived", run["id"]),
+                )
+        except BaseException as exc:  # noqa: BLE001
+            worker_error.append(exc)
+
+    worker = threading.Thread(target=_wedged)
+    worker.start()
+    assert entered.wait(5)
+
+    service.close()  # settle wait expires; the busy connection must survive
+    release.set()
+    worker.join(5)
+
+    assert not worker_error, worker_error
+    assert service.get_run(run["id"])["progress_message"] == "survived"
+    service.close()
+
+
+def test_close_rearms_the_store_for_later_operations(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="re-arm")
+    service.close()
+
+    reopened = service.get_run(run["id"])
+    assert reopened is not None and reopened["query"] == "re-arm"
+    service.close()
+
+
+def test_memory_mode_survives_close_and_reuse():
+    """``:memory:`` shares ONE connection; closing it destroys the database, so
+    the re-armed store must rebuild the schema rather than raise."""
+    service = LocalResearchService(":memory:")
+    service.launch_run(query="memory")
+    service.close()
+
+    assert list(service.list_runs()) == []
+    fresh = service.launch_run(query="after close")
+    assert fresh["query"] == "after close"
+    service.close()
+
+
+def test_release_lease_reads_then_writes_in_one_transaction(tmp_path):
+    """release_lease SELECTs and then UPDATEs. With isolation_level=None a
+    DEFERRED begin opens a read snapshot whose later write raises
+    BUSY_SNAPSHOT ("database is locked") -- which SQLite's busy handler does
+    NOT retry. It must take the write lock up front."""
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="lease")
+    lease = service.claim_run(run["id"], worker_id="w1", lease_seconds=60.0)
+
+    # A second connection to the same file, holding a write transaction open,
+    # is what turns a deferred begin into an unretryable failure.
+    contender = LocalResearchService(tmp_path / "research.db")
+    other_run = contender.launch_run(query="contender")
+    with contender._transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE research_runs SET progress_message = ? WHERE id = ?",
+            ("holding", other_run["id"]),
+        )
+        # release_lease must WAIT for this (busy_timeout), not fail outright.
+        released: list[object] = []
+
+        def _release():
+            released.append(service.release_lease(run["id"], lease_id=lease))
+
+        releaser = threading.Thread(target=_release)
+        releaser.start()
+        time.sleep(0.05)
+    releaser.join(6)
+
+    assert released == [True]
+    assert service.get_run(run["id"])["lease_id"] is None
+    service.close()
+    contender.close()
+
+
+def test_concurrent_run_updates_never_lose_a_version_bump(tmp_path):
+    """Rule C: moving work off the loop removes the serialization the loop was
+    silently providing.
+
+    Every writer parks on a barrier released at the same instant, then all of
+    them race ``update_run_progress`` -- which reads ``version`` and writes
+    ``version + 1``. Under the shipped shape that pair is ONE ``BEGIN
+    IMMEDIATE`` transaction, so SQLite serialises them and the counter must
+    advance exactly once per call. The barrier is deliberately OUTSIDE the
+    transaction: parking inside it would wedge on the write lock the fix takes
+    up front, which is itself the proof there is no longer a window there.
+    """
+    writers = 8
+    rounds = 5
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="interleaving")
+    start_version = int(service.get_run(run["id"])["version"])
+
+    barrier = threading.Barrier(writers, timeout=15)
+    results: list[object] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _writer(index: int):
+        try:
+            barrier.wait()
+            for attempt in range(rounds):
+                updated = service.update_run_progress(
+                    run["id"],
+                    progress_message=f"w{index}-{attempt}",
+                    event="progress",
+                )
+                with lock:
+                    results.append(updated)
+        except BaseException as exc:  # noqa: BLE001 - reported to the assertion
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_writer, args=(i,)) for i in range(writers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert not errors, errors
+    assert len(results) == writers * rounds
+    final_version = int(service.get_run(run["id"])["version"])
+    assert final_version == start_version + writers * rounds, (
+        f"{writers * rounds} writes all reported success but version advanced "
+        f"{final_version - start_version} time(s): a lost update"
+    )
+    service.close()
+
+
+class _RollbackRefusingConnection:
+    """Wraps a real connection and refuses exactly the ROLLBACK statement."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def execute(self, sql, *args, **kwargs):
+        if sql.strip().upper().startswith("ROLLBACK"):
+            raise sqlite3.OperationalError("rollback refused by the probe")
+        return self._inner.execute(sql, *args, **kwargs)
+
+
+def test_transaction_error_is_not_masked_by_a_failing_rollback(tmp_path):
+    """A ROLLBACK that itself fails must never replace the original error."""
+    service = LocalResearchService(tmp_path / "research.db")
+    service.list_runs()
+
+    class _Boom(RuntimeError):
+        pass
+
+    real_begin = LocalResearchService._begin
+
+    def _wrapping_begin(self, *, immediate=False):
+        return _RollbackRefusingConnection(real_begin(self, immediate=immediate))
+
+    LocalResearchService._begin = _wrapping_begin
+    try:
+        with pytest.raises(_Boom, match="the real error"):
+            with service._transaction():
+                raise _Boom("the real error")
+    finally:
+        LocalResearchService._begin = real_begin
+    # The connection is left mid-transaction; _begin's heal path clears it.
+    assert service.get_run("nope") is None
+    service.close()

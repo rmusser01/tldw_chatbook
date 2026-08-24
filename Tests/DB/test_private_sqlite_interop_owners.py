@@ -50,7 +50,9 @@ def _research_owner(path: Path) -> tuple[object, Callable[[], None]]:
     # TASK-21105: see _writing_owner.
     service = local_research_service.LocalResearchService(path)
     service.list_runs()
-    return service, lambda: None
+    # TASK-21127: the connection opened above is now HELD, so the owner has a
+    # real closer to hand back.
+    return service, service.close
 
 
 def _notes_mirror_owner(path: Path) -> tuple[object, Callable[[], None]]:

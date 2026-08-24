@@ -6,9 +6,12 @@ import json
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
+
+from loguru import logger
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -20,6 +23,12 @@ from .research_normalizers import (
 )
 
 __all__ = ["LocalResearchService", "LeaseBudgetExhausted", "TERMINAL_RUN_STATUSES"]
+
+# How long close() waits for operations still running on other threads, and how
+# long a new operation waits out an in-flight close. Bounded so a wedged
+# operation degrades to a warning instead of hanging application shutdown
+# (TASK-21127, mirroring the writing store's lifecycle gate).
+_LIFECYCLE_SETTLE_TIMEOUT = 5.0
 
 #: Statuses from which a run cannot be claimed or further executed. The
 #: single source of truth: ``local_research_engine.py`` imports this rather
@@ -101,7 +110,26 @@ class LocalResearchService:
         # connection must stay bound to the constructing thread, as before.
         self._schema_ready = False
         self._schema_lock = threading.Lock()
-        if self.db_path is not None and str(self.db_path) == ":memory:":
+        self._is_memory = self.db_path is not None and str(self.db_path) == ":memory:"
+        # TASK-21127: one HELD connection per thread, keyed by thread id so
+        # close() can reach connections it does not own (a ``threading.local``
+        # cannot be cleared from another thread, which is what shutdown needs).
+        # ``:memory:`` keeps sharing the single ``_memory_conn`` -- closing it
+        # destroys the database, so it is never entered in this map.
+        self._connections: dict[int, sqlite3.Connection] = {}
+        # Lifecycle gate: operations register here and close() waits for them
+        # to settle before it touches any connection.
+        self._lifecycle = threading.Condition()
+        self._active_operations: dict[int, int] = {}
+        self._closing = False
+        # Re-entrancy: a nested _transaction() joins the transaction its caller
+        # already opened instead of issuing a second BEGIN.
+        self._tx_state = threading.local()
+        # ``:memory:`` shares one connection across threads, so its
+        # transactions must be serialised; file-backed threads each hold their
+        # own connection and never contend here.
+        self._memory_tx_lock = threading.RLock()
+        if self._is_memory:
             self._init_schema()
             self._schema_ready = True
 
@@ -122,10 +150,53 @@ class LocalResearchService:
             self._schema_ready = True
 
     def _connect(self) -> sqlite3.Connection:
+        """Return this thread's held connection, opening it on first use.
+
+        TASK-21127: the service used to open (and GC-leak) a fresh connection
+        per operation -- ~87 opens for a single engine run, each paying the
+        private seam's owner-policy validation and ``verify_trusted_directory``
+        plus a re-run of the WAL/synchronous pragmas (measured 0.63 ms per open
+        against 0.002 ms for the statement it was opened to run). Callers now
+        share one connection per thread for the life of the service.
+        """
         if self.db_path is None:
             raise RuntimeError("Path-backed research database is not configured.")
         self._ensure_schema()
-        return self._open_connection()
+        if self._is_memory:
+            # close() drops the connection AND clears _schema_ready, so the
+            # _ensure_schema() above has already rebuilt both. The fallback is
+            # defensive only.
+            conn = self._memory_conn
+            if conn is None:
+                conn = self._open_connection()
+            return conn
+
+        ident = threading.get_ident()
+        with self._lifecycle:
+            held = self._connections.get(ident)
+            if held is not None:
+                return held
+
+        opened = self._open_connection()
+        superseded: sqlite3.Connection | None = None
+        with self._lifecycle:
+            existing = self._connections.get(ident)
+            if existing is not None:
+                superseded = opened
+                opened = existing
+            else:
+                self._connections[ident] = opened
+        if superseded is not None:
+            self._close_quietly(superseded)
+        return opened
+
+    def _discard_connection(self, conn: sqlite3.Connection) -> None:
+        """Detach a connection this thread can no longer use, and close it."""
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._connections.get(ident) is conn:
+                self._connections.pop(ident, None)
+        self._close_quietly(conn)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a raw connection without the first-use schema ensure.
@@ -133,12 +204,20 @@ class LocalResearchService:
         ``_init_schema`` must use this directly: it runs inside
         ``_ensure_schema``'s lock, and going through ``_connect`` there
         would deadlock on the non-reentrant lock.
+
+        ``check_same_thread=False`` because held connections are handed to
+        whichever worker thread the caller ran on, and ``isolation_level=None``
+        because ``_transaction`` issues explicit BEGIN/COMMIT rather than
+        relying on sqlite3's implicit transactions (the sanctioned template;
+        exemplar ``DB/Library_Ingest_Jobs_DB.py``).
         """
-        if str(self.db_path) == ":memory:":
+        if self._is_memory:
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
                     "research.local",
                     self.db_path,
+                    check_same_thread=False,
+                    isolation_level=None,
                 )
                 self._memory_conn.row_factory = sqlite3.Row
                 # synchronous is harmless (and a no-op performance-wise) on an
@@ -146,22 +225,217 @@ class LocalResearchService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        conn = connect_private_sqlite("research.local", self.db_path)
+        conn = connect_private_sqlite(
+            "research.local",
+            self.db_path,
+            check_same_thread=False,
+            isolation_level=None,
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
         # lose the last commit, acceptable for this local research
-        # session/run store) and avoids an fsync per commit. This DB opens a
-        # fresh connection per operation, so synchronous must be re-applied
-        # on every open, not just the first (task-15465).
+        # session/run store) and avoids an fsync per commit (task-15465). The
+        # connection is now HELD, so this runs once per thread rather than once
+        # per operation.
         conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
+    @contextmanager
+    def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        """Run one explicit transaction on this thread's held connection.
+
+        Replaces the old ``with self._connect() as conn:`` form. sqlite3's
+        connection context manager is a *transaction* manager, not a closer, so
+        that form both leaked the connection and depended on implicit
+        transaction control; this issues BEGIN/COMMIT/ROLLBACK itself.
+
+        Args:
+            immediate: Take the write lock at BEGIN. Required for any body that
+                READS and then WRITES: with ``isolation_level=None`` a deferred
+                BEGIN starts a read snapshot, and SQLite's busy handler does not
+                retry ``BUSY_SNAPSHOT``, so the later write fails outright with
+                "database is locked" instead of waiting (TASK-21125 review,
+                MINOR-1). It is also what makes read-check-write sequences
+                atomic now that callers can run on more than one thread.
+
+        A rollback that fails is swallowed (type name only) so it can never
+        mask the exception that caused it.
+        """
+        state = self._tx_state
+        if getattr(state, "depth", 0):
+            # Nested use joins the open transaction: a second BEGIN on the same
+            # connection is an error, and splitting the commit would break the
+            # caller's atomicity.
+            yield state.conn
+            return
+
+        self._begin_operation()
+        try:
+            serialise = self._memory_tx_lock if self._is_memory else None
+            if serialise is not None:
+                serialise.acquire()
+            try:
+                conn = self._begin(immediate=immediate)
+                state.depth = 1
+                state.conn = conn
+                try:
+                    yield conn
+                    conn.execute("COMMIT")
+                except BaseException:
+                    self._rollback_quietly(conn)
+                    raise
+                finally:
+                    state.depth = 0
+                    state.conn = None
+            finally:
+                if serialise is not None:
+                    serialise.release()
+        finally:
+            self._end_operation()
+
+    def _begin(self, *, immediate: bool = False) -> sqlite3.Connection:
+        """Open a transaction on this thread's connection, healing it if needed.
+
+        Two states can outlive an operation and would otherwise poison the held
+        connection for the rest of the process:
+
+        - the connection was closed by ``close()`` between operations -- the
+          store re-arms, so the stale handle is dropped and a fresh one opened;
+        - a transaction was left open because a COMMIT *and* its ROLLBACK both
+          failed -- rolling back here clears it instead of failing every later
+          operation on this thread with "within a transaction".
+
+        Both heal once and then retry; a second failure propagates.
+        """
+        statement = "BEGIN IMMEDIATE" if immediate else "BEGIN"
+        conn = self._connect()
+        try:
+            conn.execute(statement)
+            return conn
+        except sqlite3.ProgrammingError:
+            self._discard_connection(conn)
+            conn = self._connect()
+        except sqlite3.OperationalError as exc:
+            if "within a transaction" not in str(exc):
+                raise
+            logger.debug(
+                "Local research store found a transaction left open; clearing it"
+            )
+            self._rollback_quietly(conn)
+        conn.execute(statement)
+        return conn
+
+    def _begin_operation(self) -> None:
+        """Admit one operation, waiting out an in-flight close()."""
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._closing and not self._lifecycle.wait_for(
+                lambda: not self._closing, timeout=_LIFECYCLE_SETTLE_TIMEOUT
+            ):
+                logger.warning(
+                    "Local research store close() did not settle in "
+                    f"{_LIFECYCLE_SETTLE_TIMEOUT}s; proceeding with the operation"
+                )
+            self._active_operations[ident] = self._active_operations.get(ident, 0) + 1
+
+    def _end_operation(self) -> None:
+        ident = threading.get_ident()
+        with self._lifecycle:
+            remaining = self._active_operations.get(ident, 0) - 1
+            if remaining > 0:
+                self._active_operations[ident] = remaining
+            else:
+                self._active_operations.pop(ident, None)
+            self._lifecycle.notify_all()
+
+    @staticmethod
+    def _rollback_quietly(conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception as exc:
+            # Type name only: rollback failures must never mask (or leak the
+            # message of) the error that triggered them.
+            logger.debug(f"Local research store rollback failed: {type(exc).__name__}")
+
+    @staticmethod
+    def _close_quietly(conn: sqlite3.Connection) -> None:
+        try:
+            conn.close()
+        except Exception as exc:
+            logger.debug(
+                f"Local research store connection close failed: {type(exc).__name__}"
+            )
+
     def close(self) -> None:
-        """Close the persistent in-memory connection, when present."""
-        if self._memory_conn is not None:
-            self._memory_conn.close()
-            self._memory_conn = None
+        """Close every held connection once in-flight operations have settled.
+
+        TASK-21127: shutdown must not close a connection out from under a
+        research run still writing on a worker thread, so this waits for
+        operations owned by other threads before it touches anything. The store
+        re-arms: a later operation transparently reopens.
+
+        If the wait expires, the still-busy threads KEEP their connections
+        (TASK-21125 review: closing them anyway produced ``ProgrammingError:
+        Cannot operate on a closed database`` inside the wedged operation,
+        surfacing as an unretrieved-task traceback). Committed data is already
+        durable under WAL and an open transaction rolls back at process exit.
+
+        Blocking: this waits up to ``_LIFECYCLE_SETTLE_TIMEOUT``. Callers on the
+        event loop must run it through ``asyncio.to_thread`` -- see
+        ``TldwCli._close_local_research_service``.
+        """
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._closing:
+                # Another thread is already closing; let it finish.
+                self._lifecycle.wait_for(
+                    lambda: not self._closing, timeout=_LIFECYCLE_SETTLE_TIMEOUT
+                )
+                return
+            self._closing = True
+
+        try:
+            with self._lifecycle:
+                settled = self._lifecycle.wait_for(
+                    lambda: (
+                        not any(owner != ident for owner in self._active_operations)
+                    ),
+                    timeout=_LIFECYCLE_SETTLE_TIMEOUT,
+                )
+                busy = {owner for owner in self._active_operations if owner != ident}
+                connections = [
+                    conn
+                    for owner, conn in list(self._connections.items())
+                    if owner not in busy
+                ]
+                for owner in list(self._connections):
+                    if owner not in busy:
+                        self._connections.pop(owner, None)
+                # The shared in-memory connection can only be released when no
+                # other thread is mid-transaction on it.
+                memory_conn = None
+                if not busy:
+                    memory_conn = self._memory_conn
+                    self._memory_conn = None
+                    if self._is_memory:
+                        # The in-memory database dies with its connection, so
+                        # the re-armed store has to rebuild the schema.
+                        self._schema_ready = False
+            if not settled:
+                logger.warning(
+                    f"Local research store left {len(busy)} connection(s) open: "
+                    "operations were still in flight after "
+                    f"{_LIFECYCLE_SETTLE_TIMEOUT}s"
+                )
+            for conn in connections:
+                self._close_quietly(conn)
+            if memory_conn is not None:
+                self._close_quietly(memory_conn)
+        finally:
+            with self._lifecycle:
+                self._closing = False
+                self._lifecycle.notify_all()
 
     @staticmethod
     def _format_timestamp(moment: datetime) -> str:
@@ -290,7 +564,12 @@ class LocalResearchService:
 
     def _init_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105).
-        with self._open_connection() as conn:
+        # TASK-21127: file-backed mode closes this connection rather than
+        # leaking it -- the per-thread held connection is opened separately by
+        # _connect(). ``:memory:`` must NOT close it: _open_connection returns
+        # the shared _memory_conn and closing that destroys the database.
+        conn = self._open_connection()
+        try:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS research_sessions (
@@ -365,7 +644,19 @@ class LocalResearchService:
             # The base script above ships the v0 shape (CREATE TABLE IF NOT
             # EXISTS never revisits an existing database); the versioned
             # migrations below take it from there (Qodo PR-1822 finding 7).
-            self._apply_migrations(conn)
+            # ``apply`` documents that the CALLER owns the transaction, and
+            # with isolation_level=None nothing opens one implicitly, so the
+            # migration span is fenced explicitly here.
+            conn.execute("BEGIN")
+            try:
+                self._apply_migrations(conn)
+            except BaseException:
+                self._rollback_quietly(conn)
+                raise
+            conn.execute("COMMIT")
+        finally:
+            if not self._is_memory:
+                self._close_quietly(conn)
 
     def _apply_migrations(self, conn: sqlite3.Connection) -> None:
         """Upgrade the database to the newest known schema version.
@@ -398,7 +689,7 @@ class LocalResearchService:
                 apply_step(conn)
 
     def _fetch_one(self, table: str, item_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 f"SELECT * FROM {table} WHERE id = ? AND deleted = 0",
                 (item_id,),
@@ -435,27 +726,33 @@ class LocalResearchService:
         expected_version: int | None,
         fields: dict[str, Any],
     ) -> dict[str, Any]:
-        row = self._require_one(table, item_id, label)
-        self._check_version(row, expected_version)
-        updates = dict(fields)
-        if not updates:
-            return row
-        updates["updated_at"] = self._now()
-        updates["version"] = int(row["version"]) + 1
-        assignments = ", ".join(f"{key} = ?" for key in updates)
-        with self._connect() as conn:
+        # TASK-21127: one IMMEDIATE transaction, not three separate connections
+        # (read, write, re-read). Besides the two connection opens it removes,
+        # this makes the version check and the write it authorises atomic: the
+        # split shape was harmless only while every caller ran inline on the
+        # event loop, and is a silent lost update the moment two callers can be
+        # on different threads (TASK-21125 review, MAJOR-1).
+        with self._transaction(immediate=True) as conn:
+            row = self._require_one(table, item_id, label)
+            self._check_version(row, expected_version)
+            updates = dict(fields)
+            if not updates:
+                return row
+            updates["updated_at"] = self._now()
+            updates["version"] = int(row["version"]) + 1
+            assignments = ", ".join(f"{key} = ?" for key in updates)
             conn.execute(
                 f"UPDATE {table} SET {assignments} WHERE id = ?",
                 (*updates.values(), item_id),
             )
-        return self._require_one(table, item_id, label)
+            return self._require_one(table, item_id, label)
 
     def _soft_delete(
         self, table: str, item_id: str, label: str, expected_version: int | None
     ) -> bool:
-        row = self._require_one(table, item_id, label)
-        self._check_version(row, expected_version)
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
+            row = self._require_one(table, item_id, label)
+            self._check_version(row, expected_version)
             conn.execute(
                 f"UPDATE {table} SET deleted = 1, updated_at = ?, version = ? WHERE id = ?",
                 (self._now(), int(row["version"]) + 1, item_id),
@@ -517,7 +814,7 @@ class LocalResearchService:
     ) -> dict[str, Any]:
         session_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
             conn.execute(
                 """
                 INSERT INTO research_sessions (
@@ -534,9 +831,9 @@ class LocalResearchService:
                     now,
                 ),
             )
-        return self._normalize_session(
-            self._require_one("research_sessions", session_id, "research session")
-        )
+            return self._normalize_session(
+                self._require_one("research_sessions", session_id, "research session")
+            )
 
     def list_sessions(
         self, *, limit: int = 100, offset: int = 0, status: str | None = None
@@ -548,7 +845,7 @@ class LocalResearchService:
             params.append(status)
         sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_session(dict(row)) for row in rows]
 
@@ -640,17 +937,17 @@ class LocalResearchService:
         follow_up: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        session = (
-            self._require_one("research_sessions", session_id, "research session")
-            if session_id
-            else None
-        )
-        run_query = query or (session["query"] if session else None)
-        if not run_query:
-            raise ValueError("query is required")
-        run_id = kwargs.get("id") or self._new_id()
-        now = self._now()
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
+            session = (
+                self._require_one("research_sessions", session_id, "research session")
+                if session_id
+                else None
+            )
+            run_query = query or (session["query"] if session else None)
+            if not run_query:
+                raise ValueError("query is required")
+            run_id = kwargs.get("id") or self._new_id()
+            now = self._now()
             conn.execute(
                 """
                 INSERT INTO research_runs (
@@ -680,9 +977,9 @@ class LocalResearchService:
                 ),
             )
             self._record_event(conn, run_id, "created")
-        return self._normalize_run(
-            self._require_one("research_runs", run_id, "research run")
-        )
+            return self._normalize_run(
+                self._require_one("research_runs", run_id, "research run")
+            )
 
     def list_runs(
         self,
@@ -709,7 +1006,7 @@ class LocalResearchService:
             params.append(status)
         sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return self._awaitable_list(self._normalize_run(dict(row)) for row in rows)
 
@@ -775,24 +1072,30 @@ class LocalResearchService:
             ``_quiet_lease_lost_return``'s "return the truth, not a lie"
             contract elsewhere in the lease design.
         """
-        row = self._require_one("research_runs", run_id, "research run")
-        updates = dict(fields)
-        updates["updated_at"] = self._now()
-        updates["version"] = int(row["version"]) + 1
-        assignments = ", ".join(f"{key} = ?" for key in updates)
-        sql = f"UPDATE research_runs SET {assignments} WHERE id = ?"
-        params: list[Any] = [*updates.values(), run_id]
-        if lease_id is not None:
-            sql += " AND lease_id = ?"
-            params.append(lease_id)
-        with self._connect() as conn:
+        # TASK-21127: read, write and re-read in ONE immediate transaction. The
+        # version bump is derived from the row read here, so on the old
+        # three-transaction shape a concurrent writer between the read and the
+        # UPDATE silently collapsed two bumps into one.
+        with self._transaction(immediate=True) as conn:
+            row = self._require_one("research_runs", run_id, "research run")
+            updates = dict(fields)
+            updates["updated_at"] = self._now()
+            updates["version"] = int(row["version"]) + 1
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            sql = f"UPDATE research_runs SET {assignments} WHERE id = ?"
+            params: list[Any] = [*updates.values(), run_id]
+            if lease_id is not None:
+                sql += " AND lease_id = ?"
+                params.append(lease_id)
             cursor = conn.execute(sql, params)
             landed = cursor.rowcount == 1
             if landed:
                 self._record_event(conn, run_id, event)
-        updated = self._normalize_run(
-            self._require_one("research_runs", run_id, "research run")
-        )
+            updated = self._normalize_run(
+                self._require_one("research_runs", run_id, "research run")
+            )
+        # Outside the transaction: the dispatcher reaches the app/UI, and must
+        # never run with the write lock held.
         if landed:
             self._dispatch_terminal_run_notification(updated)
         return updated
@@ -889,6 +1192,31 @@ class LocalResearchService:
                 lease_seconds=lease_seconds,
                 max_attempts=max_attempts,
             )
+        with self._transaction(immediate=True) as conn:
+            return self._claim_run_locked(
+                conn,
+                run_id,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+                max_attempts=max_attempts,
+            )
+
+    def _claim_run_locked(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: float,
+        max_attempts: int,
+    ) -> str | None:
+        """``claim_run``'s body, inside the caller's write transaction.
+
+        TASK-21127: the reclaim/budget decision reads the row and the claim
+        writes it; those were two separate connections, so the "is this lease
+        live" judgement could be made against a row another claimant had
+        already taken. One IMMEDIATE transaction closes that.
+        """
         row = self._require_one("research_runs", run_id, "research run")
         if str(row["status"] or "") in TERMINAL_RUN_STATUSES:
             # Nothing to reclaim and nothing to budget-check -- a terminal
@@ -910,29 +1238,28 @@ class LocalResearchService:
         expires = self._timestamp_after(lease_seconds)
         next_attempts = attempts + 1
         status_placeholders = ", ".join("?" for _ in TERMINAL_RUN_STATUSES)
-        with self._connect() as conn:
-            cursor = conn.execute(
-                f"""
-                UPDATE research_runs
-                   SET lease_owner = ?, lease_id = ?, leased_until = ?,
-                       lease_attempts = ?, updated_at = ?
-                 WHERE id = ?
-                   AND (leased_until IS NULL OR leased_until <= ?)
-                   AND status NOT IN ({status_placeholders})
-                """,
-                (
-                    worker_id,
-                    lease_id,
-                    expires,
-                    next_attempts,
-                    now,
-                    run_id,
-                    now,
-                    *sorted(TERMINAL_RUN_STATUSES),
-                ),
-            )
-            if cursor.rowcount != 1:
-                return None
+        cursor = conn.execute(
+            f"""
+            UPDATE research_runs
+               SET lease_owner = ?, lease_id = ?, leased_until = ?,
+                   lease_attempts = ?, updated_at = ?
+             WHERE id = ?
+               AND (leased_until IS NULL OR leased_until <= ?)
+               AND status NOT IN ({status_placeholders})
+            """,
+            (
+                worker_id,
+                lease_id,
+                expires,
+                next_attempts,
+                now,
+                run_id,
+                now,
+                *sorted(TERMINAL_RUN_STATUSES),
+            ),
+        )
+        if cursor.rowcount != 1:
+            return None
         return lease_id
 
     def _claim_run_external(
@@ -1007,7 +1334,7 @@ class LocalResearchService:
             )
         now = self._now()
         expires = self._timestamp_after(lease_seconds)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             cursor = conn.execute(
                 """
                 UPDATE research_runs
@@ -1059,7 +1386,12 @@ class LocalResearchService:
         if self._uses_external_db:
             return self._release_lease_external(run_id, lease_id=lease_id)
         now = self._now()
-        with self._connect() as conn:
+        # IMMEDIATE is mandatory here, not a preference: this body SELECTs and
+        # then UPDATEs, and with isolation_level=None a deferred BEGIN opens a
+        # read snapshot whose later write fails with BUSY_SNAPSHOT ("database is
+        # locked") -- which SQLite's busy handler does NOT retry (TASK-21125
+        # review, MINOR-1).
+        with self._transaction(immediate=True) as conn:
             row = conn.execute(
                 "SELECT leased_until FROM research_runs WHERE id = ? AND lease_id = ?",
                 (run_id, lease_id),
@@ -1107,7 +1439,7 @@ class LocalResearchService:
         """
         if self._uses_external_db:
             return self._holds_lease_external(run_id, lease_id=lease_id)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 "SELECT lease_id, leased_until FROM research_runs WHERE id = ?",
                 (run_id,),
@@ -1275,10 +1607,10 @@ class LocalResearchService:
         proposed_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a pending review checkpoint for a run (task-16482)."""
-        self._require_one("research_runs", run_id, "research run")
         checkpoint_id = f"chk-{self._new_id()}"
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
+            self._require_one("research_runs", run_id, "research run")
             conn.execute(
                 """
                 INSERT INTO research_checkpoints (
@@ -1301,13 +1633,15 @@ class LocalResearchService:
                 "checkpoint_created",
                 {"checkpoint_id": checkpoint_id, "checkpoint_type": checkpoint_type},
             )
-        return self._normalize_checkpoint(
-            self._require_one("research_checkpoints", checkpoint_id, "research checkpoint")
-        )
+            return self._normalize_checkpoint(
+                self._require_one(
+                    "research_checkpoints", checkpoint_id, "research checkpoint"
+                )
+            )
 
     def list_checkpoints(self, run_id: str) -> list[dict[str, Any]]:
-        self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._transaction() as conn:
+            self._require_one("research_runs", run_id, "research run")
             rows = conn.execute(
                 "SELECT * FROM research_checkpoints WHERE run_id = ? ORDER BY rowid ASC",
                 (run_id,),
@@ -1343,6 +1677,25 @@ class LocalResearchService:
         """Approve a pending checkpoint with a type-validated patch
         (task-16482). Raises ValueError on non-pending state, unexpected
         patch keys, or sources patches referencing unknown/overlapping ids.
+        """
+        with self._transaction(immediate=True) as conn:
+            return self._patch_and_approve_checkpoint_locked(
+                conn, run_id, checkpoint_id, patch_payload=patch_payload
+            )
+
+    def _patch_and_approve_checkpoint_locked(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        checkpoint_id: str,
+        *,
+        patch_payload: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """``patch_and_approve_checkpoint``'s body, inside the write transaction.
+
+        TASK-21127: the pending-state guard, the version bump and the approving
+        write were three separate transactions, so two approvals of the same
+        checkpoint could both read ``pending`` and both write ``approved``.
         """
         self._require_one("research_runs", run_id, "research run")
         row = self._require_one(
@@ -1391,14 +1744,13 @@ class LocalResearchService:
             "version": int(row["version"]) + 1,
         }
         assignments = ", ".join(f"{key} = ?" for key in updates)
-        with self._connect() as conn:
-            conn.execute(
-                f"UPDATE research_checkpoints SET {assignments} WHERE id = ?",
-                (*updates.values(), checkpoint_id),
-            )
-            self._record_event(
-                conn, run_id, "checkpoint_approved", {"checkpoint_id": checkpoint_id}
-            )
+        conn.execute(
+            f"UPDATE research_checkpoints SET {assignments} WHERE id = ?",
+            (*updates.values(), checkpoint_id),
+        )
+        self._record_event(
+            conn, run_id, "checkpoint_approved", {"checkpoint_id": checkpoint_id}
+        )
         return self._normalize_checkpoint(
             self._require_one(
                 "research_checkpoints", checkpoint_id, "research checkpoint"
@@ -1473,24 +1825,24 @@ class LocalResearchService:
             )
             if value is not None
         }
-        row = self._require_one("research_runs", run_id, "research run")
-        updates = dict(fields)
-        updates["updated_at"] = self._now()
-        updates["version"] = int(row["version"]) + 1
-        assignments = ", ".join(f"{key} = ?" for key in updates)
-        event_data = dict(data or {})
-        for key in ("phase", "progress_percent"):
-            if fields.get(key) is not None:
-                event_data.setdefault(key, fields[key])
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
+            row = self._require_one("research_runs", run_id, "research run")
+            updates = dict(fields)
+            updates["updated_at"] = self._now()
+            updates["version"] = int(row["version"]) + 1
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            event_data = dict(data or {})
+            for key in ("phase", "progress_percent"):
+                if fields.get(key) is not None:
+                    event_data.setdefault(key, fields[key])
             conn.execute(
                 f"UPDATE research_runs SET {assignments} WHERE id = ?",
                 (*updates.values(), run_id),
             )
             self._record_event(conn, run_id, event, event_data or None)
-        return self._normalize_run(
-            self._require_one("research_runs", run_id, "research run")
-        )
+            return self._normalize_run(
+                self._require_one("research_runs", run_id, "research run")
+            )
 
     def _dispatch_terminal_run_notification(self, run: dict[str, Any]) -> None:
         status = str(run.get("status") or "").strip()
@@ -1546,13 +1898,13 @@ class LocalResearchService:
                 ),
                 run_id=run_id,
             )
-        self._require_one("research_runs", run_id, "research run")
         content_text = content if isinstance(content, str) else None
         content_json = (
             None if isinstance(content, str) else json.dumps(content, sort_keys=True)
         )
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
+            self._require_one("research_runs", run_id, "research run")
             conn.execute(
                 """
                 INSERT INTO research_artifacts (
@@ -1569,7 +1921,7 @@ class LocalResearchService:
             self._record_event(
                 conn, run_id, "artifact_saved", {"artifact_name": artifact_name}
             )
-        return self.get_artifact(run_id, artifact_name)
+            return self.get_artifact(run_id, artifact_name)
 
     def get_artifact(self, run_id: str, artifact_name: str) -> dict[str, Any] | None:
         if self._uses_external_db:
@@ -1579,8 +1931,8 @@ class LocalResearchService:
                 )
             except KeyError:
                 return None
-        self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._transaction() as conn:
+            self._require_one("research_runs", run_id, "research run")
             row = conn.execute(
                 """
                 SELECT * FROM research_artifacts
@@ -1607,8 +1959,8 @@ class LocalResearchService:
                 )
                 for name, content in bundle.items()
             )
-        self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._transaction() as conn:
+            self._require_one("research_runs", run_id, "research run")
             rows = conn.execute(
                 """
                 SELECT * FROM research_artifacts
@@ -1647,8 +1999,8 @@ class LocalResearchService:
         """
         if self._uses_external_db:
             return
-        self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._transaction(immediate=True) as conn:
+            self._require_one("research_runs", run_id, "research run")
             self._record_event(conn, run_id, event, data)
 
     def list_run_events(
@@ -1658,8 +2010,8 @@ class LocalResearchService:
             return self._awaitable_list(
                 self._external_run_events(run_id, after_id=after_id)
             )
-        self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._transaction() as conn:
+            self._require_one("research_runs", run_id, "research run")
             rows = conn.execute(
                 """
                 SELECT * FROM research_run_events
