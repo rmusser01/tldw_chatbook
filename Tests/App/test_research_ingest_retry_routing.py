@@ -18,6 +18,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
     LibraryIngestJobRegistry,
     _job_from_row,
+    plan_restore,
 )
 from tldw_chatbook.Home.active_work_adapter import HomeControlResultStatus
 from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
@@ -398,6 +399,119 @@ async def test_release_then_raise_settles_replacement_before_terminal_receipt(
         assert restored_receipt is not None
         assert restored_receipt.catalog_status is SourceOperationStatus.FAILED
         assert restored_receipt.ingest_job_id == restored_replacement.job_id
+    finally:
+        reopened_db.close()
+        reopened_workspace_db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["local", "server"])
+async def test_failed_replacement_upsert_cannot_restore_queue_eligibility(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    """A failed terminal write cannot reopen generic dispatch eligibility."""
+
+    app, store, ingest_db, failed, scheduled, _trace = _research_retry_app(
+        tmp_path,
+        origin=origin,
+    )
+    real_upsert = ingest_db.upsert_job
+
+    def fail_replacement_terminal_upsert(job: LibraryIngestJob) -> None:
+        if job.retry_of_job_id == failed.job_id and job.state is IngestJobState.FAILED:
+            raise OSError("disk write failed at /private/sensitive/ingest.sqlite")
+        real_upsert(job)
+
+    ingest_db.upsert_job = fail_replacement_terminal_upsert
+
+    def release_then_raise(job_id: str) -> None:
+        released = app.library_ingest_jobs.release_dispatch_hold(
+            job_id,
+            require_persisted=True,
+        )
+        assert released is not None
+        assert released.origin == origin
+        assert released.dispatch_held is False
+        raise RuntimeError("Bearer secret-token at /private/sensitive/source.txt")
+
+    coordinator = ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=app.library_ingest_jobs,
+        catalog_requeuer=app._requeue_research_source_catalog_job,
+        catalog_dispatcher=release_then_raise,
+    )
+    app.research_source_association_scheduler = ResearchSourceAssociationScheduler(
+        coordinator=coordinator,
+        operation_store=store,
+    )
+    app.notify.reset_mock()
+
+    assert app.retry_library_ingest_job(failed.job_id) is None
+    [result] = await _run_scheduled(scheduled)
+
+    receipt = store.get(failed.research_source_operation_id)
+    assert result is None
+    assert receipt is not None
+    assert receipt.catalog_status is SourceOperationStatus.IN_PROGRESS
+    replacement = app.library_ingest_jobs.get_job(receipt.ingest_job_id)
+    assert replacement is not None
+    assert replacement.state is not IngestJobState.QUEUED
+    assert replacement.dispatch_held is False
+    assert app.library_ingest_jobs.next_queued() is None
+    app._top_up_ingest_parse_pool.assert_not_called()
+    assert app.notify.call_args.args[0] == (
+        "Research source retry is unavailable. Open Research Workspace "
+        "and retry from its receipt."
+    )
+    assert "secret-token" not in app.notify.call_args.args[0]
+    assert "/private/" not in app.notify.call_args.args[0]
+
+    ingest_path = ingest_db.db_path
+    workspace_path = store._db.db_path
+    ingest_db.close()
+    store._db.close()
+    reopened_db = LibraryIngestJobsDB(ingest_path)
+    reopened_workspace_db = WorkspaceDB(
+        workspace_path,
+        client_id=f"retry-routing-failed-upsert-reopened-{origin}",
+    )
+    try:
+        rows = reopened_db.all_jobs()
+        persisted_replacement = next(
+            row for row in rows if row["job_id"] == replacement.job_id
+        )
+        assert persisted_replacement["state"] != "queued"
+        assert persisted_replacement["dispatch_held"] == 0
+
+        raw_restored = LibraryIngestJobRegistry()
+        raw_restored.restore(
+            [_job_from_row(row) for row in rows],
+            next_id=max(row["seq"] for row in rows) + 1,
+        )
+        assert raw_restored.next_queued() is None
+
+        restore_plan = plan_restore(
+            rows,
+            max_persisted=100,
+            now_iso="2026-08-24T14:00:00+00:00",
+        )
+        production_restored = LibraryIngestJobRegistry()
+        production_restored.restore(restore_plan.jobs, restore_plan.next_id)
+        recovered_job = production_restored.get_job(replacement.job_id)
+        assert recovered_job is not None
+        assert recovered_job.state is IngestJobState.FAILED
+
+        reopened_store = ResearchSourceOperationStore(reopened_workspace_db)
+        reopened_receipt = reopened_store.get(receipt.operation_id)
+        assert reopened_receipt is not None
+        assert reopened_receipt.catalog_status is SourceOperationStatus.IN_PROGRESS
+        recovered_receipt = await ResearchSourceAssociationCoordinator(
+            operation_store=reopened_store,
+            ingest_jobs=production_restored,
+        ).resume(receipt.operation_id)
+        assert recovered_receipt.catalog_status is SourceOperationStatus.FAILED
+        assert recovered_receipt.ingest_job_id == recovered_job.job_id
     finally:
         reopened_db.close()
         reopened_workspace_db.close()

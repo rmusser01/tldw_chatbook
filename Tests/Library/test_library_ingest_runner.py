@@ -581,6 +581,62 @@ def test_server_research_catalog_retry_requeues_before_server_dispatch(
     ingest_store.close()
 
 
+def test_local_research_retry_claim_waits_for_and_uses_parse_capacity(
+    tmp_path: Path,
+) -> None:
+    """The atomic retry claim stays bounded and is dispatched exactly once."""
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    ingest_store = LibraryIngestJobsDB(tmp_path / "local-retry-claim.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
+    app._ingest_parse_worker_count = lambda: 1  # type: ignore[method-assign]
+    app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
+    app._ingest_parse_pool_generation = 1
+    app._ingest_parse_jobs_by_generation = {1: set()}
+
+    active = app.library_ingest_jobs.submit(
+        source_path=str(tmp_path / "active.txt"),
+        detected_type="document",
+    )
+    app.library_ingest_jobs.mark_parsing(active.job_id, detected_type="document")
+    source = app.library_ingest_jobs.submit(
+        source_path=str(tmp_path / "research.txt"),
+        detected_type="document",
+        research_source_operation_id="research-op-local-retry-claim",
+    )
+    app.library_ingest_jobs.mark_failed(source.job_id, error="Temporary failure")
+    retry = app._requeue_research_source_catalog_job(source.job_id)
+    assert retry is not None
+
+    class _Pool:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def apply_async(self, function, args, callback, error_callback) -> None:
+            self.calls.append((function, args, callback, error_callback))
+
+    pool = _Pool()
+    app._ensure_ingest_parse_pool = lambda: pool  # type: ignore[method-assign]
+
+    app._dispatch_research_source_catalog_job(retry.job_id)
+
+    claimed = app.library_ingest_jobs.get_job(retry.job_id)
+    assert claimed is not None
+    assert claimed.state is IngestJobState.PARSING
+    assert claimed.dispatch_held is False
+    assert pool.calls == []
+
+    app.library_ingest_jobs.mark_failed(active.job_id, error="Active job stopped")
+    app._top_up_ingest_parse_pool()
+
+    assert len(pool.calls) == 1
+    _, (_, _, progress_context), _, _ = pool.calls[0]
+    assert progress_context == (1, retry.job_id)
+    assert app._research_source_parse_dispatch_pending == set()
+    assert app.library_ingest_jobs.next_queued() is None
+    ingest_store.close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("origin", ["local", "server"])
 async def test_production_catalog_dispatch_failure_uses_current_replacement_lineage(

@@ -1,5 +1,51 @@
 # Task 4 review package — Research Sources workbench
 
+Fix-round-6 review base:
+
+`8b5defce02bca90fafd3690bbab8be0aa8c258e4`
+
+The controller-owned dirty TASK-21508 file remains excluded from the
+implementation and commit.
+
+## Fix-round-6 review order
+
+1. `library_ingest_jobs.py`: Research retry hold release atomically persists the
+   explicit owner's active claim, so no fallible later settlement can reopen
+   generic queue eligibility.
+2. `app.py`: Local claimed retries wait in the existing bounded parse-pool owner
+   path; only expected scheduler CAS conflicts use durable-winner reread, while
+   other failures return no replacement and notify with sanitized recovery.
+3. Real-store Local+Server regression: injected replacement-failure upsert,
+   same-process selector exclusion, raw SQLite reopen, production restore
+   containment, truthful worker recovery, and bounded later operation resume.
+4. Ordinary queue and retry parity, concurrent fence stability, capacity exact-
+   once dispatch, split gates, static checks, and inverse evidence in the Task 4
+   report.
+
+### Fix-round-6 high-risk invariants
+
+- A Research replacement is never simultaneously unheld, `QUEUED`, and
+  operation-owned after explicit dispatch admission, even if every later
+  failure-settlement write raises.
+- Same-process generic `next_queued()` cannot claim an interrupted Research
+  retry. A raw reopen remains nonqueueable, and production restore settles the
+  interrupted active row before normal top-up.
+- Scheduler/coordinator failures never become false successful worker results;
+  exception text, secrets, and source paths remain absent from recovery copy.
+- Local atomically claimed retries still respect total/heavy parse capacity and
+  dispatch once when capacity becomes available. Server retries never cross to
+  Local, and ordinary Library queue/retry behavior is unchanged.
+
+### Fix-round-6 verification snapshot
+
+- Direct exact controls **4 passed**; App retry/submission **161 passed**;
+  registry/DB **129 passed**; Runner **146 passed, 1 Windows-only skipped**;
+  Research association/store/readiness/controller **125 passed**.
+- All three inverse mutations failed at their intended guards and were restored.
+  Scoped Ruff/format, compilation, and whitespace gates pass. The legacy runner's
+  two unrelated lint findings and whole-file format baseline were not rewritten.
+  Full pytest was not run by repository policy.
+
 Fix-round-5 review base:
 
 `58dc62050fe6db2ad8c79624eff18d0c6d938f15`

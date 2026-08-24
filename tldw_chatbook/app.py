@@ -438,7 +438,10 @@ from .Research_Workspace.source_association import (
     ResearchSourceAssociationCoordinator,
     ResearchSourceAssociationScheduler,
 )
-from .Research_Workspace.source_operation_store import ResearchSourceOperationStore
+from .Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+    SourceOperationConflictError,
+)
 from .Research_Workspace.paste_staging import ResearchPasteStagingStore
 from .Research_Workspace.source_operations import (
     SourceOperationStage,
@@ -2373,6 +2376,7 @@ class LibraryIngestQueueMixin:
         """
         self.library_ingest_jobs = LibraryIngestJobRegistry()
         self._research_source_terminal_jobs_scheduled: set[str] = set()
+        self._research_source_parse_dispatch_pending: set[str] = set()
         self._research_source_restore_in_progress = False
         self.library_ingest_jobs.add_listener(
             self._schedule_settled_research_source_operations
@@ -3283,7 +3287,10 @@ class LibraryIngestQueueMixin:
             self._notify_research_source_retry_unavailable()
             return None
         try:
-            operation = await asyncio.to_thread(operation_store.get, operation_id)
+            # Keep this indexed preflight on the event-loop turn so concurrent
+            # clicks reach the scheduler fence in order instead of racing the
+            # same SQLite connection from two executor threads.
+            operation = operation_store.get(operation_id)
         except Exception:
             operation = None
         operation_source = getattr(
@@ -3306,8 +3313,11 @@ class LibraryIngestQueueMixin:
                 operation_id,
                 stage=SourceOperationStage.CATALOG,
             )
-        except Exception:
+        except SourceOperationConflictError:
             receipt = None
+        except Exception:
+            self._notify_research_source_retry_unavailable()
+            return None
         replacement = self._research_source_retry_replacement(
             source,
             operation_id=operation_id,
@@ -3445,6 +3455,20 @@ class LibraryIngestQueueMixin:
                     error="Media database is unavailable.",
                 )
                 return
+            if (
+                requeued.state is IngestJobState.PARSING
+                and requeued.retry_of_job_id
+                and requeued.research_source_operation_id
+            ):
+                pending = getattr(
+                    self,
+                    "_research_source_parse_dispatch_pending",
+                    None,
+                )
+                if pending is None:
+                    pending = set()
+                    self._research_source_parse_dispatch_pending = pending
+                pending.add(requeued.job_id)
             self._top_up_ingest_parse_pool()
             return
         if requeued.origin != "server":
@@ -4889,14 +4913,39 @@ class LibraryIngestQueueMixin:
             return
         worker_count = self._ingest_parse_worker_count()
         heavy_cap = self._ingest_heavy_lane_max_workers()
+        pending_research = getattr(
+            self,
+            "_research_source_parse_dispatch_pending",
+            set(),
+        )
+        pending_research_jobs: dict[str, LibraryIngestJob] = {}
+        for pending_job_id in tuple(pending_research):
+            pending_job = self.library_ingest_jobs.get_job(pending_job_id)
+            if (
+                pending_job is None
+                or pending_job.state is not IngestJobState.PARSING
+                or pending_job.origin != "local"
+            ):
+                pending_research.discard(pending_job_id)
+                continue
+            pending_research_jobs[pending_job_id] = pending_job
         # Read the total + heavy in-flight counts ONCE, then include local-STT
         # jobs provisionally owned by an off-loop dispatch thread. Those rows
         # remain QUEUED until coordinator admission succeeds, but still consume
         # capacity; otherwise a later top-up could overfill the pool with light
         # work while identity resolution is in flight.
-        parsing_count = self.library_ingest_jobs.counts().get("parsing", 0)
-        heavy_parsing_count = self.library_ingest_jobs.parsing_count_for_types(
-            _INGEST_HEAVY_TYPES
+        parsing_count = max(
+            0,
+            self.library_ingest_jobs.counts().get("parsing", 0)
+            - len(pending_research_jobs),
+        )
+        heavy_parsing_count = max(
+            0,
+            self.library_ingest_jobs.parsing_count_for_types(_INGEST_HEAVY_TYPES)
+            - sum(
+                job.detected_type in _INGEST_HEAVY_TYPES
+                for job in pending_research_jobs.values()
+            ),
         )
         provisional_local_jobs = []
         for provisional_job_id in self._ingest_local_stt_jobs:
@@ -4919,9 +4968,24 @@ class LibraryIngestQueueMixin:
             heavy_full = (
                 heavy_parsing_count >= heavy_cap or local_stt_busy or dictation_reserved
             )
-            job = self.library_ingest_jobs.next_queued(
-                skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+            preclaimed = False
+            eligible_pending = (
+                job
+                for job in pending_research_jobs.values()
+                if not (heavy_full and job.detected_type in _INGEST_HEAVY_TYPES)
             )
+            job = min(
+                eligible_pending,
+                key=lambda item: item.submitted_at,
+                default=None,
+            )
+            if job is not None:
+                preclaimed = True
+                pending_research_jobs.pop(job.job_id, None)
+            else:
+                job = self.library_ingest_jobs.next_queued(
+                    skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+                )
             if job is None:
                 return
             try:
@@ -4940,6 +5004,8 @@ class LibraryIngestQueueMixin:
                     error=failure_text,
                     permanent=False,
                 )
+                if preclaimed:
+                    pending_research.discard(job.job_id)
                 continue
             except _template_resolution_errors() as exc:
                 # (task 10, AC 37/AC-24b) A template choice that no longer
@@ -4972,6 +5038,8 @@ class LibraryIngestQueueMixin:
                 try:
                     self._submit_local_stt_job(job, options)
                 except Exception as exc:
+                    if preclaimed:
+                        pending_research.discard(job_id)
                     code, recovery_actions = self._classify_local_stt_dispatch_error(
                         str(options.get("transcription_provider") or ""), exc
                     )
@@ -4994,12 +5062,18 @@ class LibraryIngestQueueMixin:
                         },
                     )
                     continue
+                if preclaimed:
+                    pending_research.discard(job_id)
                 parsing_count += 1
                 if job.detected_type in _INGEST_HEAVY_TYPES:
                     heavy_parsing_count += 1
                 continue
-            claimed = self.library_ingest_jobs.mark_parsing(
-                job.job_id, detected_type=job.detected_type
+            claimed = (
+                job
+                if preclaimed
+                else self.library_ingest_jobs.mark_parsing(
+                    job.job_id, detected_type=job.detected_type
+                )
             )
             if claimed is None:
                 logger.error(
@@ -5014,6 +5088,8 @@ class LibraryIngestQueueMixin:
             try:
                 pool = self._ensure_ingest_parse_pool()
             except Exception as exc:
+                if preclaimed:
+                    pending_research.discard(job_id)
                 # CONTAINMENT (live-QA crash fix): pool CREATION itself
                 # failed -- e.g. the spawn machinery raising at
                 # construction time (the fileno-less-stderr resource-
@@ -5056,7 +5132,11 @@ class LibraryIngestQueueMixin:
                         self._ingest_pool_error_callback, generation, job_id
                     ),
                 )
+                if preclaimed:
+                    pending_research.discard(job_id)
             except Exception as exc:
+                if preclaimed:
+                    pending_research.discard(job_id)
                 # The pool itself rejected the submission synchronously
                 # (e.g. it was already terminated/closed) -- every job
                 # currently PARSING was submitted to this same broken pool

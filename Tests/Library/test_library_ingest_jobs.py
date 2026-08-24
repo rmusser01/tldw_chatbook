@@ -171,6 +171,39 @@ def test_dispatch_held_requeue_requires_store_before_mutation() -> None:
     assert len(registry.jobs()) == 1
 
 
+def test_research_retry_release_atomically_claims_dispatch(tmp_path) -> None:
+    """A released retry is durably active, never generically queueable."""
+
+    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+    store = LibraryIngestJobsDB(tmp_path / "retry-claim.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(store)
+    source = registry.submit(
+        source_path="/managed/retry.txt",
+        research_source_operation_id="operation-retry-claim",
+        require_persisted=True,
+    )
+    registry.mark_failed(
+        source.job_id,
+        error="retry",
+        require_persisted=True,
+    )
+    retry = registry.requeue(source.job_id, dispatch_held=True)
+    assert retry is not None
+
+    claimed = registry.release_dispatch_hold(retry.job_id, require_persisted=True)
+
+    assert claimed is not None
+    assert claimed.state is IngestJobState.PARSING
+    assert claimed.dispatch_held is False
+    assert registry.next_queued() is None
+    row = next(row for row in store.all_jobs() if row["job_id"] == retry.job_id)
+    assert row["state"] == "parsing"
+    assert row["dispatch_held"] == 0
+    store.close()
+
+
 def test_active_consent_scope_is_order_stable_and_candidate_mutation_sensitive(
     tmp_path,
 ):

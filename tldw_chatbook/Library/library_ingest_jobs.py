@@ -881,7 +881,13 @@ class LibraryIngestJobRegistry:
     def release_dispatch_hold(
         self, job_id: str, *, require_persisted: bool = True
     ) -> LibraryIngestJob | None:
-        """Persistently make one held queued job eligible for owner dispatch."""
+        """Persistently release a held job to its explicit dispatch owner.
+
+        A Research retry is atomically claimed as ``PARSING`` with its release,
+        so a later owner or failure-write error can never expose it to the
+        generic ``QUEUED`` selector. Initial Research intake retains the legacy
+        queued release because its operation owner has not retried a failed job.
+        """
 
         index = self._find_index(job_id)
         if index is None:
@@ -891,7 +897,15 @@ class LibraryIngestJobRegistry:
             return None
         if not current.dispatch_held:
             return _copy_job(current)
-        updated = replace(current, dispatch_held=False)
+        claim_retry = bool(
+            current.research_source_operation_id and current.retry_of_job_id
+        )
+        updated = replace(
+            current,
+            dispatch_held=False,
+            state=IngestJobState.PARSING if claim_retry else current.state,
+            started_at=time.monotonic() if claim_retry else current.started_at,
+        )
         if require_persisted:
             self._persist_required(updated)
             self._jobs[index] = updated

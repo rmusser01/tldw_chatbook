@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete after review fix round 3. Research Workspace now has a compose-once, authority-explicit Sources
+Complete after review fix round 6. Research Workspace now has a compose-once, authority-explicit Sources
 workbench with durable intake receipts, paged sources, exact desired selection,
 readiness/status inspection, device-only folders/annotations, and honest owner
 capability gates. Quick Notes bodies and Task 5 ownership were not added.
@@ -391,6 +391,71 @@ existing dispatch-hold transaction.
   `git diff --check` pass. Warnings are the accepted Requests dependency warning
   and pre-existing third-party SWIG deprecations in an untouched PDF neighbor.
   No UI changed in this round, so the prior final-candidate Impeccable `[]`
+  remains applicable. Full pytest was not run, per repository policy.
+
+TASK-21508 remains controller-owned and is excluded from the fix commit.
+
+## Review fix round 6
+
+The failed-settlement-write reviewer finding was reproduced against the real
+retry scheduler, operation store, registry, and ingest-job SQLite database for
+both Local and Server. After a dispatcher durably released a replacement and
+raised, an injected failure of the required replacement `FAILED` upsert left
+the receipt in progress and the replacement `QUEUED`/unheld. The app's fallback
+reread then returned that row as a successful worker result, and the same-process
+generic selector could claim it. No new ADR is required: this closes a crash
+window in ADR-078's existing durable dispatch-owner boundary.
+
+- Releasing a held Research retry now atomically persists its dispatch claim as
+  `PARSING` together with `dispatch_held=False`. A later dispatcher or terminal
+  write failure can therefore leave an interrupted active row, but can never
+  expose generic `QUEUED` work. Initial Research intake and ordinary Library
+  release behavior remain unchanged.
+- Local atomically claimed retries enter a small owner-pending set. The existing
+  parse-pool top-up subtracts those not-yet-submitted claims from its in-flight
+  count, respects total and heavy-lane capacity, submits each claim once, and
+  removes it on submission or terminal dispatch failure. Server dispatch retains
+  its explicit Server owner.
+- Only the scheduler's expected CAS conflict uses the durable-winner reread.
+  Other scheduler/coordinator failures return no replacement and emit the fixed,
+  path-free Research recovery notice. Exact operation lineage and authority
+  validation remain unchanged.
+- A raw SQLite reopen retains the interrupted row as nonqueueable `PARSING`.
+  Production `plan_restore` then normalizes that interrupted row to `FAILED`,
+  after which a bounded coordinator resume terminalizes the still-in-progress
+  receipt. This is containment and later recovery, not a claim that raw restore
+  itself settles the operation.
+
+### Fix-round-6 RED and inverse evidence
+
+- Initial Local+Server integration RED: **2 expected failures**. Both workers
+  returned a `QUEUED`/unheld replacement after the injected failed-state upsert;
+  the receipt remained in progress, `next_queued()` selected the replacement,
+  and no sanitized recovery was emitted.
+- The atomic-release unit guard was independently red because release persisted
+  `QUEUED` rather than `PARSING`.
+- Three restored inverse mutations failed at the intended invariant: removing
+  the atomic claim produced **3 failures** across the unit and Local+Server
+  containment cases; restoring generic exception fallback returned a false
+  replacement (**1 failure**); omitting the Local pending owner prevented later
+  capacity dispatch (**1 failure**).
+
+### Fix-round-6 GREEN and closeout evidence
+
+- Exact Local+Server failed-upsert, atomic-release, and capacity controls:
+  **4 passed**. The complete direct app retry file passed **15 tests** on five
+  consecutive runs after the SQLite preflight was kept on the event-loop turn.
+- App retry/submission split: **161 passed**; ingest registry/DB: **129 passed**;
+  complete Library runner: **146 passed, 1 Windows-only skipped**; Research
+  association/store/readiness/controller: **125 passed**. Across those targeted
+  gates, **561 tests passed** with one platform skip.
+- Scoped Ruff lint passes for changed production and tests. Ruff format passes
+  the owned formatted files; the legacy runner retains two unrelated lint
+  findings and unrelated whole-file format drift, while the new block is clean.
+  Changed-file `compileall` and `git diff --check` pass.
+- Warnings are the accepted environment `RequestsDependencyWarning` and
+  pre-existing third-party SWIG deprecations in an untouched PDF neighbor. No UI
+  changed in this round, so the previous final-candidate Impeccable result
   remains applicable. Full pytest was not run, per repository policy.
 
 TASK-21508 remains controller-owned and is excluded from the fix commit.
