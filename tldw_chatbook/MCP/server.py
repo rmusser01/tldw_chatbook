@@ -34,9 +34,10 @@ the retired `todo_write` tool is also absent.
 
 ## Exposed local Library tools (task-1337)
 
-The 23 descriptor-backed `library_*` tools (media/notes/prompts/skills/
+The 24 descriptor-backed `library_*` tools (media/notes/prompts/skills/
 conversations/collections list+get+search, plus the chunking-agent-tools
-siblings: structure/chunk/spec-list/spec-save/re-chunk) are part of the
+siblings: structure/chunk/spec-list/spec-save/re-chunk, and the note WRITE
+tool `library_save_note`) are part of the
 local MCP surface: they are locally served and contract-governed by
 `Library/library_tool_contract.py`. The capability manifest appends them from
 the descriptor table (`_describe_local_library_tools`), and the in-app direct
