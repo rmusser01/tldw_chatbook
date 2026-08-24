@@ -536,9 +536,7 @@ def test_startup_sweep_skips_usable_unverified_staging(
         pytest.fail("unverified staging contents must not be examined")
 
     monkeypatch.setattr(importer_module.os, "scandir", unexpected_access)
-    monkeypatch.setattr(
-        importer_module, "_read_candidate_authority", unexpected_access
-    )
+    monkeypatch.setattr(importer_module, "_read_candidate_authority", unexpected_access)
 
     service = ActorPackImportService(
         repository,
