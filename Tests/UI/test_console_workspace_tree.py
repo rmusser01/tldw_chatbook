@@ -429,7 +429,91 @@ async def test_truncation_tooltip_uses_cell_width_and_clears_after_growth() -> N
 
 
 @pytest.mark.asyncio
-async def test_collapsed_workspace_tooltip_counts_disclosure_glyph() -> None:
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("scrolling", [False, True])
+async def test_tooltip_boundary_matches_compositor_painted_viewport(
+    nested: bool,
+    scrolling: bool,
+) -> None:
+    filler_count = 8 if scrolling else 0
+    if nested:
+        conversations = (("target", "x"),) + tuple(
+            (f"filler-{index}", "filler") for index in range(filler_count)
+        )
+        projection = (_workspace("w", "Parent", *conversations),)
+        expanded = {"w"}
+    else:
+        projection = (_workspace("target", "x"),) + tuple(
+            _workspace(f"filler-{index}", "filler")
+            for index in range(filler_count)
+        )
+        expanded = set()
+
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(projection, expanded_workspace_ids=expanded)
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(40, 12)) as pilot:
+        tree.styles.width = 20
+        tree.styles.height = 4 if scrolling else 8
+        tree.styles.overflow_x = "hidden"
+        tree.styles.overflow_y = "auto"
+        tree.styles.scrollbar_gutter = "auto"
+        tree.styles.scrollbar_size_vertical = 1
+        await pilot.pause()
+
+        assert tree.show_vertical_scrollbar is scrolling
+        viewport_cells = tree.scrollable_content_region.width
+        guide_cells = tree.guide_depth if nested else 0
+        disclosure_cells = 0 if nested else 2
+        marker_cells = 2
+        exact_raw = "x" * (
+            viewport_cells - guide_cells - disclosure_cells - marker_cells
+        )
+        over_raw = exact_raw + "x"
+
+        if nested:
+            exact_projection = (_workspace("w", "Parent", ("target", exact_raw)),)
+            target = tree.conversation_nodes["target"]
+        else:
+            exact_projection = (_workspace("target", exact_raw),)
+            target = tree.workspace_nodes["target"]
+        if scrolling:
+            exact_projection += projection[1:] if not nested else ()
+            if nested:
+                exact_projection = (
+                    _workspace("w", "Parent", ("target", exact_raw), *conversations[1:]),
+                )
+        tree.sync_projection(exact_projection, expanded_workspace_ids=expanded)
+        tree.move_cursor(target)
+        await pilot.pause()
+
+        painted_row_index = tree.region.y + target.line - int(tree.scroll_offset.y)
+        painted_row = app.screen._compositor.render_strips()[painted_row_index].text[
+            tree.region.x : tree.region.right
+        ]
+        assert "…" not in painted_row
+        assert tree.tooltip is None
+
+        if nested:
+            over_projection = (
+                _workspace("w", "Parent", ("target", over_raw), *conversations[1:]),
+            )
+        else:
+            over_projection = (_workspace("target", over_raw),) + projection[1:]
+        tree.sync_projection(over_projection, expanded_workspace_ids=expanded)
+        await pilot.pause()
+
+        painted_row_index = tree.region.y + target.line - int(tree.scroll_offset.y)
+        painted_row = app.screen._compositor.render_strips()[painted_row_index].text[
+            tree.region.x : tree.region.right
+        ]
+        assert "…" in painted_row
+        assert isinstance(tree.tooltip, Text)
+        assert tree.tooltip.plain == over_raw
+
+
+@pytest.mark.asyncio
+async def test_fitting_collapsed_workspace_disclosure_has_no_tooltip() -> None:
     tree = ConsoleWorkspaceTree()
     tree.sync_projection(
         (_workspace("w", "abcde"),),
@@ -442,8 +526,8 @@ async def test_collapsed_workspace_tooltip_counts_disclosure_glyph() -> None:
         tree.move_cursor(tree.workspace_nodes["w"])
         await pilot.pause()
 
-        assert isinstance(tree.tooltip, Text)
-        assert tree.tooltip.plain == "abcde"
+        assert "…" not in tree.render_line(0).text
+        assert tree.tooltip is None
 
 
 @pytest.mark.asyncio
@@ -529,6 +613,37 @@ async def test_hover_clears_when_same_label_line_gets_a_different_stable_key() -
 
         replacement = tree.workspace_nodes["replacement"]
         assert int(replacement._line) == old_line
+        assert tree.hover_line == -1
+        assert tree.tooltip is None
+
+
+@pytest.mark.asyncio
+async def test_collapse_does_not_transfer_fitting_child_hover_to_long_row() -> None:
+    long_raw = "Replacement " + "界🙂" * 20
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace("parent", "Parent", ("child", "Fits")),
+            _workspace("replacement", long_raw),
+        ),
+        expanded_workspace_ids={"parent"},
+    )
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tree.styles.width = 24
+        await pilot.pause()
+        parent = tree.workspace_nodes["parent"]
+        child = tree.conversation_nodes["child"]
+        tree.move_cursor(parent)
+        child_line = child.line
+        tree.hover_line = child_line
+        await pilot.pause()
+        assert tree.tooltip is None
+
+        parent.collapse()
+        await pilot.pause()
+
+        assert tree.workspace_nodes["replacement"].line == child_line
         assert tree.hover_line == -1
         assert tree.tooltip is None
 

@@ -494,15 +494,14 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         return label
 
     def _available_label_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
-        """Return the exact row budget after native three-cell guides."""
+        """Return the painted label budget after visible native guides."""
 
-        depth = 0
-        ancestor = node
-        while ancestor is not self.root:
-            depth += 1
+        guide_cells = 0
+        ancestor = node.parent
+        while ancestor is not None and (self.show_root or ancestor is not self.root):
+            guide_cells += self.guide_depth
             ancestor = ancestor.parent
-        guide_cells = depth * 3
-        return max(1, self.size.width - guide_cells)
+        return max(1, self.scrollable_content_region.width - guide_cells)
 
     def _untruncated_visible_label(self, node: TreeNode[WorkspaceTreeNodeData]) -> str:
         """Return the complete literal label measured for truncation."""
@@ -813,12 +812,14 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def on_tree_node_expanded(
         self, event: Tree.NodeExpanded[WorkspaceTreeNodeData]
     ) -> None:
+        self.hover_line = -1
         self._record_expansion_gesture(event.node)
         self._update_tooltip()
 
     def on_tree_node_collapsed(
         self, event: Tree.NodeCollapsed[WorkspaceTreeNodeData]
     ) -> None:
+        self.hover_line = -1
         node = event.node
         cursor = self.cursor_node
         ancestor = cursor.parent if cursor is not None else None
