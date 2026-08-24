@@ -147,10 +147,10 @@ from ...Widgets.Console import ConsoleComposerBar
 if TYPE_CHECKING:
     from ...TTS.profile_types import CharacterRef
     from ...Widgets.Console.console_control_bar import (
-        ConsoleAutoSpeakChanged,
         ConsoleAutoSpeakResumeRequested,
         ConsoleAutoSpeakRetryRequested,
     )
+    from ...Widgets.Console.console_speech_controls import ConsoleAutoSpeakChanged
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -396,8 +396,8 @@ class ConsoleHandsFreeController:
 
         task-18911 (fix 2): the Switch is the soft-keyboard-only user's
         entry/exit for the mode; every session lifecycle change repaints it
-        so it never disagrees with reality. No-op when the control bar is
-        not mounted (pre-mount, mid-teardown).
+        so it never disagrees with reality. No-op when the header controls
+        are not mounted (pre-mount, mid-teardown).
         """
         self._sync_hands_free_state_fn(active)
 

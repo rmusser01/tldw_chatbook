@@ -2856,6 +2856,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
        rule (1,2,0) beats that density rule (0,2,0). */
     display: block;
     width: 1fr;
+    min-width: 0;
     height: 1;
     min-height: 1;
     text-wrap: nowrap;
@@ -2881,9 +2882,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-control-bar {
-    height: $ds-console-control-bar-height;
-    min-height: $ds-console-control-bar-height;
-    max-height: $ds-console-control-bar-height;
+    height: auto;
+    min-height: 1;
+    max-height: 2;
     padding: 0 1;
     margin: 0;
     border: none;
@@ -2902,9 +2903,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
-#console-auto-speak-row,
-#console-auto-speak-control {
-    width: auto;
+#console-auto-speak-row {
+    width: 100%;
     min-width: 0;
     height: 1;
     min-height: 1;
@@ -2913,22 +2913,43 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
-#console-auto-speak-label {
+#console-speech-controls,
+#console-auto-speak-control,
+#console-hands-free-control {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+#console-speech-controls {
+    margin: 0 2 0 0;
+}
+
+#console-auto-speak-label,
+#console-hands-free-label {
     width: auto;
     height: 1;
     margin-right: 1;
 }
 
-#console-auto-speak {
-    width: 8;
-    min-width: 8;
-    max-width: 8;
+#console-auto-speak,
+#console-hands-free-switch {
+    width: 5;
+    min-width: 5;
+    max-width: 5;
     height: 1;
     min-height: 1;
     max-height: 1;
     padding: 0;
-    margin: 0 1 0 0;
+    margin: 0;
     border: none;
+}
+
+#console-auto-speak {
+    margin-right: 1;
 }
 
 #console-auto-speak-retry,
@@ -5170,13 +5191,6 @@ ConsoleCitationSourcesModal {
     layers: console-workbench console-setup-overlay;
 }
 
-/* TASK-346: at small terminal heights (<35 rows) the header banner is
-   dropped so the transcript+composer core loop stays on screen instead of
-   the composer being silently clipped off the bottom. */
-#console-shell.-console-compact #console-workbench-header {
-    display: none;
-}
-
 /* task-18812 / ADR-071: focus mode. The -focus class lives on the
    ChatScreen itself (MainNavigationBar is composed by BaseAppScreen as a
    sibling of #console-shell, so #console-shell-rooted selectors cannot
@@ -5188,31 +5202,6 @@ ChatScreen.-focus MainNavigationBar {
 
 ChatScreen.-focus #console-workbench-header {
     display: none;
-}
-
-/* TASK-2154.1 (LY-10): while the rule above hides the header badge, the
-   control-bar stand-in carries the same Ready/Running/Blocked identity.
-   Display itself is Python-driven (ChatScreen._sync_console_compact_status_marker)
-   so harness apps without this bundle behave identically; only the status
-   colors live here. */
-#console-compact-status-marker {
-    width: auto;
-    padding: 0 1;
-    text-style: bold;
-}
-
-#console-compact-status-marker.status-ready {
-    color: $ds-status-ready;
-}
-
-#console-compact-status-marker.status-running,
-#console-compact-status-marker.status-loading {
-    color: $ds-status-running;
-}
-
-#console-compact-status-marker.status-blocked,
-#console-compact-status-marker.status-error {
-    color: $ds-status-blocked;
 }
 
 /* TASK-2154.1 (LY-09): at 60x18 the transcript body shrinks to a single row;

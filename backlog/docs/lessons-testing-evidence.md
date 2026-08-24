@@ -7448,3 +7448,21 @@ word-split but an unquoted `$VAR` is NOT. Hoisting a file list into
 the run collected nothing, printed only a warnings block, and the compound
 command still exited 0. It looked like a completed A/B. Inline the command
 substitution, and read the passed-count before believing any comparison.
+
+---
+
+## UI lifecycle tests must stop before optional native backends (TASK-21201, 2026-08-23)
+
+**What happened.** The focused test for the Console Hands-free switch clicked the
+real control and let `HandsFreeController.enter()` continue into audio capture.
+During TASK-21201 verification that path initialized the optional parakeet-mlx
+backend and aborted the test process. The test was intended to prove only that the
+visible switch starts and stops the Hands-free UI lifecycle; opening a microphone
+and loading a native model made it machine-dependent without adding evidence for
+that contract.
+
+**What to do.** In UI lifecycle tests, patch at the first owned boundary before
+hardware, network, or optional native inference begins, while preserving the state
+transition the UI observes. Test those integrations separately behind their own
+explicitly marked suites. A test that can unexpectedly capture audio or initialize
+a model is not a focused UI test, even if it normally passes on a configured laptop.

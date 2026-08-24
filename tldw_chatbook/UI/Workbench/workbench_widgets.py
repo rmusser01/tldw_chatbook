@@ -180,14 +180,24 @@ class DestinationHeader(Vertical):
     def __init__(
         self,
         state: WorkbenchHeaderState,
+        *,
+        before_status: Widget | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize a destination header.
+
+        Args:
+            state: Header title, subtitle, and status state.
+            before_status: Optional fixed widget rendered immediately before status.
+            **kwargs: Additional Textual widget arguments.
+        """
         classes = kwargs.pop("classes", "")
         super().__init__(
             classes=f"workbench-header ds-destination-header {classes}".strip(),
             **kwargs,
         )
         self.state = state
+        self.before_status = before_status
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -200,6 +210,8 @@ class DestinationHeader(Vertical):
             id="workbench-header-subtitle",
             classes="workbench-header-subtitle",
         )
+        if self.before_status is not None:
+            yield self.before_status
         yield Static(
             self._chip_text(),
             id="workbench-header-status",
