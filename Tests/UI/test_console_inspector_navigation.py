@@ -36,9 +36,9 @@ INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
 STAGED_ONE_ROW_TEST_CSS = """
 #console-right-rail {
-    height: 13;
-    min-height: 13;
-    max-height: 13;
+    height: 19;
+    min-height: 19;
+    max-height: 19;
 }
 #console-inspector-rail-body {
     height: 1fr;
@@ -374,6 +374,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
         ten_row_demand = tray.query_one(
             "#console-bounded-section-sources", ConsoleBoundedSection
         ).desired_content_lines
+        assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 11, 0)
 
         tray.sync_state(_staged_state(11))
         await _wait_for_right_rail_condition(
@@ -395,6 +396,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
         await pilot.pause()
         assert hint.display is True
         assert outer.virtual_size.height > outer.content_region.height
+        assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 10, 1)
         assert rail._outer_owner_reconcile_count == overflow_count
         outer.scroll_end(animate=False, immediate=True)
         await _wait_for_right_rail_condition(
@@ -417,6 +419,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
             ),
             description="ten-source owner shrink removing slot and clamping",
         )
+        assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 11, 0)
 
 
 @pytest.mark.asyncio
@@ -456,8 +459,9 @@ async def test_scroll_owner_cue_preserves_bold_and_clears_without_stale_underlin
             lambda: (
                 collapse.get_visual_style().bold
                 and collapse.get_visual_style().underline
+                and not source_title.get_visual_style().underline
             ),
-            description="collapse focus declarative bold underline",
+            description="completed collapse focus repaint",
         )
         assert not source_title.get_visual_style().underline
 
