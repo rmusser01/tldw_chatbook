@@ -470,7 +470,7 @@ silently edited.
    cursor-blink tick calls `Static.update()`, whose `layout` parameter **defaults to `True`**, so
    it arms a layout pass every 0.53 s while the composer is merely focused and idle — directly
    contradicting its own docstring ("must not trigger a layout recompute on every blink phase").
-   Filed as task-21501.
+   Filed as task-21692.
 
    **The method lesson**: a finding's cost estimate decays as fast as its line numbers. Re-measure
    before dispatching, not after — five of seven is not a rounding error, and two of these would

@@ -1,5 +1,5 @@
 ---
-id: TASK-21501
+id: TASK-21692
 title: >-
   Cursor blink tick arms a full screen layout pass twice a second while the composer is idle
 status: Done
@@ -123,3 +123,24 @@ rich-style cache, so the repaint half is intact.
 
 **Modified files:** `tldw_chatbook/Widgets/Console/console_composer_bar.py`,
 `Tests/UI/test_console_composer_cursor.py`.
+
+## Renumbering provenance
+
+Authored as **TASK-21501** and renumbered to **TASK-21692** before merge, per the 2026-08-21
+owner rule (TASK-19601): the older arrival keeps the id, the younger renumbers.
+
+`TASK-21501` was claimed concurrently by "Three documents and the code disagree about the private
+MCP tool surface", which reached dev first — it was committed and closed there on 2026-08-23
+(`ff4c7593b`) while this task was still unmerged. That task keeps 21501; this one moved.
+
+The new id was taken at max+30 after sweeping every remote ref and worktree
+case-insensitively (max was 21662). Renamed here: the file, the `id:` field, the
+`console_composer_bar.py` docstring reference, three references in
+`Tests/UI/test_console_composer_cursor.py`, the lesson in `lessons-testing-evidence.md`, the
+evidence-doc row, and the cross-reference in task-21120. The reference in
+`Tests/MCP/test_mcp_documentation_contract.py` belongs to the *other* 21501 and was deliberately
+left alone.
+
+Fourth id collision of this programme. The preflight `backlog task ids` check is what caught it —
+a sweep taken at authoring time cannot see a task that lands during review.
+

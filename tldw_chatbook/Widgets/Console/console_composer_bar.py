@@ -2878,7 +2878,7 @@ class ConsoleComposerBar(Horizontal):
         Used by the cursor blink tick (its only caller), which must stay cheap
         and must not trigger a layout recompute on every blink phase.
 
-        TASK-21501: ``Static.update`` defaults to ``layout=True``, so this
+        TASK-21692: ``Static.update`` defaults to ``layout=True``, so this
         method used to arm a full screen layout pass ~2x/second for as long
         as the composer merely held focus -- measured at 1 ``Screen.
         _refresh_layout`` + 1 ``Compositor.reflow`` + 1 arrangement-cache

@@ -592,7 +592,7 @@ async def test_console_prompt_insert_appends_at_end_regardless_of_caret():
 
 
 # ---------------------------------------------------------------------------
-# TASK-21501: the blink tick must not arm a layout pass
+# TASK-21692: the blink tick must not arm a layout pass
 # ---------------------------------------------------------------------------
 
 
@@ -661,7 +661,7 @@ async def _count_layout_passes(pilot, composer, rounds: int, *, blink: bool) -> 
 async def test_console_composer_blink_tick_arms_no_layout_pass():
     """A blink phase flip costs no more layout work than an idle settle.
 
-    TASK-21501: ``Static.update`` defaults to ``layout=True``, so the 0.53 s
+    TASK-21692: ``Static.update`` defaults to ``layout=True``, so the 0.53 s
     cursor-blink tick used to schedule a full ``Screen._refresh_layout`` /
     ``Compositor.reflow`` ~2x/second for as long as the composer merely held
     focus -- exactly what ``_render_visible_draft_only``'s own docstring says
@@ -706,7 +706,7 @@ async def test_console_composer_blink_tick_arms_no_layout_pass():
 async def test_console_composer_blink_phases_are_geometry_identical():
     """Both blink phases occupy identical geometry, at every wrap boundary.
 
-    This is the safety half of TASK-21501: ``layout=False`` is only sound
+    This is the safety half of TASK-21692: ``layout=False`` is only sound
     while the rendered size genuinely cannot change between phases. The
     reserved caret cell (glyph when visible, space when hidden, wrapped in
     the same pass) is what guarantees that, so the boundary cases that would

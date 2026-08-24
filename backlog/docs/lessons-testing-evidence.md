@@ -8029,7 +8029,7 @@ now fast" into "this is fast unless one row is corrupt, in which case it is
 silently as slow as before, forever."
 ## A docstring is not a measurement — and `Static.update` lays out by default
 
-**TASK-21501, 2026-08-23.** `_render_visible_draft_only` in
+**TASK-21692, 2026-08-23.** `_render_visible_draft_only` in
 `Widgets/Console/console_composer_bar.py` carried a docstring saying it "must stay
 cheap and must not trigger a layout recompute on every blink phase". Its body called
 `self.query_one(...).update(renderable)`. Textual 8's
