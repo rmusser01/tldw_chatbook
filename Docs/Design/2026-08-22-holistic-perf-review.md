@@ -451,6 +451,31 @@ silently edited.
    (task-21128; authored as v47 → v48 and renumbered when the Console Library policy step took
    48 by merging first), one line different from v47's trigger.
 
+4. **Seven unstarted findings were re-verified before dispatch, and five needed correcting.**
+   After three of this doc's findings turned out wrong at implementation time, the remaining
+   queue was re-read against dev `2be18842a` before any more of it was dispatched. That pass
+   changed the plan more than the three earlier corrections did:
+
+   | finding | as filed | after re-verification |
+   |---|---|---|
+   | 21107 | ~44 ms; TYPE_CHECKING the import | ~19 ms warm; that fix **cannot compile** — the spec table stores the schema classes as runtime values, and a test already allowlists the import as deliberate. Needs a lazy spec table instead. |
+   | 21109 | 5 s lease stall in `__init__` | **sub-millisecond** for a user with no videos; the 5 s case needs a second instance mid-save. Deferring it past first paint would let the default `session` sweep delete a video published *that session*. |
+   | 21110 | medium | **highest-value item left** — ~305 modules / ~232k LOC imported on the loop after a 1.5 s splash during which nothing else is scheduled. |
+   | 21120 | three per-keystroke legs | mis-stated on all three; two fixes remove ~nothing (the "skip unchanged" guard can never fire while typing). Only the ghost-scan cap survives. |
+   | 21123 | ~421 recompose sites; relocate the hook | count is ~111 (98 in `library_screen.py`); **under**-billed — the widget import precedes the enabled check and drags PIL onto the loop. The relocation would **break** the enabled case: `recompose()` removes the mounted buddy and an app-level owner would miss that signal. Split: early-return shipped, relocation deferred. |
+   | 21127 | three legs | all three hold, cites drifted; `_update_row` opens **three** connections per update, worse than filed. Trap: `:memory:` mode shares one connection — closing it destroys the database. |
+   | 21132 | per-interaction closure walk | recursion walks **upward**, so it is bounded by managed folders × depth and is **empty for the default profile**; already off-loop. Recommend cancel. |
+
+   The pass also surfaced a finding worth more than the task it was found under: the composer's
+   cursor-blink tick calls `Static.update()`, whose `layout` parameter **defaults to `True`**, so
+   it arms a layout pass every 0.53 s while the composer is merely focused and idle — directly
+   contradicting its own docstring ("must not trigger a layout recompute on every blink phase").
+   Filed as task-21501.
+
+   **The method lesson**: a finding's cost estimate decays as fast as its line numbers. Re-measure
+   before dispatching, not after — five of seven is not a rounding error, and two of these would
+   have shipped a fix for a problem that was not there.
+
 ---
 
 ## Verified clean — do not re-fix
