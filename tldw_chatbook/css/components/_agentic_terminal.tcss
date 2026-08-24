@@ -3636,6 +3636,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
     min-height: 2;
     border-top: solid $ds-column-line;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
     content-align: center middle;
 }
 
