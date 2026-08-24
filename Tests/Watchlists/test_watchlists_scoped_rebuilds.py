@@ -7,8 +7,7 @@ rather than reasoned about:
   and nothing else -- not the screen, not the navigation bar, not the footer,
   not either rail, and not the reader.
 * A **tree-node click** updates each affected pane at most once.
-* **z / Z / [ / ]** rebuild only the region whose rendered form actually
-  changed.
+* Side-pane layout actions mount or remove only the affected pane body.
 
 Every count comes from `Widget.recompose` and `Widget.mount`, patched for the
 duration of one interaction (`_RebuildCounter`). Against the pre-task code
@@ -434,6 +433,24 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
         assert not screen.query("#wl-region-content"), (
             "CONTENT is unmounted off the Read tab"
         )
+        from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+            WatchlistsWorkbench,
+        )
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        body = screen.query_one("#wl-workbench-body")
+        assert workbench.read_mode is False
+        assert [child.id for child in workbench.children] == [
+            "wl-centre-status",
+            "wl-workbench-body",
+        ]
+        assert [child.id for child in body.children] == [
+            "wl-region-left_rail",
+            "wl-grip-left_rail",
+            "wl-region-items",
+            "wl-grip-right_rail",
+            "wl-region-right_rail",
+        ]
 
         screen.active_section = "items"
         await _settle(pilot, host)
@@ -441,6 +458,16 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
         assert screen.query("#wl-region-content"), (
             "CONTENT must be mounted back on the Read tab"
         )
+        assert workbench.read_mode is True
+        assert [child.id for child in body.children] == [
+            "wl-region-left_rail",
+            "wl-grip-left_rail",
+            "wl-region-items",
+            "wl-grip-items",
+            "wl-region-content",
+            "wl-grip-right_rail",
+            "wl-region-right_rail",
+        ]
         assert backend_select.disabled is False, (
             "the backend picker must be re-enabled off a local-only section"
         )
@@ -696,7 +723,8 @@ async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
             await pilot.press("[")
             await _settle(pilot, host)
 
-        assert screen.query("#wl-header-left_rail"), "the rail really did collapse"
+        grip = screen.query_one("#wl-grip-left_rail", Button)
+        assert getattr(grip, "expanded") is False
         assert not screen.query("#wl-region-left_rail")
         assert screen.query_one("#wl-region-items") is items_region, counted.report()
         assert screen.query_one("#wl-region-content") is content_region, (
@@ -722,22 +750,20 @@ async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
 
 
 async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
-    """`z` on ITEMS. CONTENT stays expanded, so it keeps its instance -- and
-    picks up the sole-centre marker in place rather than by being rebuilt."""
+    """`z` on Feed Items removes only that side body."""
     app = _build_test_app()
     watchlist_id = _seed(app)
     async with _open(app, watchlist_id) as (screen, pilot, host):
         tree = screen.query_one("#wl-tree", WatchlistTree)
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
         content_region = screen.query_one("#wl-region-content")
-        assert not content_region.has_class("watchlists-region-sole-centre")
-
         screen.focused_region = Region.ITEMS
         with _RebuildCounter() as counted:
             screen.action_toggle_region()
             await _settle(pilot, host)
 
-        assert screen.query("#wl-header-items"), "ITEMS really did collapse"
+        grip = screen.query_one("#wl-grip-items", Button)
+        assert getattr(grip, "expanded") is False
         assert not screen.query("#wl-region-items")
         assert screen.query_one("#wl-tree", WatchlistTree) is tree, counted.report()
         assert screen.query_one("#watchlists-content-pane", ContentPane) is reader, (
@@ -745,51 +771,6 @@ async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
             f"{counted.report()}"
         )
         assert screen.query_one("#wl-region-content") is content_region
-        assert content_region.has_class("watchlists-region-sole-centre"), (
-            "the sole-expanded marker must be applied in place"
-        )
-
-
-async def test_soloing_content_relabels_the_reader_without_rebuilding_it():
-    """`Z` on CONTENT collapses ITEMS around it. CONTENT's own form does not
-    change, so the reader survives -- and its Expand/Restore button has to be
-    relabelled in place or it would keep offering the action it just did."""
-    app = _build_test_app()
-    watchlist_id = _seed(app)
-    async with _open(app, watchlist_id) as (screen, pilot, host):
-        items_pane = screen.query_one("#watchlists-items-pane")
-        items_pane.items = [
-            {
-                "id": "local:watchlist_item:1",
-                "item_id": 1,
-                "title": "Story 0",
-                "source_name": "AI News",
-                "status": "new",
-                "content": "body",
-                "content_kind": "article",
-                "content_format": "text",
-            }
-        ]
-        await _settle(pilot, host)
-        items_pane.select_item_by_id("local:watchlist_item:1")
-        await _settle(pilot, host)
-
-        reader = screen.query_one("#watchlists-content-pane", ContentPane)
-        assert str(reader.query_one("#content-expand-button", Button).label) == "Expand"
-
-        screen.focused_region = Region.CONTENT
-        with _RebuildCounter() as counted:
-            screen.action_solo_region()
-            await _settle(pilot, host)
-
-        assert screen.region_layout.solo_region is Region.CONTENT
-        assert not screen.query("#wl-region-items"), "solo really collapsed ITEMS"
-        assert screen.query_one("#watchlists-content-pane", ContentPane) is reader, (
-            f"soloing CONTENT must not rebuild CONTENT: {counted.report()}"
-        )
-        assert (
-            str(reader.query_one("#content-expand-button", Button).label) == "Restore"
-        ), "the surviving reader must be relabelled in place"
 
 
 async def test_an_inspector_toggle_leaves_the_centre_and_the_left_rail_alone():
@@ -805,7 +786,8 @@ async def test_an_inspector_toggle_leaves_the_centre_and_the_left_rail_alone():
             await pilot.press("]")
             await _settle(pilot, host)
 
-        assert screen.query("#wl-header-right_rail"), "the Inspector really collapsed"
+        grip = screen.query_one("#wl-grip-right_rail", Button)
+        assert getattr(grip, "expanded") is False
         assert not screen.query("#wl-region-right_rail")
         assert screen.query_one("#wl-tree", WatchlistTree) is tree, counted.report()
         assert screen.query_one("#wl-region-items") is items_region, counted.report()
@@ -836,12 +818,8 @@ async def test_a_layout_toggle_mounts_far_fewer_widgets_than_a_full_rebuild():
         )
 
 
-async def test_layout_keys_still_persist_and_restore_the_layout():
-    """Scoping the rebuild must not change what the keys MEAN.
-
-    Collapse state, solo/restore and the refusal off the Read tab are all
-    behaviour the perf work is not allowed to move.
-    """
+async def test_layout_keys_keep_independent_side_pane_state():
+    """Scoping the rebuild must not couple the side-pane preferences."""
     app = _build_test_app()
     watchlist_id = _seed(app)
     async with _open(app, watchlist_id) as (screen, pilot, host):
@@ -855,18 +833,6 @@ async def test_layout_keys_still_persist_and_restore_the_layout():
         assert Region.LEFT_RAIL in screen.region_layout.collapsed, (
             "one rail's toggle must not disturb the other's"
         )
-
-        screen.focused_region = Region.CONTENT
-        screen.action_solo_region()
-        await _settle(pilot, host)
-        assert screen.region_layout.solo_region is Region.CONTENT
-        assert not screen.query("#wl-region-items")
-
-        screen.focused_region = Region.CONTENT
-        screen.action_solo_region()
-        await _settle(pilot, host)
-        assert screen.region_layout.solo_region is None, "a second Z restores"
-        assert screen.query("#wl-region-items")
 
         # Off Read, the centre regions are not the user's to collapse.
         screen.active_section = "sources"
@@ -883,53 +849,19 @@ async def test_layout_keys_still_persist_and_restore_the_layout():
         )
 
 
-async def test_z_collapsing_a_centre_region_is_not_one_way():
-    """The keyboard round trip, not just the chevron.
-
-    A collapsed region renders as a focusable header (`#wl-header-items`) and
-    `on_descendant_focus` maps that id back to the region, so `z` with the
-    header focused has to expand it again. Worth pinning next to the scoping
-    work: the scoped path removes the widget that had focus and mounts a
-    different one in its place, which is exactly where a "collapse is one
-    way" regression would come from.
-    """
-    app = _build_test_app()
-    watchlist_id = _seed(app)
-    async with _open(app, watchlist_id) as (screen, pilot, host):
-        screen.focused_region = Region.ITEMS
-        screen.action_toggle_region()
-        await _settle(pilot, host)
-        assert screen.query("#wl-header-items"), "ITEMS collapsed"
-
-        screen.query_one("#wl-header-items", Button).focus()
-        await _settle(pilot, host)
-        assert screen.focused_region is Region.ITEMS, (
-            "focusing a collapsed region's header must point the keybinding "
-            "at that region"
-        )
-
-        await pilot.press("z")
-        await _settle(pilot, host)
-
-        assert screen.query("#wl-region-items"), "z must expand it again"
-        assert screen.query("#watchlists-items-pane"), (
-            "and the region has to come back with its pane, not empty"
-        )
-
-
-async def test_a_collapsed_region_still_expands_from_its_header_button() -> None:
-    """The chevron route through `RegionToggled`, not just the keybinding."""
+async def test_a_collapsed_region_still_expands_from_its_grip_button() -> None:
+    """The grip route through `RegionToggled`, not just the keybinding."""
     app = _build_test_app()
     watchlist_id = _seed(app)
     async with _open(app, watchlist_id) as (screen, pilot, host):
         await pilot.press("[")
         await _settle(pilot, host)
-        header = screen.query_one("#wl-header-left_rail", Button)
+        grip = screen.query_one("#wl-grip-left_rail", Button)
 
-        header.press()
+        grip.press()
         await _settle(pilot, host)
 
         assert screen.query("#wl-region-left_rail"), (
-            "clicking a collapsed region's header must expand it"
+            "clicking a collapsed region's grip must expand it"
         )
         assert screen.query("#wl-tree"), "and rebuild its content"
