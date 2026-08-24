@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import RLock, Thread
 import time
@@ -193,7 +192,15 @@ class ChangeReviewConsentService:
             return self._admit_enabled_locked(workspace_id, consent)
 
     def status(self, workspace_id: str) -> ChangeReviewStatus:
-        """Return a revision-consistent alias-only Settings projection."""
+        """Return a revision-consistent alias-only Settings projection.
+
+        Args:
+            workspace_id: Workspace whose consent and root readiness to inspect.
+
+        Returns:
+            The capability, consent, and alias-only readiness captured under one
+            service lock.
+        """
         with self._lock:
             capability = self._capability_reader()
             consent = self._registry.read_change_review_consent(workspace_id)
@@ -204,7 +211,9 @@ class ChangeReviewConsentService:
                 and consent.state is ChangeReviewState.ENABLED
             ):
                 for binding in self._current_bindings(workspace_id):
-                    root = str(Path(binding.locator).resolve())
+                    # Folder bindings are canonicalized at registry admission and
+                    # READY bindings are rechecked for symlink/resolve drift.
+                    root = binding.locator
                     entry = self._readiness.get((workspace_id, root))
                     if entry is not None and entry.revision == consent.revision:
                         roots.append(
@@ -259,7 +268,7 @@ class ChangeReviewConsentService:
                 return 0
             scheduled = 0
             for binding in self._current_bindings(workspace_id):
-                root = str(Path(binding.locator).resolve())
+                root = binding.locator
                 key = (workspace_id, root)
                 entry = self._readiness.get(key)
                 if (
@@ -308,7 +317,7 @@ class ChangeReviewConsentService:
         ready_aliases: list[str] = []
         skipped: list[SkippedReviewRoot] = []
         for binding in self._current_bindings(workspace_id):
-            root = str(Path(binding.locator).resolve())
+            root = binding.locator
             key = (workspace_id, root)
             entry = self._readiness.get(key)
             if entry is None or entry.revision != consent.revision:

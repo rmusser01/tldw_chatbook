@@ -104,6 +104,37 @@ def test_manifest_pins_upstream():
     assert manifest["licence"]["spdx"] == "GPL-3.0-only"
 
 
+def test_validated_source_accepts_linked_git_worktree(tmp_path) -> None:
+    """A linked worktree has a .git file and remains a supported --source."""
+    repository = tmp_path / "repository"
+    linked = tmp_path / "linked"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Test User"],
+        check=True,
+    )
+    (repository / "tracked.txt").write_text("tracked\n")
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        capture_output=True,
+    )
+
+    assert (linked / ".git").is_file()
+    assert sync_helper._validated_source(str(linked)) == linked.resolve()
+
+
 def test_manifest_templates_vendored_not_excluded():
     """Spec §6.1: vendoring templates.py is a MOVE from `excluded` to
     `vendored` — the name left in both lists would make a sync run ambiguous."""

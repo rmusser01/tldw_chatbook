@@ -252,7 +252,21 @@ class ChangeReviewFinalizationCoordinator:
         *,
         survivor_key: str = "",
     ) -> ChangeReviewReservation | None:
-        """Atomically admit one reservation to every canonical-root lane."""
+        """Atomically admit one reservation to every canonical-root lane.
+
+        ``roots`` are trusted turn-admission outputs from the workspace registry,
+        which validates, canonicalizes, and checks them for symlink drift before
+        they enter the Console snapshot. This coordinator normalizes ``Path`` and
+        string representations only; it is not another user-input boundary.
+
+        Args:
+            roots: Registry-admitted workspace roots for one Console turn.
+            survivor_key: Optional durable assistant key used to retain lineage.
+
+        Returns:
+            The all-roots reservation, or ``None`` when no roots were supplied or
+            the coordinator no longer accepts work.
+        """
         canonical = tuple(
             dict.fromkeys(str(Path(root).expanduser().resolve()) for root in roots)
         )

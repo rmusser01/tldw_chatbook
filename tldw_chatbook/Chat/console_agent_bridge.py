@@ -221,7 +221,17 @@ def build_change_review_dispatch_gate(
     *,
     on_timeout: Callable[[], None] | None = None,
 ) -> Callable[[list[ToolCall], frozenset[str]], None]:
-    """Build the fixed pure-bypass, bounded Change Review dispatch gate."""
+    """Build the fixed pure-bypass, bounded Change Review dispatch gate.
+
+    Args:
+        await_baseline: Wait for the turn's Change Review baseline, bounded by
+            the supplied timeout.
+        on_timeout: Optional callback invoked when the baseline does not become
+            ready before the fixed dispatch bound.
+
+    Returns:
+        A pre-dispatch callback that waits once for mutation-capable tool calls.
+    """
     gate_lock = threading.Lock()
     gate_complete = False
 

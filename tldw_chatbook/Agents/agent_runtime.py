@@ -1499,6 +1499,9 @@ def run_agent_loop(
                     )
                     trace_state["decision"] = decision_step
 
+        if review_hook_failed and continuation_checkpoint is not None:
+            return continuation_error()
+
         dispatchable_calls = [
             call
             for call in calls
@@ -1525,9 +1528,6 @@ def run_agent_loop(
                 logger.opt(exception=True).warning(
                     "before_tool_dispatch hook raised; dispatch continuing"
                 )
-        if review_hook_failed and continuation_checkpoint is not None:
-            return continuation_error()
-
         for call in calls:
             verdict = _effective_review_verdict(call, verdicts)
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE

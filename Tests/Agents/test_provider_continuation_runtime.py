@@ -1067,7 +1067,7 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
 
     assert outcome.status == RUN_ERROR
     assert [type(event) for event in events] == ([] if restored else [ToolBatchReady])
-    assert gated == ["calculator"]
+    assert gated == []
     assert invoked == []
     captured = capfd.readouterr()
     assert "PRIVATE-REVIEW-CANARY" not in captured.out + captured.err
