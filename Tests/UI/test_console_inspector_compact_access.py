@@ -484,3 +484,73 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         assert after_compact == before_compact
         assert writes == []
         assert deletions == []
+
+
+@pytest.mark.asyncio
+async def test_console_rail_scope_seed_preserves_explicit_left_open_intent(
+    monkeypatch,
+):
+    """Scope adoption keeps the stored intent marker but drops transient UI state."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        await pilot.pause(0.2)
+
+        writes: list[tuple[str, dict[str, bool]]] = []
+
+        def record_save(
+            _screen,
+            key: str,
+            serialized: dict[str, bool],
+            *,
+            notify_on_failure: bool = False,
+        ) -> None:
+            assert notify_on_failure is False
+            writes.append((key, deepcopy(serialized)))
+
+        monkeypatch.setattr(
+            type(console), "_save_console_rail_preferences", record_save
+        )
+
+        workspace_id = (
+            console._workspace._current_console_workspace_context().active_workspace_id
+        )
+        shared_key = build_console_rail_preference_key(layout_scope="global")
+        workspace_key = build_console_rail_preference_key(
+            workspace_id=workspace_id,
+            layout_scope="workspace",
+        )
+        base = serialize_console_rail_preferences(ConsoleRailPreferences())
+        source = {
+            **base,
+            "left_open": True,
+            "left_open_explicit": True,
+            "focused_widget_id": "console-workspace-tree",
+        }
+
+        for selected_scope, source_key, target_key in (
+            ("global", workspace_key.value, shared_key),
+            ("workspace", shared_key.value, workspace_key),
+        ):
+            records = {source_key: deepcopy(source)}
+            source_bytes = json.dumps(records[source_key], separators=(",", ":"))
+            app.app_config["console"] = {
+                "rail_layout_scope": selected_scope,
+                "rail_state": records,
+            }
+            writes.clear()
+
+            state = console._current_console_rail_state(available_columns=90)
+
+            target = records[target_key.value]
+            assert target["left_open_explicit"] is True
+            assert "focused_widget_id" not in target
+            assert state.left_open is True
+            assert state.left_forced_collapsed is False
+            assert writes == [(target_key.value, target)]
+            assert (
+                json.dumps(records[source_key], separators=(",", ":")) == source_bytes
+            )

@@ -10563,6 +10563,8 @@ class ChatScreen(BaseAppScreen):
         serialized = serialize_console_rail_preferences(
             coerce_console_rail_preferences(source)
         )
+        if console_rail_left_open_explicit(source):
+            serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
         rail_state_config[selected_key.value] = serialized
         self._save_console_rail_preferences(
             selected_key.value,

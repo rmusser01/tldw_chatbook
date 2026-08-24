@@ -131,9 +131,17 @@ def test_console_rail_preference_key_scope_inputs_never_leak_into_key():
 def test_console_rail_layout_scope_normalizes_to_global_by_default():
     normalize = console_rail_state_module.normalize_console_rail_layout_scope
 
+    class WorkspaceImpostor:
+        def __str__(self) -> str:
+            return "workspace"
+
     assert normalize(None) == "global"
     assert normalize("bogus") == "global"
     assert normalize({"workspace": True}) == "global"
+    assert normalize(WorkspaceImpostor()) == "global"
+    assert normalize(["workspace"]) == "global"
+    assert normalize(1) == "global"
+    assert normalize(True) == "global"
     assert normalize("  WoRkSpAcE  ") == "workspace"
 
 

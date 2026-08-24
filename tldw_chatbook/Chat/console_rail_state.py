@@ -211,7 +211,9 @@ _LEGACY_GLOBAL_SCOPE = "global"
 
 def normalize_console_rail_layout_scope(value: Any) -> str:
     """Return the supported Console rail layout persistence scope."""
-    normalized = str(value or "").strip().lower()
+    if not isinstance(value, str):
+        return CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
+    normalized = value.strip().lower()
     if normalized == CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE:
         return CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE
     return CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
