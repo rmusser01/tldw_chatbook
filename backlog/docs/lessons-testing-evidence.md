@@ -7475,3 +7475,33 @@ hardware, network, or optional native inference begins, while preserving the sta
 transition the UI observes. Test those integrations separately behind their own
 explicitly marked suites. A test that can unexpectedly capture audio or initialize
 a model is not a focused UI test, even if it normally passes on a configured laptop.
+## An early `break` proves nothing when the list you scan was materialized for you (TASK-21121, 2026-08-23)
+
+**What happened.** `_console_changed_files_scope()` ran on the Console's 0.2 s
+run tick and carried a docstring arguing its own cost was fine: it scanned the
+session's messages in REVERSE and broke on the first change-review marker, and
+"markers cluster near the end", so "steady-state cost is near-constant"; the
+`O(messages)` worst case was conceded only for a session with no marker at all.
+Every clause was true and the conclusion was still wrong, because the thing
+being scanned was `store.messages_for_session()` — which `dataclasses.replace`
+-copies EVERY message in the session before the loop can look at one of them.
+Measured on a 400-message session, 25 ticks: **10,050 message copies and
+32.1 ms of event-loop time with a marker present** — i.e. the early break saved
+nothing at all, and the "worst case" and the "steady state" cost the same.
+
+**What to do.** When you reason about the cost of a scan, first ask who built
+the sequence you are scanning. An early exit only helps over a lazily produced
+or already-owned sequence; over an eagerly materialized copy the O(n) is paid
+before your loop starts, and no amount of breaking early can reach it. In this
+repo the shape to grep for is `for x in reversed(store.messages_for_session(
+...))` — several sites still have it, and each one is a full transcript copy
+regardless of how quickly it finds what it wants.
+
+**Adjacent trap from the same task: a call counter counts your fixture too.**
+The first cut of the counter probe wrapped `ConsoleChatStore._snapshot`
+globally and reported 26 copies per 25 ticks AFTER the fix — which would have
+read as "the fix is only partial". Those 26 were the probe's own
+`append_message` + 25 `append_stream_chunk` calls, each of which returns a
+snapshot; the subject's true count was 0. Arm the counter around the call under
+test and disarm it for the fixture's own store traffic, or the setup you wrote
+to make the measurement realistic gets billed to the code you are measuring.

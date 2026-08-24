@@ -404,6 +404,14 @@ latent pre-existing FTS corruption (an unguarded `messages_ad` trigger on a tomb
 delete, silent doclist poisoning rather than a raise), and `v45_to_v46` missing from every
 packaging list (part of TASK-19860) — both inside 21100.
 
+### Landed after close-out
+
+Findings that were still open when the table above was written, measured the same way.
+
+| Task | Measured before → after |
+|---|---|
+| 21121 changed-files guard per run tick | Per 25 simulated run ticks with a reply streaming, the guard alone: `messages_for_session` **25 → 0**, message copies **10,025 → 0** (400-message session; **1,025 → 0** at 40), guard wall time **32.1 ms → 0.02 ms** (**2.87 ms → 0.01 ms** at 40). Identical with a marker present (10,050 → 0) and the reported scope byte-identical in every arm, before and after. |
+
 ## Corrections found during implementation (added 2026-08-23 at close-out)
 
 Two statements in the findings above were proved wrong by the implementations they produced.

@@ -765,6 +765,15 @@ class ConsoleChatStore:
         self._tool_markers_by_session: dict[
             str, list[tuple[str | None, ConsoleChatMessage]]
         ] = {}
+        #: TASK-21121: single-slot VERIFIED memo behind
+        #: ``newest_change_review_run_id`` --
+        #: ``(session_id, view_list, len(view_list), newest_run_id)``. Holding
+        #: the view LIST itself (not its ``id()``) is what makes the identity
+        #: check sound: a memoized list can never be freed and have its address
+        #: recycled under us. See that method for the invariant this rests on.
+        self._newest_change_review_memo: (
+            tuple[str, list[ConsoleChatMessage], int, str | None] | None
+        ) = None
         self._message_session_index: dict[str, str] = {}
         #: Full conversation tree -- ALL branches, on- and off-path. ``_nodes``
         #: maps a native id to the LIVE ``ConsoleChatMessage`` (never a copy --
@@ -2891,6 +2900,82 @@ class ConsoleChatStore:
         return [
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
+
+    def newest_change_review_run_id(self, session_id: str) -> str | None:
+        """Newest ``change_review_run_id`` on the session's active-path view.
+
+        TASK-21121. The Console rail's changed-files guard needs exactly this
+        one string on every 0.2s run tick, and used to get it by calling
+        ``messages_for_session`` and reverse-scanning the result -- which
+        ``dataclasses.replace``-copies EVERY message in the session first, so
+        the reverse scan's early break bought nothing and a several-hundred
+        message session paid a full O(messages) copy pass five times a second
+        (the docstring of the old caller conceded the worst case; it was the
+        common case, because a session with no change-review marker at all
+        never breaks early).
+
+        **Verified memo, no invalidation protocol** -- deliberately the
+        :class:`~tldw_chatbook.Chat.console_cost_tracker.TokenEstimateCache`
+        shape: a hit is served only after re-checking the full signature the
+        answer depends on, so a missed "bump" can cost a recompute but can
+        never serve a stale run id. The signature is ``(session_id, the view
+        list OBJECT, its length)``, and it is exact because of two store
+        invariants:
+
+        * ``change_review_run_id`` is write-once -- set in the
+          ``ConsoleChatMessage`` constructor (live markers via
+          ``append_message``, resume-derived ones built by
+          ``ConsoleAgentBridge.resume_marker_messages``) and never reassigned
+          anywhere. So an unchanged list of unchanged elements has an
+          unchanged answer, even though streaming mutates those same message
+          objects' ``content`` in place.
+        * Every write to ``_messages_by_session[session_id]`` either installs
+          a NEW list object (``_recompute_active_path`` -- the single writer,
+          reached by send/edit/delete/variant/branch-switch/ingest;
+          ``apply_resume_marker_overlay``; ``create_session``;
+          ``restore_state``) or appends to the existing one (the TOOL-marker
+          branch of ``append_message``, the ONLY in-place mutation). Identity
+          catches the first, length catches the second.
+
+        Single-slot on purpose: the only caller asks about the ACTIVE session
+        every tick, so one slot hits ~always, retains exactly one list, and
+        needs no teardown hook to avoid outliving a closed session by more
+        than one query. ``close_session``/``restore_state`` are free to drop
+        their session state without telling this memo -- the next query for a
+        different session misses on ``session_id`` and re-derives.
+
+        Args:
+            session_id: Native Console session id.
+
+        Returns:
+            The ``change_review_run_id`` of the LAST message in the active-path
+            view that carries one, or ``None`` when no such message is on the
+            path (the common case, and the one this memo exists to make free).
+
+        Raises:
+            KeyError: The session id is unknown -- same contract as
+                ``messages_for_session``, whose callers already catch it.
+        """
+        self._session_or_raise(session_id)
+        view = self._messages_by_session.get(session_id)
+        if not view:
+            return None
+        memo = self._newest_change_review_memo
+        if (
+            memo is not None
+            and memo[0] == session_id
+            and memo[1] is view
+            and memo[2] == len(view)
+        ):
+            return memo[3]
+        newest: str | None = None
+        for message in reversed(view):
+            run_id = getattr(message, "change_review_run_id", None)
+            if run_id:
+                newest = str(run_id)
+                break
+        self._newest_change_review_memo = (session_id, view, len(view), newest)
+        return newest
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
