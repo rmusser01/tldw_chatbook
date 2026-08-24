@@ -3,11 +3,11 @@ id: TASK-21121
 title: >-
   The 0.2s run tick gained a full per-tick message-snapshot pass for
   changed-files scope
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
-updated_date: '2026-08-24 00:25'
+updated_date: '2026-08-24 00:36'
 labels:
   - performance
   - console
