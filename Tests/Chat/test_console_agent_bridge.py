@@ -50,6 +50,10 @@ from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.provider_continuation import (
@@ -864,7 +868,15 @@ async def test_plain_and_character_forced_plain_never_resolve_project_instructio
         agent_runtime_enabled=force_character,
     )
     resolution = SimpleNamespace(
-        provider="openai", model="gpt-4o-mini", max_tokens=128
+        provider="openai",
+        model="gpt-4o-mini",
+        max_tokens=128,
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="gpt-4o-mini",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
     )
     configuration = controller.resolve_turn_configuration_snapshot(session.id)
     authority = await controller._capture_turn_library_authority(

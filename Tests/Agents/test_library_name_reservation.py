@@ -87,8 +87,8 @@ def test_library_reservation_is_one_derived_immutable_union():
     reserved = _reservation()
 
     assert isinstance(reserved, frozenset)
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 18
-    assert len(reserved) == 19
+    assert len(LIBRARY_TOOL_DESCRIPTORS) == 24
+    assert len(reserved) == 25
     assert reserved == frozenset((*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME))
 
 
@@ -164,6 +164,8 @@ def test_reserved_skill_name_never_reaches_skill_runner_dispatch_when_blocked():
         workspace_id=None,
         ephemeral=False,
         diff_sink=None,
+        scratch_root=None,
+        scratch_lease=None,
         resolution=SimpleNamespace(model="model-a", execution_key="openai"),
         fallback_model="model-a",
         session_system_prompt="",
