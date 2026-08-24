@@ -194,7 +194,13 @@ def console_messages_from_conversation_tree(
         )
         raw_id = node.get("id")
         node_persisted_id = str(raw_id) if raw_id is not None else None
-        kept = bool(content) or image_data is not None
+        generation_state = node.get("assistant_generation_state")
+        kept = (
+            bool(content)
+            or image_data is not None
+            or generation_state is not None
+            or node.get("provider_continuation_json") is not None
+        )
         if kept:
             # The tree only carries the legacy position-0 columns; positions
             # >= 1 (multi-attachment table rows) are batch-fetched below,
@@ -223,6 +229,11 @@ def console_messages_from_conversation_tree(
                     attachments=attachments,
                     usage=usage,
                     metadata=metadata,
+                    assistant_generation_state=(
+                        str(generation_state)
+                        if generation_state is not None
+                        else None
+                    ),
                     video_metadata=video_metadata,
                 )
             )
@@ -322,7 +333,7 @@ def apply_resume_settings_overrides(
     return replace(settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill)
 
 
-def hydrate_console_session(
+async def hydrate_console_session(
     *,
     app: Any,
     store: Any,
@@ -428,8 +439,12 @@ def hydrate_console_session(
         assistant_id=assistant_id,
         assistant_authority_id=assistant_authority_id,
         character_id=character_id,
+        activate=False,
     )
+    await store.hydrate_session_library_policy(session.id)
+    await store.reconcile_pending_workspace_projection(session.id)
     roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
     session.user_display_name_override = roleplay_context.user_name_override
     session.character_system_template = roleplay_context.character_system_template
+    store.switch_session(session.id)
     return session

@@ -72,6 +72,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     MINIMUM_BOOTSTRAP_VERSION,
     chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
 )
 
 _THIS_FILE = "Tests/ChaChaNotesDB/test_index_census.py"
@@ -102,6 +103,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_collkw_kw": IndexPin("collection_keywords", False, ("keyword_id",)),
     "idx_console_aux_attempts_conversation_started": IndexPin(
         "console_auxiliary_attempts", False, ("conversation_id", "started_at")
+    ),
+    "idx_console_dispatch_checkpoint_conversation": IndexPin(
+        "console_dispatch_checkpoints", False, ("conversation_id",)
     ),
     "idx_console_memories_boundary": IndexPin(
         "console_conversation_memories",
@@ -368,7 +372,9 @@ def live_index_census(request, tmp_path_factory) -> dict[str, IndexPin]:
     db_path = tmp_path_factory.mktemp("index_census") / "chain_migrated.sqlite"
     with chachanotes_db_at_version(db_path, MINIMUM_BOOTSTRAP_VERSION):
         pass  # bootstrap a genuinely-v4 DB, then close it
-    db = CharactersRAGDB(str(db_path), client_id="index-census-chain")
+    db = open_current_chachanotes_from_legacy(
+        db_path, client_id="index-census-chain"
+    )
     try:
         return _census(db.get_connection())
     finally:

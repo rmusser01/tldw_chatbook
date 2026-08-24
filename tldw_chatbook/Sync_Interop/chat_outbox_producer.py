@@ -19,6 +19,7 @@ class ChatSyncIntentRecord:
     content: str
     parent_message_id: str | None
     provider_continuation_json: str | None
+    assistant_generation_state: str | None
     message_version: int
     payload_hash: str
     base_payload_hash: str | None
@@ -114,6 +115,7 @@ class ChatSyncV2OutboxProducer:
             content=source_record.content,
             parent_message_id=source_record.parent_message_id,
             provider_continuation_json=source_record.provider_continuation_json,
+            assistant_generation_state=source_record.assistant_generation_state,
             base_version=source_record.base_payload_hash,
             entity_version=source_record.message_version,
         )
@@ -218,6 +220,7 @@ class ChatSyncV2OutboxProducer:
         variant_index: int | None = None,
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
+        assistant_generation_state: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> dict[str, Any]:
@@ -237,6 +240,7 @@ class ChatSyncV2OutboxProducer:
             variant_index: Optional selected variant index.
             variant_count: Optional total available variant count for the turn.
             selected_variant_id: Optional selected variant ID.
+            assistant_generation_state: Portable assistant generation lifecycle state.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after the mutation.
 
@@ -264,6 +268,7 @@ class ChatSyncV2OutboxProducer:
             variant_index=variant_index,
             variant_count=variant_count,
             selected_variant_id=selected_variant_id,
+            assistant_generation_state=assistant_generation_state,
             base_version=base_version,
             entity_version=entity_version,
         )

@@ -119,12 +119,18 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
+)
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.config import coerce_bool_setting
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -138,6 +144,26 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 #: or a read-only double). Never the production path — `TldwCli.__init__`
 #: always takes `CONSOLE_RUNTIME_ATTR`.
 _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
+
+
+def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
+    """Read fresh future-session defaults from the app's current config."""
+    config = getattr(app, "app_config", None)
+    if not isinstance(config, Mapping):
+        config = {}
+    console = config.get("console", {})
+    if not isinstance(console, Mapping):
+        console = {}
+    return ConsoleLibraryPolicyDefaults(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=(
+            ConsoleAssistantLibraryAccess.ALLOWED
+            if coerce_bool_setting(
+                console.get("assistant_library_access_default", False), False
+            )
+            else ConsoleAssistantLibraryAccess.BLOCKED
+        ),
+    )
 
 __all__ = [
     "CONSOLE_RUNTIME_ATTR",
@@ -580,6 +606,9 @@ class ConsoleRuntime:
             ChatPersistenceService,
         )
         from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.Chat.console_library_policy_coordinator import (
+            ConsoleLibraryPolicyCoordinator,
+        )
 
         persistence = None
         db = getattr(self._app, "chachanotes_db", None)
@@ -607,6 +636,16 @@ class ConsoleRuntime:
             persistence=persistence,
             workspace_context=workspace_context,
             on_scope_flushed=on_scope_flushed,
+            library_policy_coordinator=(
+                ConsoleLibraryPolicyCoordinator(
+                    persistence.console_library_policy_repository
+                )
+                if persistence is not None
+                else None
+            ),
+            library_policy_defaults_provider=lambda: _current_library_policy_defaults(
+                self._app
+            ),
         )
         self._bind_view_hooks()
         return self._chat_store
@@ -1020,6 +1059,10 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+        if self._chat_store is not None:
+            end_app_runtime = getattr(self._chat_store, "end_app_runtime", None)
+            if callable(end_app_runtime):
+                end_app_runtime()
         try:
             await asyncio.to_thread(self._scratch_spaces.dispose)
         except Exception as exc:  # noqa: BLE001 - quit must continue after cleanup failure

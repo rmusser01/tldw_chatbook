@@ -16,11 +16,35 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class _PausedGateway:
@@ -34,13 +58,20 @@ class _PausedGateway:
         self.selections.append(selection)
         self.resolve_started.set()
         await self.release_resolve.wait()
+        model = selection.explicit_model or selection.configured_model or ""
         return SimpleNamespace(
             ready=True,
             provider=selection.provider,
-            model=selection.explicit_model or selection.configured_model or "",
+            model=model,
             base_url=selection.base_url,
             max_tokens=selection.max_tokens,
             visible_copy="",
+            resolved_destination=ConsoleResolvedDestination(
+                provider=selection.provider,
+                model=model,
+                endpoint_identity="https://api.openai.com",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
         )
 
     async def stream_chat(self, resolution, messages, **_kwargs):
@@ -91,7 +122,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     tool_configuration = {"local": {"enabled": True, "names": ["fs_read"]}}
     payload_settings = {"headers": {"x-mode": "one"}, "stops": ["END"]}
 
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id="session-a",
         provider_selection=selection,
         session_settings=_settings("openai", "gpt-context", "system-a"),
@@ -137,7 +168,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
 
 def test_direct_constructor_also_detaches_mutable_inputs():
     capabilities = {"formats": ["image/png"]}
-    context = ConsoleTurnExecutionContext(
+    context = ConsoleTurnConfigurationSnapshot(
         session_id="session-a",
         provider_selection=ConsoleProviderSelection(provider="openai"),
         capabilities=capabilities,
@@ -148,10 +179,83 @@ def test_direct_constructor_also_detaches_mutable_inputs():
     assert context.capabilities["formats"] == ("image/png",)
 
 
+def _authority() -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=4,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "gpt-context", None),
+        attempt_id="attempt-1",
+    )
+
+
+def _destination() -> ConsoleResolvedDestination:
+    return ConsoleResolvedDestination(
+        provider="openai",
+        model="gpt-context",
+        endpoint_identity="https://api.example.invalid/v1",
+        egress_class=ConsoleEgressClass.UNKNOWN,
+    )
+
+
+def test_final_context_requires_complete_authority_and_destination():
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(provider="openai"),
+    )
+
+    with pytest.raises(TypeError, match="library_authority"):
+        ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=None,
+            resolved_destination=_destination(),
+        )
+    with pytest.raises(TypeError, match="resolved_destination"):
+        ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=_authority(),
+            resolved_destination=None,
+        )
+
+
+def test_final_context_exposes_read_only_configuration_compatibility_properties():
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(
+            provider="openai", configured_model="gpt-context"
+        ),
+        capabilities={"vision": True},
+        rag_defaults={"top_k": 5},
+        tool_configuration={"direct_library_tools": True},
+        provider_payload_settings={"temperature": 0.2},
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=configuration,
+        library_authority=_authority(),
+        resolved_destination=_destination(),
+    )
+
+    assert context.session_id == "session-a"
+    assert context.effective_model == "gpt-context"
+    assert context.provider_selection.provider == "openai"
+    assert context.capabilities == {"vision": True}
+    assert context.rag_defaults == {"top_k": 5}
+    assert context.tool_configuration == {"direct_library_tools": True}
+    assert context.provider_payload_settings == {"temperature": 0.2}
+    with pytest.raises(AttributeError):
+        context.configuration = configuration
+
+
 def test_live_tool_kill_switch_is_not_frozen_into_turn_context():
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="workspace-a")
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(provider="openai"),
         tool_configuration={"local_tools_enabled": True},
@@ -304,9 +408,7 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
         temperature=0.4,
         max_tokens=777,
         system_prompt="system-a",
-        workspace_context=ConsoleWorkspaceContext(
-            active_workspace_id="workspace-a"
-        ),
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id="workspace-a"),
     )
     app_config = {
         "chat_defaults": {"rag_auto_retrieve_on_send": "true"},
@@ -342,7 +444,6 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
     assert context.workspace_roots == (str(Path("C:/workspace/a")),)
     assert context.scratch_space is scratch_snapshot
     assert context.rag_defaults == {
-        "auto_retrieve_on_send": True,
         "source_types": ("notes", "media"),
         "top_k": 7,
     }
@@ -489,7 +590,7 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
             content="answer",
         )
 
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="openai",
@@ -502,13 +603,29 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
         session_settings=store.session_settings(session.id),
         tool_configuration={"agent_runtime_enabled": False},
     )
+    events: list[str] = []
     context_calls: list[str] = []
 
-    def resolve_context(session_id: str) -> ConsoleTurnExecutionContext:
+    def resolve_context(session_id: str) -> ConsoleTurnConfigurationSnapshot:
+        events.append("configuration")
         context_calls.append(session_id)
         return context
 
-    gateway = _PausedGateway()
+    class UnavailableCoordinator:
+        async def capture_for_execution(self, captured_session_id: str):
+            assert captured_session_id == session.id
+            events.append("policy")
+            raise RuntimeError("durable policy unavailable")
+
+    class ActionGateway(_PausedGateway):
+        async def resolve_for_send(self, selection: ConsoleProviderSelection):
+            events.append("gateway")
+            resolution = await super().resolve_for_send(selection)
+            resolution.resolved_destination = _destination()
+            return resolution
+
+    store.library_policy_coordinator = UnavailableCoordinator()
+    gateway = ActionGateway()
     gateway.release_resolve.set()
     controller = ConsoleChatController(
         store=store,
@@ -519,6 +636,17 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
         agent_runtime_enabled=False,
         turn_context_provider=resolve_context,
     )
+    observed_contexts: list[ConsoleTurnExecutionContext] = []
+    real_inner = controller._stream_assistant_response_inner
+
+    async def assert_complete_provider_boundary(**kwargs):
+        events.append("provider-boundary")
+        turn_context = kwargs["turn_context"]
+        assert isinstance(turn_context, ConsoleTurnExecutionContext)
+        observed_contexts.append(turn_context)
+        return await real_inner(**kwargs)
+
+    controller._stream_assistant_response_inner = assert_complete_provider_boundary
 
     if action_name == "retry":
         result = await controller.retry_message(assistant.id)
@@ -532,6 +660,17 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
     assert result.accepted is True
     assert context_calls == [session.id]
     assert gateway.selections == [context.provider_selection]
+    assert events == ["configuration", "policy", "gateway", "provider-boundary"]
+    assert len(observed_contexts) == 1
+    turn_context = observed_contexts[0]
+    assert turn_context.resolved_destination == _destination()
+    assert turn_context.library_authority.policy == ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        policy_revision=None,
+        source="unavailable",
+        error_code="policy_read_error",
+    )
     assert gateway.message_batches[0][0] == {
         "role": "system",
         "content": "captured-system",
@@ -561,7 +700,7 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         role=ConsoleMessageRole.USER,
         content="second question",
     )
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="openai",
@@ -602,7 +741,9 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         context.provider_selection,
         context.provider_selection,
     ]
-    assert rag_contexts == [context]
+    assert len(rag_contexts) == 1
+    assert rag_contexts[0] is not None
+    assert rag_contexts[0].configuration == context
 
 
 @pytest.mark.asyncio
@@ -624,7 +765,7 @@ async def test_attachment_gate_and_payload_use_captured_capabilities():
             mime_type="image/png",
         ),
     )
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="custom",
@@ -706,15 +847,11 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     # `_build_console_provider_selection_uncached`; the wrapper under test
     # delegates to the latter through `self`, so the double borrows the real
     # uncached half exactly as the memo-less path binds it in production.
-    fake_screen._build_console_provider_selection_uncached = (
-        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
-            fake_screen, session_id
-        )
+    fake_screen._build_console_provider_selection_uncached = lambda session_id=None: (
+        ChatScreen._build_console_provider_selection_uncached(fake_screen, session_id)
     )
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, first.id
-    )
+    selection = ChatScreen._build_console_provider_selection(fake_screen, first.id)
 
     assert selection.provider == "openai"
     assert selection.explicit_model == "model-a"

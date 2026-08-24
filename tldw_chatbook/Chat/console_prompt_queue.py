@@ -12,6 +12,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -289,6 +290,7 @@ class _SessionQueueState:
     session_id: str
     waiting: list[QueuedPrompt] = field(default_factory=list)
     claimed: PromptQueueClaim | None = None
+    claimed_preparation_id: str | None = None
     revision: int = 0
     mode: PromptQueueMode = PromptQueueMode.DRAINING
     pause_reason: PromptQueuePauseReason | None = None
@@ -306,6 +308,8 @@ class _SessionQueueState:
 class ConsolePromptQueueRegistry:
     """Synchronous owner of bounded, revisioned per-session prompt queues."""
 
+    DURABLE_ACCEPTANCE_TOMBSTONE_CAP = 256
+
     def __init__(
         self,
         *,
@@ -315,6 +319,7 @@ class ConsolePromptQueueRegistry:
         self._owner_thread_id = threading.get_ident()
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex)
         self._monotonic = monotonic or time.monotonic
+        self._lock = threading.RLock()
         self._states: dict[str, _SessionQueueState] = {}
         self._empty_snapshots: dict[str, PromptQueueSnapshot] = {}
         # Entry identities need only be unique while they can still be
@@ -322,6 +327,9 @@ class ConsolePromptQueueRegistry:
         # historical IDs forever would make this process-memory queue grow
         # with lifetime throughput instead of its bounded active contents.
         self._active_entry_ids: set[str] = set()
+        self._durable_acceptance_tombstones: OrderedDict[tuple[str, str], str] = (
+            OrderedDict()
+        )
         self._next_insertion_order = 0
         self._registry_revision = 0
         self._shutting_down = False
@@ -897,33 +905,89 @@ class ConsolePromptQueueRegistry:
         *,
         expected_revision: int,
     ) -> PromptQueueMutationResult:
-        session_id, state, refusal = self._check(session_id, expected_revision)
-        if refusal is not None:
-            return refusal
-        assert state is not None
-        if state.claimed is not None:
-            return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
-        if (
-            state.mode is not PromptQueueMode.DRAINING
-            or state.reservation is not PromptQueueReservation.HELD
-            or state.expected_context_epoch is None
-        ):
-            return self._result(QueueMutationStatus.INVALID, session_id, state=state)
-        if not state.waiting:
-            return self._result(QueueMutationStatus.NOT_FOUND, session_id, state=state)
-        claimed_at = self._claim_time()
-        if claimed_at is None:
-            return self._result(QueueMutationStatus.INVALID, session_id, state=state)
-        prompt = state.waiting.pop(0)
-        state.claimed = PromptQueueClaim(prompt=prompt, claimed_at=claimed_at)
-        self._bump(state)
-        return self._result(
-            QueueMutationStatus.APPLIED,
-            session_id,
-            state=state,
-            entry_id=prompt.entry_id,
-            claim=state.claimed,
-        )
+        with self._lock:
+            session_id, state, refusal = self._check(session_id, expected_revision)
+            if refusal is not None:
+                return refusal
+            assert state is not None
+            if state.claimed is not None:
+                return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
+            if (
+                state.mode is not PromptQueueMode.DRAINING
+                or state.reservation is not PromptQueueReservation.HELD
+                or state.expected_context_epoch is None
+            ):
+                return self._result(
+                    QueueMutationStatus.INVALID, session_id, state=state
+                )
+            if not state.waiting:
+                return self._result(
+                    QueueMutationStatus.NOT_FOUND, session_id, state=state
+                )
+            claimed_at = self._claim_time()
+            if claimed_at is None:
+                return self._result(
+                    QueueMutationStatus.INVALID, session_id, state=state
+                )
+            prompt = state.waiting.pop(0)
+            state.claimed = PromptQueueClaim(prompt=prompt, claimed_at=claimed_at)
+            state.claimed_preparation_id = None
+            self._bump(state)
+            return self._result(
+                QueueMutationStatus.APPLIED,
+                session_id,
+                state=state,
+                entry_id=prompt.entry_id,
+                claim=state.claimed,
+            )
+
+    def bind_claimed_preparation(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+    ) -> PromptQueueMutationResult:
+        """Bind one exact live claim to its preparation before durable acceptance."""
+
+        self._assert_owner_thread()
+        session_id = self._session_id(session_id)
+        if type(entry_id) is not str or not entry_id:
+            raise ValueError("entry_id must be non-empty text")
+        if type(preparation_id) is not str or not preparation_id:
+            raise ValueError("preparation_id must be non-empty text")
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is None or state.claimed is None:
+                return self._result(
+                    QueueMutationStatus.NOT_FOUND,
+                    session_id,
+                    state=state,
+                    entry_id=entry_id,
+                )
+            if state.claimed.prompt.entry_id != entry_id:
+                return self._result(
+                    QueueMutationStatus.LOCKED,
+                    session_id,
+                    state=state,
+                    entry_id=entry_id,
+                )
+            existing = state.claimed_preparation_id
+            if existing is not None:
+                status = (
+                    QueueMutationStatus.UNCHANGED
+                    if existing == preparation_id
+                    else QueueMutationStatus.LOCKED
+                )
+                return self._result(status, session_id, state=state, entry_id=entry_id)
+            state.claimed_preparation_id = preparation_id
+            self._bump(state)
+            return self._result(
+                QueueMutationStatus.APPLIED,
+                session_id,
+                state=state,
+                entry_id=entry_id,
+            )
 
     def settle_claim(
         self,
@@ -932,23 +996,94 @@ class ConsolePromptQueueRegistry:
         entry_id: str,
         expected_revision: int,
     ) -> PromptQueueMutationResult:
-        session_id, state, refusal = self._check(session_id, expected_revision)
-        if refusal is not None:
-            return refusal
-        assert state is not None
-        if state.claimed is None:
-            return self._result(QueueMutationStatus.NOT_FOUND, session_id, state=state)
-        if state.claimed.prompt.entry_id != entry_id:
-            return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
-        self._active_entry_ids.discard(state.claimed.prompt.entry_id)
-        state.claimed = None
-        self._bump(state)
-        return self._result(
-            QueueMutationStatus.APPLIED,
-            session_id,
-            state=state,
-            entry_id=entry_id,
-        )
+        with self._lock:
+            session_id, state, refusal = self._check(session_id, expected_revision)
+            if refusal is not None:
+                return refusal
+            assert state is not None
+            if state.claimed is None:
+                return self._result(
+                    QueueMutationStatus.NOT_FOUND, session_id, state=state
+                )
+            if state.claimed.prompt.entry_id != entry_id:
+                return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
+            self._active_entry_ids.discard(state.claimed.prompt.entry_id)
+            state.claimed = None
+            state.claimed_preparation_id = None
+            self._bump(state)
+            return self._result(
+                QueueMutationStatus.APPLIED,
+                session_id,
+                state=state,
+                entry_id=entry_id,
+            )
+
+    def settle_durable_acceptance(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+    ) -> PromptQueueMutationResult:
+        """Settle an exact committed claim even after its live chain vanished."""
+
+        self._assert_owner_thread()
+        session_id = self._session_id(session_id)
+        if type(entry_id) is not str or not entry_id:
+            raise ValueError("entry_id must be non-empty text")
+        if type(preparation_id) is not str or not preparation_id:
+            raise ValueError("preparation_id must be non-empty text")
+        with self._lock:
+            key = (session_id, entry_id)
+            prior = self._durable_acceptance_tombstones.get(key)
+            state = self._states.get(session_id)
+            if prior is not None:
+                status = (
+                    QueueMutationStatus.UNCHANGED
+                    if prior == preparation_id
+                    else QueueMutationStatus.LOCKED
+                )
+                return self._result(status, session_id, state=state, entry_id=entry_id)
+            if state is None or state.claimed is None:
+                return self._result(
+                    QueueMutationStatus.NOT_FOUND,
+                    session_id,
+                    state=state,
+                    entry_id=entry_id,
+                )
+            if (
+                state.claimed.prompt.entry_id != entry_id
+                or state.claimed_preparation_id != preparation_id
+            ):
+                return self._result(
+                    QueueMutationStatus.LOCKED,
+                    session_id,
+                    state=state,
+                    entry_id=entry_id,
+                )
+            self._active_entry_ids.discard(entry_id)
+            state.claimed = None
+            state.claimed_preparation_id = None
+            if state.waiting:
+                state.mode = PromptQueueMode.PAUSED
+                state.pause_reason = PromptQueuePauseReason.FAILED
+                state.reservation = PromptQueueReservation.RELEASED
+            else:
+                state.reservation = PromptQueueReservation.RELEASED
+                self._finalize_released_empty_state(state)
+            self._bump(state)
+            self._durable_acceptance_tombstones[key] = preparation_id
+            while (
+                len(self._durable_acceptance_tombstones)
+                > self.DURABLE_ACCEPTANCE_TOMBSTONE_CAP
+            ):
+                self._durable_acceptance_tombstones.popitem(last=False)
+            return self._result(
+                QueueMutationStatus.APPLIED,
+                session_id,
+                state=state,
+                entry_id=entry_id,
+            )
 
     def return_claim_to_head(
         self,
@@ -958,28 +1093,34 @@ class ConsolePromptQueueRegistry:
         reason: PromptQueuePauseReason,
         expected_revision: int,
     ) -> PromptQueueMutationResult:
-        session_id, state, refusal = self._check(session_id, expected_revision)
-        if refusal is not None:
-            return refusal
-        assert state is not None
-        if not isinstance(reason, PromptQueuePauseReason):
-            return self._result(QueueMutationStatus.INVALID, session_id, state=state)
-        if state.claimed is None:
-            return self._result(QueueMutationStatus.NOT_FOUND, session_id, state=state)
-        if state.claimed.prompt.entry_id != entry_id:
-            return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
-        state.waiting.insert(0, state.claimed.prompt)
-        state.claimed = None
-        state.mode = PromptQueueMode.PAUSED
-        state.pause_reason = reason
-        state.reservation = PromptQueueReservation.RELEASED
-        self._bump(state)
-        return self._result(
-            QueueMutationStatus.APPLIED,
-            session_id,
-            state=state,
-            entry_id=entry_id,
-        )
+        with self._lock:
+            session_id, state, refusal = self._check(session_id, expected_revision)
+            if refusal is not None:
+                return refusal
+            assert state is not None
+            if not isinstance(reason, PromptQueuePauseReason):
+                return self._result(
+                    QueueMutationStatus.INVALID, session_id, state=state
+                )
+            if state.claimed is None:
+                return self._result(
+                    QueueMutationStatus.NOT_FOUND, session_id, state=state
+                )
+            if state.claimed.prompt.entry_id != entry_id:
+                return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
+            state.waiting.insert(0, state.claimed.prompt)
+            state.claimed = None
+            state.claimed_preparation_id = None
+            state.mode = PromptQueueMode.PAUSED
+            state.pause_reason = reason
+            state.reservation = PromptQueueReservation.RELEASED
+            self._bump(state)
+            return self._result(
+                QueueMutationStatus.APPLIED,
+                session_id,
+                state=state,
+                entry_id=entry_id,
+            )
 
     def request_pause_after_turn(
         self,

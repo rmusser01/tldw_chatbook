@@ -26,6 +26,7 @@ from ..Chatbooks.database_paths import (
 from ..Chatbooks.chatbook_models import ContentType
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Prompts_DB import PromptsDatabase
+from ..config import load_console_library_migration_seed
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -201,7 +202,11 @@ class ChatbookCreationWindow(ModalScreen):
 
         # Load conversations
         if self.db_paths["chachanotes"].exists():
-            db = CharactersRAGDB(str(self.db_paths["chachanotes"]), "chatbook_ui")
+            db = CharactersRAGDB(
+                str(self.db_paths["chachanotes"]),
+                "chatbook_ui",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
 
             # Add conversations node
             conv_node = tree.root.add("📚 Conversations", expand=True)

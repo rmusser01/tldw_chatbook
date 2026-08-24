@@ -154,6 +154,11 @@ from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
     resolve_console_expression_state,
 )
+from ...Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
+)
 from ...Chat.console_image_view import resolve_react_character_expressions
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -179,7 +184,7 @@ from ...Chat.console_session_settings import (
     default_console_session_settings,
 )
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
-from ...Chat.console_turn_context import ConsoleTurnExecutionContext
+from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
     VisualIdentityResolution,
@@ -2119,6 +2124,31 @@ class ConsoleSessionController:
                     severity="warning",
                 )
 
+    def _refresh_console_library_policy_defaults(self) -> None:
+        """Load the defaults captured by the next locally created session."""
+        app_config = self._provider_readiness_app_config()
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        self._ensure_console_chat_store().set_library_policy_defaults(
+            ConsoleLibraryPolicyDefaults(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=(
+                    ConsoleAssistantLibraryAccess.ALLOWED
+                    if coerce_bool_setting(
+                        console_config.get(
+                            "assistant_library_access_default",
+                            False,
+                        ),
+                        False,
+                    )
+                    else ConsoleAssistantLibraryAccess.BLOCKED
+                ),
+            )
+        )
+
     async def _create_native_console_session_from_active_context(
         self, *, ephemeral: bool = False
     ) -> None:
@@ -2131,6 +2161,7 @@ class ConsoleSessionController:
         # first so the deferred draft swap attributes settle-window typing
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
+        self._refresh_console_library_policy_defaults()
         self._ensure_console_chat_controller().new_session(
             settings=(
                 self._active_console_session_settings()
@@ -2183,7 +2214,7 @@ class ConsoleSessionController:
 
     def _build_console_turn_execution_context(
         self, session_id: str
-    ) -> ConsoleTurnExecutionContext:
+    ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
         from ...Tools.workspace_file_roots import folder_binding_roots
@@ -2199,15 +2230,8 @@ class ConsoleSessionController:
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
-        chat_defaults = (
-            app_config.get("chat_defaults", {})
-            if isinstance(app_config, Mapping)
-            else {}
-        )
         if not isinstance(console_config, Mapping):
             console_config = {}
-        if not isinstance(chat_defaults, Mapping):
-            chat_defaults = {}
         workspace_id = self._ensure_console_chat_store().session_workspace_id(
             session_id
         )
@@ -2216,7 +2240,7 @@ class ConsoleSessionController:
         except Exception:  # noqa: BLE001 -- optional roots never block a send
             workspace_roots = ()
 
-        return ConsoleTurnExecutionContext.capture(
+        return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=selection,
             scratch_space=self._scratch_snapshot_provider(session_id),
@@ -2228,10 +2252,6 @@ class ConsoleSessionController:
                 "max_history_images": max_history_images(selection.provider, model),
             },
             rag_defaults={
-                "auto_retrieve_on_send": coerce_bool_setting(
-                    chat_defaults.get("rag_auto_retrieve_on_send", False),
-                    False,
-                ),
                 "source_types": tuple(self._rag_source_types_accessor()),
                 "top_k": self._rag_top_k_accessor(),
             },
@@ -2886,6 +2906,7 @@ class ConsoleSessionController:
                 except ValueError:
                     session = None
             if session is None:
+                self._refresh_console_library_policy_defaults()
                 session = store.create_session(
                     title=f"Chat with {seed.name}",
                     workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,

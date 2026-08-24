@@ -22,7 +22,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     ConflictError,
 )
-from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
 
 
 #
@@ -272,7 +275,9 @@ class TestDBInitialization:
             ).fetchone()
             assert version_before["version"] == 17
 
-        migrated = CharactersRAGDB(db_path, client_id)
+        migrated = open_current_chachanotes_from_legacy(
+            db_path, client_id=client_id
+        )
         migrated_conn = migrated.get_connection()
 
         version_row = migrated_conn.execute(

@@ -11,7 +11,22 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicyDefaults,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
@@ -32,6 +47,75 @@ from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistr
 
 def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSettings:
     return ConsoleSessionSettings(provider="openai", model=model)
+
+
+def _library_authority(
+    attempt_id: str,
+    *,
+    auto_retrieve: ConsoleAutoRetrieve = ConsoleAutoRetrieve.AUTOMATIC,
+    assistant_access: ConsoleAssistantLibraryAccess = (
+        ConsoleAssistantLibraryAccess.BLOCKED
+    ),
+) -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=auto_retrieve,
+            assistant_access=assistant_access,
+            policy_revision=1,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "model-a", None),
+        attempt_id=attempt_id,
+    )
+
+
+def _begin_disclosed_library_attempt(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    attempt_id: str = "attempt-active",
+    content: str = "",
+) -> tuple[ConsoleChatMessage, ConsoleResolvedDestination]:
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    baseline = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority("attempt-baseline"),
+        local,
+        baseline.id,
+    )
+    store.append_stream_chunk(baseline.id, "baseline")
+    store.mark_message_complete(baseline.id)
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority(attempt_id),
+        external,
+        assistant.id,
+    )
+    return assistant, external
 
 
 def _pristine_session(
@@ -68,6 +152,29 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
     assert store.is_pristine_session(session.id, expected_settings=defaults)
 
     store.set_session_draft(session.id, "typed work")
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_default_library_policy_does_not_dirty_pristine_tab_but_explicit_edit_does():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore(
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        )
+    )
+    session = _pristine_session(store, defaults)
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+    store.stage_session_library_policy(
+        session.id,
+        ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        ),
+    )
+
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
@@ -159,6 +266,170 @@ def test_message_completed_subscription_emits_each_successful_regeneration() -> 
         (session.id, message.id),
         (session.id, message.id),
     ]
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    ["complete", "failed", "stopped", "variant_complete"],
+)
+def test_assistant_terminal_settlement_clears_runtime_library_disclosure(
+    terminal: str,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message, external = _begin_disclosed_library_attempt(
+        store,
+        session.id,
+        content="original" if terminal == "variant_complete" else "",
+    )
+    assert session.library_destination_runtime.disclosure is not None
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == message.id
+
+    if terminal == "variant_complete":
+        store.begin_variant_stream(message.id)
+        store.append_stream_chunk(message.id, "replacement")
+        store.finalize_variant_stream(message.id)
+    else:
+        store.append_stream_chunk(message.id, "response")
+        getattr(store, f"mark_message_{terminal}")(message.id)
+
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+    assert session.library_destination_runtime.resolved_destination == external
+    assert session.library_destination_runtime.last_resolved_identity == (
+        external.identity_key
+    )
+
+
+def test_completion_subscribers_observe_disclosure_already_settled() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message, _external = _begin_disclosed_library_attempt(store, session.id)
+    observed = []
+    store.subscribe_message_completed(
+        lambda _token: observed.append(session.library_destination_runtime.disclosure)
+    )
+    store.append_stream_chunk(message.id, "response")
+
+    store.mark_message_complete(message.id)
+
+    assert observed == [None]
+
+
+def test_older_completed_variant_cannot_settle_a_newer_attempt_disclosure() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="older answer",
+    )
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+    assert disclosure is not None
+
+    store.add_variant(older.id, "older alternate")
+
+    assert session.library_destination_runtime.disclosure == disclosure
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == active.id
+
+
+def test_library_destination_settlement_requires_exact_attempt_and_message_owner() -> (
+    None
+):
+    store = ConsoleChatStore()
+    session = store.create_session()
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+
+    wrong_attempt = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-older",
+        expected_message_id=active.id,
+    )
+    wrong_message = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id="older-message",
+    )
+
+    assert wrong_attempt.disclosure == disclosure
+    assert wrong_message.disclosure == disclosure
+    settled = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=active.id,
+    )
+    assert settled.disclosure is None
+    assert settled.owner_attempt_id is None
+    assert settled.owner_message_id is None
+
+
+def test_older_attempt_cleanup_cannot_clear_replacement_destination_owner() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older, _external = _begin_disclosed_library_attempt(store, session.id)
+    replacement = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    private = ConsoleResolvedDestination(
+        provider="custom",
+        model="model-b",
+        endpoint_identity="http://10.0.0.9:8080",
+        egress_class=ConsoleEgressClass.PRIVATE_NETWORK,
+    )
+    store.begin_session_library_destination_attempt(
+        session.id,
+        _library_authority("attempt-replacement"),
+        private,
+        replacement.id,
+    )
+
+    store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=older.id,
+    )
+
+    runtime = session.library_destination_runtime
+    assert runtime.disclosure is not None
+    assert runtime.disclosure.resolved_destination == private
+    assert runtime.owner_attempt_id == "attempt-replacement"
+    assert runtime.owner_message_id == replacement.id
+
+
+def test_runtime_library_disclosure_is_isolated_across_session_navigation() -> None:
+    store = ConsoleChatStore()
+    session_a = store.create_session(title="Session A")
+    session_b = store.create_session(title="Session B")
+    message_a, _external_a = _begin_disclosed_library_attempt(
+        store,
+        session_a.id,
+        attempt_id="attempt-a",
+    )
+    message_b, _external_b = _begin_disclosed_library_attempt(
+        store,
+        session_b.id,
+        attempt_id="attempt-b",
+    )
+
+    store.switch_session(session_b.id)
+    store.switch_session(session_a.id)
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_b.library_destination_runtime.disclosure is not None
+
+    store.append_stream_chunk(message_b.id, "response")
+    store.mark_message_complete(message_b.id)
+
+    assert store.active_session_id == session_a.id
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_a.library_destination_runtime.owner_message_id == message_a.id
+    assert session_b.library_destination_runtime.disclosure is None
 
 
 def test_completion_generation_remains_monotonic_across_same_id_restore() -> None:
@@ -1349,6 +1620,33 @@ class FakePersistence:
         self.created_conversations.append(kwargs)
         self.last_create_kwargs = kwargs
         return "conv-1"
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id,
+        policy_candidate,
+        conversation_kwargs,
+        messages,
+        active_leaf_message_id,
+        context_summary=None,
+        context_summary_boundary_message_id=None,
+        contributions=(),
+    ):
+        if contributions:
+            raise RuntimeError("FakePersistence does not execute contributions")
+        self.created_conversations.append(
+            {"conversation_id": conversation_id, **dict(conversation_kwargs)}
+        )
+        self.last_create_kwargs = dict(conversation_kwargs)
+        for prepared in messages:
+            self.created_messages.append(dict(prepared["create_kwargs"]))
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
 
     def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
         self.updated_system_prompts.append(
@@ -4951,7 +5249,7 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
     ]
 
 
-def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
+def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_path():
     class RefusingPersistence(FakePersistence):
         def update_conversation_roleplay_context(self, **kwargs):
             return False
@@ -4965,10 +5263,13 @@ def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
 
     temporary = store.create_session(ephemeral=True)
     temporary.user_display_name_override = "Rowan"
-    with pytest.raises(RuntimeError, match="roleplay context"):
-        store.promote_ephemeral_session(temporary.id)
-    assert temporary.ephemeral is True
-    assert temporary.persisted_conversation_id is None
+    conversation_id = store.promote_ephemeral_session(temporary.id)
+
+    assert conversation_id is not None
+    assert temporary.ephemeral is False
+    assert temporary.persisted_conversation_id == conversation_id
+    roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
+    assert roleplay["user_name_override"] == "Rowan"
 
 
 def test_identical_real_seed_does_not_append_a_duplicate_greeting():
@@ -5537,38 +5838,17 @@ def test_presentation_context_resolves_override_identity_and_roleplay_row():
     assert presentation.row_class == "console-transcript-message-roleplay-character"
 
 
-def test_promotion_transaction_rolls_back_created_conversation_on_context_failure():
-    class TransactionalRefusingPersistence(FakePersistence):
-        def __init__(self):
-            super().__init__()
-            self.db = self
+def test_atomic_promotion_adapter_failure_preserves_ephemeral_fake_state():
+    class FailingAtomicPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise RuntimeError("atomic bundle failure")
 
-        def transaction(self):
-            persistence = self
-
-            class _Transaction:
-                def __enter__(self):
-                    self.conversations = list(persistence.created_conversations)
-                    self.messages = list(persistence.created_messages)
-                    return self
-
-                def __exit__(self, exc_type, exc, traceback):
-                    if exc_type is not None:
-                        persistence.created_conversations[:] = self.conversations
-                        persistence.created_messages[:] = self.messages
-                    return False
-
-            return _Transaction()
-
-        def update_conversation_roleplay_context(self, **kwargs):
-            return False
-
-    persistence = TransactionalRefusingPersistence()
+    persistence = FailingAtomicPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session(ephemeral=True)
     session.user_display_name_override = "Rowan"
 
-    with pytest.raises(RuntimeError, match="roleplay context"):
+    with pytest.raises(RuntimeError, match="atomic bundle failure"):
         store.promote_ephemeral_session(session.id)
 
     assert persistence.created_conversations == []

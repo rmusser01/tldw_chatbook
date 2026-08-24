@@ -20,7 +20,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError,
     SchemaError,
 )
-from tldw_chatbook.config import chachanotes_db as global_db_from_config
+from tldw_chatbook.config import (
+    chachanotes_db as global_db_from_config,
+    load_console_library_migration_seed,
+)
 from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     verify_trusted_directory,
@@ -145,6 +148,7 @@ class NotesInteropService:
                 db_instance = CharactersRAGDB(
                     db_path=unified_db_file_path,  # Use the path from the unified DB template
                     client_id=user_id,  # Use the passed user_id as the client_id for this instance
+                    console_library_migration_seed=load_console_library_migration_seed(),
                 )
                 self._db_instances[user_id] = db_instance  # Cache it
                 logger.info(

@@ -42,6 +42,12 @@ def _build_screen():
     return app, ChatScreen(app)
 
 
+def _turn_context(*, direct: bool):
+    return SimpleNamespace(
+        library_authority=SimpleNamespace(direct_library_tools=direct)
+    )
+
+
 # --- ChatScreen provider factory --------------------------------------------
 
 
@@ -54,7 +60,7 @@ def test_factory_direct_mode_builds_library_tool_provider(monkeypatch):
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
     _app, screen = _build_screen()
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     assert isinstance(provider._service, LocalLibraryToolService)
@@ -68,24 +74,21 @@ def test_factory_off_mode_builds_bounded_rag_provider(monkeypatch):
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": False}})
     app, screen = _build_screen()
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=False))
 
     assert isinstance(provider, LibraryRagToolProvider)
     assert provider._rag_service is getattr(app, "library_rag_search_service", None)
 
 
-def test_factory_defaults_to_direct_mode_when_setting_missing(monkeypatch):
-    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-
+def test_factory_fails_closed_when_turn_context_is_missing(monkeypatch):
     _patch_cli_config(monkeypatch, {})
     _app, screen = _build_screen()
 
-    assert isinstance(screen._console_library_provider_factory(), LibraryToolProvider)
+    assert screen._console_library_provider_factory() is None
 
 
-def test_factory_reads_config_fresh_without_rebuilding_controller(monkeypatch):
-    """Flipping the config between consecutive runs swaps the provider type
-    while the cached controller (and its bridge) stay the same object."""
+def test_factory_reads_captured_context_without_rebuilding_controller(monkeypatch):
+    """Each captured authority selects its provider without rebuilding."""
     from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
     from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 
@@ -96,9 +99,9 @@ def test_factory_reads_config_fresh_without_rebuilding_controller(monkeypatch):
     controller = screen._ensure_console_chat_controller()
     assert controller._library_provider_factory is not None
 
-    first = controller._library_provider_factory()
+    first = controller._library_provider_factory(_turn_context(direct=True))
     config["console"]["direct_library_tools"] = False
-    second = controller._library_provider_factory()
+    second = controller._library_provider_factory(_turn_context(direct=False))
 
     assert isinstance(first, LibraryToolProvider)
     assert isinstance(second, LibraryRagToolProvider)
@@ -119,7 +122,7 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     app.local_chat_conversation_service = SimpleNamespace(marker="conversations")
     app.local_library_collections_service = SimpleNamespace(marker="collections")
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     service = provider._service
@@ -205,7 +208,7 @@ def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch
     app.local_chat_conversation_service = None
     app.local_library_collections_service = None
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
 
     assert isinstance(provider, LibraryToolProvider)
     # Catalog still exposes the full descriptor set (no total failure).
@@ -235,7 +238,7 @@ def test_factory_present_backend_serves_its_tool(monkeypatch):
     app.local_chat_conversation_service = None
     app.local_library_collections_service = None
 
-    provider = screen._console_library_provider_factory()
+    provider = screen._console_library_provider_factory(_turn_context(direct=True))
     result = provider.invoke("library:library_list_notes", {"limit": 5})
 
     assert result.ok is True

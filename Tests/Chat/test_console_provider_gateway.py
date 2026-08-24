@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
 from tldw_chatbook.Chat.console_provider_gateway import (
     MAX_AUXILIARY_OUTPUT_TOKENS,
     AuxiliaryCompletionRequest,
@@ -986,6 +987,71 @@ async def test_resolve_for_send_materializes_builtin_cloud_endpoint(
 
     assert resolved.ready is True
     assert resolved.base_url == expected_base_url
+    assert resolved.resolved_destination is not None
+    assert resolved.resolved_destination.endpoint_identity == (
+        expected_base_url.split("/v1", maxsplit=1)[0]
+    )
+    assert (
+        resolved.resolved_destination.egress_class
+        is ConsoleEgressClass.PUBLIC_NETWORK
+    )
+
+
+@pytest.mark.asyncio
+async def test_gateway_attaches_on_device_destination_after_llamacpp_normalization():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="llama_cpp",
+            base_url="127.42.7.9:9099/v1/chat/completions",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "http://127.42.7.9:9099"
+    assert resolved.resolved_destination is not None
+    assert resolved.resolved_destination.endpoint_identity == "http://127.42.7.9:9099"
+    assert resolved.resolved_destination.egress_class is ConsoleEgressClass.ON_DEVICE
+
+
+@pytest.mark.asyncio
+async def test_gateway_unknown_custom_destination_identity_is_credential_free():
+    endpoint = (
+        "https://user:URL-SECRET@models.example.test:8443/private/v1"
+        "?api_key=URL-SECRET#fragment"
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "openai": {
+                    "api_key": "CONFIG-SECRET",
+                    "model": "gpt-test",
+                    "api_base_url": endpoint,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
+    )
+
+    assert resolved.ready is True
+    assert resolved.resolved_destination is not None
+    assert resolved.resolved_destination.endpoint_identity == (
+        "https://models.example.test:8443"
+    )
+    assert resolved.resolved_destination.egress_class is ConsoleEgressClass.UNKNOWN
+    rendered = repr(resolved.resolved_destination)
+    for secret in ("user", "URL-SECRET", "CONFIG-SECRET", "private", "api_key"):
+        assert secret not in rendered
 
 
 @pytest.mark.asyncio

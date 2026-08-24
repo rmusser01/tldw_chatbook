@@ -110,22 +110,8 @@ def test_staging_updates_state_before_sync_and_recomposes_only_as_fallback() -> 
 
 
 @pytest.mark.unit
-def test_placeholder_cleanup_never_drops_newer_staging() -> None:
-    """Identity ownership keeps an older retrieval from clearing newer work."""
-    controller, state = _controller()
-    placeholder = ConsoleLiveWorkLaunch.from_values(
-        source="Library Search/RAG",
-        title="First retrieval",
-        status="searching",
-    )
-    newer = ConsoleLiveWorkLaunch.from_values(
-        source="Library Search/RAG",
-        title="Newer retrieval",
-        status="staged",
-    )
-    state.pending = newer
+def test_retrieval_controller_owns_no_automatic_placeholder_cleanup() -> None:
+    """Automatic preparation placeholders belong to controller/store state."""
+    controller, _state = _controller()
 
-    controller._clear_console_auto_rag_placeholder(placeholder)
-
-    assert state.pending is newer
-    assert state.sync_calls == 0
+    assert not hasattr(controller, "_clear_console_auto_rag_placeholder")

@@ -40,6 +40,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from unittest.mock import patch
 
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
@@ -50,12 +51,29 @@ SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 MINIMUM_BOOTSTRAP_VERSION = 4
 
 
+def open_current_chachanotes_from_legacy(
+    db_path: str | os.PathLike[str],
+    *,
+    client_id: str,
+    auto_retrieve_on_send: bool = False,
+) -> CharactersRAGDB:
+    """Open a pre-v45 fixture with the explicit sanitized migration seed."""
+    return CharactersRAGDB(
+        str(db_path),
+        client_id=client_id,
+        console_library_migration_seed=ConsoleLibraryMigrationSeed(
+            auto_retrieve_on_send=auto_retrieve_on_send
+        ),
+    )
+
+
 @contextmanager
 def chachanotes_db_at_version(
     db_path: str | os.PathLike[str],
     version: int,
     *,
     client_id: str = "historical-bootstrap",
+    console_library_migration_seed: ConsoleLibraryMigrationSeed | None = None,
 ) -> Iterator[CharactersRAGDB]:
     """Yield an open ``CharactersRAGDB`` genuinely at schema ``version``.
 
@@ -71,6 +89,8 @@ def chachanotes_db_at_version(
         version: The historical schema version to stop the chain at. Must be
             within ``[MINIMUM_BOOTSTRAP_VERSION, _CURRENT_SCHEMA_VERSION]``.
         client_id: Client id for the bootstrap connection.
+        console_library_migration_seed: Sanitized seed for a historical chain
+            that traverses the v44-to-v45 migration.
 
     Yields:
         The open ``CharactersRAGDB`` instance, recorded at ``version``.
@@ -84,7 +104,11 @@ def chachanotes_db_at_version(
         f"[{MINIMUM_BOOTSTRAP_VERSION}, {current}]"
     )
     with patch.object(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", version):
-        db = CharactersRAGDB(str(db_path), client_id=client_id)
+        db = CharactersRAGDB(
+            str(db_path),
+            client_id=client_id,
+            console_library_migration_seed=console_library_migration_seed,
+        )
         try:
             yield db
         finally:

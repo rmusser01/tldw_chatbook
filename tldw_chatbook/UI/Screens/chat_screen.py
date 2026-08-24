@@ -92,6 +92,7 @@ from ..Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
     ConsolePromptQueueRegion,
 )
+from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -5397,27 +5398,17 @@ class ChatScreen(BaseAppScreen):
     ):
         """Resolve the Library retrieval provider for one Console agent run.
 
-        task-1337 (spec section 8): a turn context pins
-        ``[console].direct_library_tools`` for one run; the compatibility
-        no-context path still reads it fresh. Direct mode assembles
+        ADR-079: the final turn authority pins the Library mode for one run;
+        a missing context fails closed. Direct mode assembles
         ``LocalLibraryToolService`` purely from the app's local service
         attributes (any missing backend degrades its own tools to
         ``feature_unavailable``); off mode binds the bounded RAG provider to
         the app-owned ``library_rag_search_service``.
         """
-        # Local imports: keeps the Agents/Library import chains off the
-        # ChatScreen module import path (and lets tests patch the config seam
-        # at call time).
-        from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
-            load_direct_library_tools,
-        )
-
+        if turn_context is None:
+            return None
         app = self.app_instance
-        direct_library_tools = (
-            bool(turn_context.tool_configuration.get("direct_library_tools", False))
-            if turn_context is not None
-            else load_direct_library_tools()
-        )
+        direct_library_tools = turn_context.library_authority.direct_library_tools
         if not direct_library_tools:
             from tldw_chatbook.Agents.library_rag_tool_provider import (
                 LibraryRagToolProvider,
@@ -9680,10 +9671,6 @@ class ChatScreen(BaseAppScreen):
                 # derives from this same pending-launch source test.
                 rag_active=_source_mentions_rag(pending.source if pending else None),
                 staged_title=(pending.title if pending else ""),
-                auto_retrieve_on_send=get_cli_setting(
-                    "chat_defaults", "rag_auto_retrieve_on_send", False
-                ),
-                on_auto_retrieve_changed=self._persist_console_rag_auto_retrieve_on_send,
             ),
             callback=self._retrieval._apply_console_rag_settings_choice,
         )
@@ -9732,10 +9719,6 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         scope_label.update(self._retrieval._console_library_rag_scope_label())
-
-    @work(thread=True)
-    def _persist_console_rag_auto_retrieve_on_send(self, value: bool) -> None:
-        self._retrieval._persist_console_rag_auto_retrieve_on_send(value)
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
@@ -13439,6 +13422,19 @@ class ChatScreen(BaseAppScreen):
                 self._build_console_staged_evidence_strip_state(pending_launch),
                 id="console-staged-evidence-strip",
                 classes="ds-panel",
+            )
+            store = self._console_chat_store
+            recovery = None
+            if store is not None and store.active_session_id is not None:
+                recovery = store.dispatch_recovery_for_presentation(
+                    store.active_session_id
+                )
+            yield ConsoleDispatchRecoveryRegion(
+                recovery,
+                session_id=(store.active_session_id if store is not None else ""),
+                id="console-dispatch-recovery",
+                classes="ds-panel",
+                on_action=self._dispatch_console_recovery_action,
             )
             yield ConsolePromptQueueRegion(
                 id="console-prompt-queue",
@@ -17570,6 +17566,35 @@ class ChatScreen(BaseAppScreen):
             getattr(self.app_instance, "open_console_live_work_primary_action", None)
         )
 
+    def _dispatch_console_recovery_action(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+        action: str,
+    ) -> None:
+        """Run one mounted recovery intent against the currently pinned owner."""
+
+        controller = self._console_chat_controller
+        if controller is None or not session_id or not assistant_message_id:
+            return
+        recovery = controller.store.dispatch_recovery_for_session(session_id)
+        if (
+            recovery is None
+            or recovery.assistant_message_id != assistant_message_id
+            or not recovery.recovery_needed
+        ):
+            return
+        revision = controller.prompt_queue_registry.snapshot(session_id).revision
+        self.run_worker(
+            self._prompt_queue.handle_primary_intent(
+                session_id,
+                action=action,
+                expected_revision=revision,
+            ),
+            exclusive=True,
+            group="console-dispatch-recovery-action",
+        )
+
     def _sync_console_composer_action_state(
         self,
         *,
@@ -17602,7 +17627,13 @@ class ChatScreen(BaseAppScreen):
                     active_id,
                     composer_collapsed=composer.collapsed,
                 )
-                send_blocked = not queue_presentation.send_enabled
+                send_blocked = (
+                    send_blocked
+                    or not queue_presentation.send_enabled
+                    or controller.store.dispatch_recovery_blocks_submission(
+                        active_id
+                    )
+                )
                 try:
                     queue_region = self.query_one(
                         "#console-prompt-queue", ConsolePromptQueueRegion
@@ -17615,6 +17646,20 @@ class ChatScreen(BaseAppScreen):
                     count=queue_presentation.count,
                     paused=queue_presentation.paused,
                 )
+                try:
+                    recovery_region = self.query_one(
+                        "#console-dispatch-recovery",
+                        ConsoleDispatchRecoveryRegion,
+                    )
+                except QueryError:
+                    pass
+                else:
+                    recovery_region.sync_recovery(
+                        active_id,
+                        controller.store.dispatch_recovery_for_presentation(
+                            active_id
+                        )
+                    )
         # task-3401.5: an in-flight video generation shows the same Stop
         # affordance (it sets the adapter's cooperative cancel event).
         store_for_videogen = self._console_chat_store

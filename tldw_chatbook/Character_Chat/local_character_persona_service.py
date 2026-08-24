@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 from ..Utils.path_validation import validate_path_simple
 from ..Chat.chat_conversation_service import ChatConversationService
+from ..Chat.assistant_generation_state import render_exported_assistant_content
 from .world_book_manager import WorldBookManager
 
 
@@ -1798,7 +1799,12 @@ class LocalCharacterPersonaService:
             lines = [f"# {session.get('title') or chat_id}", ""]
             for message in messages:
                 role = message.get("role") or message.get("sender") or "message"
-                lines.extend([f"## {role}", "", str(message.get("content") or ""), ""])
+                content = render_exported_assistant_content(
+                    role=role,
+                    content=message.get("content", ""),
+                    state=message.get("assistant_generation_state"),
+                )
+                lines.extend([f"## {role}", "", content, ""])
             return "\n".join(lines).rstrip() + "\n"
         if normalized_format != "json":
             raise ValueError(

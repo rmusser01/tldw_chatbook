@@ -356,6 +356,11 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
         # test_generated_sheets_scope_every_selector.
         scope_every_selector=True,
     )
+    # Filtering self versus scope-prefixed selectors can leave placeholder
+    # blank lines after the final surviving rule.  Generated files must end in
+    # exactly one newline so they remain compatible with `git diff --check`.
+    own = own.rstrip() + "\n"
+    scoped = scoped.rstrip() + "\n"
     self_file.write_text(own, encoding="utf-8")
     scoped_file.write_text(scoped, encoding="utf-8")
     print(f"\n✅ Widget defaults build complete: {self_file}, {scoped_file}")
@@ -449,6 +454,8 @@ def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
         # every selector is scoped here rather than reproducing that quirk.
         scope_every_selector=True,
     )
+    own = own.rstrip() + "\n"
+    scoped = scoped.rstrip() + "\n"
     self_file.write_text(own, encoding="utf-8")
     scoped_file.write_text(scoped, encoding="utf-8")
     print(f"\n✅ Screen CSS build complete: {self_file}, {scoped_file}")

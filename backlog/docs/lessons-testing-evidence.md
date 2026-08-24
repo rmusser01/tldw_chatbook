@@ -27,6 +27,27 @@ handles and user/model guidance do not promise a nonexistent full copy.
 
 ---
 
+## An outer SQLite rollback cannot undo a write committed by another database
+
+**TASK-19900.1 fix review, 2026-08-22.** Console temporary promotion wrapped
+conversation, policy, messages, attachments, and sidecars in one ChaChaNotes
+transaction, but `create_conversation` also linked WorkspaceDB membership from
+inside that transaction. Failure injection against only the Chat database made
+the bundle look atomic. A real two-file probe failed the later policy write and
+found a committed workspace membership with no surviving conversation; retry
+then produced a second membership identity. The two connection-local transaction
+managers could not provide the cross-database atomicity the call graph implied.
+
+**What to do.** State the database boundary whenever claiming transaction
+atomicity. For a derived row in another database, validate its target before the
+authoritative transaction, commit the authority first, and perform an idempotent
+post-commit projection with durable-source reconciliation after failure/restart.
+Test with two real temporary SQLite files and inject failures both before and
+after the authority commit; one in-memory database or mocked registry cannot
+prove the absence of cross-database orphans.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled
@@ -7457,6 +7478,62 @@ word-split but an unquoted `$VAR` is NOT. Hoisting a file list into
 the run collected nothing, printed only a warnings block, and the compound
 command still exited 0. It looked like a completed A/B. Inline the command
 substitution, and read the passed-count before believing any comparison.
+
+## Mandatory migration inputs require a real historical-reopen sweep (TASK-19900.1, 2026-08-22)
+
+Delivery 1 made the v47→v48 Console Library seed explicit and fail-closed. Its
+named 203-test foundation battery passed, but the controller-required complete
+`Tests/DB/ Tests/ChaChaNotesDB/` sweep then produced 100 failures and four
+setup errors: historical v4–v47 fixtures reopened through bare
+`CharactersRAGDB(...)` calls, so they never supplied the new sanitized seed.
+The same sweep also found stale v48 table/index/version inventories. A shared
+`open_current_chachanotes_from_legacy(...)` test boundary fixed the reopeners;
+the final sweep had no Delivery-1-induced failures.
+
+When a schema upgrade adds mandatory constructor or migration authority, run
+the complete database-owner subtree, not only the new migration tests. Give
+historical fixtures one explicit opener that supplies sanitized authority at
+the legacy-to-current boundary, while leaving the production missing-input
+guard strict. Refresh absolute schema-version, table, index, and trigger
+inventories in the same delivery.
+
+## Private asyncio warning suppression makes lifecycle evidence vacuous (TASK-19900.3, 2026-08-23)
+
+Task 13's first closed-loop cleanup probe set the private
+`Task._log_destroy_pending` flag to false and manually called
+`task.get_coro().close()` before garbage collection. The test then reported no
+pending-task or never-awaited diagnostic and the implementation report treated
+that as shutdown evidence. A replacement probe using only a public event-loop
+exception handler, warning capture, and weak references exposed the real
+boundary: awaited controller shutdown while the owner loop was alive reached a
+terminal Task with no lifecycle diagnostic, but closing the loop first made
+terminal cancellation/await impossible and correctly produced `Task was
+destroyed but it is pending!` when the detached Task was collected.
+
+For asyncio lifecycle tests, assert the supported ordering directly: call and
+await the owner's shutdown API before closing its loop, then collect the Task
+and owner and require no public diagnostic. Test an already-closed-loop
+emergency separately: require fail-closed ownership cleanup and no dispatch,
+capture the expected destroyed-pending diagnostic through the loop's public
+exception handler, and assert warning capture contains no unhandled
+never-awaited coroutine. Never mutate private Task warning flags or manually
+close its coroutine; those operations change the behavior the test is meant to
+observe.
+
+## An isolated recovery widget does not prove one mounted action owner (TASK-19900.3, 2026-08-23)
+
+Task 15's first recovery UI tests passed against the standalone Textual widget,
+but the production ChatScreen never composed it. Once the real screen mounted
+the region, a queued recovery exposed a second Retry/Discard projection through
+the queue shelf, and a Button event delayed across navigation re-resolved the
+new `active_session_id` instead of the owner displayed when the click occurred.
+
+For recovery or destructive controls, mount the production hierarchy at empty
+and non-empty companion-state counts, count each advertised action across all
+sibling surfaces, and exercise the real callback after changing navigation
+state. Keep companion UI limited to its own count/pause truth, and carry the
+displayed session plus durable/ephemeral owner identity through the event rather
+than looking up a mutable active selection at handling time.
 
 ---
 

@@ -516,6 +516,7 @@ class TldwMCPServer:
                 get_chachanotes_db_path,
                 get_media_db_path,
                 CLI_APP_CLIENT_ID,
+                load_console_library_migration_seed,
             )
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
             from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -523,7 +524,9 @@ class TldwMCPServer:
 
             # Initialize character/chat/notes database
             self.chachanotes_db = CharactersRAGDB(
-                db_path=get_chachanotes_db_path(), client_id=CLI_APP_CLIENT_ID
+                db_path=get_chachanotes_db_path(),
+                client_id=CLI_APP_CLIENT_ID,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
 
             # Initialize media database. Uses the same resolver the rest of

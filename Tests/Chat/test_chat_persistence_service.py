@@ -86,7 +86,7 @@ class TestChatPersistenceService:
         assert "Omitting" in doc
         assert "``None`` explicitly" in doc
         assert "explicit normalized" in doc
-        assert "best-effort" in doc
+        assert "post-commit projection" in doc
         assert "Returns:" in doc
         assert "Raises:" in doc
 
@@ -1737,7 +1737,7 @@ class TestChatPersistenceService:
                 conversation_title="Missing workspace chat",
             )
 
-    def test_workspace_conversation_links_membership(
+    def test_workspace_conversation_projects_membership_after_chat_commit(
         self,
         db_instance: CharactersRAGDB,
         tmp_path,
@@ -1753,6 +1753,9 @@ class TestChatPersistenceService:
             workspace_id="ws-a",
             conversation_title="Workspace planning",
         )
+        assert registry.list_workspace_conversations("ws-a") == ()
+
+        service.project_workspace_membership(conversation_id)
 
         conversations = registry.list_workspace_conversations("ws-a")
         assert [conversation.item_id for conversation in conversations] == [
@@ -1760,7 +1763,7 @@ class TestChatPersistenceService:
         ]
         assert conversations[0].title == "Workspace planning"
 
-    def test_workspace_conversation_link_failure_soft_deletes_created_conversation(
+    def test_workspace_projection_failure_keeps_durable_authority_for_retry(
         self,
         db_instance: CharactersRAGDB,
         tmp_path,
@@ -1782,20 +1785,21 @@ class TestChatPersistenceService:
             workspace_registry=FailingMembershipRegistry(),
         )
 
+        conversation_id = service.create_conversation(
+            scope_type="workspace",
+            workspace_id="ws-a",
+            conversation_title="Partially linked workspace chat",
+        )
         with pytest.raises(RuntimeError, match="membership write failed"):
-            service.create_conversation(
-                scope_type="workspace",
-                workspace_id="ws-a",
-                conversation_title="Partially linked workspace chat",
-            )
+            service.project_workspace_membership(conversation_id)
 
         rows = db_instance.execute_query(
             "SELECT id, deleted FROM conversations WHERE title = ?",
             ("Partially linked workspace chat",),
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0]["deleted"] == 1
-        assert db_instance.get_conversation_by_id(rows[0]["id"]) is None
+        assert rows[0]["deleted"] == 0
+        assert db_instance.get_conversation_by_id(rows[0]["id"])["workspace_id"] == "ws-a"
 
     def test_fork_conversation_rejects_unresolved_workspace_scope_without_assert(
         self,

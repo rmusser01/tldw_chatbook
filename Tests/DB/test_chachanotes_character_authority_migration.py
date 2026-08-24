@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
@@ -272,7 +276,9 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     path = tmp_path / "v27-to-v28.sqlite"
     before_columns, expected_authority = _seed_v27_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="migration-test")
+    db = open_current_chachanotes_from_legacy(
+        path, client_id="migration-test"
+    )
     connection = db.get_connection()
 
     # task-1780 bumped the schema past v28, and cost ticker PR1 (v29->v30)
@@ -336,13 +342,17 @@ def test_v27_migration_rolls_back_column_backfill_and_version_on_late_failure(
             raising=False,
         )
         with pytest.raises(Exception, match="forced character authority failure"):
-            CharactersRAGDB(path, client_id="migration-test")
+            open_current_chachanotes_from_legacy(
+                path, client_id="migration-test"
+            )
 
     with sqlite3.connect(path) as connection:
         assert _version(connection) == 27
         assert _conversation_columns(connection) == before_columns
 
-    migrated = CharactersRAGDB(path, client_id="migration-test")
+    migrated = open_current_chachanotes_from_legacy(
+        path, client_id="migration-test"
+    )
     with migrated.transaction() as cursor:
         row = cursor.execute(
             """

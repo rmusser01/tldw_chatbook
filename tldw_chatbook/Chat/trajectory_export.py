@@ -36,6 +36,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .assistant_generation_state import normalize_assistant_generation_state
+from .library_preparation import (
+    LIBRARY_PREPARATION_EVENT_KIND,
+    LibraryPreparationValidationError,
+    decode_library_preparation_event,
+    encode_library_preparation_event,
+)
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
@@ -82,6 +89,7 @@ _MESSAGE_KEYS = (
     "timestamp",
     "parent_message_id",
     "usage_json",
+    "assistant_generation_state",
 )
 
 #: Exported sidecar fields, mirroring ``TrajectoryRowRead``.
@@ -1219,7 +1227,14 @@ def build_trajectory_export(
         data = _as_dict(row)
         kind = str(data.get("event_kind") or "")
         payload_json = data.get("payload_json")
-        if not include_payloads and kind in _TOOL_KINDS and payload_json:
+        if kind == LIBRARY_PREPARATION_EVENT_KIND:
+            try:
+                payload_json = encode_library_preparation_event(
+                    decode_library_preparation_event(payload_json)
+                )
+            except LibraryPreparationValidationError:
+                payload_json = None
+        elif not include_payloads and kind in _TOOL_KINDS and payload_json:
             payload_json = _redacted_payload_json(payload_json)
         exported_row = {key: _jsonable(data.get(key)) for key in _TRAJECTORY_ROW_KEYS}
         exported_row["payload_json"] = payload_json
@@ -1381,16 +1396,41 @@ def validate_trajectory_export(payload: Any) -> dict:
         )
 
     messages = _require(payload, "messages", list, "messages")
+    normalized_messages: list[dict[str, Any]] = []
     for index, message in enumerate(messages):
         if not isinstance(message, Mapping):
             raise TrajectoryExportError(
                 f"Invalid trajectory export: 'messages[{index}]' must be an object"
             )
+        normalized_message = dict(message)
+        normalized_message.setdefault("assistant_generation_state", None)
         for key in _MESSAGE_KEYS:
-            if key not in message:
+            if key not in normalized_message:
                 raise TrajectoryExportError(
                     f"Invalid trajectory export: 'messages[{index}].{key}' is missing"
                 )
+        sender = normalized_message["sender"]
+        raw_state = normalized_message["assistant_generation_state"]
+        if raw_state is not None and str(sender or "").lower() != "assistant":
+            raise TrajectoryExportError(
+                f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
+                "is invalid for a non-assistant message"
+            )
+        try:
+            state = normalize_assistant_generation_state(
+                role=sender,
+                raw_state=raw_state,
+                has_valid_active_continuation=False,
+            )
+        except ValueError:
+            raise TrajectoryExportError(
+                f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
+                "is invalid"
+            ) from None
+        normalized_message["assistant_generation_state"] = (
+            state.value if state is not None else None
+        )
+        normalized_messages.append(normalized_message)
 
     rows = _require(payload, "trajectory_rows", list, "trajectory_rows")
     for index, row in enumerate(rows):
@@ -1416,6 +1456,7 @@ def validate_trajectory_export(payload: Any) -> dict:
         )
 
     normalized = dict(payload)
+    normalized["messages"] = normalized_messages
     normalized.setdefault("compaction_records", [])
     normalized.setdefault("variants", [])
     normalized.setdefault("active_leaf_message_id", None)

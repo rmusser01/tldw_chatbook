@@ -30,12 +30,14 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
 from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     build_request_capture,
     stub_binary_strings,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     generic_endpoint_differs,
@@ -700,6 +702,7 @@ class ConsoleProviderResolution:
     request_timeout: float | None = None
     request_retries: int | None = None
     request_retry_delay: float | None = None
+    resolved_destination: ConsoleResolvedDestination | None = None
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -1706,6 +1709,16 @@ class ConsoleProviderGateway:
         )
 
     async def resolve_for_send(
+        self, selection: ConsoleProviderSelection
+    ) -> ConsoleProviderResolution:
+        """Resolve readiness and attach the credential-free destination."""
+        resolution = await self._resolve_for_send_unclassified(selection)
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
+        )
+
+    async def _resolve_for_send_unclassified(
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
         """Resolve the provider selected by Console before sending.

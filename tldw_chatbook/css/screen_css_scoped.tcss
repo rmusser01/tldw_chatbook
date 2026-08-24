@@ -494,4 +494,3 @@
     VoiceBlendDialog .button-row Button {
         margin: 0 1;
     }
-

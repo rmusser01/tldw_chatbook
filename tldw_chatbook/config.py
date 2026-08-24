@@ -28,6 +28,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    TYPE_CHECKING,
     Iterator,
 )
 
@@ -58,6 +59,9 @@ from tldw_chatbook.Utils.private_paths import (
     verify_trusted_directory,
 )
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 #
 #######################################################################################################################
 #
@@ -1530,7 +1534,9 @@ def _load_settings_uncached(
     final_general_settings_cli = get_toml_section("general")
     final_database_settings_cli = get_toml_section("database")
     final_model_catalog_settings_cli = get_toml_section("model_catalog")
-    final_chat_defaults_cli = get_toml_section("chat_defaults")
+    final_chat_defaults_cli = copy.deepcopy(get_toml_section("chat_defaults"))
+    if not isinstance(final_chat_defaults_cli, dict):
+        final_chat_defaults_cli = {}
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
     # (task 11, spec §9.1/AC 40) The [chunking] table -- the config tier of
@@ -3061,6 +3067,7 @@ shutdown_grace_seconds = 120.0
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
+assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).
@@ -3858,12 +3865,6 @@ transcript_scrollback_lines = 96
 # links) in the Console transcript. Set false to restore the lightweight
 # span renderer, which keeps roleplay speech/action flavor colors.
 assistant_markdown = true
-
-# Console's RAG chip settings modal: when true, each plain text send first
-# retrieves Library evidence into the staged-evidence strip before the
-# message goes out. Off by default -- retrieval only runs when a user
-# explicitly asks for it (the RAG chip / "Run Library RAG").
-rag_auto_retrieve_on_send = false
 
 # Image attachment settings for chat
 [chat.images]
@@ -6975,6 +6976,33 @@ def get_notes_sync_watcher_intervals(
     return float(base), float(peak)
 
 
+def load_console_library_migration_seed(
+    app_config: Mapping[str, Any] | None = None,
+) -> "ConsoleLibraryMigrationSeed":
+    """Return the sanitized pre-upgrade automatic-retrieval migration seed.
+
+    Args:
+        app_config: Optional already-loaded application configuration.
+
+    Returns:
+        The strict typed seed required by a legacy database migration.
+    """
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+
+    selected = (
+        load_cli_config_and_ensure_existence() if app_config is None else app_config
+    )
+    chat_defaults = selected.get("chat_defaults") if isinstance(selected, Mapping) else None
+    raw_value = (
+        chat_defaults.get("rag_auto_retrieve_on_send", False)
+        if isinstance(chat_defaults, Mapping)
+        else False
+    )
+    return ConsoleLibraryMigrationSeed(
+        auto_retrieve_on_send=raw_value if type(raw_value) is bool else False
+    )
+
+
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the Prompts database.
 
@@ -7183,7 +7211,9 @@ def initialize_all_databases():
     logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
     try:
         chachanotes_db = CharactersRAGDB(
-            db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
+            db_path=chachanotes_path,
+            client_id=CLI_APP_CLIENT_ID,
+            console_library_migration_seed=load_console_library_migration_seed(),
         )
         seed_builtin_content(chachanotes_db)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
@@ -7235,6 +7265,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
                 db_path=chachanotes_path,
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
             seed_builtin_content(chachanotes_db)
             logger.success(

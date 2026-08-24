@@ -263,9 +263,14 @@ def _resolve_chacha_db(app: Any):
     path = db_config.get("chacha_db_path") if isinstance(db_config, dict) else None
     if not path:
         return None
+    from ..config import load_console_library_migration_seed
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
 
-    return CharactersRAGDB(path, client_id="rag_pipeline")
+    return CharactersRAGDB(
+        path,
+        client_id="rag_pipeline",
+        console_library_migration_seed=load_console_library_migration_seed(),
+    )
 
 
 async def search_conversations_fts5(

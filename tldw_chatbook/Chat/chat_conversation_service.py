@@ -190,6 +190,9 @@ def normalize_message_row(
         "usage_json": message_row.get("usage_json"),
         "metadata_json": message_row.get("metadata_json"),
         "provider_continuation_json": message_row.get("provider_continuation_json"),
+        "assistant_generation_state": message_row.get(
+            "assistant_generation_state"
+        ),
         "topology": topology,
         "variant": variant,
     }

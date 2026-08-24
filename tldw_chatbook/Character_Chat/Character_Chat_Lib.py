@@ -38,6 +38,11 @@ from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
+from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
+    assistant_state_allows_provider_history,
+    normalize_assistant_generation_state,
+    render_exported_assistant_content,
+)
 from tldw_chatbook.model_capabilities import (  # noqa: E402
     moonshot_model_returns_reasoning_content,
 )
@@ -1094,6 +1099,20 @@ def process_db_messages_to_ui_history(
     for msg_data in db_messages:
         sender = msg_data.get("sender")
         content = msg_data.get("content", "")  # DB content should not be None
+
+        if sender == char_sender_identifier:
+            continuation_read = read_provider_continuation_json(
+                msg_data.get("provider_continuation_json")
+            )
+            if not assistant_state_allows_provider_history(
+                state=msg_data.get("assistant_generation_state"),
+                has_valid_continuation=(
+                    continuation_read.checkpoint is not None
+                    and continuation_read.checkpoint.state == "active"
+                ),
+                content=content,
+            ):
+                continue
 
         # Replace placeholders in the content from DB
         processed_content = replace_placeholders(
@@ -3274,6 +3293,24 @@ def load_chat_history_from_file_and_save_to_db(
                     )
                 if checkpoint is not None:
                     staged["provider_continuation_json"] = canonical
+                raw_state = message.get("assistant_generation_state")
+                if raw_state is not None and role != "assistant":
+                    raise ValueError("Invalid exported chat history.")
+                try:
+                    generation_state = normalize_assistant_generation_state(
+                        role=role,
+                        raw_state=raw_state,
+                        has_valid_active_continuation=(
+                            checkpoint is not None and checkpoint.state == "active"
+                        ),
+                    )
+                except ValueError:
+                    raise ValueError("Invalid exported chat history.") from None
+                staged["assistant_generation_state"] = (
+                    generation_state.value
+                    if generation_state is not None
+                    else None
+                )
                 staged_messages.append(staged)
 
             title = chat_data_dict.get("conversation_name")
@@ -4497,10 +4534,24 @@ def export_conversation_to_json(
             timestamp = msg.get("timestamp", "")
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
+            private = read_provider_continuation_json(
+                msg.get("provider_continuation_json")
+            )
+            generation_state = normalize_assistant_generation_state(
+                role=msg.get("role") or msg.get("sender"),
+                raw_state=msg.get("assistant_generation_state"),
+                has_valid_active_continuation=(
+                    private.checkpoint is not None
+                    and private.checkpoint.state == "active"
+                ),
+            )
             entry = {
                 "sender": msg.get("sender", ""),
                 "content": msg.get("content", ""),
                 "timestamp": timestamp,
+                "assistant_generation_state": generation_state.value
+                if generation_state is not None
+                else None,
             }
             # tasks 15660/15667: the message row's normalized provider
             # usage (`messages.usage_json`, the Console cost ticker's
@@ -4578,7 +4629,11 @@ def export_conversation_to_text(
             if sender == "User":
                 sender = user_name
 
-            content = msg.get("content", "")
+            content = render_exported_assistant_content(
+                role=msg.get("role") or msg.get("sender"),
+                content=msg.get("content", ""),
+                state=msg.get("assistant_generation_state"),
+            )
             timestamp = msg.get("timestamp", "")
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()

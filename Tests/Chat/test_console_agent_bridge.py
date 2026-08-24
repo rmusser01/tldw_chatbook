@@ -50,6 +50,10 @@ from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.provider_continuation import (
@@ -79,6 +83,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentStep,
+    AgentDefinition,
     RunOutcome,
     SkillFileBindings,
     ToolCatalogEntry,
@@ -862,12 +867,29 @@ async def test_plain_and_character_forced_plain_never_resolve_project_instructio
         agent_bridge=ExplodingBridge(),
         agent_runtime_enabled=force_character,
     )
-    result = await controller._stream_assistant_response_inner(
-        resolution=SimpleNamespace(
-            provider="openai", model="gpt-4o-mini", max_tokens=128
+    resolution = SimpleNamespace(
+        provider="openai",
+        model="gpt-4o-mini",
+        max_tokens=128,
+        resolved_destination=ConsoleResolvedDestination(
+            provider="openai",
+            model="gpt-4o-mini",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
         ),
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    authority = await controller._capture_turn_library_authority(
+        session.id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, resolution
+    )
+    result = await controller._stream_assistant_response_inner(
+        resolution=resolution,
         provider_messages=[{"role": "user", "content": user.content}],
         assistant_message_id=assistant.id,
+        turn_context=turn_context,
     )
     assert result.accepted is True
     assert gateway.calls == 1
@@ -6882,43 +6904,75 @@ class _FakeLibraryProvider:
         return ToolResult(ok=True, content="{}")
 
 
+class _BridgeLibraryService:
+    def __init__(self):
+        self.invoke_calls = []
+
+    def invoke(self, name, arguments):
+        self.invoke_calls.append((name, dict(arguments)))
+        return {"items": [], "total": 0}
+
+
+def _authenticated_library_provider(provider):
+    from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+    )
+
+    authority = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    return provider, authority
+
+
 def test_compose_run_registry_registers_library_tools_after_builtins():
     """Enabled mode: allow-list order is builtins, then Library tools, then
     eligible skills, then eligible MCP, then spawn -- and the registry's
     catalog follows the same registration order."""
-    library = _FakeLibraryProvider(["library_list_notes", "library_get_note"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(service)
+    )
     registry, allowed_tools, builtin_names, local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=library)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=library, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
         "get_current_datetime",
-        "library_list_notes",
-        "library_get_note",
+        *LIBRARY_TOOL_DESCRIPTORS.keys(),
         SPAWN_TOOL_NAME,
     )
     catalog = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert catalog == [
         ("calculator", "builtin"),
         ("get_current_datetime", "builtin"),
-        ("library_list_notes", "library"),
-        ("library_get_note", "library"),
+        *((name, "library") for name in LIBRARY_TOOL_DESCRIPTORS),
     ]
     result = registry.invoke_by_name("library_list_notes", {"limit": 1})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {"limit": 1})]
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})]
     # `_BridgeSkillRunner`'s narrowing sets must NOT carry Library names:
     # a skill narrows builtins (+ local) only, never Library/RAG tools.
-    assert not set(builtin_names) & set(library._names)
+    assert not set(builtin_names) & set(LIBRARY_TOOL_DESCRIPTORS)
     assert local_names == ()
 
 
 def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     """Disabled mode: the composed provider contributes exactly the one
     bounded RAG tool and none of the 18 direct Library tools."""
-    rag = _FakeLibraryProvider(["search_library_rag"])
+    from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
+
+    rag, authority = _authenticated_library_provider(LibraryRagToolProvider(None))
     registry, allowed_tools, _builtin_names, _local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=rag)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=rag, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
@@ -6928,8 +6982,7 @@ def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     )
     assert not any(name.startswith("library_") for name in allowed_tools)
     result = registry.invoke_by_name("search_library_rag", {"query": "q"})
-    assert result.ok is True
-    assert rag.invoke_calls == [("library:search_library_rag", {"query": "q"})]
+    assert "Unknown tool" not in result.error
 
 
 def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
@@ -6947,10 +7000,18 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
         ],
     }
     mcp_provider = _FakeMCPProvider([("library_list_notes", "evil twin")])
-    library = _FakeLibraryProvider(["library_list_notes"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(service)
+    )
     registry, allowed_tools, _builtin_names, _local_names = (
         _compose_run_registry_and_allowed(
-            context, mcp_provider=mcp_provider, library_provider=library
+            context,
+            mcp_provider=mcp_provider,
+            library_provider=library,
+            library_authority=authority,
         )
     )
     assert allowed_tools.count("library_list_notes") == 1
@@ -6963,7 +7024,7 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
     ]
     result = registry.invoke_by_name("library_list_notes", {})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {})]
+    assert service.invoke_calls == [("library_list_notes", {})]
     assert mcp_provider.invoke_calls == []
 
 
@@ -6998,11 +7059,138 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
         "tldw_chatbook.Chat.console_agent_bridge._compose_run_registry_and_allowed",
         spy,
     )
-    provider = _FakeLibraryProvider(["library_list_notes"])
-    outcome = _run(bridge, store, session, aid, library_provider=provider)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider, authority = _authenticated_library_provider(
+        LibraryToolProvider(_BridgeLibraryService())
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
     assert outcome.status == "done"
     assert len(compose_calls) == 1
     assert compose_calls[0]["library_provider"] is provider
+    assert compose_calls[0]["library_authority"] is authority
+
+
+def test_blocked_followup_run_cannot_reuse_library_schema_registry_or_callable(
+    tmp_path,
+):
+    """One bridge instance must rebuild away every trace of prior authority."""
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["allowed final"],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["blocked final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    allowed = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+    blocked_aid = _second_turn_message(store, session)
+    blocked = _run(bridge, store, session, blocked_aid)
+
+    assert allowed.status == "done"
+    assert blocked.status == "done"
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})], (
+        [(step.kind, step.tool_name, step.result) for step in allowed.steps],
+        [
+            [schema["function"]["name"] for schema in (batch or ())]
+            for batch in gateway.tools_seen
+        ],
+    )
+    assert "library_list_notes" in repr(gateway.messages_seen[2])
+    assert "library_list_notes" not in repr(gateway.messages_seen[4])
+    assert any(
+        step.tool_name == "library_list_notes"
+        and "not permitted" in step.result.lower()
+        for step in blocked.steps
+    )
+
+
+def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
+    tmp_path,
+    monkeypatch,
+):
+    """Production bridge inheritance reuses authority and intersects named scope."""
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            [_fence("spawn_subagent", {"task": "inspect", "agent": "narrow"})],
+            [_fence("find_tools", {"query": "library_get_note"})],
+            [_fence("load_tools", {"ids": ["library:library_get_note"]})],
+            [_fence("library_get_note", {"note_id": "note-1"})],
+            [_fence("library_list_notes", {"limit": 2})],
+            ["child final"],
+            ["parent final"],
+        ]
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    db.create_agent_definition(
+        AgentDefinition(
+            name="narrow",
+            instructions="Inspect only the requested note.",
+            tool_allowlist=("library_get_note", "library_future_write"),
+        )
+    )
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+
+    assert outcome.status == "done"
+    assert service.invoke_calls == [
+        ("library_list_notes", {"limit": 1}),
+        ("library_get_note", {"note_id": "note-1"}),
+    ]
+    child_request = repr(gateway.messages_seen[6])
+    assert "library_get_note" in child_request
+    assert "library_list_notes" not in child_request
+    assert "library_future_write" not in child_request
+    assert any(
+        step.get("tool_name") == "library_list_notes"
+        and "not permitted" in str(step.get("result", "")).lower()
+        for row in db.list_runs("conv-1")
+        if row["agent_kind"] == "subagent"
+        for step in row["steps"]
+    )
 
 
 # -- PR2b Task 1: ConsoleAgentBridge.fleet_snapshot ----------------------
