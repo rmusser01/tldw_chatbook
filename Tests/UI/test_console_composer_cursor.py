@@ -14,6 +14,7 @@ from textual.widgets import Static
 
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
+    _build_console_send_test_app,
     _configure_native_ready_console,
     _wait_for_text,
 )
@@ -463,7 +464,9 @@ async def test_console_composer_ctrl_w_deletes_word_left_of_caret():
 @pytest.mark.asyncio
 async def test_console_composer_shift_enter_inserts_newline_enter_still_sends():
     gateway = CapturingGateway()
-    app = _build_test_app()
+    # TASK-21590: this is the one test in this module that drives a real send,
+    # so it needs the durable persistence the shipping app always has.
+    app = _build_console_send_test_app()
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -471,10 +474,6 @@ async def test_console_composer_shift_enter_inserts_newline_enter_still_sends():
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-
-        # This interaction test intentionally runs without a persistence
-        # backend, so its session must be explicitly temporary.
-        console._ensure_console_chat_store().ensure_session().ephemeral = True
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("line one")

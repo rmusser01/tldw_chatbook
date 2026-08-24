@@ -8286,3 +8286,68 @@ the closure at all, and `mcp_inspector.py` imports no RAG. A tracer that records
 `(importer, imported)` edges for the whole boot answered this in one run and disagreed
 with a plausible reading of the diff — run it before believing any reported chain,
 including one that comes with a bisect.
+## A production gate that fails closed on a capability the test double lacks is invisible — the symptom is "nothing happened" (TASK-21590, 2026-08-24)
+
+**What happened.** `Tests/UI/test_console_native_chat_flow.py` was 26 red on dev and had
+been for a day. Every failure looked identical and told you nothing: press Send, wait,
+`AssertionError: Text not found: 'generic provider response'` with a screen dump showing
+`No messages yet.` and the draft still sitting in the composer. No exception, no system row,
+no toast — pressing Send simply did nothing.
+
+The cause was a fail-closed gate meeting a double that had never needed the capability it
+now demands. TASK-19900.3's `56db75386` changed the durable-turn gate from
+
+```python
+if persistence is not None and persistence.db is not None and ... and not callable(durable_commit):
+    return self._block(session.id, "Durable turn acceptance is unavailable; ...")
+```
+
+to
+
+```python
+if durable_turn and not callable(durable_commit):
+    return ConsoleSubmitResult(False, False, "Durable turn acceptance is unavailable; ...")
+```
+
+Two independent changes in one hunk. The first made `persistence=None` — which every
+`_build_test_app` app has, since the factory patches `get_chachanotes_db_lazy` to `None` —
+count as a durable turn that cannot commit. The second dropped `_block()`, which was the
+only thing that put the refusal on screen. So the gate went from "refuses loudly in a
+configuration tests never hit" to "refuses silently in the configuration every mounted
+Console test hits". The commit's own report says plainly: *"No full repository sweep was
+run."*
+
+Repairing that surfaced **two more stale doubles underneath it**, both hidden by the first
+refusal firing earlier in the same function: a fake gateway whose ready resolution had no
+`resolved_destination` (mandatory since `a26cdafd8`), and a hand-rolled three-method
+persistence double with no `commit_durable_turn`. Three layers of the same defect class, and
+you only ever see the outermost one.
+
+**What to do.**
+
+1. **Trace before you read the tests.** The failure text named the assertion, not the cause.
+   Wrapping the real seams in order — button handler → `ConsolePromptQueueUIController.
+   dispatch` → `ConsoleChatController.run_prompt_chain` — printed
+   `ConsoleSubmitResult(accepted=False, visible_copy='Durable turn acceptance is unavailable;
+   the provider was not called.', provider_started=False)` on the first try. `git log -S` on
+   that copy then named the commit in seconds. Reading 11,587 lines of test file first would
+   have found nothing, because nothing in the test was wrong.
+2. **A fail-closed gate must fail *visibly*.** If a refusal returns a bare result instead of
+   going through the path that writes a system row, it is indistinguishable from a dead
+   button — for the suite *and* for a user in the degraded state the gate exists to catch.
+   When you harden a gate, check what the user sees when it fires.
+3. **Expect the double to be the stale half, and expect more than one.** After fixing the
+   first, re-run and read the *new* failure text rather than assuming you are done: each
+   repair moves the failure one gate further down.
+4. **Prefer the harness shape production already names.** `ConsoleRuntime.ensure_agent_bridge`
+   explicitly returns `None` for a `:memory:` DB ("an in-memory harness still builds
+   neither"). Attaching a *file-backed* ChaChaNotes DB fixed the durable gate but also
+   switched 26 tests onto the agent loop, because `[console] agent_runtime` defaults on and
+   the bridge keys off a real `db_path`. `:memory:` restored exactly the lost precondition
+   and nothing else. When production distinguishes a harness case, use that case.
+5. **A red test may be the only honest thing in the file.** Two of the 26 stayed red after
+   the harness was correct, and a live run of the real app confirmed why: Send really is
+   disabled for the whole of every Console run, showing a greyed-out button labelled "Queue"
+   whose tooltip says to wait. Two shipped contracts disagree (ADR-046 vs the durable-owner
+   submission block, each with its own test asserting the opposite). That is an owner
+   decision, not a test edit — filed as TASK-22000 and left red.
