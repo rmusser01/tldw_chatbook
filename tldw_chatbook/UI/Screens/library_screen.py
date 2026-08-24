@@ -2865,6 +2865,7 @@ class LibraryScreen(BaseAppScreen):
         file_notes_workspace_factory: (
             Callable[[], LibraryFileNotesWorkspace] | None
         ) = None,
+        preview_widget_factory: Callable[..., Widget] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
@@ -3195,6 +3196,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode: str = "raw"
         self._library_media_read_scroll_by_id: dict[str, tuple[int, int]] = {}
         self._library_media_progress_restored_id: str | None = None
+        # Task 21665: decoded local originals are ephemeral screen-session
+        # state. The production renderer is imported only after the capability
+        # gate passes, preserving Library's no-Pillow startup path.
+        self._library_media_preview_factory = preview_widget_factory
+        self._library_media_preview_factory_injected = (
+            preview_widget_factory is not None
+        )
+        self._library_media_preview_images: dict[str, Any] = {}
+        self._library_media_preview_status: dict[str, str] = {}
+        self._library_media_preview_hidden: set[str] = set()
+        self._library_media_preview_loading: dict[str, int] = {}
         self._library_notes_view: str = "list"
         self._library_notes_lasting_origin: str | None = None
         self._library_notes_select_mode: bool = False
@@ -13868,6 +13880,12 @@ class LibraryScreen(BaseAppScreen):
                     request_generation,
                     requested_id,
                 )
+                self._schedule_library_media_image_preview(
+                    request_generation=request_generation,
+                    canonical_id=requested_id,
+                    backing_id=resolved_service_media_id,
+                    detail=detail,
+                )
         elif request_generation is not None and not external_detail:
             self._library_media_reader_session = settle_failure(
                 self._library_media_reader_session,
@@ -13913,6 +13931,142 @@ class LibraryScreen(BaseAppScreen):
             # the identity guard below avoids a duplicate large-document parse.
             self.call_next(self._recompose_library_media_detail_if_unrendered)
         return None
+
+    def _library_media_image_preview_capable(self) -> bool:
+        """Return whether this runtime can present terminal image previews."""
+        if self._library_media_preview_factory_injected:
+            return True
+        try:
+            return not bool(self.app.is_headless)
+        except Exception:
+            return False
+
+    def _schedule_library_media_image_preview(
+        self,
+        *,
+        request_generation: int,
+        canonical_id: str,
+        backing_id: int | str,
+        detail: Mapping[str, Any],
+        force: bool = False,
+    ) -> None:
+        """Schedule an additive local-original preview without delaying text."""
+        if not self._library_media_image_preview_capable():
+            return
+        if canonical_id in self._library_media_preview_images and not force:
+            return
+        if (
+            self._library_media_preview_loading.get(canonical_id)
+            == request_generation
+        ):
+            return
+        if force:
+            self._library_media_preview_images.pop(canonical_id, None)
+            self._library_media_preview_status.pop(canonical_id, None)
+        self._library_media_preview_loading[canonical_id] = request_generation
+        self.run_worker(
+            self._load_library_media_image_preview(
+                request_generation=request_generation,
+                canonical_id=canonical_id,
+                backing_id=backing_id,
+                detail=detail,
+            ),
+            group="library_media_image_preview",
+        )
+
+    def _library_media_preview_request_is_current(
+        self, request_generation: int, canonical_id: str
+    ) -> bool:
+        """Fence preview projection to the local item that still owns Reader."""
+        session = self._library_media_reader_session
+        return (
+            not session.external_detail
+            and session.request_generation == request_generation
+            and session.loaded_id == canonical_id
+        )
+
+    async def _load_library_media_image_preview(
+        self,
+        *,
+        request_generation: int,
+        canonical_id: str,
+        backing_id: int | str,
+        detail: Mapping[str, Any],
+    ) -> None:
+        """Load and decode one eligible local original behind a stale fence."""
+        try:
+            from ...Widgets.Library.library_media_image_preview import (
+                decode_media_image,
+                image_preview_eligibility,
+            )
+
+            # Remote details are rejected before even consulting local file
+            # seams. This keeps previews strictly local and side-effect free.
+            preliminary = image_preview_eligibility(
+                detail, None, backend="local"
+            )
+            if preliminary.reason == "remote":
+                return
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            check_media_file = getattr(service, "check_media_file", None)
+            download_media_file = getattr(service, "download_media_file", None)
+            if not callable(check_media_file) or not callable(download_media_file):
+                return
+            file_check = await self._run_library_service_call(
+                check_media_file,
+                mode="local",
+                media_id=backing_id,
+                file_type="original",
+                isolate_in_worker=True,
+            )
+            eligibility = image_preview_eligibility(
+                detail,
+                file_check if isinstance(file_check, Mapping) else None,
+                backend="local",
+            )
+            if not eligibility.eligible:
+                if eligibility.reason == "unavailable" and self._library_media_preview_request_is_current(
+                    request_generation, canonical_id
+                ):
+                    self._library_media_preview_status[canonical_id] = (
+                        "Image preview unavailable — showing complete stored text"
+                    )
+                    self._sync_library_media_viewer_or_recompose()
+                return
+            receipt = await self._run_library_service_call(
+                download_media_file,
+                mode="local",
+                media_id=backing_id,
+                file_type="original",
+                isolate_in_worker=True,
+            )
+            content = receipt.get("content") if isinstance(receipt, Mapping) else None
+            image = await asyncio.to_thread(decode_media_image, content)
+            if not self._library_media_preview_request_is_current(
+                request_generation, canonical_id
+            ):
+                return
+            self._library_media_preview_images[canonical_id] = image
+            self._library_media_preview_status.pop(canonical_id, None)
+            self._sync_library_media_viewer_or_recompose()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load Library media image preview for {}.", canonical_id
+            )
+            if self._library_media_preview_request_is_current(
+                request_generation, canonical_id
+            ):
+                self._library_media_preview_images.pop(canonical_id, None)
+                self._library_media_preview_status[canonical_id] = (
+                    "Image preview failed — showing complete stored text"
+                )
+                self._sync_library_media_viewer_or_recompose()
+        finally:
+            if (
+                self._library_media_preview_loading.get(canonical_id)
+                == request_generation
+            ):
+                self._library_media_preview_loading.pop(canonical_id, None)
 
     async def _fetch_library_media_reading_progress(
         self, media_id: str
@@ -32656,6 +32810,13 @@ class LibraryScreen(BaseAppScreen):
         if detail is not None:
             self._library_media_composed_detail = detail
         arrival_note = self._pop_library_media_arrival_note()
+        (
+            preview_widget,
+            preview_status,
+            preview_hidden,
+            preview_available,
+            preview_source,
+        ) = self._library_media_image_preview_projection()
         viewer = LibraryMediaViewer(
             self._build_library_media_viewer_display_state(
                 detail, arrival_note=arrival_note
@@ -32681,10 +32842,59 @@ class LibraryScreen(BaseAppScreen):
             more_open=self._library_media_reader_session.more_open,
             external_detail=self._library_media_reader_session.external_detail,
             console_representation=self._library_media_console_representation(),
+            image_preview=preview_widget,
+            image_preview_status=preview_status,
+            image_preview_hidden=preview_hidden,
+            image_preview_available=preview_available,
+            image_preview_source=preview_source,
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
         return viewer
+
+    def _library_media_image_preview_projection(
+        self,
+    ) -> tuple[Widget | None, str, bool, bool, Any]:
+        """Build the current item's ephemeral preview projection."""
+        session = self._library_media_reader_session
+        canonical_id = session.loaded_id or ""
+        if (
+            not canonical_id
+            or session.external_detail
+            or not self._library_media_image_preview_capable()
+        ):
+            return None, "", False, False, None
+        image = self._library_media_preview_images.get(canonical_id)
+        status = self._library_media_preview_status.get(canonical_id, "")
+        hidden = canonical_id in self._library_media_preview_hidden
+        if image is None:
+            return None, status, False, False, None
+        if hidden:
+            return None, status, True, True, image
+        try:
+            factory = self._library_media_preview_factory
+            if factory is None:
+                from ...Widgets.Library.library_media_image_preview import (
+                    build_media_image_widget,
+                )
+
+                factory = build_media_image_widget
+            config = getattr(self.app_instance, "app_config", {})
+            widget = factory(
+                image,
+                app_config=config if isinstance(config, Mapping) else {},
+                box_cols=max(20, min(72, int(self.size.width or 72) - 4)),
+                box_lines=18,
+            )
+            return widget, status, False, True, image
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to render Library media image preview for {}.", canonical_id
+            )
+            self._library_media_preview_images.pop(canonical_id, None)
+            failure = "Image preview failed — showing complete stored text"
+            self._library_media_preview_status[canonical_id] = failure
+            return None, failure, False, False, None
 
     def _build_library_media_viewer_display_state(
         self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
@@ -32733,6 +32943,13 @@ class LibraryScreen(BaseAppScreen):
         highlights = tuple(
             build_library_media_highlight_rows(self._library_media_highlights)
         )
+        (
+            preview_widget,
+            preview_status,
+            preview_hidden,
+            preview_available,
+            preview_source,
+        ) = self._library_media_image_preview_projection()
         unchanged = (
             viewer.viewer == viewer_state
             and viewer.editing == self._library_media_editing
@@ -32757,6 +32974,10 @@ class LibraryScreen(BaseAppScreen):
             and viewer.external_detail
             == self._library_media_reader_session.external_detail
             and viewer.console_representation == self._library_media_console_representation()
+            and viewer.image_preview_source is preview_source
+            and viewer.image_preview_status == preview_status
+            and viewer.image_preview_hidden == preview_hidden
+            and viewer.image_preview_available == preview_available
         )
         if not unchanged:
             viewer.viewer = viewer_state
@@ -32779,6 +33000,11 @@ class LibraryScreen(BaseAppScreen):
             viewer.more_open = self._library_media_reader_session.more_open
             viewer.external_detail = self._library_media_reader_session.external_detail
             viewer.console_representation = self._library_media_console_representation()
+            viewer.image_preview = preview_widget
+            viewer.image_preview_status = preview_status
+            viewer.image_preview_hidden = preview_hidden
+            viewer.image_preview_available = preview_available
+            viewer.image_preview_source = preview_source
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
@@ -32813,6 +33039,45 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         session = self._library_media_reader_session
         self._library_media_reader_session = set_more_open(session, not session.more_open)
+        self._sync_library_media_viewer_or_recompose()
+
+    @on(Button.Pressed, "#library-media-image-preview-toggle")
+    def handle_library_media_image_preview_toggle(
+        self, event: Button.Pressed
+    ) -> None:
+        """Hide or reveal the loaded item's cached preview for this session."""
+        event.stop()
+        canonical_id = self._library_media_reader_session.loaded_id
+        if not canonical_id or canonical_id not in self._library_media_preview_images:
+            return
+        if canonical_id in self._library_media_preview_hidden:
+            self._library_media_preview_hidden.remove(canonical_id)
+        else:
+            self._library_media_preview_hidden.add(canonical_id)
+        self._sync_library_media_viewer_or_recompose()
+
+    @on(Button.Pressed, "#library-media-image-preview-retry")
+    def handle_library_media_image_preview_retry(
+        self, event: Button.Pressed
+    ) -> None:
+        """Retry only the loaded item's preview; never reload its detail."""
+        event.stop()
+        session = self._library_media_reader_session
+        detail = self._library_media_detail
+        if (
+            session.external_detail
+            or session.loaded_id is None
+            or session.loaded_backing_id is None
+            or not isinstance(detail, Mapping)
+        ):
+            return
+        self._schedule_library_media_image_preview(
+            request_generation=session.request_generation,
+            canonical_id=session.loaded_id,
+            backing_id=session.loaded_backing_id,
+            detail=detail,
+            force=True,
+        )
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, ".library-media-reader-mode")

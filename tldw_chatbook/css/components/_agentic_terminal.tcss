@@ -2750,6 +2750,32 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
 }
 
+/* Task 21665: an eligible local original is an additive reading aid. Keep it
+   bounded inside the Reader's existing scroll surface; the complete stored
+   text remains directly below it and owns its own established scroll region. */
+#library-media-image-preview {
+    width: 100%;
+    height: auto;
+    max-height: 18;
+    overflow: hidden;
+    align: center middle;
+    border: solid $ds-grid-line;
+    margin: 0 0 1 0;
+}
+
+#library-media-image-preview-status {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+#library-media-image-preview-toggle,
+#library-media-image-preview-retry {
+    width: auto;
+    margin: 0 0 1 0;
+}
+
 #library-media-viewer-content {
     /* Bounded so short content stays compact and long content scrolls inside
        this region; height:1fr here ballooned the pane and split the sections.

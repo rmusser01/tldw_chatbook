@@ -8,6 +8,7 @@ from rich.color import Color
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_media_viewer_state import (
@@ -85,6 +86,11 @@ class LibraryMediaViewer(Vertical):
         more_open: bool = False,
         external_detail: bool = False,
         console_representation: str = "Complete stored text excerpt",
+        image_preview: Widget | None = None,
+        image_preview_status: str = "",
+        image_preview_hidden: bool = False,
+        image_preview_available: bool = False,
+        image_preview_source: Any = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -103,6 +109,11 @@ class LibraryMediaViewer(Vertical):
         self.more_open = more_open
         self.external_detail = external_detail
         self.console_representation = console_representation
+        self.image_preview = image_preview
+        self.image_preview_status = image_preview_status
+        self.image_preview_hidden = image_preview_hidden
+        self.image_preview_available = image_preview_available
+        self.image_preview_source = image_preview_source
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -260,6 +271,27 @@ class LibraryMediaViewer(Vertical):
         if self.external_detail or self.reader_mode == "read":
             with Vertical(id="library-media-reader-mode-read"):
                 yield Static("Read", classes="destination-section")
+                if self.image_preview is not None and not self.image_preview_hidden:
+                    with Vertical(id="library-media-image-preview"):
+                        yield self.image_preview
+                if self.image_preview_status:
+                    yield Static(
+                        self.image_preview_status,
+                        id="library-media-image-preview-status",
+                        markup=False,
+                    )
+                if self.image_preview_available:
+                    yield Button(
+                        "Show preview" if self.image_preview_hidden else "Hide preview",
+                        id="library-media-image-preview-toggle",
+                        compact=True,
+                    )
+                elif self.image_preview_status:
+                    yield Button(
+                        "Retry preview",
+                        id="library-media-image-preview-retry",
+                        compact=True,
+                    )
                 yield from self._compose_content_mode_toggle()
                 matches = find_content_matches(self.viewer.content, self.content_query)
                 yield LibraryMediaContentSearchControls(
