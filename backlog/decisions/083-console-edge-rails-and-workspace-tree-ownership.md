@@ -84,8 +84,11 @@ rapid double-click, using Textual's native click chain, or Enter activates the
 selected workspace or conversation. Space and disclosure-glyph gestures toggle
 workspace disclosure; Left and Right retain branch navigation. The node's stable
 key at press time owns the entire gesture, so rail reconciliation cannot retarget
-it. Full-label tooltips exist only for actually truncated rows and are cleared or
-recomputed after reflow.
+it. Both clicks in an activation chain must resolve that same still-selected
+key; a coordinate that moves over another row cancels activation. Full-label
+tooltips exist only for actually truncated rows and are cleared or recomputed
+after reflow. A focused Tree context row plus contextual F1 help exposes the
+complete selected label and activation grammar without pointer hover.
 
 Rail disclosure layout is global by default. Console Behavior offers an
 explicit per-workspace mode; existing workspace-scoped records remain stored and
@@ -96,12 +99,22 @@ search disclosure, Tree selection, or tooltip state and never delete the
 inactive scope's records. Responsive compact-collapse remains a rendering
 override rather than a preference mutation.
 
+The shared record uses the collision-safe reserved key
+`console_rail_state:global:shared-layout-v1`; it does not reuse the current
+Default/unscoped `console_rail_state:global:layout` key. A workspace without a
+per-workspace record seeds once from the effective shared layout, or product
+defaults when none exists. Existing Default, named-workspace, legacy, and
+shared records remain lossless and independent.
+
 Inspect pins a compact `What happens if I send now?` authority summary above its
 outer scroll owner. One existing atomic display snapshot supplies workspace and
 conversation identity, next-send scope, run state, staged-source count, and
-pending approvals. Lower groups do not repeat the same facts. Empty Tools,
-Approvals, and Artifacts groups live under one More boundary and promote into
-the ordinary visible sequence whenever they become actionable or nonzero.
+pending-approval state/count in one heading plus five single-line rows. Lower
+groups do not repeat the same facts. Empty Tools, Approvals, and Artifacts groups
+live under one More boundary and promote in fixed Tools/Approvals/Artifacts order
+whenever actionable or nonzero. More defaults collapsed, follows the selected
+layout scope, supports click/Enter/Space plus Left/Right, and owns deterministic
+focus recovery when a focused group demotes.
 
 This amendment changes the earlier clause that preserved the existing
 per-workspace rail-layout preference behavior and supersedes the original Tree

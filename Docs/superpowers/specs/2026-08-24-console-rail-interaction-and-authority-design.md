@@ -67,6 +67,10 @@ Pointer behavior is:
 - A rapid double-click on a selected workspace or conversation activates it.
 - Textual's native multi-click chain is authoritative; the Console does not own
   a timer or define a second double-click interval.
+- Both clicks in an activating chain must resolve the same stable node key, and
+  that key must still be the selected key when the second click arrives. If
+  reflow moves a different row under the same screen coordinate, the chain is
+  canceled without activating either row.
 
 Keyboard behavior is:
 
@@ -94,6 +98,12 @@ actually truncated. Short labels such as `Research Lab` do not produce a
 tooltip. Any tooltip is cleared or recomputed after Tree or outer-rail reflow,
 and it must not remain associated with a stale hover line.
 
+While the Tree owns focus, its compact context row reads
+`Selected: <full label> · Enter open` and follows the selected stable key. The
+row may ellipsize visually to remain one physical row, but contextual F1 help
+must expose the complete literal label and the single-click, double-click,
+Enter, Space, Left, and Right behavior without requiring a pointer tooltip.
+
 ## Rail layout scope
 
 ### Default global layout
@@ -116,9 +126,18 @@ overrides remain rendering rules and do not rewrite either preference scope.
 Existing per-workspace layout records remain intact. Opting into Per workspace
 therefore restores the user's prior layouts rather than starting over.
 
-When Global mode has no saved global layout, the currently active workspace's
-effective saved layout seeds the global record once. If neither exists, product
-defaults apply. Switching scope never deletes the inactive scope's records.
+Shared Global state uses the reserved internal scope
+`console_rail_state:global:shared-layout-v1`. It does not reuse
+`console_rail_state:global:layout`, which may already represent the built-in
+Default/unscoped workspace under the current key contract.
+
+When Global mode has no shared-layout record, the currently active workspace's
+effective saved layout seeds it once. If neither exists, product defaults apply.
+When Per workspace mode enters a workspace with no workspace record, the
+current effective Global layout seeds that workspace once; if no shared layout
+exists, product defaults apply. Existing Default, named-workspace, legacy
+`:global`, and shared-layout records are adopted losslessly and never overwrite
+one another. Switching scope never deletes the inactive scope's records.
 
 No database or schema migration is required. The existing Console preference
 store remains authoritative; only key selection and the additive scope setting
@@ -132,14 +151,17 @@ change.
 rail heading/project control and the outer scrolling detail body. It remains
 visible while the user scrolls Inspect.
 
-It answers five questions from one atomic display snapshot:
+It answers five questions from one atomic display snapshot in a fixed six-row
+budget: one heading plus five single-line facts. Values ellipsize rather than
+wrap, and the existing detailed/focus help path exposes complete long values.
 
 1. **Where?** `Workspace › Conversation`, including Default or temporary state.
 2. **Scope?** What the next send will use, including any one-shot prefill or
    narrowed retrieval scope.
 3. **Run?** Ready, running, waiting for approval, blocked, or recovery required.
 4. **Sources?** Count of staged sources, including an explicit none state.
-5. **Approvals?** Pending count, promoted visually when action is required.
+5. **Approvals?** Pending count and whether the run is waiting for approval,
+   promoted visually when action is required.
 
 The summary reuses existing Console display state. It adds no database read,
 provider call, secondary cache, or independent reactive owner. A workspace or
@@ -157,8 +179,19 @@ Tools, Approvals, and Artifacts follow conditional disclosure:
   one `More` disclosure boundary.
 - When nonzero, pending, blocked, available, or otherwise actionable, the
   affected group promotes to the ordinary visible Inspect sequence.
+- Promoted groups use the fixed order Tools, Approvals, Artifacts immediately
+  after Source Readiness. More follows them and contains the remaining empty
+  groups in that same order.
+- More is collapsed by default. Click, Enter, or Space on its disclosure
+  control toggles it; Left collapses and Right expands it while focused.
+- More's open state is a direct rail-disclosure preference and follows the
+  selected Global or Per workspace layout scope.
 - Promotion does not move keyboard focus to the group automatically.
 - Collapsing More does not hide an actionable group.
+- If a focused group demotes while More is open, focus stays on the same
+  descendant after it moves. If More is closed, focus moves to More's
+  disclosure control. No demotion moves focus into the transcript or another
+  Inspect group.
 
 Source Readiness remains visible because a zero-source state changes the
 meaning of the next send. Detailed Run and Selected Conversation rows remain
@@ -187,11 +220,14 @@ stylesheet stack. Tests must cover:
 - no workspace or conversation activation after single-click;
 - collapsed workspace selection and expansion;
 - double-click and Enter activation for workspace and conversation rows;
+- cancellation when two clicks at the same coordinate resolve different stable
+  keys after reflow;
 - exact pressed-node identity across outer-rail reflow;
 - disclosure-glyph, Space, Left, and Right behavior;
 - overflow and non-overflow Tree geometry;
 - tooltips absent for complete labels and correct for truncated labels;
 - tooltip clearing/recalculation after reflow.
+- selected-row context copy and contextual F1 help available without a mouse.
 
 ### Layout-scope coverage
 
@@ -200,7 +236,9 @@ Tests must prove:
 - Global is the default and preserves one disclosure layout across workspace
   switches.
 - Per-workspace is opt-in and restores distinct existing records.
-- first-use global seeding is deterministic and one-time;
+- the reserved shared-layout key cannot collide with existing Default,
+  unscoped, named-workspace, or legacy records;
+- first-use Global and missing-workspace seeding are deterministic and one-time;
 - scope switches do not delete inactive records;
 - compact responsive overrides do not mutate saved layouts;
 - transient scroll, focus, search, and selection state remain unpersisted.
@@ -214,9 +252,16 @@ Tests must prove:
 - repeated lower rows are absent;
 - empty Tools/Approvals/Artifacts render under More;
 - each group promotes when actionable and demotes when cleared;
-- keyboard order remains deterministic after promotion/demotion;
+- More defaults, pointer/keyboard disclosure, scoped persistence, fixed group
+  order, and focus fallback are deterministic after promotion/demotion;
+- the pinned summary stays exactly six rows with long workspace, conversation,
+  and scope values;
 - narrow and wide production geometry contains the pinned summary and both
   rail edges without clipping.
+
+The Console user guide must replace its immediate label-click/Enter wording
+with the selected interaction grammar and document Global versus Per workspace
+layout scope, focused-row/F1 label help, and the pinned Inspect summary.
 
 Final UAT repeats the interaction paths in iTerm2 and Windows Terminal using
 equivalent reported rows and columns. Physical pixels are not the layout oracle.
