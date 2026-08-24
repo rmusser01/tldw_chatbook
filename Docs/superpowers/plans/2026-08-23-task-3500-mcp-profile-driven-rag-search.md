@@ -479,7 +479,7 @@ Keep the existing formatter and `[{'error': ...}]` exception boundary. Update th
 
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/simplified/test_search_service.py Tests/MCP/test_rag_search_tool.py -q
-PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_ingestion_indexing.py -q -k shared_rag_service
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_ingestion_indexing.py -q -k SharedRagService
 ```
 
 Expected: all selected tests PASS. The plain-mode test proves no model/runtime construction; the real MediaDatabase keyword tests prove the fallback/override path.
