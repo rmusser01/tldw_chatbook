@@ -4729,6 +4729,21 @@ def _prepare_manifest_correction(campaign: Path) -> Path:
     )
 
 
+def _prebuild_manifest_correction(campaign: Path) -> Path:
+    attempt = campaign / "attempts/attempt-0001"
+    correction = attempt / "corrections/correction-001"
+    correction.mkdir(parents=True)
+    for name in REVIEWED_ARTIFACT_NAMES:
+        shutil.copy2(attempt / name, correction / name)
+    manifest_path = correction / "real-provider-three-turn.manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["implementation_base_revision"] = profile.IMPLEMENTATION_BASE_SHA
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return correction
+
+
 def test_implementation_base_revision_resolves_only_the_fixed_ref(
     tmp_path: Path,
 ) -> None:
@@ -4809,6 +4824,49 @@ def test_manifest_correction_resolves_fixed_ref_before_creating_stage(
         ]
     ]
     assert not (attempt / "corrections").exists()
+
+
+@pytest.mark.parametrize(
+    "code",
+    (
+        "implementation_base_revision_failed",
+        "implementation_base_revision_mismatch",
+    ),
+)
+def test_correction_approval_rejects_prebuilt_root_without_fixed_ref_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+) -> None:
+    campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    correction = _prebuild_manifest_correction(campaign)
+    receipt = _write_review_receipt(
+        correction,
+        profile.canonical_artifact_digest(correction),
+        filename="review-003.json",
+    )
+    observed: list[Path] = []
+
+    def reject_ref(repository_root: Path) -> str:
+        observed.append(repository_root)
+        raise RuntimeError(code)
+
+    monkeypatch.setattr(profile, "resolve_implementation_base_revision", reject_ref)
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert observed == [Path(profile.__file__).resolve().parents[2]]
+    marker = (
+        attempt
+        / "reviews/.registered/corrections/correction-001/reviews"
+        / f"review-003.json--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    )
+    assert not marker.exists()
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review", "changes_required"]
 
 
 def test_reopen_review_registers_later_rejection_and_correction_identity(
@@ -5264,6 +5322,109 @@ def test_manifest_correction_post_rename_failure_retains_only_complete_root(
     profile._validate_correction_contents(attempt, correction)
 
 
+def test_post_rename_correction_republishes_parent_before_approval_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    corrections = attempt / "corrections"
+    correction = corrections / "correction-001"
+    real_directory_fsync = profile._fsync_directory
+
+    def fail_prepare_parent(path: Path) -> None:
+        if path == corrections and correction.is_dir():
+            raise OSError("injected post-rename correction parent fsync failure")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", fail_prepare_parent)
+    with pytest.raises(
+        OSError, match="injected post-rename correction parent fsync failure"
+    ):
+        _prepare_manifest_correction(campaign)
+
+    assert correction.is_dir()
+    assert not (corrections / ".correction-001-stage").exists()
+    receipt = _write_review_receipt(
+        correction,
+        profile.canonical_artifact_digest(correction),
+        filename="review-003.json",
+    )
+    monkeypatch.setattr(
+        profile,
+        "resolve_implementation_base_revision",
+        lambda repository_root: (
+            profile.IMPLEMENTATION_BASE_SHA
+            if repository_root == Path(profile.__file__).resolve().parents[2]
+            else pytest.fail("wrong implementation-base authority root")
+        ),
+    )
+    marker = (
+        attempt
+        / "reviews/.registered/corrections/correction-001/reviews"
+        / f"review-003.json--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    )
+    first_events: list[str] = []
+
+    def fail_registration_parent(path: Path) -> None:
+        if path == correction:
+            first_events.append("correction")
+        elif path == corrections:
+            first_events.append("corrections")
+            raise OSError("injected retained correction parent fsync failure")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", fail_registration_parent)
+    with pytest.raises(RuntimeError, match="^review_receipt_durability_failed$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert first_events == ["correction", "corrections"]
+    assert not marker.exists()
+    assert approved.is_file()
+    assert correction.is_dir()
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review", "changes_required"]
+
+    retry_events: list[str] = []
+    real_file_fsync = profile._fsync_regular_file
+
+    def record_file(path: Path) -> None:
+        if path == marker:
+            retry_events.append("marker")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == correction:
+            retry_events.append("correction")
+        elif path == corrections:
+            retry_events.append("corrections")
+        elif path == marker.parent:
+            retry_events.append("marker-directory")
+        real_directory_fsync(path)
+
+    real_complete = profile.complete_attempt_measurement
+
+    def record_complete(*args, **kwargs):
+        retry_events.append("lineage")
+        return real_complete(*args, **kwargs)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
+    monkeypatch.setattr(profile, "complete_attempt_measurement", record_complete)
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == "approved"
+
+    assert retry_events == [
+        "correction",
+        "corrections",
+        "marker",
+        "marker-directory",
+        "lineage",
+    ]
+
+
 def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
     tmp_path: Path,
 ) -> None:
@@ -5501,6 +5662,7 @@ def test_correction_receipt_and_registry_namespaces_fsync_every_parent_link(
     watched = [
         correction / "reviews",
         correction,
+        correction.parent,
         registry,
         correction_registry,
         identity_registry,

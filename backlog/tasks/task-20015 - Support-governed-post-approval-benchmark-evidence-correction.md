@@ -62,7 +62,10 @@ confined path determines the correction root.
 
 The provider-free `prepare-correction` action resolves and verifies the fixed
 implementation-base ref itself before it can create a correction namespace;
-callers cannot supply an unverified revision. Reopen and correction-approval
+callers cannot supply an unverified revision. Correction approval and promotion
+independently resolve that fixed ref again under the campaign lock and validate
+the confined correction manifest against the resolved revision, so a manually
+prebuilt root cannot bypass the authority check. Reopen and correction-approval
 retries now reconcile the durable receipt marker with a missing append-only
 lineage transition after either a pre-commit or post-commit failure, while
 remaining idempotent after the transition commits. A visible marker is not by
@@ -78,7 +81,9 @@ after the atomic rename retains one complete correction root and no stage.
 Nested receipt-registry namespaces are created one component at a time without
 following symlinks, and every new parent link is fsynced from the durable
 registry root. Correction receipt publication also fsyncs its `reviews` child
-link through the correction root before publishing the registry identity.
+link through the correction root and then fsyncs the parent `corrections/`
+namespace before publishing the registry identity. This makes a complete root
+retained after a post-rename parent-fsync failure safely retryable.
 Promotion reuses the existing durable atomic no-replace publisher with the
 source root derived solely from the approving receipt location. The pytest
 cleanup fixture recursively unseals nested published/correction directories.
@@ -89,8 +94,10 @@ Verification completed for the implementation:
 - review-finding GREEN shard: 12 passed;
 - marker-durability RED shard: 4 expected failures;
 - marker-durability GREEN/reconciliation shard: 8 passed;
-- correction/review regression shard: 91 passed;
-- complete performance harness: 646 passed, 2 dependency warnings in 124.01s;
+- correction-authority/durability RED shard: 4 expected failures;
+- correction-authority/durability GREEN shard: 4 passed;
+- correction/review regression shard: 94 passed;
+- complete performance harness: 649 passed, 2 dependency warnings in 77.27s;
 - Ruff, `py_compile`, and `git diff --check`: passed.
 
 Modified files are the benchmark runner, its focused harness tests, and this

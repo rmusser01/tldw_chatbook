@@ -666,6 +666,7 @@ def _register_receipt_durably(
         location = _validate_receipt_location(attempt_root, receipt_path)
         if location.correction_id is not None:
             _fsync_directory(location.artifact_root)
+            _fsync_directory(location.artifact_root.parent)
     except OSError as exc:
         raise RuntimeError("review_receipt_durability_failed") from exc
     if _sha256_review_file(receipt_path) != receipt_sha256:
@@ -776,7 +777,12 @@ def reopen_review_receipt(
     )
 
 
-def _validate_correction_contents(attempt_root: Path, correction_root: Path) -> None:
+def _validate_correction_contents(
+    attempt_root: Path,
+    correction_root: Path,
+    *,
+    implementation_base_revision: str = IMPLEMENTATION_BASE_SHA,
+) -> None:
     """Require a correction to preserve four files and add only the base pin."""
     original = canonical_artifact_hashes(attempt_root)
     corrected = canonical_artifact_hashes(correction_root)
@@ -795,7 +801,7 @@ def _validate_correction_contents(attempt_root: Path, correction_root: Path) -> 
     if not isinstance(before, dict) or not isinstance(after, dict):
         raise RuntimeError("review_correction_manifest_invalid")
     expected = dict(before)
-    expected["implementation_base_revision"] = IMPLEMENTATION_BASE_SHA
+    expected["implementation_base_revision"] = implementation_base_revision
     if after != expected:
         raise RuntimeError("review_correction_manifest_invalid")
 
@@ -929,7 +935,14 @@ def _register_correction_review_locked(
     corrected_digest = canonical_artifact_digest(location.artifact_root)
     if corrected_digest == original_digest:
         raise RuntimeError("review_artifact_digest_not_changed")
-    _validate_correction_contents(attempt_root, location.artifact_root)
+    implementation_base_revision = resolve_implementation_base_revision(
+        Path(__file__).resolve().parents[2]
+    )
+    _validate_correction_contents(
+        attempt_root,
+        location.artifact_root,
+        implementation_base_revision=implementation_base_revision,
+    )
     if (
         receipt["attempt_id"] != attempt_id
         or receipt["verdict"] != current["verdict"]
