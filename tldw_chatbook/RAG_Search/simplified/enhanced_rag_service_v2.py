@@ -327,7 +327,12 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         # discloses when a result WAS actually reranked; this
         # `reranking_skipped` tag is the counterpart that discloses when it
         # was attempted and skipped.
-        should_rerank = rerank if rerank is not None else self.enable_reranking
+        if rerank is not None:
+            should_rerank = rerank
+        elif experiment_profile is not None:
+            should_rerank = experiment_profile.reranking_config is not None
+        else:
+            should_rerank = self.enable_reranking
         reranked = False
         if should_rerank and results:
             active_reranker = None
@@ -357,7 +362,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 try:
                     outcome = await active_reranker.rerank(query, results)
                     results = outcome.results
-                    reranked = True
+                    reranked = outcome.failed < outcome.total
 
                     rerank_time = time.time() - rerank_start
                     log_histogram("rag_reranking_time", rerank_time)
