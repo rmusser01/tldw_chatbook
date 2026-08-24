@@ -35,10 +35,13 @@ this would silently measure the conftest stub, not this task's fix.
 from __future__ import annotations
 
 import pytest
+import tomllib
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook import config as config_module
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
@@ -302,3 +305,76 @@ async def test_mount_schedules_no_persist_worker_when_nothing_changed(monkeypatc
             "on_mount must not schedule a persist worker when construction "
             "already loaded and primed this exact layout"
         )
+
+
+async def test_preferred_layout_survives_an_isolated_fresh_restart(
+    monkeypatch, tmp_path
+) -> None:
+    """Only preferred side-pane state crosses a real config restart."""
+    profile = tmp_path / "restart-profile"
+    home = profile / "home"
+    config_home = profile / "config-home"
+    config_path = config_home / "tldw_cli" / "config.toml"
+    home.mkdir(parents=True)
+    config_path.parent.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    for name in (
+        "_CONFIG_CACHE",
+        "_CONFIG_CACHE_SOURCE",
+        "_SETTINGS_CACHE",
+        "_SETTINGS_CACHE_SOURCE",
+    ):
+        monkeypatch.setattr(config_module, name, None)
+    monkeypatch.setattr(
+        _LOAD_REGION_LAYOUT_TARGET, region_layout_store.load_region_layout
+    )
+
+    desired = RegionLayout(
+        collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS})
+    )
+    assert save_settings_to_cli_config(
+        {
+            "watchlists": {
+                "collapsed_regions": [
+                    "content",
+                    Region.LEFT_RAIL.value,
+                    Region.ITEMS.value,
+                ],
+                "layout_version": 1,
+            }
+        }
+    )
+
+    first = WatchlistsCollectionsScreen(_build_test_app())
+    assert first.region_layout == desired
+    first._article_focus_active = True
+    first._effective_region_layout = RegionLayout(
+        collapsed=frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
+        )
+    )
+    first._responsive_priority_target = Region.RIGHT_RAIL
+
+    config_module._invalidate_config_caches()
+    restarted = WatchlistsCollectionsScreen(_build_test_app())
+    assert restarted.region_layout == desired
+    assert restarted._effective_region_layout == desired
+    assert restarted._article_focus_active is False
+    assert restarted._responsive_priority_target is None
+
+    persisted = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["watchlists"]["collapsed_regions"] == [
+        Region.LEFT_RAIL.value,
+        Region.ITEMS.value,
+    ]
+    assert persisted["watchlists"]["layout_version"] == (
+        region_layout_store.LAYOUT_VERSION
+    )
+    assert "content" not in persisted["watchlists"]["collapsed_regions"]
+
+    config_module._invalidate_config_caches()
+    restarted_again = WatchlistsCollectionsScreen(_build_test_app())
+    assert restarted_again.region_layout == desired
+    assert Region.CONTENT not in restarted_again.region_layout.collapsed

@@ -104,6 +104,8 @@ class ProductionCssArticleListHarness(ArticleListHarness):
 
     def compose(self) -> ComposeResult:
         pane = ArticleListPane(id="watchlists-items-pane")
+        pane.styles.height = "1fr"
+        pane.styles.min_height = 0
         pane.items = [
             _item(index, published_offset_hours=index * 12 + 1)
             for index in range(50)
@@ -440,10 +442,15 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
                 "".join(segment.text for segment in strips[y])[
                     region.x : region.x + region.width
                 ]
-                for y in range(region.y, region.y + region.height)
+                for y in range(
+                    max(0, region.y), min(len(strips), region.y + region.height)
+                )
             )
 
-        assert table.region.height <= 40
+        # Read now owns the full-height Feed Items column in the permanent
+        # horizontal reader canvas. The list itself must scroll while its
+        # toolbar, legend, and pager remain fixed; its absolute height is a
+        # function of the terminal rather than a legacy stacked-pane cap.
         assert table.max_scroll_y > 0
         assert "Refresh" in composited_text(toolbar)
         for label in ("Previous", "Page 1", "Next"):

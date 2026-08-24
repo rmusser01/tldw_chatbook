@@ -533,10 +533,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("r", "refresh_all", "Refresh all"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
-        ("z", "toggle_region", "Collapse"),
-        ("Z", "article_focus", "Article Focus"),
-        ("left_square_bracket", "toggle_left_rail", "Left rail"),
-        ("right_square_bracket", "toggle_right_rail", "Right rail"),
+        ("z", "toggle_region", "Toggle focused side pane"),
+        ("Z", "article_focus", "Article Focus (Read only)"),
+        ("left_square_bracket", "toggle_left_rail", "Navigation"),
+        ("right_square_bracket", "toggle_right_rail", "Inspector"),
     ]
 
     active_section = reactive("items")
@@ -1333,6 +1333,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         "you have zero watchlists" -- two empty roots and no message, since
         the tree is its own only error surface.
         """
+        if self.active_section == "items" and self.runtime_backend != "local":
+            self._tree_watchlists = []
+            self._tree_counts = {}
+            self._tree_source_counts = {}
+            self._breadcrumb_labels = self._resolve_breadcrumb_labels(
+                self.selected_scope
+            )
+            self._apply_tree_data_to_live_surfaces()
+            return
+
         notify = getattr(self.app_instance, "notify", None)
         try:
             service = self._watchlist_bundle_service()
@@ -2264,13 +2274,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         elif section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
-            # Audited for task-15778 and deliberately left as plain
-            # assignments: `ArticleListPane` has NO `recompose=True`
-            # reactives at all (its watchers patch the mounted list in
-            # place), so this branch never paid the pre-mount seeding
-            # recompose and there is nothing to convert.
+            # `items` is seeded without its async watcher: on a freshly
+            # constructed pane there is no mounted list to patch, and
+            # invoking that watcher here only creates an un-awaited
+            # coroutine. Compose reads the seeded value normally.
             items_pane = ArticleListPane(id="watchlists-items-pane")
-            items_pane.items = self._loaded_items
+            # The surrounding detail pane also owns its one-line title.
+            # Consume only the remaining height so the fixed legend/pager
+            # stay inside the permanent Feed Items column at every terminal
+            # height; `100%` here would place that chrome below the viewport.
+            items_pane.styles.height = "1fr"
+            items_pane.styles.min_height = 0
+            items_pane.set_reactive(ArticleListPane.items, self._loaded_items)
             # Seed the filter, the search box and the selection too
             # (whole-branch review, Important) -- the sibling Sources/Runs/
             # Notifications panes above and below already re-seed their
@@ -2409,7 +2424,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_inflight_page_load = None
         self._push_items_pager_state()
 
-    def _build_content_pane(self) -> ContentPane:
+    def _build_content_pane(self) -> Widget:
         """Build the CONTENT-region content: the reader for the last
         selected item (Task 4).
 
@@ -2431,6 +2446,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         generic "Content" title above whatever this returns.
 
         """
+        if self.active_section == "items" and self.runtime_backend != "local":
+            return Vertical(
+                Static(
+                    "Read and its permanent Reader are local-only. "
+                    "Switch to Local to browse items stored on this device.",
+                    id="watchlists-read-local-only-copy",
+                ),
+                Button(
+                    "Switch to Local",
+                    id="watchlists-switch-local",
+                    tooltip="Switch to the Local backend and load feed items.",
+                ),
+                id="watchlists-read-local-only",
+                classes="destination-workbench-pane",
+            )
+
         pane = ContentPane(id="watchlists-content-pane")
         # `set_reactive`: `item` is the pane's one `recompose=True` reactive
         # and has no watcher, so a plain assignment here bought nothing but
@@ -2724,6 +2755,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     #: Artifacts joins it -- briefings are written to, and read from, this
     #: device's `SubscriptionsDB` whatever the selector says.
     _LOCAL_ONLY_SECTIONS: dict[str, dict[str, str]] = {
+        "items": {
+            "label": "Read: local",
+            "tooltip": (
+                "Read and its permanent Reader use items stored on this device. "
+                "Switch to Local to load them."
+            ),
+        },
         "notifications": {
             "label": "Inbox: local",
             "tooltip": "The notifications inbox is local to this device.",
@@ -4022,7 +4060,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self._refresh_centre_header_for_scope()
-        read_is_active = self.active_section == "items"
+        read_is_active = (
+            self.active_section == "items" and self.runtime_backend == "local"
+        )
         self._reset_items_paging_for_context(loading=read_is_active)
         if read_is_active:
             # Own group, not the default one: `exclusive=True` in the
@@ -4082,6 +4122,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     _SURFACE_RAIL = "rail"
     _SURFACE_HEADER = "header"
     _SURFACE_INSPECTOR = "inspector"
+    _SURFACE_READER = "reader"
     #: task-15461. The section swap: the ITEMS region's pane (routed by
     #: `active_section`), the centre header (which carries the tab strip) and
     #: whichever centre regions the new tab hides or shows. Queued here rather
@@ -4128,7 +4169,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Args:
             surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_HEADER`,
-                `_SURFACE_SECTION` (each an unconditional rebuild of that
+                `_SURFACE_READER`, `_SURFACE_SECTION` (each an unconditional rebuild of that
                 surface) or `_SURFACE_INSPECTOR` (conditional -- the right
                 rail is rebuilt only when the Console-follow row no longer
                 matches the adapter; see `_resolve_console_follow_drift`).
@@ -4197,6 +4238,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     await self._rebuild_surface(
                         workbench.refresh_header_content(),
                         "the centre header",
+                    )
+                if self._SURFACE_READER in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_region_content(Region.CONTENT),
+                        "the Reader",
                     )
                 if self._SURFACE_INSPECTOR in surfaces:
                     await self._rebuild_surface(
@@ -4594,6 +4640,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         run cancellation, ...).
         """
         if self.active_section == "items":
+            if self.runtime_backend != "local":
+                return
             # Own group (task-2513), as in `watch_tree_scope`:
             # `exclusive=True` in the default group would cancel every
             # in-flight default-group worker (`_create_source`, ...).
@@ -4642,9 +4690,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         read_is_active = self.active_section == "items"
-        self._reset_items_paging_for_context(loading=read_is_active)
+        local_read_is_active = read_is_active and self.runtime_backend == "local"
+        self._reset_items_paging_for_context(loading=local_read_is_active)
         if read_is_active:
-            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+            self._request_surface_refresh(self._SURFACE_READER)
+            self._load_tree_data()
+            if local_read_is_active:
+                self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+            else:
+                self._loaded_items = []
+                self._selected_content_item = None
+                self._selected_content_page_key = None
+                try:
+                    pane = self.query_one(
+                        "#watchlists-items-pane", ArticleListPane
+                    )
+                except NoMatches:
+                    pass
+                else:
+                    pane.items = []
+                    pane.selected_item = None
         try:
             label = self.query_one("#watchlists-backend-label", Static)
             label_text = self._backend_label_text()
@@ -4810,6 +4875,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_backend_changed(self, event: Select.Changed) -> None:
         event.stop()
         self.runtime_backend = str(event.value or "local")
+
+    @on(Button.Pressed, "#watchlists-switch-local")
+    def handle_switch_to_local(self, event: Button.Pressed) -> None:
+        """Recover Read through the same selector path as a manual change."""
+        event.stop()
+        self.query_one("#watchlists-backend-select", PruneSafeSelect).value = "local"
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
@@ -9480,6 +9551,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         target_page_index: int | None = None,
         explicit_page_change: bool = False,
     ) -> bool:
+        if self.runtime_backend != "local":
+            return False
         target = max(
             0,
             self._items_page_index
@@ -11082,7 +11155,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
             "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
             "j/k=move space=next-unread m=read/unread s=star o=open "
-            "a=mark-all-read u=undo /=search r=refresh-all",
+            "a=mark-all-read u=undo /=search r=refresh-all | "
+            "z=toggle focused side pane Z=Article Focus (Read only) "
+            "[=Navigation ]=Inspector | Reader is permanent",
             severity="information",
             timeout=8,
         )
@@ -11273,7 +11348,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             isinstance(focused, TextArea) and not focused.read_only
         ):
             return True
-        return self.active_section != "items"
+        return self.active_section != "items" or self.runtime_backend != "local"
 
     def action_toggle_read_selected(self) -> None:
         """`m`: flip the open item between new and reviewed (task-2513 Task 10).

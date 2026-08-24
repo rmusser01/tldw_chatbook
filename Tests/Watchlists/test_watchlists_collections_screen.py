@@ -23,6 +23,7 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsFilterChanged
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
@@ -309,6 +310,114 @@ async def test_the_list_pane_is_gone_on_every_tab():
             assert not screen.query("#watchlists-list-pane"), section
             assert not screen.query("#wl-region-feeds"), section
             assert not screen.query("#wl-header-feeds"), section
+
+
+@pytest.mark.asyncio
+async def test_server_backed_read_recovers_through_the_normal_local_load_path(
+    monkeypatch,
+) -> None:
+    """Server-labelled Read never leaks local rows or local Reader queries."""
+    controller = AsyncMock()
+    controller.get_overview_data = AsyncMock(return_value={})
+    local_rows = [
+        {
+            "id": "local:watchlist_item:7",
+            "item_id": 7,
+            "title": "Loaded after switching",
+            "status": "new",
+            "url": "https://example.com/7",
+            "created_at": "2026-08-23T12:00:00+00:00",
+        }
+    ]
+    controller.list_items = AsyncMock(return_value=local_rows)
+    controller.check_all = AsyncMock(return_value={"checked": 0, "failed": []})
+    app = _build_test_app()
+    bundle = app.watchlist_bundle_service
+    count_spies = []
+    for name in (
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(bundle, name))
+        monkeypatch.setattr(bundle, name, spy)
+        count_spies.append(spy)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        screen = host.screen_stack[-1]
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen._controller = controller
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        selector = screen.query_one("#watchlists-backend-select")
+        selector.value = "server"
+        await pilot.pause(0.3)
+        await host.workers.wait_for_complete()
+        controller.list_items.reset_mock()
+        controller.check_all.reset_mock()
+        for spy in count_spies:
+            spy.reset_mock()
+
+        screen.active_section = "items"
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.runtime_backend == "server"
+        assert selector.value == "server"
+        assert selector.disabled is True
+        assert screen.query("#wl-region-content"), "Reader centre stays mounted"
+        assert screen.query("#watchlists-read-local-only")
+        switch = screen.query_one("#watchlists-switch-local", Button)
+        assert switch.disabled is False
+        assert "Switch to Local" in str(switch.label)
+        assert "local" in _static_text(
+            screen.query_one("#watchlists-read-local-only-copy", Static)
+        ).lower()
+
+        screen.post_message(ItemsFilterChanged("unread", "server search"))
+        screen.action_refresh_all()
+        await screen._load_tree_data().wait()
+        await pilot.pause(0.5)
+        await host.workers.wait_for_complete()
+
+        controller.list_items.assert_not_awaited()
+        controller.check_all.assert_not_awaited()
+        for spy in count_spies:
+            spy.assert_not_called()
+        assert not screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).items
+
+        switch.press()
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.runtime_backend == "local"
+        assert selector.value == "local"
+        assert selector.disabled is True
+        assert controller.list_items.await_count, (
+            screen._items_page_loading,
+            screen._items_inflight_page_load,
+            screen._items_load_generation,
+            screen._loaded_items,
+        )
+        assert controller.list_items.await_args.kwargs["search"] == "server search"
+        assert [
+            item["title"]
+            for item in screen.query_one(
+                "#watchlists-items-pane", ArticleListPane
+            ).items
+        ] == ["Loaded after switching"]
+        assert screen.query("#watchlists-content-pane")
+        assert not screen.query("#watchlists-read-local-only")
+        assert screen._selected_content_item is None
 
 
 # --- Task 7: scope-driven scoped rows, with real seeded data ---------------

@@ -985,7 +985,7 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
-    """Wait for the Library rail shell to finish its async source-count load.
+    """Open the full Library rail after its async evidence load settles.
 
     Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
     suites (like this one) that mount Library through the generic
@@ -993,13 +993,20 @@ async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> 
     retired 3-pane hub's terminal selectors (``#library-source-error``,
     ``#library-source-empty``, the per-source summary ids) never mount under
     the rail + canvas shell, so readiness is keyed off ``_library_loaded``
-    and the rail itself.
+    and the rail itself. Library now admits fresh profiles through a compact
+    Starter rail; the source-shell contracts below intentionally exercise
+    the full rail, so enter it through the real ``Explore all`` action.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
             await pilot.pause()
             await pilot.pause()
+            explore = screen.query("#library-rail-explore-all")
+            if explore:
+                explore.first(Button).press()
+                await pilot.pause()
+                await pilot.pause()
             return
         await pilot.pause(0.01)
     raise AssertionError(
@@ -1146,7 +1153,7 @@ def _custom_policy_recovery_state(
         # of the generic "source material" phrasing artifacts/personas use.
         # (F-013: the copy was rewritten in plain language -- "Search
         # everything, pick a section, or add something new.")
-        ("library", "#library-header-line", "pick a section"),
+        ("library", "#library-header-line", "add something useful"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
     ],
@@ -1190,6 +1197,50 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
         assert "Collections" not in visible_text
+
+
+def test_watchlists_help_and_footer_bindings_only_advertise_live_pane_actions():
+    bindings = {binding[0]: binding for binding in WatchlistsCollectionsScreen.BINDINGS}
+
+    assert bindings["z"][2] == "Toggle focused side pane"
+    assert bindings["Z"][2] == "Article Focus (Read only)"
+    assert bindings["left_square_bracket"][2] == "Navigation"
+    assert bindings["right_square_bracket"][2] == "Inspector"
+    assert not (
+        {
+            "ctrl+c",
+            "ctrl+v",
+            "ctrl+x",
+            "ctrl+s",
+            "ctrl+d",
+            "ctrl+z",
+            "ctrl+a",
+            "ctrl+r",
+            "ctrl+w",
+            "ctrl+p",
+            "ctrl+q",
+            "f1",
+            "f6",
+        }
+        & set(bindings)
+    )
+
+
+def test_watchlists_context_help_names_permanent_reader_and_side_pane_actions():
+    app = _build_test_app()
+    app.notify = Mock()
+    screen = WatchlistsCollectionsScreen(app)
+
+    screen.action_show_help()
+
+    copy = str(app.notify.call_args.args[0])
+    assert "z=toggle focused side pane" in copy
+    assert "Z=Article Focus (Read only)" in copy
+    assert "[=Navigation ]=Inspector" in copy
+    assert "Reader is permanent" in copy
+    assert "solo" not in copy.lower()
+    assert "Expand" not in copy
+    assert "collapsed header" not in copy.lower()
 
 
 @pytest.mark.asyncio
@@ -1640,17 +1691,15 @@ async def test_library_destination_service_failure_uses_recovery_copy():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
-        button = screen.query_one("#library-use-in-console", Button)
-
-        assert (
-            "Library source services unavailable; retry Library later."
-            in _visible_text(screen)
+        await _wait_for_visible_text(
+            screen, pilot, "Some Library sources are unavailable."
         )
-        assert button.disabled is False
-        assert button.has_class("library-source-action-blocked")
-        assert "Library source services are unavailable" in str(button.tooltip)
+        retry = screen.query_one("#library-hub-retry-evidence", Button)
+
+        assert "Some Library sources are unavailable." in _visible_text(screen)
+        assert retry.disabled is False
+        assert "Retry" in str(retry.label)
 
 
 @pytest.mark.asyncio
@@ -2296,6 +2345,11 @@ async def test_destination_action_buttons_explain_their_outcome(route):
         missing_tooltips = [
             button.id
             for button in screen.query(Button)
+            # Library's lifecycle entry controls are orientation actions,
+            # not destination outcome actions. Their behavior and focus
+            # contracts live in Tests/UI/test_library_shell.py.
+            if button.id
+            not in {"library-rail-explore-all", "library-hub-retry-evidence"}
             if str(getattr(button, "tooltip", None)).strip().lower() in {"", "none"}
         ]
         assert not missing_tooltips, (

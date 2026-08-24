@@ -43,6 +43,7 @@ from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.pane_grip import WatchlistsPaneGrip
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -251,6 +252,77 @@ async def test_a_section_switch_leaves_both_rails_standing():
         assert (
             counted.recomposes["InspectorPane#watchlists-entity-inspector"] == 0
         ), counted.report()
+
+
+async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
+    monkeypatch,
+) -> None:
+    """One Inspector preference governs Read and every management tab."""
+    writes: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.load_region_layout",
+        lambda: RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL})),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: writes.append(layout) or True,
+    )
+    app = _build_test_app()
+    pane_ids = {
+        "sources": "watchlists-sources-pane",
+        "runs": "watchlists-runs-pane",
+        "rules": "watchlists-rules-pane",
+        "notifications": "watchlists-notifications-pane",
+        "artifacts": "watchlists-artifacts-pane",
+        "overview": "watchlists-overview-pane",
+    }
+
+    async with _open(app) as (screen, pilot, host):
+        collapsed_grip = screen.query_one(
+            "#wl-grip-right_rail", WatchlistsPaneGrip
+        )
+        assert str(collapsed_grip.label) == "<---"
+        assert collapsed_grip.tooltip == "Expand Inspector"
+
+        collapsed_grip.press()
+        await _settle(pilot, host)
+        assert writes == [RegionLayout()]
+
+        for section, pane_id in pane_ids.items():
+            screen.active_section = section
+            await _settle(pilot, host)
+
+            assert screen.region_layout == RegionLayout(), section
+            grip = screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip)
+            assert grip.expanded is True, section
+            assert str(grip.label) == "--->", section
+            assert grip.tooltip == "Collapse Inspector", section
+            assert screen.query(f"#{pane_id}"), section
+            assert screen.query("#wl-region-items"), section
+            assert not screen.query("#watchlists-items-pane"), section
+            assert not screen.query("#wl-grip-items"), section
+            assert writes == [RegionLayout()], (
+                f"visiting {section} must not persist an unchanged preference"
+            )
+
+        screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip).press()
+        await _settle(pilot, host)
+        expected_collapsed = RegionLayout(
+            collapsed=frozenset({Region.RIGHT_RAIL})
+        )
+        assert writes == [RegionLayout(), expected_collapsed]
+
+        screen.active_section = "items"
+        await _settle(pilot, host)
+        grip = screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip)
+        assert screen.region_layout == expected_collapsed
+        assert grip.expanded is False
+        assert str(grip.label) == "<---"
+        assert grip.tooltip == "Expand Inspector"
+        assert not screen.query("#wl-region-right_rail")
+        assert screen.query("#watchlists-items-pane")
+        assert screen.query("#wl-grip-items")
+        assert writes == [RegionLayout(), expected_collapsed]
 
 
 async def test_a_section_switch_builds_the_sections_pane_exactly_once():
@@ -468,6 +540,13 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
     watchlist_id = _seed(app, briefings=1)
     async with _open(app, watchlist_id) as (screen, pilot, host):
         backend_select = screen.query_one("#watchlists-backend-select")
+        assert backend_select.disabled is True, (
+            "Read is local-only, so its truthful backend selector is locked"
+        )
+
+        screen.active_section = "sources"
+        await _settle(pilot, host)
+        assert screen.query_one("#watchlists-backend-select") is backend_select
         assert backend_select.disabled is False
 
         screen.active_section = "artifacts"
@@ -526,11 +605,11 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
             "wl-grip-right_rail",
             "wl-region-right_rail",
         ]
-        assert backend_select.disabled is False, (
-            "the backend picker must be re-enabled off a local-only section"
+        assert backend_select.disabled is True, (
+            "Read is local-only, so its backend picker must remain disabled"
         )
-        assert not screen.query("#watchlists-backend-label"), (
-            "and the local-only explanation must go away with it"
+        assert screen.query("#watchlists-backend-label"), (
+            "Read must keep its local-only explanation beside the selector"
         )
 
 
