@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # tldw_chatbook
 
 A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. The product is organized around a chat-first **master shell**: the **Console** is the main work surface, with **Home** (triage/status) and **Library** (notes, media, study, ingestion, search) as the other top-priority destinations, alongside supporting surfaces (Personas, Artifacts, Watchlists, and model/agent tools) that hand context back into the active conversation.
@@ -643,244 +644,321 @@ API keys can also be set via environment variables:
 - etc.
 
 ### QwenCloud
+=======
+# tldw_chatbook
+>>>>>>> 43e9a20e9f (docs: rewrite README for newcomers)
 
-QwenCloud is a first-class Console provider with `qwen3.8-max` as the embedded
-default model. Its default compatible base is the functional international
-(Singapore) endpoint, while accounts that provide a workspace-specific
-regional endpoint should save that base under **Settings ▸ Providers &
-Models** instead:
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#alpha-status)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](LICENSE)
 
-```toml
-[api_settings.qwencloud]
-api_key_env_var = "DASHSCOPE_API_KEY"
-api_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-api_mode = "responses" # or "chat_completions"
-model = "qwen3.8-max"
-```
+tldw_chatbook is a local-first terminal workbench for conversations with large
+language models, personal knowledge, and controllable agent-assisted workflows.
+It provides a Textual interface for talking to hosted APIs or local model
+servers while keeping conversations and other core data on your machine by
+default.
 
-`responses` is the default API mode. It re-sends the required history, does
-not send `previous_response_id` or QwenCloud conversation IDs, and does not
-rely on provider-managed session state. It requests `store=false` where the
-compatible endpoint honors it; this is not a claim about QwenCloud's
-operational retention or caching.
-`chat_completions` is also supported and explicitly disables preserved
-thinking because Chatbook does not retain private reasoning for replay.
-Existing Chatbook function tools work in both modes; QwenCloud-hosted built-in
-tools are not supported by this feature. Model discovery uses the shared
-cached catalog, and model/mode compatibility is reported by the service rather
-than guessed from a model name. See [Settings](Docs/User_Guide/settings.md#qwencloud)
-and [Console](Docs/User_Guide/console.md#qwencloud-in-console) for parameter,
-endpoint, recovery, and optional live-test details.
+The shortest path through the app is:
 
-### Moonshot Kimi and Z.ai GLM
+1. Install the latest source checkout.
+2. Let the first-run wizard connect a provider and model.
+3. Open **Console** and send a message.
 
-Moonshot and Z.ai are first-class, Chat-Completions-only Console providers.
-Fresh configuration defaults to `kimi-k3` with `MOONSHOT_API_KEY` and
-`glm-5.2` with `ZAI_API_KEY`; explicit historical model selections remain
-unchanged. The defaults use `https://api.moonshot.ai/v1` and
-`https://api.z.ai/api/paas/v4`. Moonshot also supports its China base and both
-providers accept a validated custom compatible base.
+The core install stays reasonably lightweight. Retrieval, media processing,
+web access, and protocol integrations are available as optional dependency
+groups when you need them.
 
-Both providers stream text, terminal usage, and existing Chatbook function
-tools through the normal approval and recovery path. Provider-hosted search,
-retrieval, code, and other built-in tools are excluded. Required Kimi/GLM
-reasoning is stored only in bounded private continuation checkpoints, counts
-against context limits, and never appears in the transcript. Model discovery
-uses the shared bounded cache; when no verified price is known, Console reports
-**pricing unknown** rather than treating the request as free. See
-[Settings](Docs/User_Guide/settings.md#moonshot-kimi-and-zai-glm) and
-[Console](Docs/User_Guide/console.md#moonshot-kimi-and-zai-glm-in-console) for
-exact controls, endpoints, recovery, and optional paid verification.
+> New here? Start with [Quick start](#quick-start), then follow
+> [Your first conversation](#your-first-conversation). The detailed
+> [User Guide](Docs/User_Guide/index.md) is available when you want to explore
+> beyond the first message.
 
-### Database Files
-Located at `~/.local/share/tldw_cli/`:
-- `tldw_chatbook_ChaChaNotes.db`: Conversations, characters, and notes
-- `tldw_chatbook_media_v2.db`: Ingested media files and metadata
-- `tldw_chatbook_prompts.db`: Saved prompt templates
-- `rag_indexing.db`: RAG indexing state (if using RAG features)
-- `evals.db`: Evaluation results and benchmarks
-- `tldw_chatbook_subscriptions.db`: Content subscription tracking
+## Alpha status
 
-## Web Server Access
+tldw_chatbook is **Alpha** software. The current package version is `0.1.8.0`.
+Expect active development, changing interfaces, incomplete documentation in
+some advanced areas, and occasional migration or recovery work.
 
-The application can be run in a web browser using the optional `textual-serve` integration. This allows you to access the full TUI interface through any modern web browser, making it accessible from devices without terminal access or when SSH is not available.
+Maturity is not uniform across the application:
 
-### Installation
+- **Available now:** the core Textual shell, provider and model setup, Console
+  conversations, local conversation storage, Library workflows, Roleplay,
+  Settings, and the source-install path documented below.
+- **Still evolving:** advanced optional capabilities, ACP/runtime integration,
+  some agent and tool workflows, write synchronization, and complete parity
+  between local-only use and configured tldw server workflows.
+- **Goal:** a modular, local-first workbench where model access, personal
+  knowledge, and agent-assisted work can be combined without making every
+  integration part of the core install.
+
+“Local-first” describes the default ownership and storage model; it does not
+mean every model executes inside this process. Hosted providers send prompts to
+their services. Local models are normally reached through a separately running
+server such as Ollama, llama.cpp, or another OpenAI-compatible endpoint.
+
+Current package facts:
+
+| Item | Value |
+| --- | --- |
+| Release | `0.1.8.0` |
+| Classifier | Alpha |
+| Python | `>=3.11` |
+| Textual runtime | `textual==8.2.8` |
+| Installed command | `tldw-cli` |
+| Entry point | `tldw_chatbook.cli:main_cli_runner` |
+
+## Quick start
+
+The primary installation route is a checkout of the latest source.
+
+### 1. Clone the repository
+
 ```bash
-pip install -e ".[web]"
+git clone https://github.com/rmusser01/tldw_chatbook.git
+cd tldw_chatbook
 ```
 
-### Usage
+### 2. Create a Python 3.11+ virtual environment
 
-#### Method 1: Using the --serve flag
+Unix and macOS:
+
 ```bash
-tldw-cli --serve
-# With custom options:
-tldw-cli --serve --host 0.0.0.0 --port 8080
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-#### Method 2: Using the dedicated command
+Windows PowerShell:
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+Windows Command Prompt:
+
+```bat
+py -3.11 -m venv .venv
+.venv\Scripts\activate.bat
+```
+
+### 3. Install the core application
+
 ```bash
-tldw-serve
-# With options:
-tldw-serve --host 0.0.0.0 --port 8080 --title "My TUI App"
+python -m pip install -e .
 ```
 
-### Command-line Options
-- `--host`: Host address to bind to (default: localhost)
-- `--port`: Port number to bind to (default: 8000)
-- `--web-title` / `--title`: Custom title for the web page
-- `--debug`: Enable debug mode (only for tldw-serve)
+### 4. Launch it
 
-### Security Considerations
-- By default, the server binds to `localhost` for local access only
-- To allow external access, use `--host 0.0.0.0` but ensure proper firewall configuration
-- The web server runs the application in a subprocess with restricted permissions
-- No shell access is exposed through the web interface
-
-### Use Cases
-- Access the application from tablets or phones
-- Use the TUI on systems without proper terminal emulators
-- Share the interface with team members on the same network
-- Run on a server and access remotely without SSH
-
-## Upgrading from requirements.txt
-
-If you previously installed using `requirements.txt`:
 ```bash
-# Uninstall old dependencies
-pip uninstall -r requirements.txt -y
-
-# Install using pyproject.toml
-pip install -e .  # or with optional features
+tldw-cli
 ```
 
-### Project Structure
-<details>
-<summary>Here's a brief overview of the main directories in the project:</summary>
+On first launch, use the setup wizard. It is the primary setup path and can
+configure either a hosted model provider or a local model server.
 
+If the command is not found, confirm the virtual environment is active and
+retry the install with that environment's `python -m pip`.
+
+## Your first conversation
+
+The hosted and local routes differ only in how the model is reached. Both end
+in **Console**, using the provider and model chosen in the first-run wizard.
+
+### Option A: Connect a hosted model API
+
+1. In the first-run wizard, choose the quick setup track.
+2. Select the hosted provider you already use.
+3. Enter its API key and choose one of its available models.
+4. Finish setup and open **Console**.
+5. Type a message in the composer and send it.
+
+Prompts and responses travel through the selected provider under that
+provider's terms. API keys can be stored through the guided configuration or
+supplied through supported environment variables.
+
+### Option B: Connect a local model server
+
+1. Start your local server separately, for example Ollama, llama.cpp, or an
+   OpenAI-compatible endpoint.
+2. In the first-run wizard, choose the quick setup track.
+3. Select the local or compatible provider and confirm its endpoint.
+4. Choose a model exposed by that server.
+5. Finish setup, open **Console**, and send a message.
+
+tldw_chatbook does not claim an embedded model runtime. The local server owns
+model loading and inference; the app provides the conversation interface.
+
+### Change or repair setup
+
+- Run the guided flow again at **Settings › Diagnostics › Run setup wizard**.
+- Repair a provider, endpoint, key, or model directly at
+  **Settings › Providers & Models**.
+- Open the command palette with **Ctrl+P** or screen help with **F1**.
+
+For a step-by-step explanation, see
+[First-Run Setup](Docs/User_Guide/First_Run_Setup.md) and the
+[Console guide](Docs/User_Guide/console.md).
+
+## Capability overview
+
+The application is organized around named work surfaces rather than a flat
+list of equally mature features. These descriptions stay at the outcome level;
+the User Guide records current controls and limitations.
+
+| Destination | What it helps you do |
+| --- | --- |
+| **Console** | Hold model conversations, attach context, and supervise supported tools or agent runs. |
+| **Library** | Organize and find conversations, notes, prompts, media, and imported source material. |
+| **Artifacts** | Collect generated outputs and Chatbooks. |
+| **Roleplay** | Work with characters, personas, dictionaries, and lore. |
+| **Watchlists** | Monitor configured sources and review their runs or alerts. |
+| **Schedules** | Manage when supported recurring work runs. |
+| **Workflows** | Define and run reusable procedures. |
+| **MCP** | Configure Model Context Protocol servers, tools, and permissions. |
+| **ACP** | Work with compatible agent runtimes and sessions as integration support develops. |
+| **Lab** | Explore model, speech, and evaluation workflows. |
+| **Logs** | Inspect application activity and diagnostics. |
+| **Settings** | Configure providers, models, appearance, storage, and application behavior. |
+
+Core conversations and personal content are designed for local storage.
+Capabilities that contact model providers, web services, MCP servers, local
+model servers, or a configured tldw server cross the corresponding trust
+boundary. Review the relevant settings before using them with sensitive data.
+
+## Project direction
+
+The project is moving toward a modular terminal environment in which a
+conversation can draw on local knowledge and invoke explicitly controlled
+tools without hiding where data goes or who owns an action.
+
+That direction currently emphasizes:
+
+- a newcomer path that reaches a useful first conversation quickly;
+- local ownership of core application data and practical offline workflows;
+- equal support for hosted APIs and separately operated local model servers;
+- optional installation of heavier retrieval, media, web, and integration
+  stacks;
+- visible approvals and boundaries for agent-assisted actions;
+- recovery paths that explain missing configuration or dependencies.
+
+This is a direction, not a claim that all destinations already provide the
+same depth, that every tldw server feature has a local equivalent, or that
+every local workflow synchronizes back to a server.
+
+## Optional capabilities
+
+Install extras from the repository root, inside the same virtual environment
+as the core application. Add only the capability groups you need.
+
+| Optional group | Representative use |
+| --- | --- |
+| `embeddings_rag` | Embeddings and retrieval-augmented Library workflows |
+| `websearch` | Web search and content extraction dependencies |
+| `mcp` | Standalone and in-app MCP integration dependencies |
+| `web` | Browser-served Textual access |
+| `audio` | Audio import and transcription dependencies |
+| `video` | Video import and transcription dependencies |
+| `pdf` | PDF extraction dependencies |
+| `ebook` | E-book extraction dependencies |
+
+Install one group:
+
+```bash
+python -m pip install -e ".[embeddings_rag]"
 ```
-└── ./
-    └── tldw_chatbook
-        ├── assets
-        │   └── Static Assets
-        ├── Character_Chat
-        │   └── Libraries relating to character chat functionality/interactions
-        ├── Chat
-        │   └── Libraries relating to chat functionality/orchestrations
-        ├── Chunking
-        │   └── Libraries relating to chunking text for LLMs
-        ├── Coding
-        │   └── Code assistance and mapping functionality
-        ├── Config_Files
-        │   └── Configuration templates and defaults
-        ├── css
-        │   ├── core/         # Base styles and variables
-        │   ├── components/   # Component-specific styles
-        │   ├── features/     # Feature-specific styles
-        │   ├── layout/       # Layout and grid systems
-        │   ├── utilities/    # Utility classes
-        │   └── Themes/       # Theme definitions
-        ├── DB
-        │   └── Core Database Libraries (7 specialized databases)
-        ├── Embeddings
-        │   └── Embeddings Generation & ChromaDB Libraries
-        ├── Evals
-        │   └── Comprehensive evaluation system components
-        ├── Event_Handlers
-        │   ├── Chat_Events
-        │   │   └── Handle all chat-related events
-        │   ├── LLM_Management_Events
-        │   │   └── Handle all LLM management-related events
-        │   └── Event Handling for all tabs and features
-        ├── Helper_Scripts
-        │   ├── Character_Cards/  # Sample character cards
-        │   └── Prompts/         # Extensive prompt library
-        ├── LLM_Calls
-        │   └── Libraries for calling LLM APIs (Local and Commercial)
-        ├── Local_Inference
-        │   └── Libraries for managing local inference of LLMs
-        ├── Local_Ingestion
-        │   └── Programmatic file ingestion API
-        ├── MCP
-        │   └── Model Context Protocol server and client implementation
-        ├── Metrics
-        │   └── Library for instrumentation/tracking (local) metrics
-        ├── Notes
-        │   └── Libraries for notes management and synchronization
-        ├── Prompt_Management
-        │   └── Libraries for managing prompts interactions and storage
-        ├── RAG_Search
-        │   └── Libraries for RAG (Retrieval-Augmented Generation) search
-        ├── Screens
-        │   └── Complex UI screen implementations
-        ├── Third_Party
-        │   └── All third-party libraries integrated
-        ├── tldw_api
-        │   └── Code for interacting with the tldw API
-        ├── Tools
-        │   └── Tool calling system implementation
-        ├── TTS
-        │   └── Libraries for Text-to-Speech functionality
-        ├── UI
-        │   └── Libraries containing all screens and panels for the TUI
-        ├── Utils
-        │   └── All utility libraries (encryption, splash, validation, etc.)
-        ├── Web_Scraping
-        │   └── Libraries for web scraping and search functionality
-        ├── Widgets
-        │   └── Reusable TUI components/widgets
-        ├── app.py - Main application entry point
-        ├── config.py - Configuration management library
-        ├── Constants.py - Constants used throughout the application
-        └── model_capabilities.py - Model capability detection
+
+Install a useful combination:
+
+```bash
+python -m pip install -e ".[audio,video,pdf,ebook]"
 ```
-</details>
 
-### Local Models I recommend
-<details>
-<summary>**Local Models I Can Recommend - Click-Here**</summary>
+Install integration and web-search support together:
 
-### Local Models I recommend
-- These are just the 'standard smaller' models I recommend, there are many more out there, and you can use any of them with this project.
-  - One should also be aware that people create 'fine-tunes' and 'merges' of existing models, to create new models that are more suited to their needs.
-  - This can result in models that may be better at some tasks but worse at others, so it's important to test and see what works best for you.
-- Llama 3.1 - The native llamas will give you censored output by default, but you can jailbreak them, or use a finetune which has attempted to tune out their refusals. 
-
-For commercial API usage for use with this project: Claude Sonnet 3.5, Cohere Command R+, DeepSeek, gpt4o. 
-Flipside I would say none, honestly. The (largest players) will gaslight you and charge you money for it. Fun.
-That being said they obviously can provide help/be useful(helped me make this app), but it's important to remember that they're not your friend, and they're not there to help you. They are there to make money not off you, but off large institutions and your data.
-You are just a stepping stone to their goals.
-
-From @nrose 05/08/2024 on Threads:
+```bash
+python -m pip install -e ".[mcp,websearch]"
 ```
-No, it’s a design. First they train it, then they optimize it. Optimize it for what- better answers?
-  No. For efficiency. 
-Per watt. Because they need all the compute they can get to train the next model.So it’s a sawtooth. 
-The model declines over time, then the optimization makes it somewhat better, then in a sort of 
-  reverse asymptote, they dedicate all their “good compute” to the next bigger model.Which they then 
-  trim down over time, so they can train the next big model… etc etc.
-None of these companies exist to provide AI services in 2024. They’re only doing it to finance the 
- things they want to build in 2025 and 2026 and so on, and the goal is to obsolete computing in general
-  and become a hidden monopoly like the oil and electric companies. 
-2024 service quality is not a metric they want to optimize, they’re forced to, only to maintain some 
-  directional income
+
+Optional groups can add large dependencies, native libraries, model downloads,
+or external services. A missing extra should disable or explain the advanced
+capability it owns; it should not make the core install unusable. See the
+[release recovery and setup guide](Docs/Development/release-recovery-setup.md)
+for maintained recovery commands and capability ownership.
+
+## Configuration and data
+
+The main configuration file is:
+
+```text
+~/.config/tldw_cli/config.toml
 ```
-</details>
 
+The first-run wizard and **Settings** are preferred over hand-editing it.
+Environment variables are supported for API keys, which is useful for shells,
+CI, and secret managers. Provider-specific names and precedence can change, so
+use the current Settings UI and maintained documentation instead of copying an
+unverified list of variables.
 
-### Inspiration
-- https://github.com/darrenburns/elia
-- https://github.com/paulrobello/parllama
+On a typical Unix-like system, the default local data base is:
 
-## Contributing
-- Contributions are welcome! Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for details on how to contribute to this project.(WIP)
-- (Realistically, this is a work in progress, so contributions are welcome, but please be aware that the codebase is still evolving and may change frequently.)
-- Make a pull request against the `dev` branch, where development happens prior to being merged into `main`.
+```text
+~/.local/share/tldw_cli/<user>/
+```
 
-## License
+User- or profile-specific databases, logs, generated files, caches, and other
+state live below that base. Exact paths may vary by platform, profile, and
+configuration. Before deleting or moving anything, inspect the active paths in
+**Settings** and back up the data you care about.
 
-This project is licensed under the GNU Affero General Public License v3.0 or later - see the [LICENSE](LICENSE) file for details.
+Local storage does not prevent a configured feature from sending selected
+content elsewhere. Hosted model calls, web search, MCP tools, compatible agent
+runtimes, and server-backed workflows each have their own data boundary.
 
-### Contact
-For any questions, issues, or feature requests, please open an issue on the [GitHub repository](https://github.com/rmusser01/tldw_chatbook) or contact me directly on the tldw_Project Discord or via the email in my profile.
+## Troubleshooting and documentation
+
+Start with these recovery checks:
+
+- **No setup or wrong provider:** open
+  **Settings › Diagnostics › Run setup wizard**.
+- **Provider, key, endpoint, or model error:** open
+  **Settings › Providers & Models** and save a valid combination.
+- **`tldw-cli` is missing:** activate the virtual environment and run
+  `python -m pip install -e .` again.
+- **An advanced feature is unavailable:** install the optional group named by
+  the recovery message, then restart the app.
+- **A local model does not respond:** verify its separate server is running,
+  its endpoint is reachable, and the configured model name is exposed there.
+- **Need runtime detail:** open **Logs**, then consult the relevant guide
+  before sharing diagnostic output that may contain private paths or content.
+
+Maintained starting points:
+
+- [User Guide](Docs/User_Guide/index.md) — navigation and task-oriented guides
+- [First-Run Setup](Docs/User_Guide/First_Run_Setup.md) — wizard tracks and
+  setup recovery
+- [Console](Docs/User_Guide/console.md) — conversations, context, and live work
+- [Release recovery and setup](Docs/Development/release-recovery-setup.md) —
+  optional dependency and blocked-state recovery
+- [Changelog](CHANGELOG.md) — release history
+
+Because the project is Alpha, documentation may track the development branch
+more closely than an older checkout. When labels differ, compare your package
+version with the guide's verification note.
+
+## Contributing, license, and contact
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a pull request, keep changes focused, and include tests or verification
+appropriate to the behavior being changed. Use the repository's issue tracker
+for reproducible bugs, feature discussion, and documentation gaps.
+
+tldw_chatbook is licensed under the
+[GNU Affero General Public License v3.0 or later](LICENSE). If you discover a
+security issue, avoid publishing sensitive details in a public issue; contact
+the maintainer privately at [contact@rmusser.net](mailto:contact@rmusser.net).
+
+Project links:
+
+- Repository: [github.com/rmusser01/tldw_chatbook](https://github.com/rmusser01/tldw_chatbook)
+- Issues: [github.com/rmusser01/tldw_chatbook/issues](https://github.com/rmusser01/tldw_chatbook/issues)
+- License: [LICENSE](LICENSE)
