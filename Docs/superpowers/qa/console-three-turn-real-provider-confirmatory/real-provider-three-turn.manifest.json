@@ -58,6 +58,7 @@
       "logical_cpu_count": 14
     }
   },
+  "implementation_base_revision": "77c5e9f487af79391a479deb85e712163bfed909",
   "listener_identity": {
     "fingerprint_sha256": "3252eb7a4878ddf6f6523dd81327a4d57b8ccd49fc3a42fa9eea48ba4f90c45c",
     "listener_count": 1
