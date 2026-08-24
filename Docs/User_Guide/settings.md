@@ -293,14 +293,19 @@ otherwise, task-2708).
 editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Animations** and **Smooth scrolling**, each a button
-whose label is its state (Enabled / Disabled); **Preview and boundary**
+whose label is its state (Enabled / Disabled). **Library Media layout**
+remembers whether the Library and Items panes are open, uses fixed 28/40-column
+targets by default, and can opt into bounded custom widths (Library 24–48,
+Items 32–72); **Reset layout** restores both panes open and fixed defaults.
+Narrow-terminal responsive collapses are temporary and are never saved.
+**Preview and boundary**
 summarises what a save will touch. **Preview** applies runtime-safe values for
 this session only and persists nothing ("Appearance preview applied for this
 session only.") — it is the only way to see *this pane's* theme selection
 without restarting.
-Four of the six fields are less useful than they look (see
-[Quirks](#quirks--troubleshooting)); **Theme** and **Density** are the two that
-matter.
+Some launch-only fields are less immediate than they look (see
+[Quirks](#quirks--troubleshooting)); Media layout changes refresh mounted
+Library readers after a successful save.
 
 ### Interface — Theme
 

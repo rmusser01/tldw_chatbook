@@ -18,6 +18,12 @@ from .library_ingest_canvas import (
     LibraryIngestQueuePanel,
 )
 from .library_media_canvas import LibraryMediaCanvas
+from .library_media_reader_shell import (
+    LibraryMediaPaneGrip,
+    LibraryMediaReaderShell,
+    MediaShellResized,
+    PaneToggleRequested,
+)
 from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_note_import_canvas import LibraryNoteImportCanvas
@@ -94,6 +100,9 @@ __all__ = [
     "LibraryIngestPreflightSummary",
     "LibraryIngestQueuePanel",
     "LibraryMediaCanvas",
+    "LibraryMediaPaneGrip",
+    "LibraryMediaReaderShell",
+    "MediaShellResized",
     "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
     "LibraryNoteImportCanvas",
@@ -101,6 +110,7 @@ __all__ = [
     "LibraryNotesCanvas",
     "LibraryNotesSyncRootsCanvas",
     "LibraryNavigationRailHandle",
+    "PaneToggleRequested",
     "LibraryPromptsListCanvas",
     "LibraryRail",
     "LibrarySearchRagPanel",

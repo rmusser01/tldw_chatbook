@@ -1414,6 +1414,26 @@ def _build_field_search_index() -> None:
                 ("settings-appearance-transcript-style", "Console transcript"),
                 ("settings-appearance-animations-enabled", "Animations"),
                 ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
+                (
+                    "settings-appearance-library-media-library-open",
+                    "Library Media Library pane",
+                ),
+                (
+                    "settings-appearance-library-media-items-open",
+                    "Library Media Items pane",
+                ),
+                (
+                    "settings-appearance-library-media-custom-widths",
+                    "Library Media widths",
+                ),
+                (
+                    "settings-appearance-library-media-library-width",
+                    "Library Media Library width",
+                ),
+                (
+                    "settings-appearance-library-media-items-width",
+                    "Library Media Items width",
+                ),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
                 ("settings-provider-value", "Provider"),
@@ -6464,6 +6484,16 @@ class SettingsScreen(BaseAppScreen):
             return "ascii_glyphs"
         if message.startswith("Smooth scrolling"):
             return "smooth_scrolling"
+        if message.startswith("Library pane"):
+            return "library_media_library_open"
+        if message.startswith("Items pane"):
+            return "library_media_items_open"
+        if message.startswith("Custom widths"):
+            return "library_media_custom_widths_enabled"
+        if message.startswith("Library width"):
+            return "library_media_library_width"
+        if message.startswith("Items width"):
+            return "library_media_items_width"
         return None
 
     def _appearance_field_selector(self, key: str) -> str | None:
@@ -6477,6 +6507,11 @@ class SettingsScreen(BaseAppScreen):
             "smooth_scrolling": "#settings-appearance-smooth-scrolling",
             "reduce_motion": "#settings-appearance-reduce-motion",
             "ascii_glyphs": "#settings-appearance-ascii-glyphs",
+            "library_media_library_open": "#settings-appearance-library-media-library-open",
+            "library_media_items_open": "#settings-appearance-library-media-items-open",
+            "library_media_custom_widths_enabled": "#settings-appearance-library-media-custom-widths",
+            "library_media_library_width": "#settings-appearance-library-media-library-width",
+            "library_media_items_width": "#settings-appearance-library-media-items-width",
         }.get(key)
 
     def _update_appearance_validation_classes(self) -> None:
@@ -6491,6 +6526,11 @@ class SettingsScreen(BaseAppScreen):
             "smooth_scrolling",
             "reduce_motion",
             "ascii_glyphs",
+            "library_media_library_open",
+            "library_media_items_open",
+            "library_media_custom_widths_enabled",
+            "library_media_library_width",
+            "library_media_items_width",
         ):
             selector = self._appearance_field_selector(key)
             if selector is None:
@@ -6554,6 +6594,13 @@ class SettingsScreen(BaseAppScreen):
             precedence every other Appearance control renders from).
         """
         return "Enabled" if bool(self._appearance_setting_values()[key]) else "Disabled"
+
+    def _appearance_media_layout_label(self, key: str) -> str:
+        """Return state-in-text labels for Media layout preference buttons."""
+        enabled = bool(self._appearance_setting_values()[key])
+        if key == "library_media_custom_widths_enabled":
+            return "Custom widths" if enabled else "Fixed default widths"
+        return "Open" if enabled else "Collapsed"
 
     def _appearance_summary_text(self) -> str:
         values = self._appearance_setting_values()
@@ -11795,6 +11842,21 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "appearance.ascii_glyphs"),
                 ("Validation", "enabled or disabled"),
             )
+        if field_id and field_id.startswith(
+            "settings-appearance-library-media-"
+        ):
+            return (
+                ("Focused setting", "Library Media layout"),
+                (
+                    "Purpose",
+                    "Sets preferred pane visibility and optional target widths; responsive collapse remains session-only.",
+                ),
+                ("Saved as", "library.media_reader"),
+                (
+                    "Validation",
+                    "Library width 24–48; Items width 32–72",
+                ),
+            )
         return (
             ("Focused setting", "Appearance defaults"),
             (
@@ -15517,6 +15579,57 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-appearance-smooth-scrolling",
                         tooltip="Toggle smooth scrolling defaults where supported.",
                     )
+                yield Static("Library Media layout", classes="destination-section")
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Library pane", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_media_layout_label(
+                            "library_media_library_open"
+                        ),
+                        id="settings-appearance-library-media-library-open",
+                        classes="settings-library-media-layout-toggle",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Items pane", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_media_layout_label(
+                            "library_media_items_open"
+                        ),
+                        id="settings-appearance-library-media-items-open",
+                        classes="settings-library-media-layout-toggle",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Width mode", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_media_layout_label(
+                            "library_media_custom_widths_enabled"
+                        ),
+                        id="settings-appearance-library-media-custom-widths",
+                        classes="settings-library-media-layout-toggle",
+                    )
+                custom_widths = bool(values["library_media_custom_widths_enabled"])
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Library width", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["library_media_library_width"]),
+                        id="settings-appearance-library-media-library-width",
+                        classes="settings-compact-input settings-library-media-layout-width",
+                        restrict=r"^[0-9]*$",
+                        disabled=not custom_widths,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Items width", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["library_media_items_width"]),
+                        id="settings-appearance-library-media-items-width",
+                        classes="settings-compact-input settings-library-media-layout-width",
+                        restrict=r"^[0-9]*$",
+                        disabled=not custom_widths,
+                    )
+                yield Button(
+                    "Reset layout to defaults",
+                    id="settings-appearance-library-media-reset",
+                )
                 yield Static("Preview and boundary", classes="destination-section")
                 yield self._detail_row(
                     "Current summary", self._appearance_summary_text()
@@ -15529,7 +15642,7 @@ class SettingsScreen(BaseAppScreen):
                     "full theme editor, custom colors, and deeper visual preview",
                 )
                 yield self._detail_row(
-                    "Save targets", "general, web_server, and appearance"
+                    "Save targets", "general, web_server, appearance, and library"
                 )
                 with Horizontal(
                     id="settings-appearance-actions", classes="settings-action-row"
@@ -17828,6 +17941,11 @@ class SettingsScreen(BaseAppScreen):
                 "settings-appearance-transcript-style",
                 "settings-appearance-animations-enabled",
                 "settings-appearance-smooth-scrolling",
+                "settings-appearance-library-media-library-open",
+                "settings-appearance-library-media-items-open",
+                "settings-appearance-library-media-custom-widths",
+                "settings-appearance-library-media-library-width",
+                "settings-appearance-library-media-items-width",
             }
             self._active_settings_field_id = (
                 widget_id if widget_id in appearance_field_ids else None
@@ -18234,6 +18352,65 @@ class SettingsScreen(BaseAppScreen):
         # next repaint without waiting for a relaunch.
         set_ascii_glyph_mode(next_value)
         event.button.label = self._appearance_bool_label("ascii_glyphs")
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, ".settings-library-media-layout-toggle")
+    def handle_appearance_library_media_layout_toggle(
+        self, event: Button.Pressed
+    ) -> None:
+        """Stage one Media layout boolean preference."""
+        event.stop()
+        if self._syncing_appearance_defaults:
+            return
+        keys = {
+            "settings-appearance-library-media-library-open": "library_media_library_open",
+            "settings-appearance-library-media-items-open": "library_media_items_open",
+            "settings-appearance-library-media-custom-widths": "library_media_custom_widths_enabled",
+        }
+        key = keys.get(str(event.button.id or ""))
+        if key is None:
+            return
+        self._stage_appearance_value(
+            key, not bool(self._appearance_setting_values()[key])
+        )
+        self._sync_appearance_widgets()
+        self._mark_appearance_settings_staged()
+
+    @on(Input.Changed, ".settings-library-media-layout-width")
+    def handle_appearance_library_media_layout_width(
+        self, event: Input.Changed
+    ) -> None:
+        """Stage one bounded Media layout width draft."""
+        if self._syncing_appearance_defaults:
+            return
+        keys = {
+            "settings-appearance-library-media-library-width": "library_media_library_width",
+            "settings-appearance-library-media-items-width": "library_media_items_width",
+        }
+        key = keys.get(str(event.input.id or ""))
+        if key is None:
+            return
+        self._stage_appearance_value(
+            key, self._normalise_appearance_int(event.value)
+        )
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, "#settings-appearance-library-media-reset")
+    def handle_appearance_library_media_layout_reset(
+        self, event: Button.Pressed
+    ) -> None:
+        """Stage the accepted fixed/open Media layout defaults."""
+        event.stop()
+        defaults = SettingsAppearanceDefaults()
+        for key in (
+            "library_media_library_open",
+            "library_media_items_open",
+            "library_media_custom_widths_enabled",
+            "library_media_library_width",
+            "library_media_items_width",
+        ):
+            self._stage_appearance_value(key, getattr(defaults, key))
+        self._sync_appearance_widgets()
         self._mark_appearance_settings_staged()
 
     @on(Button.Pressed, "#settings-preview-appearance")
@@ -22063,6 +22240,34 @@ class SettingsScreen(BaseAppScreen):
                             type(exc).__name__,
                         )
 
+    def _signal_library_media_layout_refresh(self) -> None:
+        """Publish saved Media layout defaults to live Library screens."""
+        generation = int(
+            getattr(
+                self.app_instance,
+                "_library_media_layout_refresh_generation",
+                0,
+            )
+            or 0
+        ) + 1
+        self.app_instance._library_media_layout_refresh_generation = generation
+        signalled: set[int] = set()
+        for app in (self.app, self.app_instance):
+            for screen in tuple(getattr(app, "screen_stack", ()) or ()):
+                if id(screen) in signalled:
+                    continue
+                signalled.add(id(screen))
+                refresh = getattr(
+                    screen, "request_library_media_layout_refresh", None
+                )
+                if callable(refresh):
+                    try:
+                        refresh(generation)
+                    except Exception:
+                        logger.warning(
+                            "Library Media layout refresh failed after settings save."
+                        )
+
     def _apply_appearance_save_result(
         self,
         saved: bool,
@@ -22071,6 +22276,7 @@ class SettingsScreen(BaseAppScreen):
         if saved:
             self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
             self._signal_console_appearance_refresh()
+            self._signal_library_media_layout_refresh()
             self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
             self._appearance_result = "Appearance defaults saved."
             self._set_static_text(
@@ -22754,6 +22960,43 @@ class SettingsScreen(BaseAppScreen):
                 ).label = self._appearance_bool_label("ascii_glyphs")
             except QueryError:
                 pass
+            for selector, key in (
+                (
+                    "#settings-appearance-library-media-library-open",
+                    "library_media_library_open",
+                ),
+                (
+                    "#settings-appearance-library-media-items-open",
+                    "library_media_items_open",
+                ),
+                (
+                    "#settings-appearance-library-media-custom-widths",
+                    "library_media_custom_widths_enabled",
+                ),
+            ):
+                try:
+                    self.query_one(selector, Button).label = (
+                        self._appearance_media_layout_label(key)
+                    )
+                except QueryError:
+                    pass
+            custom_widths = bool(values["library_media_custom_widths_enabled"])
+            for selector, key in (
+                (
+                    "#settings-appearance-library-media-library-width",
+                    "library_media_library_width",
+                ),
+                (
+                    "#settings-appearance-library-media-items-width",
+                    "library_media_items_width",
+                ),
+            ):
+                try:
+                    field = self.query_one(selector, Input)
+                    field.value = str(values[key])
+                    field.disabled = not custom_widths
+                except QueryError:
+                    pass
         finally:
             self._syncing_appearance_defaults = False
         self._set_static_text(

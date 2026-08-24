@@ -1309,7 +1309,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         assert "Appearance" in text
         assert "Global visual defaults" in text
         assert "Theme owns: full theme editing" in text
-        assert "Save targets: general, web_server, and appearance" in text
+        assert "Save targets: general, web_server, appearance, and library" in text
         assert "Open Theme" in text
         assert (
             screen.query_one("#settings-appearance-theme", Select).value
@@ -1423,6 +1423,97 @@ async def test_settings_appearance_save_signals_live_console_refresh(monkeypatch
     assert app.app_config["appearance"]["console_transcript_style"] == "role_accents"
     assert app._console_appearance_refresh_generation == 1
     assert refresh_signals == [1]
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_media_layout_controls_reset_and_save(monkeypatch):
+    app = _build_test_app()
+    app.app_config["library"] = {
+        "search": {"history": ["keep-me"]},
+        "media_reader": {
+            "library_open": False,
+            "items_open": True,
+            "custom_widths_enabled": True,
+            "library_width": 34,
+            "items_width": 52,
+        },
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+
+        assert "Collapsed" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-library-open", Button
+            ).label
+        )
+        assert "Open" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-items-open", Button
+            ).label
+        )
+        assert "Custom widths" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-custom-widths", Button
+            ).label
+        )
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-media-library-width", Input
+            ).value
+            == "34"
+        )
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-media-items-width", Input
+            ).value
+            == "52"
+        )
+
+        await pilot.click("#settings-appearance-library-media-reset")
+        await pilot.pause()
+
+        assert "Open" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-library-open", Button
+            ).label
+        )
+        assert "Fixed default widths" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-custom-widths", Button
+            ).label
+        )
+        assert screen.query_one(
+            "#settings-appearance-library-media-library-width", Input
+        ).disabled
+        assert screen.query_one(
+            "#settings-appearance-library-media-items-width", Input
+        ).disabled
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+
+    assert saved[-1]["library"] == {
+        "search": {"history": ["keep-me"]},
+        "media_reader": {
+            "library_open": True,
+            "items_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 28,
+            "items_width": 40,
+        },
+    }
+    assert app._library_media_layout_refresh_generation == 1
 
 
 @pytest.mark.asyncio
