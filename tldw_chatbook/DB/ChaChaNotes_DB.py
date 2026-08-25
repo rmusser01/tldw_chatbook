@@ -11358,6 +11358,49 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching message ID {message_id}: {e}")
             raise
 
+    def get_message_by_id_without_blob(
+        self, message_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve one non-deleted message row without hydrating the image BLOB.
+
+        TASK-22226 sibling of ``get_message_by_id``, following the
+        TASK-22206 narrow-projection precedent
+        (``get_message_tree_rows_for_conversation``): the exact same select
+        list EXCEPT the ``image_data`` BLOB, which is replaced by a
+        ``has_image`` flag (0/1) so callers that only need DB-normalized
+        scalars (``version``, timestamps, ``feedback``, ...) never copy
+        megabytes of image bytes out of SQLite. Callers that need the actual
+        bytes hydrate them separately via ``get_message_images_by_ids`` (or
+        ``get_message_by_id``).
+
+        Args:
+            message_id: The string UUID of the message.
+
+        Returns:
+            A dictionary with all ``get_message_by_id`` fields except
+            ``image_data``, plus ``has_image`` (0/1), if the message exists
+            and is not deleted; else None.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = (
+            "SELECT id, conversation_id, parent_message_id, sender, role, content,"
+            " (image_data IS NOT NULL) AS has_image, image_mime_type, timestamp,"
+            " ranking, last_modified, version, client_id, deleted, feedback,"
+            " usage_json, metadata_json, provider_continuation_json,"
+            " assistant_generation_state FROM messages WHERE id = ? AND deleted = 0"
+        )
+        try:
+            cursor = self.execute_query(query, (message_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error fetching message ID {message_id} (no-blob): {e}"
+            )
+            raise
+
     def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
         """Replace the extra attachments (positions >= 1) for a message.
 
