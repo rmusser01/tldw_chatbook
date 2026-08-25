@@ -29,6 +29,13 @@ class StaticWatchlistsScopeService:
         self.calls.append(kwargs)
         return list(self.watch_items)
 
+    def create_form_source_types(self, *, runtime_backend=None):
+        return (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+
 
 def _settings_without_splash(section, key=None, default=None):
     """Keep the full app deterministic without replacing its composition."""

@@ -931,6 +931,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # not whether the draft has to survive it.)
         self._source_create_form_open = False
         self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
+        self._source_create_draft_active = True
+        self._source_create_draft_frequency = 3600
         # The create form's noise-selector text, mirrored for the same reason
         # as the three fields above (TASK-1362). Held separately, and `None`
         # rather than `""` when untouched, because its empty state is not its
@@ -1847,7 +1849,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             id="wl-tree",
         )
 
-    def _tree_write_disabled_reason(self) -> str | None:
+    def _tree_write_disabled_reason(
+        self, *, runtime_backend: str | None = None
+    ) -> str | None:
         """Why the tree's five write verbs cannot run, or `None` (task-895).
 
         Two blockers, in the order the user can act on them:
@@ -1861,12 +1865,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
           the screen's existing `WC_SERVICE_UNAVAILABLE_COPY` rather than a
           second phrasing of the same condition.
 
+        Args:
+            runtime_backend: Backend whose write availability to evaluate.
+                Defaults to the backend currently visible on the screen.
+
         Returns:
             The reason string, used verbatim as both the disabled buttons'
             tooltip and the visible note beneath them, or `None` when writes
             are available.
         """
-        if self.runtime_backend == "server":
+        backend = self.runtime_backend if runtime_backend is None else runtime_backend
+        if backend == "server":
             return WC_SERVER_WRITE_RECOVERY.disabled_tooltip
         if self._watchlist_bundle_service() is None:
             return WC_SERVICE_UNAVAILABLE_COPY
@@ -1949,6 +1958,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self._tree_write_disabled_reason() is not None:
             return []
         return [dict(watchlist) for watchlist in self._tree_watchlists]
+
+    def _create_form_source_types(
+        self, runtime_backend: str
+    ) -> tuple[str, ...]:
+        """Return the create-form contract for one runtime backend."""
+        return tuple(
+            self._controller.create_form_source_types(
+                runtime_backend=runtime_backend
+            )
+        )
+
+    def _sync_live_source_create_backend(self) -> None:
+        """Push the visible backend contract into the mounted Sources pane."""
+        if not self._dom_is_live:
+            return
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except NoMatches:
+            return
+        pane.configure_create_backend(
+            self.runtime_backend,
+            self._create_form_source_types(self.runtime_backend),
+        )
 
     def _scope_default_destination(self) -> Any:
         """The watchlist a new source joins by default: the one in scope.
@@ -2223,6 +2255,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             children.append(overview)
         elif section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
+            source_types = self._create_form_source_types(self.runtime_backend)
+            sources_pane.configure_create_backend(
+                self.runtime_backend,
+                source_types,
+            )
             # Seed the last-loaded rows and selection (Finding 2, fix round
             # 2) the same way RunsPane/NotificationsPane already do below —
             # without this the table renders empty until the next unrelated
@@ -2256,7 +2293,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self._source_create_draft_type is not None:
                 sources_pane.set_reactive(
                     SourcesPane.create_draft_source_type,
-                    self._source_create_draft_type,
+                    (
+                        self._source_create_draft_type
+                        if self._source_create_draft_type in source_types
+                        else "rss"
+                    ),
                 )
             # Seed the create-form draft so it survives this pane being
             # reconstructed (see the note on `_source_create_draft` in
@@ -2271,6 +2312,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             sources_pane.create_draft_name = self._source_create_draft["name"]
             sources_pane.create_draft_url = self._source_create_draft["url"]
             sources_pane.create_draft_tags = self._source_create_draft["tags"]
+            sources_pane.create_draft_active = self._source_create_draft_active
+            sources_pane.create_draft_frequency = (
+                self._source_create_draft_frequency
+            )
             if self._source_create_draft_selectors is not None:
                 sources_pane.create_draft_ignore_selectors = (
                     self._source_create_draft_selectors
@@ -4779,8 +4824,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ):
             self._pending_navigation_run_id = None
             self._pending_navigation_run_backend = None
+        source_types = self._create_form_source_types(self.runtime_backend)
+        if (
+            self._source_create_draft_type is not None
+            and self._source_create_draft_type not in source_types
+        ):
+            self._source_create_draft_type = "rss"
         if not self.is_mounted:
             return
+        self._sync_live_source_create_backend()
         read_is_active = self.active_section == "items"
         local_read_is_active = read_is_active and self.runtime_backend == "local"
         if read_is_active:
@@ -5022,6 +5074,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             "url": event.url,
             "tags": event.tags,
         }
+        if event.active is not None:
+            self._source_create_draft_active = event.active
+        if event.frequency is not None:
+            self._source_create_draft_frequency = event.frequency
         if event.ignore_selectors is not None:
             self._source_create_draft_selectors = event.ignore_selectors
         if event.source_type is not None:
@@ -5377,6 +5433,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # before `run_worker` even starts the async chain that can recompose.
         self._source_create_form_open = False
         self._source_create_draft = {"name": "", "url": "", "tags": ""}
+        self._source_create_draft_active = True
+        self._source_create_draft_frequency = 3600
         # Back to "untouched", so the next create form is prefilled again
         # rather than inheriting the selectors of the source just submitted.
         self._source_create_draft_selectors = None
@@ -5386,22 +5444,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._source_create_draft_type = None
         self._source_create_draft_destination = None
         self.run_worker(
-            self._create_source(event.payload),
+            self._create_source(
+                event.payload,
+                runtime_backend=event.runtime_backend,
+            ),
             exclusive=True,
             group="wc_create_source",
         )
 
-    async def _create_source(self, payload: dict[str, Any]) -> None:
+    async def _create_source(
+        self, payload: dict[str, Any], *, runtime_backend: str
+    ) -> None:
         # TASK-2302: the destination is not part of the source record -- it
         # is a membership row -- so it is lifted out before the payload
         # reaches a backend that has no column for it.
+        payload = dict(payload)
         watchlist_id = payload.pop("watchlist_id", None)
         try:
             created = await self._controller.create_source(
-                runtime_backend=self.runtime_backend,
+                runtime_backend=runtime_backend,
                 payload=payload,
             )
-            destination = self._file_created_source(created, watchlist_id)
+            destination = self._file_created_source(
+                created,
+                watchlist_id,
+                runtime_backend=runtime_backend,
+            )
             # Review wave, M3. The statement is true either way -- that IS
             # where the source is -- but a destination the user chose and did
             # not get is news, not routine. `warning` on the degraded branch
@@ -5438,7 +5506,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._load_tree_data()
 
     def _file_created_source(
-        self, created: Mapping[str, Any] | None, watchlist_id: Any
+        self,
+        created: Mapping[str, Any] | None,
+        watchlist_id: Any,
+        *,
+        runtime_backend: str,
     ) -> str:
         """Write the new source's membership row and name where it landed.
 
@@ -5453,6 +5525,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Args:
             created: The normalized row `create_source` returned.
             watchlist_id: The chosen watchlist id, or None for Unassigned.
+            runtime_backend: Backend captured when Create was pressed.
 
         Returns:
             The destination as it should be named to the user -- a quoted
@@ -5462,7 +5535,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if watchlist_id is None:
             return unassigned
         service = self._watchlist_bundle_service()
-        if service is None or self._tree_write_disabled_reason() is not None:
+        if (
+            service is None
+            or self._tree_write_disabled_reason(
+                runtime_backend=runtime_backend
+            )
+            is not None
+        ):
             return unassigned
         # The raw local subscription id, not the namespaced `id`
         # (`local:subscription:5`) -- membership rows key on the former, the
