@@ -3291,6 +3291,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode: str = "raw"
         self._library_media_read_scroll_by_id: dict[str, tuple[int, int]] = {}
         self._library_media_progress_restored_id: str | None = None
+        # TASK-22210: reading-progress writes are coalesced to the latest
+        # per-item value and drained by one serial worker (mirrors the
+        # lifecycle-persistence pattern above; cancellation-based supersede
+        # is unsound for durable writes -- see task-1541's lesson).
+        self._library_media_progress_pending_writes: dict[
+            str, tuple[int | str, tuple[int, int]]
+        ] = {}
+        self._library_media_progress_inflight_write: (
+            tuple[str, int | str, tuple[int, int]] | None
+        ) = None
+        self._library_media_progress_persisted_offsets: dict[
+            str, tuple[int, int]
+        ] = {}
+        self._library_media_progress_write_worker: Worker | None = None
         # Task 21665: decoded local originals are ephemeral screen-session
         # state. The production renderer is imported only after the capability
         # gate passes, preserving Library's no-Pillow startup path.
@@ -7020,6 +7034,27 @@ class LibraryScreen(BaseAppScreen):
                 )
         if self._library_lifecycle_pending_persist is not None:
             await self._drain_library_lifecycle_persistence()
+        # TASK-22210: the last captured reading position must survive
+        # teardown. Await the drainer, then re-queue a value it may have
+        # been cancelled under mid-write (the abandoned thread may or may
+        # not have committed; the upsert is idempotent, so rewriting the
+        # ambiguous value is harmless), then drain any residue inline.
+        progress_worker = self._library_media_progress_write_worker
+        if progress_worker is not None and not progress_worker.is_finished:
+            try:
+                await progress_worker.wait()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Pending Library media progress write failed during unmount."
+                )
+        inflight = self._library_media_progress_inflight_write
+        if inflight is not None:
+            self._library_media_progress_inflight_write = None
+            self._library_media_progress_pending_writes.setdefault(
+                inflight[0], (inflight[1], inflight[2])
+            )
+        if self._library_media_progress_pending_writes:
+            await self._drain_library_media_progress_writes()
         self._library_note_import_controller.cancel()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
@@ -15397,6 +15432,9 @@ class LibraryScreen(BaseAppScreen):
         except (TypeError, ValueError):
             return False
         self._library_media_read_scroll_by_id[requested_id] = offset
+        # TASK-22210: the fetched value IS the durable row -- record it so a
+        # later capture of the same offset skips its redundant write.
+        self._library_media_progress_persisted_offsets[requested_id] = offset
         return True
 
     def _recompose_library_media_detail_if_unrendered(self) -> None:
@@ -34578,7 +34616,14 @@ class LibraryScreen(BaseAppScreen):
                 )
 
     def _capture_library_media_loaded_progress(self) -> None:
-        """Snapshot and persist the mounted local content body's scroll offset."""
+        """Snapshot and queue persistence of the local content body's offset.
+
+        TASK-22210: this fires on every traversal step and mode switch, so
+        the write itself is deduplicated (an offset already durable or
+        already queued is skipped) and coalesced (one serial drainer keeps
+        only each item's latest value) instead of spawning one SQLite
+        writer per call.
+        """
         session = self._library_media_reader_session
         loaded_id = session.loaded_id
         if (
@@ -34595,25 +34640,95 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_read_scroll_by_id[loaded_id] = offset
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_progress = getattr(service, "update_reading_progress", None)
-        if not callable(update_progress):
+        if not callable(update_progress) or session.loaded_backing_id is None:
             return
-        self.run_worker(
-            self._write_library_media_loaded_progress(
-                session.loaded_backing_id, offset
-            ),
+        self._queue_library_media_progress_write(
+            loaded_id, session.loaded_backing_id, offset
+        )
+
+    def _library_media_progress_write_is_current(
+        self, canonical_id: str, offset: tuple[int, int]
+    ) -> bool:
+        """True when ``offset`` already matches the newest known write intent.
+
+        Precedence mirrors write recency: a queued value supersedes the
+        in-flight one, which supersedes the last durably persisted one --
+        so an equal older value never masks a newer pending write.
+        """
+        pending = self._library_media_progress_pending_writes.get(canonical_id)
+        if pending is not None:
+            return pending[1] == offset
+        inflight = self._library_media_progress_inflight_write
+        if inflight is not None and inflight[0] == canonical_id:
+            return inflight[2] == offset
+        return (
+            self._library_media_progress_persisted_offsets.get(canonical_id)
+            == offset
+        )
+
+    def _queue_library_media_progress_write(
+        self, canonical_id: str, backing_id: int | str, offset: tuple[int, int]
+    ) -> None:
+        """Coalesce progress writes to the latest per-item value, one drainer.
+
+        Last-write-wins coalescing, NOT ``exclusive=True``: cancelling an
+        in-flight ``to_thread`` writer leaves the durable outcome unknown
+        (the abandoned thread may still commit after its successor -- the
+        task-1541 lesson). Keying pending values per item means a slow
+        drain never drops a different item's final position either.
+        """
+        if self._library_media_progress_write_is_current(canonical_id, offset):
+            return
+        self._library_media_progress_pending_writes[canonical_id] = (
+            backing_id,
+            offset,
+        )
+        worker = self._library_media_progress_write_worker
+        if not self.is_attached or (worker is not None and not worker.is_finished):
+            return
+        self._library_media_progress_write_worker = self.run_worker(
+            self._drain_library_media_progress_writes(),
             group="library_media_reading_progress",
         )
 
+    async def _drain_library_media_progress_writes(self) -> None:
+        """Serialize progress writes while retaining each item's latest value."""
+        while self._library_media_progress_pending_writes:
+            canonical_id, (backing_id, offset) = next(
+                iter(self._library_media_progress_pending_writes.items())
+            )
+            del self._library_media_progress_pending_writes[canonical_id]
+            self._library_media_progress_inflight_write = (
+                canonical_id,
+                backing_id,
+                offset,
+            )
+            try:
+                persisted = await self._write_library_media_loaded_progress(
+                    backing_id, offset
+                )
+            finally:
+                self._library_media_progress_inflight_write = None
+            if persisted:
+                self._library_media_progress_persisted_offsets[canonical_id] = (
+                    offset
+                )
+
     async def _write_library_media_loaded_progress(
         self, backing_id: int | str | None, offset: tuple[int, int]
-    ) -> None:
-        """Persist a scroll snapshot already fenced to one loaded identity."""
+    ) -> bool:
+        """Persist a scroll snapshot already fenced to one loaded identity.
+
+        Returns:
+            True only when the service call completed; a failed write stays
+            un-recorded so a later capture of the same offset retries it.
+        """
         if backing_id is None:
-            return
+            return False
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_progress = getattr(service, "update_reading_progress", None)
         if not callable(update_progress):
-            return
+            return False
         try:
             await self._run_library_service_call(
                 update_progress,
@@ -34624,6 +34739,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Failed to persist Library media reading progress.")
+            return False
+        return True
 
     def _restore_library_media_loaded_progress(self, expected_id: str) -> None:
         """Restore only while the expected local identity still owns Reader."""
