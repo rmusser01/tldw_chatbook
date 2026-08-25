@@ -5578,30 +5578,23 @@ class ConsoleChatController:
             preparation.preparation_id,
             user_message_id=echoed_user.id,
         )
-        # `echoed_user.parent_message_id` is the PERSISTED parent id, which
-        # `_persist_new_message` assigns -- and this echo was appended with
-        # `persist=False`, so it is always None here. Reading it made every
-        # checkpointed turn a fresh DB root, forking the conversation away
-        # from its own history on the second send. Ask the store for the
-        # nearest persisted ancestor of the echo's real tree parent instead.
-        has_native_parent, parent_message_id = (
-            self.store.durable_parent_for_message(echoed_user.id)
+        # This used to read `echoed_user.parent_message_id`, which is the
+        # PERSISTED parent id that `_persist_new_message` assigns -- and this
+        # echo was appended with `persist=False`, so it was ALWAYS None. Every
+        # checkpointed turn was therefore written as a fresh DB root, forking
+        # the conversation away from its own history on the second send
+        # (TASK-22060).
+        #
+        # Resolve the nearest PERSISTED ancestor from the store's own tree
+        # bookkeeping instead -- the identical walk `_persist_new_message`
+        # performs, so the two persistence paths agree by construction rather
+        # than by coincidence. `None` is not an error here: it is the
+        # documented "true persisted root" answer, which is exactly what the
+        # store does with it, and `insert_with_messages` validates a parent
+        # only when one is given.
+        _, parent_message_id = self.store.durable_parent_for_message(
+            echoed_user.id
         )
-        if has_native_parent:
-            if parent_message_id is None:
-                self._pause_prepared_commit(
-                    preparation.preparation_id,
-                    ConsolePreparationPauseKind.PERSISTENCE,
-                )
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    "Couldn't save the prepared turn. Retry or cancel.",
-                    session_id=session.id,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                    preparation_id=preparation.preparation_id,
-                )
         contributions = (
             (preparation_outcome.contribution,)
             if preparation_outcome is not None

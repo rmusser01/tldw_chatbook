@@ -75,6 +75,38 @@ def provider_resolution(
     return resolution
 
 
+def persisted_console_store(**kwargs: Any):
+    """A `ConsoleChatStore` wired to persistence, as production always is.
+
+    A bare `ConsoleChatStore()` has `persistence is None`. Since `a26cdafd8`,
+    `submit_draft` refuses a MANUAL or QUEUED send on a non-ephemeral session
+    without the adapter's `commit_durable_turn`, returning "Durable turn
+    acceptance is unavailable; the provider was not called." — so a rig built
+    that way never reaches whatever it meant to test. Production wires one
+    whenever the DB opens (`ConsoleRuntime.ensure_chat_store`).
+
+    Wake turns and ephemeral sessions are exempt from that rule, which is why
+    only some bare-store rigs were affected.
+
+    Args:
+        **kwargs: Passed through to `ConsoleChatStore`.
+
+    Returns:
+        A store backed by an in-memory ChaChaNotes DB.
+    """
+
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    return ConsoleChatStore(
+        persistence=ChatPersistenceService(
+            CharactersRAGDB(":memory:", "console-doubles")
+        ),
+        **kwargs,
+    )
+
+
 def with_destination(resolution: _R) -> _R:
     """Attach the destination the production gateway attaches to a REAL one.
 
