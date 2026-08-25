@@ -417,9 +417,16 @@ async def test_pending_banner_names_selected_b_and_loaded_a():
         _, backing_b, title_b = _row_identity(row_b)
         row_b.press()
         await _wait_for_detail_call(service, backing_b)
+        # task-22207: the banner is now a persistent display-gated widget,
+        # so presence alone is vacuous -- wait for it to be PAINTED.
         await _wait_for_condition(
             pilot,
-            lambda: bool(screen.query("#library-media-viewer-loading")),
+            lambda: (
+                bool(screen.query("#library-media-viewer-loading"))
+                and screen.query_one(
+                    "#library-media-viewer-loading", Static
+                ).display
+            ),
             message="Reader never painted its pending banner.",
         )
 

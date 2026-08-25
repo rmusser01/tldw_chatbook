@@ -8472,3 +8472,29 @@ the calls converge on one function from many sites, **share at the converged
 function (here: an opt-in, asyncio-task-scoped cache consulted inside the
 build itself), not by threading state through each caller** — the callers you
 did not know about are exactly the ones a threading fix misses.
+
+---
+
+## A programmatic `.focus()` is not the user's keystroke — Library focus semantics gate on the INPUT that moved focus
+
+**TASK-22207, 2026-08-25.** The red-first probe for "arrow-keying the Media
+Items list must not rebuild the Reader body" drove the traversal with
+`row.focus()` + `pilot.pause()` — and the Reader silently ignored every one
+of them: no selection, no pending request, and the settled-row wait died on
+"Detail call did not start". Nothing was broken. `LibraryScreen.
+on_descendant_focus` deliberately treats a focus change as user intent only
+when a real input event could own it: `on_resize` arms
+`_library_notes_resize_settling` (True from the mount resize onward in a
+Pilot harness), and only real input handlers (`on_key`, `on_mouse_down`,
+wheel) clear it via `_mark_library_notes_user_interaction()`. A programmatic
+`.focus()` fires `DescendantFocus` without any of those, so the screen
+classifies it as resize/restore noise — exactly as designed, to stop
+background recomposes from yanking focus.
+
+**What to do.** In a mounted-screen test, drive the gesture, not the state:
+`await pilot.press("down")` (which routes through `on_key`, clears the
+suppression, and moves row focus via `_move_library_list_row_focus`) is the
+traversal; `row.focus()` is only the framework's half of it. If a
+focus-driven behavior mysteriously does not fire in a Pilot harness, check
+which interaction-intent flags the screen consults before dispatching —
+and prefer the input event that a user would actually produce.
