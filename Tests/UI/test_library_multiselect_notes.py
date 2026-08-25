@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from textual.app import App
@@ -61,6 +62,65 @@ async def test_notes_row_select_mode_toggles_and_does_not_open_editor():
     assert fake._library_notes_row_selection.is_selected("n9")
     assert fake._library_notes_view == "list"  # editor NOT opened
     assert fake._refreshed == 1
+
+
+@pytest.mark.asyncio
+async def test_rejected_note_navigation_keeps_previous_tree_identity():
+    fake = _fake(False)
+    fake._library_notes_tree_selected_placement_id = "placement-old"
+
+    async def _flush():
+        return NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO)
+
+    fake._flush_library_note_save = _flush
+    ev = SimpleNamespace(
+        button=SimpleNamespace(note_id="n9", placement_id="placement-new"),
+        stop=lambda: None,
+    )
+
+    await LibraryScreen.handle_library_notes_row(fake, ev)
+
+    assert fake._library_notes_tree_selected_placement_id == "placement-old"
+    assert fake._library_notes_view == "list"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "controller_attr", "action_name"),
+    (
+        (
+            "handle_library_notes_manage_sync_folders",
+            "_library_notes_sync_controller",
+            "refresh_roots",
+        ),
+        (
+            "handle_library_notes_import_receipt",
+            "_library_note_import_controller",
+            "revisit_receipt",
+        ),
+    ),
+)
+async def test_permanent_navigator_tasks_respect_dirty_draft_veto(
+    handler_name: str,
+    controller_attr: str,
+    action_name: str,
+):
+    action = Mock()
+    fake = _fake(False)
+    fake._library_notes_view = "editor"
+    fake._library_notes_mutation_fenced = lambda: False
+    setattr(fake, controller_attr, SimpleNamespace(**{action_name: action}))
+
+    async def _flush():
+        return NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO)
+
+    fake._flush_library_note_save = _flush
+    event = SimpleNamespace(stop=lambda: None)
+
+    await getattr(LibraryScreen, handler_name)(fake, event)
+
+    assert fake._library_notes_view == "editor"
+    action.assert_not_called()
 
 
 @pytest.mark.asyncio
