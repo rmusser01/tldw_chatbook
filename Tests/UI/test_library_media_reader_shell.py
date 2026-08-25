@@ -31,12 +31,29 @@ from tldw_chatbook.Library.library_media_viewer_state import (
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import (
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderShell,
     LibraryMediaCanvas,
+    LibraryMediaPaneGrip,
     LibraryMediaReaderShell,
     LibraryMediaViewer,
     LibraryNavigationRailHandle,
+    MediaShellResized,
+    PaneToggleRequested,
+)
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    PaneToggleRequested as SharedPaneToggleRequested,
 )
 from tldw_chatbook.app import TldwCli
+
+
+def test_media_grip_preserves_legacy_constructor_signature():
+    grip = LibraryMediaPaneGrip("library", open=True, id="legacy-media-grip")
+
+    assert grip.id == "legacy-media-grip"
+    assert grip.has_class("library-media-pane-grip")
+    assert grip.name == "Collapse Library pane"
+    assert str(grip.tooltip) == "Collapse Library pane"
 
 
 def _painted_text_in_region(app, region) -> str:
@@ -90,6 +107,29 @@ async def test_media_shell_mounts_library_items_reader_and_two_five_column_grips
             pilot.app, reader.region
         )
         assert screen.query_one("#library-rail-collapse", Button).display is False
+
+
+@pytest.mark.asyncio
+async def test_media_wrapper_preserves_shell_ids_classes_messages_and_aliases():
+    host = LibraryProductionCSSHarness(_build_media_test_app())
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        _, shell = await _open_media_shell(host, pilot)
+
+        assert isinstance(shell, LibraryAdaptiveReaderShell)
+        assert shell.id == "library-media-reader-shell"
+        assert shell.reader is shell.work
+        assert shell.library.id == "library-rail"
+        assert shell.items.id == "library-canvas"
+        assert shell.reader.id == "library-media-viewer"
+        assert shell.library_grip.id == "library-media-library-grip"
+        assert shell.items_grip.id == "library-media-items-grip"
+        assert all(
+            grip.has_class("library-media-pane-grip")
+            for grip in (shell.library_grip, shell.items_grip)
+        )
+        assert PaneToggleRequested is SharedPaneToggleRequested
+        assert MediaShellResized is AdaptiveReaderShellResized
 
 
 @pytest.mark.asyncio

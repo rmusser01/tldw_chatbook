@@ -2,6 +2,11 @@
 
 from .library_collections_panel import LibraryCollectionsPanel
 from .library_conversations_canvas import LibraryConversationsCanvas
+from .library_adaptive_reader_shell import (
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderPaneGrip,
+    LibraryAdaptiveReaderShell,
+)
 from .library_export_canvas import LibraryExportCanvas
 from .library_entry_canvases import (
     LibraryLandingAttentionAction,
@@ -88,6 +93,9 @@ __all__ = [
     "PROMPT_DISCARD_TOOLTIP_DIRTY",
     "SKILL_DISCARD_TOOLTIP_CLEAN",
     "SKILL_DISCARD_TOOLTIP_DIRTY",
+    "AdaptiveReaderShellResized",
+    "LibraryAdaptiveReaderPaneGrip",
+    "LibraryAdaptiveReaderShell",
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
     "LibraryExportCanvas",
