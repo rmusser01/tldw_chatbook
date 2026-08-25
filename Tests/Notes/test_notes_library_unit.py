@@ -8,6 +8,7 @@ import tempfile
 from loguru import logger
 import sqlite3
 
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError as Actual_CharactersRAGDBError,
     ConflictError as Actual_ConflictError,
@@ -27,11 +28,26 @@ class TestNotesInteropService(unittest.TestCase):
         self.base_db_dir = Path(self.temp_dir_obj.name).resolve()
         self.api_client_id = "test_api_client_v1"
 
+        # autospec (not bare ``spec``) so the double enforces the *real*
+        # ``CharactersRAGDB.__init__`` signature at call time. A production
+        # signature change now raises a TypeError here instead of silently
+        # drifting away from the expected-call literal below (TASK-21531).
         self.mock_ragdb_class_patcher = patch(
-            CHARACHERS_RAGDB_CLASS_PATCH_TARGET, spec=True
+            CHARACHERS_RAGDB_CLASS_PATCH_TARGET, autospec=True
         )
         self.MockCharactersRAGDB_class = self.mock_ragdb_class_patcher.start()
         self.addCleanup(self.mock_ragdb_class_patcher.stop)
+
+        # The migration seed is loaded from config by production; pin it to a
+        # non-default sentinel so the constructor assertion proves the loaded
+        # value is forwarded, not that *some* seed object was passed.
+        self.migration_seed = ConsoleLibraryMigrationSeed(auto_retrieve_on_send=True)
+        self.mock_seed_loader_patcher = patch(
+            f"{NOTES_LIBRARY_MODULE_PATH}.load_console_library_migration_seed",
+            return_value=self.migration_seed,
+        )
+        self.mock_seed_loader = self.mock_seed_loader_patcher.start()
+        self.addCleanup(self.mock_seed_loader_patcher.stop)
 
         self.mock_notes_library_logger_patcher = patch(
             f"{NOTES_LIBRARY_MODULE_PATH}.logger", spec=True
@@ -98,10 +114,16 @@ class TestNotesInteropService(unittest.TestCase):
     def test_get_db_new_instance(self):
         user_id = "user1"
         db_instance = self.service._get_db(user_id)
-        # The new implementation creates a DB instance with the unified DB path and user_id as client_id
+        # The per-user instance points at the unified DB path, uses user_id as
+        # its client_id, and carries the config-loaded legacy migration seed
+        # (TASK-19900) so a reopened legacy DB migrates with the user's real
+        # pre-upgrade automatic-retrieval value.
         self.MockCharactersRAGDB_class.assert_called_once_with(
-            db_path=self.mock_global_db.db_path_str, client_id=user_id
+            db_path=self.mock_global_db.db_path_str,
+            client_id=user_id,
+            console_library_migration_seed=self.migration_seed,
         )
+        self.mock_seed_loader.assert_called_once_with()
         self.assertIs(db_instance, self.mock_db_instance)
 
     def test_get_db_cached_instance(self):
