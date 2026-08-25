@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import with_destination
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 @pytest.fixture
@@ -78,6 +79,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
     dictionary_db,
 ):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
@@ -118,6 +120,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
 @pytest.mark.asyncio
 async def test_native_send_applies_conversation_dictionary_agent_branch(dictionary_db):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
         local_service=LocalChatDictionaryService(dictionary_db), server_service=None

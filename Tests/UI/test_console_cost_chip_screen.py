@@ -25,6 +25,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import (
     _build_test_app,
     _visible_text,
@@ -160,6 +161,7 @@ async def _send_and_settle(console, pilot, draft: str, expect_text: str) -> None
 async def test_cost_chip_shows_dollar_figure_after_priced_send():
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -202,6 +204,7 @@ async def _mount_and_send_warm_reply(console, pilot):
 async def test_editing_earlier_history_alerts_the_warm_cache_chip():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -257,6 +260,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -311,6 +315,7 @@ async def test_projected_delta_estimator_skipped_when_warm_without_break_reason(
 async def test_reverting_the_edit_clears_the_alert():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -380,6 +385,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -438,6 +444,7 @@ async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expire
     """
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -481,6 +488,7 @@ def test_build_console_cost_state_returns_none_without_native_session():
     repository_for_matching_database`` in test_console_native_chat_flow.py)
     -- no store has been created yet, so there is no active native session."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     screen = ChatScreen(app)
     assert screen._console_chat_store is None
 
@@ -499,6 +507,7 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
     not a real spend) appears -- even though the session has zero
     messages."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -556,6 +565,7 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
     itself (already covered in `Tests/UI/test_console_agent_rail.py`).
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -577,6 +587,7 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
 @pytest.mark.asyncio
 async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(200, 48)) as pilot:
@@ -601,6 +612,7 @@ async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
 async def test_ttl_timer_expires_the_chip_and_stops_itself():
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -642,6 +654,7 @@ async def test_ttl_timer_expires_the_chip_and_stops_itself():
 async def test_fingerprint_recompute_is_skipped_while_streaming():
     gateway = _AnthropicWaitingGateway()
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -690,6 +703,7 @@ async def test_cost_chip_press_opens_the_breakdown_modal():
     verbatim, only the pushed-modal assertion changes."""
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -752,6 +766,7 @@ async def test_cost_chip_state_isolated_across_session_tabs():
     """
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="priced on A")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -822,6 +837,7 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
     and forwards it.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
