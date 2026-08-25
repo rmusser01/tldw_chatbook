@@ -677,8 +677,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "4631ec939c52ce71d837",
+      "call_count": 7,
+      "diagnostic_digest": "c7e081542ed2f8099216",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/chachanotes_fts_backfill.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3969,6 +3969,6 @@
     "owner_files": 537,
     "persistent_sink_files": 8,
     "task_492_calls": 1240,
-    "task_494_calls": 7334
+    "task_494_calls": 7338
   }
 }
