@@ -524,7 +524,7 @@ async def test_voice_sample_failure_stays_locally_valid_and_needs_test(monkeypat
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert "Needs test" in status
+        assert "Not tested yet" in status
         assert "server-owned" not in status
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert voice_state.validate_voice_setup_draft(
@@ -568,7 +568,7 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
         release.set()
         await pilot.pause(0.1)
 
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert step._verified_draft is None
@@ -648,7 +648,7 @@ async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -733,7 +733,7 @@ async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) ->
         await pilot.pause(0.1)
 
         assert button.disabled is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -778,7 +778,7 @@ async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -936,7 +936,7 @@ async def test_official_voice_refreshes_after_configured_environment_key_added(
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert step.query_one("#setup-voice-add-key", Button).display is False
-        assert "Needs test" in str(
+        assert "Not tested yet" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert "sk-added-outside-draft" not in repr(step.get_step_data())

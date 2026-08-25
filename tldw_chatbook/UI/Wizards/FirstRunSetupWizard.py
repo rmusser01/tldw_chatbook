@@ -1040,6 +1040,19 @@ class _CredentialObservation:
         return self.source == source and hmac.compare_digest(self.digest, digest)
 
 
+#: TASK-21149 (UAT P-3): where a first-time user gets a key, per provider.
+_PROVIDER_KEY_URLS = {
+    "openai": "platform.openai.com/api-keys",
+    "anthropic": "console.anthropic.com",
+    "groq": "console.groq.com/keys",
+    "openrouter": "openrouter.ai/keys",
+    "mistralai": "console.mistral.ai",
+    "deepseek": "platform.deepseek.com",
+    "cohere": "dashboard.cohere.com",
+    "google": "aistudio.google.com/apikey",
+}
+
+
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
@@ -2000,8 +2013,20 @@ class ProviderStep(SetupStep):
         test_button.disabled = not readiness.ready or not test_available
         status = self.query_one("#setup-provider-key-status", Static)
         if not readiness.ready:
-            recovery = readiness.recovery or "Add a provider credential."
-            status.update(f"API key required. {recovery}")
+            # TASK-21149 (UAT P-3): the input right above is the primary
+            # path — lead with it and where to get a key; the env-var route
+            # is the expert aside, not the headline.
+            pointer = _PROVIDER_KEY_URLS.get(self.selected_provider_key, "")
+            parts = ["An API key is needed — paste it above."]
+            if pointer:
+                parts.append(f"New keys: {pointer}.")
+            env_var = getattr(readiness, "env_var", "") or ""
+            if env_var:
+                parts.append(
+                    f"(Already exported {env_var}? It's picked up "
+                    "automatically.)"
+                )
+            status.update(" ".join(parts))
             return
         if self._clear_requested:
             status.update(
@@ -2027,7 +2052,7 @@ class ProviderStep(SetupStep):
             )
         elif credential_source == "draft":
             status.update(
-                f"A replacement API key is ready for this provider.{unavailable}"
+                f"Key staged — it will be checked when you continue.{unavailable}"
             )
         else:
             status.update(unavailable.strip())
@@ -2693,7 +2718,7 @@ class ProviderStep(SetupStep):
             )
             actions.remove_class("hidden")
         elif ui_draft.api_key:
-            status.update("A replacement API key is ready for this provider.")
+            status.update("Key staged — it will be checked when you continue.")
             actions.remove_class("hidden")
         elif presence.inline_configured:
             status.update("An API key is already configured for this provider.")
@@ -4102,7 +4127,7 @@ class VoiceSetupStep(SetupStep):
                 variant="primary",
             )
             yield Static(
-                "Needs test. You can save this configuration while offline.",
+                "Not tested yet — that's fine. You can save now and test later.",
                 id="setup-voice-status",
                 classes="setup-subtitle",
             )
@@ -4270,7 +4295,7 @@ class VoiceSetupStep(SetupStep):
             pass
         try:
             self.query_one("#setup-voice-status", Static).update(
-                "Needs test. You can save this configuration while offline."
+                "Not tested yet — that's fine. You can save now and test later."
             )
         except Exception:
             pass
@@ -4329,7 +4354,7 @@ class VoiceSetupStep(SetupStep):
                 and self._test_in_progress_generation is None
             ):
                 status.update(
-                    "Needs test. You can save this configuration while offline."
+                    "Not tested yet — that's fine. You can save now and test later."
                 )
         except Exception:
             return
@@ -4351,7 +4376,7 @@ class VoiceSetupStep(SetupStep):
             pass
         try:
             self.query_one("#setup-voice-status", Static).update(
-                "Needs test. The sample was cancelled; retry when ready."
+                "Not tested yet — the sample was cancelled. Retry when ready."
             )
         except Exception:
             pass
@@ -4463,13 +4488,13 @@ class VoiceSetupStep(SetupStep):
         except asyncio.CancelledError:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    "Needs test. The sample was cancelled; retry when ready."
+                    "Not tested yet — the sample was cancelled. Retry when ready."
                 )
             raise
         except Exception:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    "Needs test. The sample failed; review the service and retry."
+                    "Not tested yet — the sample failed. Check the service, then retry."
                 )
             return
         else:
@@ -4690,9 +4715,10 @@ class RagStep(SetupStep):
                 # silently vanishes from the rendered text instead of showing.
                 # TASK-1502: quoted plainly — backticks are markdown idiom and
                 # render literally in a TUI.
-                "RAG needs optional dependencies that aren't installed. Install the "
-                'extras package "tldw_chatbook\\[embeddings_rag]" with your package '
-                "manager, then revisit Settings ▸ RAG. Skipping for now is fine."
+                "RAG lets the assistant search your own documents. Its "
+                "optional dependencies aren't installed — install with: pip "
+                'install "tldw_chatbook\\[embeddings_rag]" — then revisit '
+                "Settings ▸ RAG. Skipping for now is fine."
             )
             try:
                 # TASK-1502: hide the model list outright — a wall of disabled
@@ -4864,8 +4890,8 @@ class SpeechSetupStep(SetupStep):
         with Vertical(classes="setup-speech"):
             yield Static("Speech transcription (optional)", classes="setup-title")
             yield Static(
-                f"Selected: {self._model_label()} — on-device speech-to-text. "
-                "Skip and set this up later from Lab ▸ Models.",
+                f"Selected: {self._model_label()} — on-device "
+                "speech-to-text for dictation. Optional; Next skips it.",
                 classes="setup-subtitle",
             )
             prefill_text = self._prefill_status_text()
@@ -6528,8 +6554,15 @@ class AppearanceStep(SetupStep):
             yield Label("Splash screen card", classes="setup-field-label")
             with SetupRadioSet(id="setup-splash-choice", classes="setup-choice-list"):
                 yield SetupRadioButton("Surprise me (random)", value=True)
-                for card_name in self._card_names()[:10]:
-                    yield SetupRadioButton(card_name)
+                # TASK-21149 (UAT G-5): human names in the list; the raw
+                # card id rides on the button (same pattern as _theme_name)
+                # so commits never see display text.
+                yield from self._card_buttons(self._card_names()[:10])
+            yield Button(
+                "Show all cards…",
+                id="setup-splash-show-all",
+                classes="setup-tertiary-button",
+            )
 
     def _theme_buttons(self, names: list[str]):
         """Radio rows for theme names, marking the persisted one "(current)".
@@ -6635,14 +6668,38 @@ class AppearanceStep(SetupStep):
                 logger.debug("Theme preview revert failed", exc_info=True)
             self._preview_original = None
 
+    @staticmethod
+    def _card_display_name(card_name: str) -> str:
+        """Human name for a snake_case splash card id (UAT G-5)."""
+        return card_name.replace("_", " ").strip().title()
+
+    def _card_buttons(self, names: list[str]):
+        for card_name in names:
+            button = SetupRadioButton(self._card_display_name(card_name))
+            button._card_name = card_name
+            yield button
+
+    @on(Button.Pressed, "#setup-splash-show-all")
+    async def _on_show_all_cards(self, event: Button.Pressed) -> None:
+        """UAT G-5: parity with themes — the first ten cards are a teaser."""
+        event.stop()
+        radio_set = self.query_one("#setup-splash-choice", RadioSet)
+        keep_surprise = SetupRadioButton(
+            "Surprise me (random)", value=not self.selected_splash_card
+        )
+        await radio_set.remove_children()
+        await radio_set.mount(keep_surprise)
+        await radio_set.mount_all(self._card_buttons(self._card_names()))
+        self.query_one("#setup-splash-show-all", Button).display = False
+
     @on(RadioSet.Changed, "#setup-splash-choice")
     def _on_card(self, event: RadioSet.Changed) -> None:
-        label = str(event.pressed.label)
-        if label.startswith("Surprise me"):
+        card_name = getattr(event.pressed, "_card_name", "")
+        if not card_name:
             self.selected_splash_card = ""
             self._picked_surprise_me = True
         else:
-            self.selected_splash_card = label
+            self.selected_splash_card = card_name
             self._picked_surprise_me = False
 
     async def commit(self) -> tuple[bool, str]:
@@ -6706,9 +6763,17 @@ class WelcomeStep(SetupStep):
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-welcome"):
             yield Static("Welcome to tldw chatbook", classes="setup-title")
+            # TASK-21149 (UAT W-3/W-2): say what the app IS before asking
+            # jargon questions, and give each path an honest time estimate.
             yield Static(
-                "Let's get you set up. Pick a path — everything here can be "
-                "changed later in Settings, and every step can be skipped.",
+                "Chat with cloud or local AI models, keep notes, and work "
+                "with your own documents — all in your terminal.",
+                classes="setup-subtitle",
+            )
+            yield Static(
+                "Quick takes about 2 minutes; Full about 10. Everything can "
+                "be changed later in Settings, and every step can be "
+                "skipped with Next.",
                 classes="setup-subtitle",
             )
             with SetupRadioSet(id="setup-track-choice", classes="setup-choice-list"):

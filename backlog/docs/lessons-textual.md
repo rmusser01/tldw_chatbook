@@ -258,3 +258,25 @@ never reaches the persistent app log — the sink records only the structured
 TUI. Instrument with a plain append-to-file probe gated by an env var (or a
 diagnostics event); a probe you cannot see is indistinguishable from a probe
 that never fired.
+
+## Textual's focus order is VISUAL (y, x) order, not DOM order (TASK-21142, 2026-08-25)
+
+**What happened.** To make Tab reach Next before the abandon button, the
+wizard footer's DOM was reordered (Next composed first) with dock CSS keeping
+the visual convention. The focus chain measurably did not change: Screen's
+`focus_chain` sorts siblings by `_focus_sort_key` = `(y - margin_top,
+x - margin_left)` from each widget's virtual region. DOM order only breaks
+ties. The fix that worked was changing the VISUAL order (Windows-wizard
+footer: progress left, right-aligned Back/Next/Exit) so the sort itself
+produces the desired traversal.
+
+**The rule.** To change Tab order in Textual, change where widgets sit on
+screen (or intercept keys); moving them in compose() while CSS restores the
+old geometry changes nothing.
+
+**Sibling trap from the same task (TASK-21148).** A widget hidden only via a
+`.hidden` class is display-none ONLY where the app stylesheet is loaded;
+bare-App test harnesses have no such rule, so the "hidden" widget keeps its
+docked row and shifts every geometry below it. Anything meant to be
+invisible in all hosts must also set `widget.display = False` (or carry the
+rule in DEFAULT_CSS).

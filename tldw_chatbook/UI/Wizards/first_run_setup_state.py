@@ -1843,11 +1843,19 @@ def build_summary_rows(
             "configured but not installed — revisit Lab ▸ Models",
         )
 
+    # TASK-21149 (UAT S-3): name the provider — "✓ Provider" confirmed
+    # nothing; "✓ Provider — OpenAI" confirms the one fact the user chose.
+    chat_defaults = app_config.get("chat_defaults")
+    provider_name = ""
+    if isinstance(chat_defaults, Mapping):
+        raw_name = chat_defaults.get("provider")
+        if isinstance(raw_name, str):
+            provider_name = raw_name.strip()
     return (
         SummaryRow(
             "Provider",
             ROW_CONFIGURED if provider_ok else ROW_ATTENTION,
-            "" if provider_ok else "no credentials or saved endpoint",
+            (provider_name if provider_ok else "no credentials or saved endpoint"),
         ),
         model_row,
         rag_row,
