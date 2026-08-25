@@ -17,11 +17,13 @@ from dataclasses import dataclass, field
 from importlib import resources
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from loguru import logger
-from PIL import Image, UnidentifiedImageError
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 from tldw_chatbook.config import get_user_data_dir
 from tldw_chatbook.Utils.path_validation import validate_path
@@ -1858,6 +1860,17 @@ def _inspect_image_bytes(
     *,
     decoded_pixels_before: int = 0,
 ) -> tuple[str, tuple[int, int], int, bool, int | None, int]:
+    # TASK-22217: PIL stays off the warm boot path. This module is imported on
+    # EVERY boot via seed_builtin_content -> ensure_builtin_samira, whose
+    # preflight exits early once seeding is terminal -- so the ~80-module PIL
+    # import belongs here, at the single function that decodes image bytes,
+    # not at module scope. All runtime PIL uses (including the except tuple
+    # below) live inside this function; `Image.Image` in an annotation stays a
+    # string under `from __future__ import annotations`. A missing Pillow
+    # still surfaces as the same ImportError as the old module-level import,
+    # now raised at first image work instead of at module import.
+    from PIL import Image, UnidentifiedImageError
+
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
