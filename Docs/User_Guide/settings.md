@@ -331,6 +331,13 @@ replays it, **Set as default** points the startup card at it. Everything here
 takes effect **at the next launch**; the gallery preview is the only in-session
 feedback.
 
+**Skip on keypress** does what it says as of TASK-21591: with it on (the
+default), any key pressed while the splash is up dismisses it and boot
+continues immediately, and the key still reaches its normal binding — pressing
+`ctrl+q` during the splash still quits. Turn it off and the splash always runs
+its full **Duration (s)**. Before that fix the setting was inert: the splash was
+never focused, so it never saw a key.
+
 ### Interface — Console Behavior
 
 Drafted, with one exception.
@@ -728,3 +735,13 @@ Verified by a mounted-settings test that holds the off-loop read open,
 types into the live `TextArea`, and asserts the keystroke survives — the
 same test reds with the exact clobbering diff when the check is removed;
 the rest of this page's content unchanged from the prior stamp).*
+*Interface — Splash Screen's row updated against TASK-21591 — 2026-08-25
+(**Skip on keypress** shipped default-true and could not fire: `SplashScreen`
+is a `Container`, Textual routes a key to the focused widget and bubbles it
+upward, and nothing focused the splash. It now takes focus when the skip is
+enabled and dismisses on any key without swallowing it. Verified in a real
+terminal, not only under Pilot: against a 25 s splash, Space 23 ms after the
+first painted frame dismissed it and boot completed, `ctrl+q` during the
+splash still quit, and with the setting off the same key left the splash up
+for its full 20 s. The rest of this page's content unchanged from the prior
+stamp.)*

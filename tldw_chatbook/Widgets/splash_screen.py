@@ -85,6 +85,17 @@ class SplashScreen(Container):
         self.show_progress = show_progress
         self.reduced_motion = bool(reduced_motion)
 
+        # TASK-21591. Textual routes a key event to `App.focused or
+        # App.screen` and bubbles it UPWARD from there, so a Container that
+        # is never focused never sees one -- `on_key` below could not fire
+        # and the shipped, default-true `[splash_screen] skip_on_keypress`
+        # was inert. Focus is what makes the skip reachable, so it is taken
+        # only when the skip is wanted: with `skip_on_keypress = false` this
+        # widget stays unfocusable, which also keeps the Settings splash
+        # PREVIEW (which passes False) from stealing focus from the settings
+        # controls around it.
+        self.can_focus = bool(skip_on_keypress)
+
         # Animation state
         self.start_time = time.time()
         self.animation_timer: Optional[Timer] = None
@@ -298,6 +309,11 @@ class SplashScreen(Container):
         # Start the splash screen
         await self._start_splash()
 
+        # TASK-21591: take focus so key events are routed here rather than to
+        # the screen. Only when the skip is enabled -- see `__init__`.
+        if self.skip_on_keypress:
+            self.focus()
+
         # Schedule auto-close
         if self.duration > 0:
             self.auto_close_timer = self.set_timer(self.duration, self._request_close)
@@ -452,10 +468,18 @@ class SplashScreen(Container):
             pass
 
     async def on_key(self, event: events.Key) -> None:
-        """Handle key press events."""
+        """Dismiss the splash on any key, when the skip is enabled.
+
+        TASK-21591. The event is deliberately NOT stopped. Today a key
+        pressed during the splash reaches nothing focused, bubbles to the
+        screen and is dispatched against the app's bindings -- so ``ctrl+q``
+        quits and ``ctrl+p`` opens the palette while the splash is up.
+        Swallowing the event here would make the skip work by breaking
+        those, which is a worse trade than the one this fixes. Letting it
+        bubble keeps every existing binding working AND dismisses the
+        splash, which is what "skip with any keypress" means.
+        """
         if self.skip_on_keypress and not self._skip_requested:
-            event.stop()
-            event.prevent_default()
             self._request_close()
 
     def _request_close(self) -> None:
