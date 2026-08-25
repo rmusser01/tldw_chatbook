@@ -146,7 +146,12 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked():
 
         assert send_button.disabled is True
         assert reason.styles.display == "block"
-        assert reason.renderable.plain == "Send blocked — choose a model to continue"
+        # TASK-21145 (UAT H-3): a setup blocker carries its own way out —
+        # the reason strip appends an "Open setup" action link wired to
+        # app.run_setup_wizard.
+        assert reason.renderable.plain == (
+            "Send blocked — choose a model to continue ›"
+        )
         assert not reason.has_class("console-send-disabled-reason-idle")
         assert (
             send_button.tooltip

@@ -13016,6 +13016,31 @@ class TldwCli(
         """
         self._handle_first_run_wizard_result(result)
 
+    def action_run_setup_wizard(self) -> None:
+        """Open the setup wizard for a re-run (TASK-21145, UAT H-3).
+
+        An app-level action so any surface can offer it as an action link
+        (e.g. the Console composer's "Send blocked — finish provider setup"
+        strip renders "[@click=app.run_setup_wizard]Open setup[/]"), not
+        just the Settings button and the command palette.
+        """
+        try:
+            if any(
+                type(screen).__name__ == "FirstRunSetupWizard"
+                for screen in self.screen_stack
+            ):
+                return
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                FirstRunSetupWizard,
+            )
+
+            self.push_screen(
+                FirstRunSetupWizard(self, rerun=True),
+                self.handle_first_run_wizard_result,
+            )
+        except Exception as exc:
+            self.notify(f"Failed to open setup wizard: {exc}", severity="error")
+
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
         initial_tab = self._initial_tab_value

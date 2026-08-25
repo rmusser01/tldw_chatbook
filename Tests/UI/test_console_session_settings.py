@@ -6905,7 +6905,9 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         assert send_button.disabled is True
         reason = console.query_one("#console-send-disabled-reason")
         assert reason.styles.display == "block"
-        assert reason.renderable.plain == "Send blocked — choose a model to continue"
+        assert reason.renderable.plain == (
+            "Send blocked — choose a model to continue ›"
+        )
         assert (
             send_button.tooltip == "Choose a model in Console Settings before sending."
         )

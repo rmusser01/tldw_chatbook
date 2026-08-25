@@ -3388,3 +3388,34 @@ async def test_local_provider_probe_feedback_is_visible_and_adjacent(
                 "Find local servers"
             )
             assert str(test_button.label) == "Test connection"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21145 (UAT H-3): app.run_setup_wizard is the action behind the
+# Console composer's setup-blocked link. It must open the wizard re-run and
+# never stack a second copy.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_setup_wizard_action_opens_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause(0.3)
+            assert type(app.screen).__name__ != "FirstRunSetupWizard"
+            app.action_run_setup_wizard()
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            app.action_run_setup_wizard()
+            await pilot.pause(0.3)
+            wizards = [
+                screen
+                for screen in app.screen_stack
+                if type(screen).__name__ == "FirstRunSetupWizard"
+            ]
+            assert len(wizards) == 1, "action must never stack a second wizard"
