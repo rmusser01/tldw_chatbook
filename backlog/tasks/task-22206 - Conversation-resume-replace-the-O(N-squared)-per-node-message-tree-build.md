@@ -157,7 +157,12 @@ on the loop via `chat_conversation_scope_service`. On-loop cost is now linear
 and small: 5.2 ms @600, 21.0 ms @2000 with a 1 KB blob on every message
 (32.1 ms including the flatten) — under the repo's 100 ms worker threshold up
 to roughly 6,000+ messages. The old build exceeded that threshold at ~600
-messages.
+messages. Image-HEAVY bound (adversarial review, temp-file DB): 100 messages
+each carrying a 1 MB blob — 100 MB of position-0 images, well past any
+realistic resume — builds in 41.4 ms median (legacy inline hydration of the
+same fixture: 31.6 ms), still under the worker threshold; total BLOB bytes
+read are unchanged from legacy (the same has_image rows, read once, batched)
+so blob volume cannot regress the loop relative to the old build.
 
 **Tests** (`Tests/Chat/test_chat_conversation_service_tree_build.py`, all
 red-first where the defect allowed):
@@ -198,4 +203,9 @@ passes but its teardown reds on attempted tiktoken-encoding download (network
 guard); `test_console_workspace_dead_rows.py::test_failed_resume_marks_row_broken_with_honest_single_toast`
 (ghost row never renders); 11 `test_console_native_chat_flow.py` failures
 (incl. two resume tests failing on drifted inspector copy — the resume itself
-succeeds there).
+succeeds there). Adversarial review added: `Tests/UI/test_console_launch_wake.py`
+fails 7/11 in this environment at the same first-`submit_draft`
+"Provider destination is incomplete" seeding step — re-baselined at 983aa5878
+in a clean merge-base worktree (import path verified pointing at the
+baseline): the identical 7 tests fail there, so pre-existing, not from this
+change.
