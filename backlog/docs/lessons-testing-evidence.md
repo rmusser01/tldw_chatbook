@@ -7976,6 +7976,78 @@ raising. Deliberately breaking the guard proved it — the memory-backed test
 went red with a zero count, not an error. Before wrapping any DB call in
 `to_thread`, check what that owner's connection factory does with
 `:memory:`, and keep a memory-backed test in the set.
+---
+
+## The stats-free planner is not a quirk of one query — sweep the whole database, and the fix may not be an index (TASK-21593, 2026-08-25)
+
+**What happened.** TASK-21126 left an open question: it proved the no-stats
+planner mis-chooses for *one* query, and nobody had looked at the rest. The
+sweep — 39 production-exact statements against a 20,000-media / 200,000-chunk
+/ 278 MB corpus built with **no `ANALYZE`** — found the same pathology
+everywhere and two things worth generalising.
+
+**1. The worst finding was not an index problem at all.** The Media search's
+`must_have_keywords` filter measured **12.3 seconds**. `Keywords.keyword` is
+already `UNIQUE COLLATE NOCASE`, but the predicate was
+`LOWER(k.keyword) IN (?)` — and wrapping a column in a function makes it
+non-sargable, so SQLite could not use the unique index and walked *every live
+keyword for every candidate media row*. Deleting the redundant `LOWER()` —
+one word — took it to 18.7 ms, **671×**, with no new index. It is reachable
+from the chat scope picker per debounced keystroke. Before designing an index
+for a slow query, read the WHERE clause for a function wrapped around the
+column you were about to index.
+
+**2. Shipping "the one obvious index" would have made three surfaces
+slower.** `(deleted, is_trash, last_modified DESC, id DESC)` fixes nine list
+queries by 10–1000×. It also *regresses* sort-by-date, sort-by-title and the
+type facet by ~38% each — the planner switches to the new index because a
+two-column equality beats a one-column one, then still sorts, and loses the
+rowid-order locality it had. Three more indexes (each leading with the same
+equality pair, differing only in the trailing sort key) take those to
+0.08–2.5 ms instead. **A single-index A/B is not enough evidence: measure
+every query the new index could be chosen for, not just the one you wrote it
+for.** The mirror-image trap is real too — a narrow `(deleted, is_trash)`
+index repairs the residual regressions and was *rejected* because the planner
+then steals it for the ordered queries (sort=date_desc 0.46 → 26.05 ms, 57×
+worse).
+
+**3. `CROSS JOIN` is the only join-order instruction SQLite obeys.** The FTS
+`COUNT` half of the same search had its join order inverted — Media outside,
+one FTS probe per live row, 276 ms — while the ROWS half got it right because
+its `ORDER BY fts.rank` forced the issue. Rewriting `FROM media_fts fts JOIN
+Media m` as a plain `JOIN` changes nothing (266 ms; the planner reorders
+straight back). `CROSS JOIN` gives 29 ms. But it removes the planner's freedom
+permanently, so check the variants: with a five-id allowlist Media really is
+the cheap side and the pin costs 0.10 → 1.92 ms. The fix is conditional.
+
+**4. Mutation-test the DDL, and be honest about what the plan cannot see.**
+Thirteen mutants, all caught — but two of them (dropping the partial `WHERE`,
+reversing `DESC` to `ASC`) were caught *only* by the DDL-text assertion, never
+by a plan assertion, because SQLite scans an ASC index backwards and a partial
+index plans identically to a full one. Say which properties are pinned by
+plan and which by text; a reader who assumes all thirteen were plan-caught has
+been misled.
+
+**What to do.** The convention is now mechanical:
+`scripts/check_index_plan_pins.py` runs in `preflight.sh` and the required CI
+job, and fails until every `CREATE INDEX` under `DB/` has a row in
+`scripts/index_plan_pin_census.tsv` marked `plan-pinned` (a test naming it
+alongside `EXPLAIN QUERY PLAN` *and* a `sqlite_stat1`-absence assertion) or
+`pre-convention`. `Tests/DB/test_media_db_schema_v9.py` is the worked example,
+including a negative control that keeps proving the rejected shape is still
+never chosen.
+
+**And the `ANALYZE` question, answered with a number so it stops being
+re-asked.** On the fixed corpus `ANALYZE` costs 261 ms and buys almost
+nothing the indexes have not already bought — but it is not free either: it
+takes `get_deletion_candidates` from 1.9 ms to 13.9 ms. Its real wins
+(`fetch_keywords_for_media_batch` 24.6 → 0.08 ms) are join-order fixes that
+belong to whichever task owns those queries and can pin their plans. Running
+`ANALYZE` globally re-plans every statement in the database at once, and every
+plan assertion in the suite was captured without it. Do not add it as a
+side effect of an unrelated change.
+---
+
 ## A subsystem can have several migration entry points, and the product may not use the one you were pointed at (TASK-21130, 2026-08-23)
 
 **What happened.** The finding cited `TTS/profile_schema.py:1439,1468` —

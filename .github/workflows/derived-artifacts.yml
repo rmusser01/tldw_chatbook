@@ -126,3 +126,16 @@ jobs:
           # exact lines to paste. No database is built; runtime is milliseconds,
           # so this does not move the ~90 s budget this job depends on.
           python scripts/check_schema_table_allowlist.py
+
+      - name: Every database index has a query-plan decision on record
+        if: ${{ !cancelled() }}
+        run: |
+          # TASK-21593. No DB module in this repo runs ANALYZE, so no user's
+          # database has a sqlite_stat1 and the planner can ignore a textbook
+          # index entirely -- TASK-21126 shipped 5 MB of dead index that way,
+          # with a green "the index exists" test. This scans the CREATE INDEX
+          # names in DB/ and fails when one is missing from
+          # scripts/index_plan_pin_census.tsv, so adding an index has to stop
+          # at "plan-pinned or pre-convention?". Pure text scan, no database
+          # built; milliseconds, so it does not move this job's ~90 s budget.
+          python scripts/check_index_plan_pins.py
