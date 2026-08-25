@@ -1,7 +1,7 @@
 # Watchlists backend-aware source types
 
-**Task:** TASK-2510  
-**Status:** Approved design  
+**Task:** TASK-2510
+**Status:** Approved design
 **Date:** 2026-08-24
 
 ## Purpose

@@ -49,8 +49,8 @@ Detailed plan: `Docs/superpowers/plans/2026-08-24-watchlists-backend-source-type
 4. Extend full-shell focus/geometry coverage, run only focused Watchlists
    tests and scoped static checks, then record evidence and close the task.
 
-ADR required: no  
-ADR path: N/A  
+ADR required: no
+ADR path: N/A
 Reason: This is a bounded correction inside the existing Watchlists
 local/server routing boundary; it changes no schema, service ownership, API
 contract, dependency, or long-lived application structure.

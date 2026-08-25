@@ -10,8 +10,8 @@
 
 **Design spec:** `Docs/superpowers/specs/2026-08-24-watchlists-backend-source-types-design.md`
 
-**ADR required:** no  
-**ADR path:** N/A  
+**ADR required:** no
+**ADR path:** N/A
 **Reason:** This is a bounded contract correction inside the existing Watchlists local/server routing boundary. It changes no schema, persistence ownership, API shape, dependency, security boundary, or long-lived application structure.
 
 ---
