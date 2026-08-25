@@ -37,7 +37,18 @@ _DUPLICATE_PINNED_LABELS = {"Selected conversation", "Workspace"}
 
 
 def inspector_group_is_actionable(owner: str, owned: InspectorOwnedContent) -> bool:
-    """Return owner-specific actionability for the three conditional groups."""
+    """Return owner-specific actionability for a conditional Inspector group.
+
+    Args:
+        owner: The conditional group name.
+        owned: The classified Inspector content.
+
+    Returns:
+        True when the group should be promoted above More.
+
+    Raises:
+        ValueError: If ``owner`` is not a conditional group.
+    """
 
     if owner not in _CONDITIONAL_OWNERS:
         raise ValueError(owner)
@@ -56,7 +67,7 @@ def inspector_group_is_actionable(owner: str, owned: InspectorOwnedContent) -> b
     )
 
 
-class _ConsoleInspectorMoreButton(Button):
+class ConsoleInspectorMoreButton(Button):
     """Native Button press path with terminal Space parity."""
 
     def action_press(self) -> None:
@@ -73,8 +84,8 @@ class _ConsoleInspectorMoreButton(Button):
         await super()._on_key(event)
 
 
-class _ConsoleInspectorMore(Vertical):
-    """Private disclosure boundary for non-actionable conditional groups."""
+class ConsoleInspectorMore(Vertical):
+    """Disclosure boundary for non-actionable conditional groups."""
 
     BINDINGS = [
         Binding("left", "collapse", "Collapse", show=False),
@@ -88,7 +99,7 @@ class _ConsoleInspectorMore(Vertical):
 
     def __init__(self, *children: Widget, open: bool) -> None:
         self.open = open
-        toggle = _ConsoleInspectorMoreButton(
+        toggle = ConsoleInspectorMoreButton(
             "More", id="console-inspector-more-toggle", compact=True
         )
         body = Vertical(*children, id="console-inspector-more-body")
@@ -98,6 +109,8 @@ class _ConsoleInspectorMore(Vertical):
         self.styles.height = "auto" if open else 2
 
     def on_mount(self) -> None:
+        """Apply the initial disclosure state after mounting."""
+
         self._apply_open()
 
     def _apply_open(self) -> None:
@@ -109,6 +122,13 @@ class _ConsoleInspectorMore(Vertical):
             heading.can_focus = self.open
 
     def set_open(self, open: bool, *, notify: bool = False) -> None:
+        """Apply a disclosure state and optionally announce a user change.
+
+        Args:
+            open: Whether the conditional groups should be visible.
+            notify: Whether to post a ``Toggled`` message.
+        """
+
         if open == self.open:
             return
         focused = self.app.focused if self.is_mounted else None
@@ -133,9 +153,13 @@ class _ConsoleInspectorMore(Vertical):
         self.set_open(not self.open, notify=True)
 
     def action_collapse(self) -> None:
+        """Collapse More and announce the deliberate action."""
+
         self.set_open(False, notify=True)
 
     def action_expand(self) -> None:
+        """Expand More and announce the deliberate action."""
+
         self.set_open(True, notify=True)
 
 
@@ -470,19 +494,23 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             return
 
     def set_more_open(self, open: bool) -> None:
-        """Apply persisted disclosure state without posting a user event."""
+        """Apply persisted disclosure state without posting a user event.
+
+        Args:
+            open: Whether the conditional More groups should be visible.
+        """
 
         self._more_open = open
         if not self.is_mounted:
             return
         try:
-            more = self.query_one("#console-inspector-more", _ConsoleInspectorMore)
+            more = self.query_one("#console-inspector-more", ConsoleInspectorMore)
         except (NoMatches, QueryError):
             return
         more.set_open(open)
 
-    @on(_ConsoleInspectorMore.Toggled)
-    def _more_toggled(self, event: _ConsoleInspectorMore.Toggled) -> None:
+    @on(ConsoleInspectorMore.Toggled)
+    def _more_toggled(self, event: ConsoleInspectorMore.Toggled) -> None:
         event.stop()
         self._more_open = event.open
         self.post_message(self.MoreToggled(event.open))
@@ -623,6 +651,12 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             self._on_reconcile()
 
     def compose(self) -> ComposeResult:
+        """Compose ordinary, promoted, and More-owned Inspector groups.
+
+        Returns:
+            The current Inspector group widgets in visual order.
+        """
+
         promoted, more = self._group_projection(self._ownership)
         for owner, _heading_id, _labels in _ROW_GROUPS:
             if owner in _CONDITIONAL_OWNERS:
@@ -639,7 +673,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                     for widget in self._group_widgets(more_owner, conditional_more=True)
                 ]
                 if more_widgets:
-                    yield _ConsoleInspectorMore(
+                    yield ConsoleInspectorMore(
                         *more_widgets,
                         open=self._more_open,
                     )

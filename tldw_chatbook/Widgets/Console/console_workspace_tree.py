@@ -805,7 +805,11 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def on_tree_node_selected(
         self, event: Tree.NodeSelected[WorkspaceTreeNodeData]
     ) -> None:
-        """Keep externally posted native selection messages non-business."""
+        """Keep externally posted native selection messages non-business.
+
+        Args:
+            event: The native Tree selection message to consume.
+        """
 
         event.stop()
 
@@ -948,12 +952,23 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self._update_tooltip()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Clear hover identity when local Tree scrolling moves rows.
+
+        Args:
+            old_value: The previous vertical scroll offset.
+            new_value: The replacement vertical scroll offset.
+        """
+
         super().watch_scroll_y(old_value, new_value)
         if round(old_value) != round(new_value) and self.hover_line >= 0:
             self.hover_line = -1
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Recompute truncation after Tree or outer-rail width changes."""
+        """Recompute truncation after Tree or outer-rail width changes.
+
+        Args:
+            _event: The Textual resize event.
+        """
 
         self.call_after_refresh(self._update_tooltip)
 

@@ -2493,7 +2493,11 @@ class ChatScreen(BaseAppScreen):
     def on_console_inspector_more_toggled(
         self, event: ConsoleRunInspector.MoreToggled
     ) -> None:
-        """Persist a deliberate Inspector More disclosure change."""
+        """Persist a deliberate Inspector More disclosure change.
+
+        Args:
+            event: The disclosure event carrying the requested open state.
+        """
 
         event.stop()
         self._set_console_rail_preference(
@@ -3199,7 +3203,7 @@ class ChatScreen(BaseAppScreen):
             except (NoMatches, QueryError):
                 context_data = None
             else:
-                context_data = tray._workspace_tree_context_data
+                context_data = getattr(tray, "_workspace_tree_context_data", None)
             label = escape_markup(
                 str(getattr(context_data, "raw_label", "") or "Workspace tree")
             )

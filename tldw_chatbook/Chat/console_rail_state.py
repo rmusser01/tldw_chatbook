@@ -210,7 +210,14 @@ _LEGACY_GLOBAL_SCOPE = "global"
 
 
 def normalize_console_rail_layout_scope(value: Any) -> str:
-    """Return the supported Console rail layout persistence scope."""
+    """Return the supported Console rail layout persistence scope.
+
+    Args:
+        value: The configured scope value.
+
+    Returns:
+        ``workspace`` when explicitly requested; otherwise ``global``.
+    """
     if not isinstance(value, str):
         return CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
     normalized = value.strip().lower()
@@ -399,7 +406,14 @@ def serialize_console_rail_preferences(
 
 
 def serialize_console_rail_stored_preferences(raw: Any) -> dict[str, bool]:
-    """Validate a stored payload while retaining behavior-affecting metadata."""
+    """Validate stored preferences while retaining behavioral metadata.
+
+    Args:
+        raw: The untrusted stored preference payload.
+
+    Returns:
+        A normalized persistence dictionary.
+    """
     serialized = serialize_console_rail_preferences(
         coerce_console_rail_preferences(raw)
     )

@@ -222,6 +222,36 @@ async def test_summary_sync_atomically_patches_rows_without_recompose() -> None:
 
 
 @pytest.mark.asyncio
+async def test_summary_sync_defers_when_a_fact_row_is_temporarily_missing() -> None:
+    """A recompose window cannot turn an authority refresh into an exception."""
+
+    before = _state()
+    app = _SummaryHarness(before)
+
+    async with app.run_test(size=(80, 12)) as pilot:
+        summary = app.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        where = summary.query_one("#console-send-authority-where", Static)
+        rendered_before = str(where.renderable)
+        scope = summary.query_one("#console-send-authority-scope", Static)
+        await scope.remove()
+        await pilot.pause()
+        after = _state(
+            rows=(
+                ConsoleDisplayRow("Workspace", "Studio"),
+                ConsoleDisplayRow("Selected conversation", "Draft B"),
+                ConsoleDisplayRow("Provider", "ready", status="ready"),
+            )
+        )
+
+        summary.sync_state(after)
+
+        assert summary.last_state is before
+        assert str(where.renderable) == rendered_before
+
+
+@pytest.mark.asyncio
 async def test_unicode_tooltips_and_context_help_only_expose_complete_values() -> None:
     long_state = _state(
         rows=(

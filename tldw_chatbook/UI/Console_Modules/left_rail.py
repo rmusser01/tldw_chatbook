@@ -871,7 +871,10 @@ class ConsoleLeftRail(Vertical):
         )
         # Preserve the same early-reveal contract when MouseDown reaches the
         # rail before Textual's descendant-focus notification.
-        stable_tree_press = isinstance(target, ConsoleWorkspaceTree)
+        stable_tree_press = (
+            isinstance(target, ConsoleWorkspaceTree)
+            and target._pressed_node_key is not None
+        )
         self.activate_section(
             section_id,
             request_reconcile=stable_tree_press,

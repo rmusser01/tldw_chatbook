@@ -8,6 +8,7 @@ from typing import Any
 from rich.cells import cell_len
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.css.query import NoMatches, QueryError
 from textual.events import Resize
 from textual.widgets import Static
 
@@ -45,7 +46,15 @@ def project_console_send_authority(
     *,
     ownership_policy: InspectorOwnershipPolicy = InspectorOwnershipPolicy.RESILIENT,
 ) -> ConsoleSendAuthorityProjection:
-    """Project the complete next-send facts from one Inspector snapshot."""
+    """Project the complete next-send facts from one Inspector snapshot.
+
+    Args:
+        state: The atomic Inspector state to summarize.
+        ownership_policy: The ownership policy used to classify Inspector rows.
+
+    Returns:
+        The five user-facing authority facts.
+    """
 
     owned = classify_inspector_content(state, ownership_policy)
     rows = {entry.row.label: entry.row for entry in owned.rows}
@@ -124,6 +133,12 @@ class ConsoleSendAuthoritySummary(Static):
         self.styles.max_height = 6
 
     def compose(self) -> ComposeResult:
+        """Compose the heading and five fixed fact rows.
+
+        Returns:
+            The child widgets for the six-row summary.
+        """
+
         yield self._row(
             "What happens if I send now?",
             "console-send-authority-heading",
@@ -143,18 +158,31 @@ class ConsoleSendAuthoritySummary(Static):
         return row
 
     def sync_state(self, state: ConsoleInspectorState) -> None:
-        """Patch all five facts from one new snapshot without recomposing."""
+        """Patch all five facts from one new snapshot without recomposing.
+
+        Args:
+            state: The replacement atomic Inspector snapshot.
+        """
 
         if state == self.last_state:
             return
         projection = project_console_send_authority(state)
+        if not self.is_mounted:
+            self.last_state = state
+            self._projection = projection
+            return
+        try:
+            rows = tuple(
+                (label, attribute, self.query_one(f"#{widget_id}", Static))
+                for label, attribute, widget_id in _FACTS
+            )
+        except (NoMatches, QueryError):
+            return
         self.last_state = state
         self._projection = projection
-        if not self.is_mounted:
-            return
-        for label, attribute, widget_id in _FACTS:
+        for label, attribute, row in rows:
             value = getattr(projection, attribute)
-            self.query_one(f"#{widget_id}", Static).update(Text(f"{label}: {value}"))
+            row.update(Text(f"{label}: {value}"))
         self.recompute_tooltips()
         self.refresh()
 
@@ -163,18 +191,34 @@ class ConsoleSendAuthoritySummary(Static):
 
         if not self.is_mounted:
             return
-        for label, attribute, widget_id in _FACTS:
-            row = self.query_one(f"#{widget_id}", Static)
+        try:
+            rows = tuple(
+                (label, attribute, self.query_one(f"#{widget_id}", Static))
+                for label, attribute, widget_id in _FACTS
+            )
+        except (NoMatches, QueryError):
+            return
+        for label, attribute, row in rows:
             value = getattr(self._projection, attribute)
             copy = f"{label}: {value}"
             width = max(0, row.content_region.width)
             row.tooltip = Text(value) if width and cell_len(copy) > width else None
 
     def on_resize(self, _event: Resize) -> None:
+        """Recompute clipped-value help after a width change.
+
+        Args:
+            _event: The Textual resize event.
+        """
+
         self.recompute_tooltips()
 
     def contextual_help_rows(self) -> tuple[tuple[str, str], ...]:
-        """Return all complete fact values for focused contextual help."""
+        """Return all complete fact values for focused contextual help.
+
+        Returns:
+            Ordered label/value pairs for the five authority facts.
+        """
 
         return tuple(
             (label, getattr(self._projection, attribute))

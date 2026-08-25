@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
@@ -1099,6 +1099,51 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         await _settle(pilot, passes=4)
         assert tree.cursor_node is not replacement_node
         assert conversation_requests == []
+
+
+@pytest.mark.asyncio
+async def test_empty_workspace_tree_press_does_not_request_early_reveal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a row-backed stable key authorizes press-time rail reflow."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        rail = await _open_all_production_context_sections(host, pilot)
+        rail.sync_workspace_context(
+            replace(
+                _workspace_state(),
+                workspace_tree=(
+                    WorkspaceTreeWorkspace(
+                        workspace_id="workspace-1",
+                        label="Workspace 1",
+                        conversations=(),
+                        next_cursor=None,
+                    ),
+                ),
+            )
+        )
+        await _settle(pilot, passes=4)
+        tree = rail.query_one(ConsoleWorkspaceTree)
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def record_activation(section_id: str, **kwargs: object) -> None:
+            calls.append((section_id, kwargs))
+
+        monkeypatch.setattr(rail, "activate_section", record_activation)
+        tree._pressed_node_key = None
+        rail.on_mouse_down(SimpleNamespace(widget=tree))
+
+        assert tree._pressed_node_key is None
+        assert calls
+        assert all(
+            call[1].get("request_reconcile") is False
+            and call[1].get("deliberate_reveal") is False
+            for call in calls
+        )
 
 
 async def _open_production_inspector(host, pilot) -> ConsoleInspectorRail:

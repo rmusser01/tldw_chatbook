@@ -676,6 +676,48 @@ async def test_console_f1_renders_markup_looking_selected_label_literally() -> N
 
 
 @pytest.mark.asyncio
+async def test_console_f1_tolerates_missing_tree_context_snapshot() -> None:
+    """Workbench help remains available during a context-tray transition."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        console.query_one("#console-left-rail").sync_workspace_context(
+            replace(
+                _base_grouped_workspace_state(),
+                workspace_tree=(
+                    WorkspaceTreeWorkspace(
+                        workspace_id="workspace-1",
+                        label="Workspace 1",
+                        conversations=(),
+                        next_cursor=None,
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+        tree = console.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.workspace_nodes["workspace-1"])
+        tree.focus()
+        await pilot.pause()
+        tray = console.query_one(
+            "#console-workspaces-context", ConsoleWorkspaceContextTray
+        )
+        del tray._workspace_tree_context_data
+
+        await console.action_show_workbench_help()
+        await pilot.pause()
+
+        panel = host.screen_stack[-1]
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert "Workspace tree" in panel.state.render_text()
+
+
+@pytest.mark.asyncio
 async def test_zero_result_workspace_search_stays_editable_and_initializes_without_echo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
