@@ -308,8 +308,8 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         assert (
             "#console-staged-context-tray {\n"
             "    height: auto;\n"
-            "    min-height: 3;\n"
-            "    max-height: 6;"
+            "    min-height: 0;\n"
+            "}"
         ) in css
         assert (
             "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
@@ -2863,12 +2863,18 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         console.query_one("#console-run-inspector-state")
         body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
+        live_work_viewport = source_readiness.parent
+        live_work_section = live_work_viewport.parent
+        live_work_root = live_work_section.parent
 
         assert inspector.parent is body
-        assert source_readiness.parent is body
+        assert live_work_viewport.id == "console-bounded-section-live-work-viewport"
+        assert live_work_section.id == "console-bounded-section-live-work"
+        assert live_work_root.id == "console-live-work-section"
+        assert live_work_root.parent is body
+        assert body.children.index(live_work_root) == body.children.index(inspector) + 1
         assert source_readiness.region.y >= inspector.region.y
-        assert source_readiness.region.y <= body.region.y + body.region.height
-        assert source_readiness.region.height <= 18
+        assert source_readiness.region.height <= 20
 
 
 @pytest.mark.asyncio
@@ -3330,7 +3336,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
             "value",
             staged_context.styles.max_height,
         )
-        assert max_height >= 10
+        assert max_height is None
         staged_text = _visible_text(staged_context)
         assert "Incident Review" in staged_text
         assert "ready" in staged_text
@@ -4821,16 +4827,14 @@ def test_console_f1_help_documents_the_macos_alt_caveat():
 
 @pytest.mark.asyncio
 async def test_console_left_rail_section_headers_all_visible_without_scrolling():
-    """task-15110 (owner ruling: cap sections, scroll inside).
+    """Keep default headers visible while enforcing the 20-row section ceiling.
 
     With every section expanded, the rail's virtual height used to run ~3x
     its viewport and Conversations started ~20 rows below the fold with no
-    scroll cue -- and after the OutOfBounds test repairs scrolled first,
-    NOTHING failed if the rail grew further. This is that missing
-    reachability guard: every default-open section HEADER must sit inside
-    the rail body's visible viewport with no scrolling, at the size the
-    defect was measured at (160x48), and each expanded body must respect
-    its height budget so the section after it stays on-screen.
+    scroll cue. The current contract gives each expanded section its own
+    bounded 20-row viewport and leaves ordinary outer scrolling available
+    when populated sections need more room. This guard keeps the compact
+    default headers visible at 160x48 and pins the local section ceiling.
 
     Runs on the REAL app CSS stack (screen css + bundle), not the
     bundle-less ConsoleHarness: the rail's vertical geometry -- header
@@ -4887,9 +4891,9 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
                 "outgrown its budget again (task-15110)"
             )
 
-        # The budget itself: no expanded section body may exceed its share
-        # (20% + 1 row of tolerance for rounding) of the rail viewport.
-        budget = body.region.height // 5 + 1
+        # Each expanded section owns up to 20 content rows before local
+        # scrolling, independent of how many peer sections are expanded.
+        budget = 20
         for section_body in console.query(".console-rail-section-body"):
             if not section_body.display:
                 continue
