@@ -8375,3 +8375,38 @@ readiness gates, mutate each gate independently. A green expected-empty test is
 not evidence for the named gate until making that gate permissive turns the test
 red. Fixtures crossing association and canonical-owner boundaries must state
 which ID space each value occupies.
+---
+
+## A process-global record drained at every teardown charges one test's background work to a bystander (TASK-21592, 2026-08-24)
+
+**TASK-21592, 2026-08-24.** The filing said `Tests/App` polluted `Tests/Library`:
+13-15 errors with node ids that varied run to run, zero when either directory
+ran alone. Reproduced on the filing's own base (`f49956038`): 10 errors together,
+0 for `Tests/Library` alone. Every one of the ten was a **teardown** error on a
+test that had itself **passed**, and every one read the same thing —
+`socket.create_connection -> huggingface.co:443`, with `huggingface_hub` logging
+`Retrying in 1s [Retry 1/5]`.
+
+Two globals in series produced it. `huggingface_hub.constants.HF_HUB_OFFLINE`
+was frozen `False` at import (nothing set it), so a Library test that built the
+default embedding model against an empty cache reached the real hub. Then
+`Tests/network_guard._blocked_attempts` — a module-level list drained and
+asserted empty at *every* test's teardown — collected the five retries, which
+run on a worker thread with 1/2/4/8/16s backoff and outlive the test that
+started them. So the attempts landed on tests B, C, D. The "zero when alone"
+result was not the absence of the fetch: it was too short a tail of subsequent
+tests for the retries to land on.
+
+The count and the ids therefore carried no information about the culprit. Nine
+of the ten node ids named innocent tests, and bisecting on them would have led
+nowhere.
+
+**What to do.** When a suite-wide guard keeps a process-global record and
+asserts it empty per test, record provenance with each entry — at minimum
+`threading.current_thread().name` — and say so in the failure message when it is
+not the main thread. Read the error *body* before the node ids: a batch of
+failures that all carry the same address and differ only in which test they
+landed on is one background actor, not N flaky tests. And check the plugin list
+before trusting an ordering claim: `-p no:randomly` is a no-op in this venv
+because `pytest-randomly` is not installed, so it neither proves nor disproves
+anything about order.

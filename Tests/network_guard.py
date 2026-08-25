@@ -31,6 +31,11 @@ Design
   that), every blocked attempt is also **recorded**. The autouse fixture in
   ``Tests/conftest.py`` fails the test at teardown on a non-empty record, so
   the guard cannot be silently absorbed by the code under test.
+* That record is process-global and drained at *every* teardown, so an attempt
+  made by a thread outliving its test lands on an unrelated later test. Each
+  attempt therefore also records the **thread** that made it, and
+  ``describe_blocked_attempts`` says so in the failure message when it is not
+  the main thread (task-21592).
 
 Opting in
 ---------
@@ -48,6 +53,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import threading
+from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
@@ -55,6 +61,8 @@ __all__ = [
     "BlockedNetworkAccess",
     "NetworkMode",
     "blocked_attempts",
+    "describe_blocked_attempts",
+    "drain_blocked_attempt_threads",
     "drain_blocked_attempts",
     "install",
     "is_allowed",
@@ -87,6 +95,21 @@ class NetworkMode(str, Enum):
 #: ``(call, address)`` pairs recorded since the last drain. Consulted by the
 #: autouse fixture so a swallowed block still fails its test.
 _blocked_attempts: list[tuple[str, str]] = []
+
+#: Names of the threads that made the recorded attempts, in the same order and
+#: drained alongside them. Kept as a parallel list rather than a third tuple
+#: element so the published ``(call, address)`` shape stays unpacking-compatible
+#: for the tests that already consume it.
+#:
+#: TASK-21592: this record is process-global and the autouse fixture asserts it
+#: empty at EVERY test's teardown, so an attempt made by a thread that outlives
+#: the test that started it is charged to whichever unrelated test happens to
+#: be finishing. That is exactly how ``huggingface_hub``'s five-retry backoff
+#: produced 10-15 teardown errors on innocent, passing ``Tests/Library`` nodes
+#: whose ids varied run to run. The thread name is the one piece of provenance
+#: available at record time, and it is enough to tell "this test did it" from
+#: "something older did it".
+_blocked_attempt_threads: list[str] = []
 
 #: Egress is denied unless a test explicitly selects a narrower or wider mode.
 _mode = NetworkMode.BLOCKED
@@ -153,9 +176,67 @@ def blocked_attempts() -> tuple[tuple[str, str], ...]:
 
 
 def drain_blocked_attempts() -> tuple[tuple[str, str], ...]:
-    """Return the recorded blocked attempts and clear the record."""
+    """Return the recorded blocked attempts and clear the record.
+
+    Also clears the parallel thread-name record, so
+    ``drain_blocked_attempt_threads`` must be called *before* this if both are
+    wanted for the same batch.
+    """
     recorded = tuple(_blocked_attempts)
     _blocked_attempts.clear()
+    _blocked_attempt_threads.clear()
+    return recorded
+
+
+def describe_blocked_attempts(
+    attempts: Sequence[tuple[str, str]],
+    threads: Sequence[str] = (),
+) -> str:
+    """Describe recorded attempts, naming any thread that is not the main one.
+
+    A non-main thread means the attempt may have been made by a worker that
+    outlived the test that started it, in which case the test being failed is a
+    bystander (TASK-21592). Saying so in the message is the difference between
+    a diagnosable failure and an unattributable flake.
+
+    Args:
+        attempts: The drained ``(call, address)`` records.
+        threads: The thread names from
+            :func:`drain_blocked_attempt_threads`, positionally aligned with
+            ``attempts``. May be shorter or empty.
+
+    Returns:
+        A one-line description, empty when there are no attempts.
+    """
+    if not attempts:
+        return ""
+    padded = list(threads) + ["thread unknown"] * (len(attempts) - len(threads))
+    detail = ", ".join(
+        f"{call} -> {address} [{thread}]"
+        for (call, address), thread in zip(attempts, padded)
+    )
+    main = threading.main_thread().name
+    foreign = sorted({name for name in threads if name != main})
+    if not foreign:
+        return detail
+    return (
+        f"{detail} — NOTE: recorded on {', '.join(foreign)}, not {main}, so the "
+        "attempt may belong to an EARLIER test whose worker outlived it; this "
+        "record is process-global and is drained at every teardown (TASK-21592)"
+    )
+
+
+def drain_blocked_attempt_threads() -> tuple[str, ...]:
+    """Return the thread names behind the recorded attempts, and clear them.
+
+    Positionally aligned with :func:`blocked_attempts`. Read this first, then
+    :func:`drain_blocked_attempts`.
+
+    Returns:
+        One thread name per currently recorded attempt.
+    """
+    recorded = tuple(_blocked_attempt_threads)
+    _blocked_attempt_threads.clear()
     return recorded
 
 
@@ -178,6 +259,7 @@ def _deny(call: str, address: Any) -> BlockedNetworkAccess:
     """
     described = _describe(address)
     _blocked_attempts.append((call, described))
+    _blocked_attempt_threads.append(threading.current_thread().name)
     return BlockedNetworkAccess(
         f"network access blocked in tests: {call}({described}). "
         "Tests must not touch a live endpoint — stub the client seam, use "
