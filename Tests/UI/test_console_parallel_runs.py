@@ -13,7 +13,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app as _build_base_test_app
 from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -29,6 +29,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+def _build_test_app(*args, **kwargs):
+    """Build a mounted-UI app without the first-run setup overlay."""
+    app = _build_base_test_app(*args, **kwargs)
+    _configure_native_ready_console(app)
+    return app
 
 
 def _transcript_text(console) -> str:
@@ -1154,7 +1161,6 @@ async def test_fleet_summary_line_intersects_the_visible_viewport_default_sectio
     the round-1 commit.
     """
     app = _build_test_app()
-    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 44)) as pilot:

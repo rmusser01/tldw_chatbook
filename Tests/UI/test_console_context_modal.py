@@ -29,7 +29,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
@@ -59,6 +59,8 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
 )
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 SNAPSHOT = ConsoleContextSnapshot(
@@ -127,7 +129,7 @@ def _inspector(snapshot_factory=_snapshot_factory, **overrides: object) -> Conso
     return ConsoleConversationInspector(**kwargs)
 
 
-class ModalHarness(App):
+class ModalHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("background")
 
@@ -237,7 +239,7 @@ async def test_context_modal_in_progress_warning():
         assert app.focused is modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
 
 
-class ActionHarness(App):
+class ActionHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("background")
 
@@ -1030,7 +1032,7 @@ async def _prefill_factory() -> ConsoleContextSnapshot:
     return PREFILL_SNAPSHOT
 
 
-class PrefillModalHarness(App):
+class PrefillModalHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("background")
 

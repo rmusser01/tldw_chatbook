@@ -6800,6 +6800,29 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         return self._active_leaf_by_session.get(session_id)
 
+    def nearest_persisted_ancestor_id(self, message_id: str) -> str | None:
+        """Return the durable parent for a newly staged message.
+
+        The message itself may still be transient, so its public
+        ``parent_message_id`` field has not been populated by persistence.
+        Resolve through the native tree instead, using the same skip-over-
+        transient rule as ordinary message persistence.
+
+        Args:
+            message_id: Native message whose durable ancestor should be found.
+
+        Returns:
+            The nearest ancestor's durable message ID, or ``None`` when the
+            message starts a durable conversation.
+
+        Raises:
+            KeyError: If ``message_id`` is not present in the store.
+        """
+
+        message = self._message_or_raise(message_id)
+        session_id = self._message_session_index[message_id]
+        return self._nearest_persisted_ancestor_id(session_id, message)
+
     def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
         """Point a session's active leaf at a node and recompute the active path.
 

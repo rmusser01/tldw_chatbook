@@ -5578,24 +5578,7 @@ class ConsoleChatController:
             preparation.preparation_id,
             user_message_id=echoed_user.id,
         )
-        parent_message_id = None
-        if echoed_user.parent_message_id is not None:
-            parent = self.store.get_message(echoed_user.parent_message_id)
-            parent_message_id = parent.persisted_message_id
-            if parent_message_id is None:
-                self._pause_prepared_commit(
-                    preparation.preparation_id,
-                    ConsolePreparationPauseKind.PERSISTENCE,
-                )
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    "Couldn't save the prepared turn. Retry or cancel.",
-                    session_id=session.id,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                    preparation_id=preparation.preparation_id,
-                )
+        parent_message_id = self.store.nearest_persisted_ancestor_id(echoed_user.id)
         contributions = (
             (preparation_outcome.contribution,)
             if preparation_outcome is not None

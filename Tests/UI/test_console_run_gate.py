@@ -134,6 +134,7 @@ def test_persona_buddy_missing_controller_sink_is_noop():
 async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
     """Each actual run task carries the exact owner captured at validation."""
     app, screen = _build_screen()
+    app.ensure_persona_buddy_controller()
     controller = screen._ensure_console_chat_controller()
     old_validating = asyncio.Event()
     release_old = asyncio.Event()

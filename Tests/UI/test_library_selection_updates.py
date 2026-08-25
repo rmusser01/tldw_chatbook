@@ -8,7 +8,7 @@ interaction class (Docs/Design/2026-07-16-performance-audit.md §P1 B2):
   state in place, instead of ``self.refresh(recompose=True)`` (a
   whole-screen remove/remount of the nav bar, footer, ~20-row rail, and
   50-100-row canvas).
-* Tier 2 -- browse-mode row selection (the ``▸`` highlight + preview
+* Tier 2 -- browse-mode row selection (the ``▸`` highlight + reader
   change) and select-mode enter/exit/select-all/clear call the mounted
   canvas's own ``sync_state`` -- a canvas-scoped recompose that rebuilds
   only the canvas's own children, skipping the nav bar, footer, and rail.
@@ -26,6 +26,9 @@ from textual.widgets import Button, Static
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
+)
+from tldw_chatbook.Widgets.Library.library_conversation_reader import (
+    LibraryConversationReader,
 )
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -169,7 +172,7 @@ async def test_checkbox_toggle_leaves_rail_untouched():
 @pytest.mark.asyncio
 async def test_browse_row_selection_routes_through_canvas_sync_state(monkeypatch):
     """Clicking a conversation row outside select mode (choosing which row
-    is previewed -- the ``▸`` marker + preview subtree) calls the mounted
+    is read -- the ``▸`` marker + permanent reader pane) calls the mounted
     canvas's own ``sync_state`` (a canvas-scoped recompose rebuilding only
     the canvas's own children), never the screen-level
     ``self.refresh(recompose=True)``.
@@ -202,20 +205,19 @@ async def test_browse_row_selection_routes_through_canvas_sync_state(monkeypatch
 
         # The service owns row order: entering the canvas auto-previews the
         # first returned row (chat-1).
-        preview_before = str(
-            screen.query_one("#library-conversation-preview-lines").renderable
+        reader = screen.query_one(
+            "#library-conversation-reader", LibraryConversationReader
         )
-        assert "Quarterly planning sync" in preview_before
+        assert screen._selected_conversation_id == "chat-1"
+        assert reader.state.selected_id == "chat-1"
 
         screen.query_one("#library-conversation-row-1", Button).press()
         await pilot.pause()
 
         assert len(sync_calls) == 1
         assert recompose_calls == []
-        preview_after = str(
-            screen.query_one("#library-conversation-preview-lines").renderable
-        )
-        assert "Design review notes" in preview_after
+        assert screen._selected_conversation_id == "chat-2"
+        assert reader.state.selected_id == "chat-2"
 
 
 @pytest.mark.asyncio
