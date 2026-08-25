@@ -1736,6 +1736,7 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "tools",
                 "notes",
                 "appearance",
+                "protect-keys",
             ]
 
             # Exit via "Explore Home" (TAB_HOME) to prove the app is
@@ -1798,9 +1799,10 @@ async def _open_rerun_wizard_from_settings(pilot):
 
 async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
-    # voice -> summary without picking anything (every step is skip-safe).
+    # voice -> protect -> summary without picking anything (every step is
+    # skip-safe; TASK-21148 keeps Protect on the track even keyless).
     container = wizard_screen.query_one(SetupWizardContainer)
-    for _ in range(4):
+    for _ in range(5):
         previous_step = container.current_step
         _press(wizard_screen, "#wizard-next")
         await _wait_until(pilot, lambda: container.current_step != previous_step)
@@ -2205,23 +2207,24 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 
             step = container.steps[voice_index]
             assert isinstance(step, VoiceSetupStep)
-            assert step.virtual_size.height > step.container_size.height
 
-            controls = (
-                step.query_one("#setup-voice-endpoint", Input),
-                step.query_one("#setup-voice-auth"),
-                step.query_one("#setup-voice-model", Input),
-                step.query_one("#setup-voice-voice", Input),
+            # TASK-21148 (UAT V-1/V-2): the try-it controls lead the step;
+            # plumbing lives under the Advanced disclosure. The primary
+            # controls must be reachable immediately, the advanced ones
+            # after expanding — at every size, including 80x24.
+            primary_controls = (
                 step.query_one("#setup-voice-sample", Input),
                 step.query_one("#setup-voice-test", Button),
                 step.query_one("#setup-voice-default", Checkbox),
             )
-            assert all(control.region.width > 0 for control in controls)
-            assert all(control.region.right <= size[0] for control in controls)
+            from textual.widgets import Collapsible as _Collapsible
 
-            for control in controls:
-                control.focus()
-                await pilot.pause(0.2)
+            advanced = step.query_one("#setup-voice-advanced", _Collapsible)
+            assert advanced.collapsed, "plumbing starts folded away"
+            assert all(c.region.width > 0 for c in primary_controls)
+            assert all(c.region.right <= size[0] for c in primary_controls)
+
+            def _assert_reachable(control) -> None:
                 assert control.region.y >= 0
                 assert control.region.bottom <= size[1]
                 assert control in app.screen._compositor.visible_widgets, (
@@ -2230,6 +2233,26 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
                     f"viewport={step.container_size}, virtual={step.virtual_size}, "
                     f"offset={step.scroll_offset}"
                 )
+
+            for control in primary_controls:
+                control.focus()
+                await pilot.pause(0.2)
+                _assert_reachable(control)
+
+            advanced.collapsed = False
+            await pilot.pause(0.3)
+            advanced_controls = (
+                step.query_one("#setup-voice-endpoint", Input),
+                step.query_one("#setup-voice-auth"),
+                step.query_one("#setup-voice-model", Input),
+                step.query_one("#setup-voice-voice", Input),
+            )
+            assert all(c.region.width > 0 for c in advanced_controls)
+            assert all(c.region.right <= size[0] for c in advanced_controls)
+            for control in advanced_controls:
+                control.focus()
+                await pilot.pause(0.2)
+                _assert_reachable(control)
 
             for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
                 button = app.screen.query_one(selector, Button)
@@ -2800,7 +2823,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(100, 24)) as pilot:
+        async with app.run_test(size=(100, 18)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -2835,11 +2858,11 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             region_before = key_input.region
             fits_before = (
                 region_before.y >= 0
-                and region_before.bottom <= 24
+                and region_before.bottom <= 18
                 and region_before.right <= 100
             )
             assert not fits_before, (
-                "test assumption broken: key Input already fits at 100x24 "
+                "test assumption broken: key Input already fits at 100x18 "
                 f"without any scroll ({region_before}) -- this test needs "
                 "genuine overflow to prove the scroll-into-view fix"
             )
@@ -2849,7 +2872,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 
             region_after = key_input.region
             assert region_after.width > 0 and region_after.height > 0
-            assert region_after.y >= 0 and region_after.bottom <= 24, (
+            assert region_after.y >= 0 and region_after.bottom <= 18, (
                 f"key Input still clipped after focusing it: {region_after}"
             )
             assert region_after.right <= 100
@@ -2862,7 +2885,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
                 button = app.screen.query_one(widget_id, Button)
                 region = button.region
                 assert region.width > 0 and region.height > 0
-                assert region.right <= 100 and region.bottom <= 24
+                assert region.right <= 100 and region.bottom <= 18
 
 
 # ---------------------------------------------------------------------------

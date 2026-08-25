@@ -217,6 +217,31 @@ class SetupRadioSet(RadioSet):
 
 
 class SetupWizardProgress(WizardProgress):
+
+    #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout must hold
+    #: even in stylesheet-less hosts (bare test harnesses) — an unstyled
+    #: Vertical expands to fill and shoves the wizard chrome off-screen.
+    DEFAULT_CSS = """
+    SetupWizardProgress .setup-progress-item {
+        height: auto;
+    }
+    SetupWizardProgress .step-indicator-stack {
+        layout: vertical;
+        align: center top;
+        width: auto;
+        height: auto;
+    }
+    SetupWizardProgress .step-number {
+        width: auto;
+        min-width: 4;
+        margin-right: 0;
+    }
+    SetupWizardProgress .step-title {
+        margin-right: 0;
+        text-align: center;
+    }
+    """
+
     """Progress indicator rendered from the resolved first-run track."""
 
     _NUMBER_WIDTH = 4
@@ -267,12 +292,13 @@ class SetupWizardProgress(WizardProgress):
     def _titled_track_width(self) -> int:
         """Return the minimum safe width for the fully titled tracker."""
 
+        # TASK-21148 (UAT F-2): titles render UNDER the number boxes, so an
+        # item costs max(number, title) width — the full 10-step track keeps
+        # its titles at 140 columns instead of collapsing to anonymous boxes.
         item_width = sum(
-            self._NUMBER_WIDTH
-            + self._TITLE_HORIZONTAL_MARGIN
+            max(self._NUMBER_WIDTH, len(item.title))
             + self._ITEM_HORIZONTAL_MARGIN
             + self._ITEM_SAFETY_WIDTH
-            + len(item.title)
             for item in self.items
         )
         connector_width = self._CONNECTOR_WIDTH * max(len(self.items) - 1, 0)
@@ -294,23 +320,28 @@ class SetupWizardProgress(WizardProgress):
                 id=f"setup-progress-{item.step_id}",
                 classes=f"step-indicator-container setup-progress-item {state_class}",
             ):
-                number_classes = f"step-number {item.state}"
-                # TASK-21143 (UAT N-7): "attention" = visited, but its probe
-                # failed — "!" instead of the ✓ users read as "OK".
-                yield Static(
-                    "✓"
-                    if item.state == "complete"
-                    else "!"
-                    if item.state == "attention"
-                    else str(index + 1),
-                    classes=number_classes,
-                )
-                title = Label(
-                    item.title,
-                    classes=f"step-title {item.state}",
-                )
-                title.display = not compact
-                yield title
+                # TASK-21148 (UAT F-2/F-3): number box and title stack
+                # vertically — titles survive at full-track widths, and the
+                # box grows for two-digit step numbers instead of clipping
+                # "10" down to "1".
+                with Vertical(classes="step-indicator-stack"):
+                    number_classes = f"step-number {item.state}"
+                    # TASK-21143 (UAT N-7): "attention" = visited, but its
+                    # probe failed — "!" instead of the ✓ users read as "OK".
+                    yield Static(
+                        "✓"
+                        if item.state == "complete"
+                        else "!"
+                        if item.state == "attention"
+                        else str(index + 1),
+                        classes=number_classes,
+                    )
+                    title = Label(
+                        item.title,
+                        classes=f"step-title {item.state}",
+                    )
+                    title.display = not compact
+                    yield title
                 if index < len(self.items) - 1:
                     connector_classes = "step-connector"
                     if item.state in ("complete", "attention"):
@@ -4025,9 +4056,20 @@ class VoiceSetupStep(SetupStep):
         )
 
     def compose_step(self) -> ComposeResult:
+        # TASK-21148 (UAT V-1/V-2): outcome first. The step used to open on
+        # raw plumbing (endpoint URL, model ids) and hid its human parts —
+        # sample text, "Test and Hear", the default toggle — below the fold
+        # at 40-row terminals with no hint of what "voice" was even for.
+        # Now: purpose line, service choice, try-it controls; the plumbing
+        # lives under an Advanced disclosure with unchanged widget ids.
         draft = self._initial_draft()
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
+            yield Static(
+                "Hear replies read aloud — optional. PocketTTS runs locally, "
+                "no account needed; skip with Next if you don't want voice.",
+                classes="setup-subtitle",
+            )
             yield Label("Service", classes="setup-field-label")
             with SetupRadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
                 yield SetupRadioButton(
@@ -4043,31 +4085,6 @@ class VoiceSetupStep(SetupStep):
                     "Custom compatible",
                     id="setup-voice-preset-custom",
                 )
-            yield Label("Endpoint", classes="setup-field-label")
-            yield Input(
-                value=draft.endpoint,
-                id="setup-voice-endpoint",
-                placeholder="http://127.0.0.1:8765/v1/audio/speech",
-            )
-            yield Label("Authentication", classes="setup-field-label")
-            with SetupRadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
-                yield SetupRadioButton(
-                    "None",
-                    id="setup-voice-auth-none",
-                    value=True,
-                )
-                yield SetupRadioButton("API key", id="setup-voice-auth-key")
-            yield Label("Model", classes="setup-field-label")
-            yield Input(value=draft.model_id, id="setup-voice-model")
-            yield Label("Voice", classes="setup-field-label")
-            yield Input(value=draft.voice_id, id="setup-voice-voice")
-            with Horizontal(classes="setup-voice-output-row"):
-                with Vertical():
-                    yield Label("Format", classes="setup-field-label")
-                    yield Input(value=draft.response_format, id="setup-voice-format")
-                with Vertical():
-                    yield Label("Speed", classes="setup-field-label")
-                    yield Input(value=str(draft.speed), id="setup-voice-speed")
             yield Label("Sample text", classes="setup-field-label")
             yield Input(
                 value=draft.sample_text,
@@ -4100,6 +4117,40 @@ class VoiceSetupStep(SetupStep):
                 id="setup-voice-default",
                 value=False,
             )
+            with Collapsible(
+                title="Advanced — endpoint, model & output",
+                collapsed=True,
+                id="setup-voice-advanced",
+            ):
+                yield Label("Endpoint", classes="setup-field-label")
+                yield Input(
+                    value=draft.endpoint,
+                    id="setup-voice-endpoint",
+                    placeholder="http://127.0.0.1:8765/v1/audio/speech",
+                )
+                yield Label("Authentication", classes="setup-field-label")
+                with SetupRadioSet(
+                    id="setup-voice-auth", classes="setup-voice-segmented"
+                ):
+                    yield SetupRadioButton(
+                        "None",
+                        id="setup-voice-auth-none",
+                        value=True,
+                    )
+                    yield SetupRadioButton("API key", id="setup-voice-auth-key")
+                yield Label("Model", classes="setup-field-label")
+                yield Input(value=draft.model_id, id="setup-voice-model")
+                yield Label("Voice", classes="setup-field-label")
+                yield Input(value=draft.voice_id, id="setup-voice-voice")
+                with Horizontal(classes="setup-voice-output-row"):
+                    with Vertical():
+                        yield Label("Format", classes="setup-field-label")
+                        yield Input(
+                            value=draft.response_format, id="setup-voice-format"
+                        )
+                    with Vertical():
+                        yield Label("Speed", classes="setup-field-label")
+                        yield Input(value=str(draft.speed), id="setup-voice-speed")
 
     def _selected_authentication(self) -> str:
         pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
@@ -6666,7 +6717,7 @@ class WelcomeStep(SetupStep):
                 # so the "Step 1 of 4" count is not a surprise after picking
                 # what read as a two-item "provider & model" track.
                 yield SetupRadioButton(
-                    "Quick setup — provider, model, voice & summary (recommended)",
+                    "Quick setup — provider, model, voice, protection (recommended)",
                     value=True,
                     id="setup-track-quick",
                 )
@@ -6713,6 +6764,38 @@ class ProtectKeysStep(SetupStep):
                 "Set a password", id="setup-protect-set-password", variant="primary"
             )
             yield Static("", id="setup-protect-status", classes="setup-probe-status")
+
+    def on_show(self) -> None:
+        """Render the nothing-to-do state while no key exists (UAT N-6).
+
+        TASK-21148: Protect is always on the track now (a stable step
+        total beats a shorter one), so a keyless run reaches this step —
+        say why there is nothing to do instead of offering a password for
+        keys that don't exist.
+        """
+        super().on_show()
+        key_entered = bool(getattr(self.wizard, "key_entered", False))
+        stored = False
+        try:
+            stored = wizard_state.stored_plaintext_key_present(
+                getattr(self.wizard.app_instance, "app_config", {}) or {}
+            )
+        except Exception:
+            logger.debug("Protect stored-key probe skipped", exc_info=True)
+        has_keys = key_entered or stored
+        try:
+            button = self.query_one("#setup-protect-set-password", Button)
+            status = self.query_one("#setup-protect-status", Static)
+        except NoMatches:
+            return
+        button.display = has_keys
+        if not has_keys and not self.encryption_enabled:
+            status.update(
+                "No API keys saved yet — nothing to protect. This step "
+                "matters once a key is stored; Next continues."
+            )
+        elif has_keys and not self.encryption_enabled:
+            status.update("")
 
     @on(Button.Pressed, "#setup-protect-set-password")
     def _on_set_password(self) -> None:
@@ -7043,7 +7126,8 @@ class SummaryStep(SetupStep):
             config_path_text = "(unknown — see Settings ▸ Diagnostics)"
         try:
             self.query_one("#setup-summary-footer", Static).update(
-                f"Config file: {config_path_text}\n"
+                "Config file: "
+                f"{wizard_state.middle_truncate_path(config_path_text, 100)}\n"
                 "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
             )
         except Exception:
@@ -9730,10 +9814,37 @@ class FirstRunSetupWizard(WizardScreen):
             id="setup-key-hints",
             classes="setup-key-hints",
         )
+        # TASK-21148 (UAT Z-1/Z-2): stock macOS Terminal is 80x24 — every
+        # step still works there, but content scrolls hard and nothing used
+        # to say so. One quiet line names the fix.
+        yield Static("", id="setup-size-hint", classes="setup-size-hint hidden")
 
     def on_mount(self) -> None:
         if not self.rerun:
             self._persist_started_flag()
+        self._sync_size_hint()
+
+    def on_resize(self, event: object = None) -> None:
+        self._sync_size_hint()
+
+    def _sync_size_hint(self) -> None:
+        """Show the enlarge-terminal nudge below ~100x30 (UAT Z-2)."""
+        try:
+            hint = self.query_one("#setup-size-hint", Static)
+        except NoMatches:
+            return
+        width, height = self.size.width, self.size.height
+        small = 0 < width < 100 or 0 < height < 30
+        if small:
+            hint.update(
+                f"Small terminal ({width}×{height}) — setup works best at "
+                "100×30 or larger. Everything still works; steps may scroll."
+            )
+        hint.set_class(not small, "hidden")
+        # Styles-level too: hosts without the app stylesheet (bare test
+        # harnesses) have no `.hidden` rule, and a docked row that only
+        # PRETENDS to hide shifts every geometry below it.
+        hint.display = small
 
     @work(thread=True, group="setup-wizard-started-flag")
     def _persist_started_flag(self) -> None:

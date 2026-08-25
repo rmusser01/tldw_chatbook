@@ -590,6 +590,23 @@ def apply_probe_failure_to_summary_rows(
     )
 
 
+def middle_truncate_path(path_text: str, max_chars: int) -> str:
+    """Middle-truncate a filesystem path for one-line display (UAT S-4).
+
+    The summary's config path used to hard-wrap mid-character across two
+    lines. Keeps the start (which disambiguates the profile root) and the
+    tail (the filename users recognize), joining with a single ellipsis.
+    """
+    if max_chars < 8:
+        max_chars = 8
+    if len(path_text) <= max_chars:
+        return path_text
+    keep = max_chars - 1
+    head = keep // 2
+    tail = keep - head
+    return f"{path_text[:head]}…{path_text[-tail:]}"
+
+
 def build_first_run_summary_actions(
     *,
     provider_configured: bool,
@@ -1222,14 +1239,19 @@ _API_SETTINGS_PREFIX = "api_settings."
 def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
     """Resolve the ordered active step ids for a track.
 
+    TASK-21148 (UAT N-6): STEP_PROTECT is always on both tracks. It used
+    to join only once a key was entered, which moved the goalposts
+    mid-flight — "Step 2 of 5" became "Step 3 of 6" the moment a key was
+    typed. A stable total beats a shorter one; the Protect step itself
+    renders a nothing-to-do state while no key exists.
+
     Args:
         track: TRACK_QUICK or TRACK_FULL (anything else falls back to full).
-        key_entered: Whether any secret was entered this run; gates STEP_PROTECT.
+        key_entered: Retained for call-site compatibility; no longer gates
+            any step.
     """
-    base = _QUICK_TRACK if track == TRACK_QUICK else _FULL_TRACK
-    if key_entered:
-        return base
-    return tuple(step for step in base if step != STEP_PROTECT)
+    del key_entered
+    return _QUICK_TRACK if track == TRACK_QUICK else _FULL_TRACK
 
 
 def build_setup_progress(

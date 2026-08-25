@@ -273,16 +273,19 @@ async def test_voice_step_compact_controls_are_ordered_and_default_is_opt_in():
             }
         ]
 
+        # TASK-21148 (UAT V-1/V-2): outcome first — try-it controls lead,
+        # plumbing (endpoint/auth/model/voice ids) follows under the
+        # Advanced disclosure.
         assert ordered_ids == [
             "setup-voice-preset",
-            "setup-voice-endpoint",
-            "setup-voice-auth",
-            "setup-voice-model",
-            "setup-voice-voice",
             "setup-voice-sample",
             "setup-voice-test",
             "setup-voice-status",
             "setup-voice-default",
+            "setup-voice-endpoint",
+            "setup-voice-auth",
+            "setup-voice-model",
+            "setup-voice-voice",
         ]
         assert step.query_one("#setup-voice-default", Checkbox).value is False
         assert step.query_one("#setup-voice-test", Button).disabled is False
@@ -1333,6 +1336,7 @@ async def test_next_button_click_drives_quick_track_to_summary():
             "provider",
             "model",
             "voice",
+            "protect-keys",
             "summary",
         ]
         assert set(container.wizard_data.keys()) == {
@@ -1340,6 +1344,7 @@ async def test_next_button_click_drives_quick_track_to_summary():
             "provider",
             "model",
             "voice",
+            "protect-keys",
         }
         assert container.query_one("#wizard-next", Button).display is False
         assert container.query_one("#wizard-cancel", Button).display is False
@@ -10068,7 +10073,15 @@ async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_p
         step.on_show()
         await pilot.pause()
         footer = str(step.query_one("#setup-summary-footer", Static).render())
-        assert str(scratch_config) in footer
+        # TASK-21148 (UAT S-4): long paths middle-truncate on one line
+        # instead of hard-wrapping mid-character — the filename tail and
+        # the path head both survive.
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            middle_truncate_path,
+        )
+
+        assert middle_truncate_path(str(scratch_config), 100) in footer
+        assert footer.count(scratch_config.name[-12:]) >= 1
         assert "Config file:" in footer
 
 
@@ -10335,7 +10348,17 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
         def _assert_focus_on_current_step_content() -> None:
             current = container.steps[container.current_step]
             expected = _first_focusable(current)
-            assert expected is not None, f"{current!r} has no focusable widget"
+            if expected is None:
+                # Mirrors production's final fallback: a step with no
+                # focusable content (keyless Protect hides its only button,
+                # TASK-21148) parks focus on the nav bar so the container
+                # stays in the focus chain.
+                nav_next = container.query_one("#wizard-next", Button)
+                assert app.focused is nav_next, (
+                    f"{current!r} has no focusable widget; expected nav "
+                    f"fallback focus, got {app.focused!r}"
+                )
+                return
             assert app.focused is expected, (
                 f"expected focus on {current!r}'s first focusable widget "
                 f"{expected!r}, got {app.focused!r}"
@@ -11064,15 +11087,17 @@ async def test_rerun_with_stored_plaintext_key_activates_protect_step_without_ty
 
 
 @pytest.mark.asyncio
-async def test_fresh_config_without_stored_key_omits_protect_step():
-    """Regression guard for the Bug-4 fix above: a fresh config with no
-    stored key and nothing typed this run must still omit STEP_PROTECT."""
+async def test_fresh_config_without_stored_key_still_includes_protect_step():
+    """TASK-21148 (UAT N-6): Protect is always on the track — a stable step
+    total beats a shorter one. The keyless run renders the step's
+    nothing-to-do state instead of omitting the step (which used to move
+    the goalposts mid-flight the moment a key was typed)."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
-        assert STEP_PROTECT not in container.active_ids
+        assert STEP_PROTECT in container.active_ids
 
 
 class TestAppOfferGating:
@@ -11289,7 +11314,7 @@ async def test_progress_defaults_to_quick_track_and_titles_fit():
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
         assert container.track == TRACK_QUICK
-        assert len(container.active_ids) == 5
+        assert len(container.active_ids) == 6
         for step in container.steps:
             title = step.config.title
             assert len(title) <= 8, f"step title too long for progress row: {title!r}"
@@ -11306,7 +11331,7 @@ async def test_setup_progress_renders_projection_state_classes_and_dynamic_total
         container = wizard.query_one(SetupWizardContainer)
 
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == len(container.active_ids) == 5
+        assert len(rows) == len(container.active_ids) == 6
         assert [row.id for row in rows] == [
             f"setup-progress-{step_id}" for step_id in container.active_ids
         ]
@@ -11350,7 +11375,8 @@ async def test_full_track_progress_content_stays_inside_non_overlapping_items(
         await pilot.pause(0.1)
 
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == (11 if include_protect else 10)
+        # TASK-21148 (UAT N-6): Protect is always on the track.
+        assert len(rows) == 11
         assert sum(row.has_class("-active") for row in rows) == 1
         assert all(
             row.has_class("-active")
@@ -11402,7 +11428,7 @@ async def test_quick_track_progress_recovers_titles_after_live_resize(theme: str
         await pilot.pause(0.2)
         assert not progress.has_class("-compact")
         rows = list(progress.query(".setup-progress-item"))
-        assert len(rows) == 5
+        assert len(rows) == 6
         for row in rows:
             title = row.query_one(".step-title")
             assert title.display
@@ -11611,7 +11637,7 @@ async def test_key_hints_footer_and_test_button_probe():
         from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
         progress = wizard.query_one(WizardProgress)
-        assert progress.total_steps == 5
+        assert progress.total_steps == 6
 
     # Test button: fires the probe with the typed key.
     probe = AsyncMock()
@@ -12482,28 +12508,27 @@ async def test_quick_track_label_names_the_steps_the_tracker_shows():
         await pilot.pause(0.2)
         quick = wizard.query_one("#setup-track-quick", RadioButton)
         label = str(quick.label)
-        assert "provider, model, voice & summary" in label
+        assert "provider, model, voice, protection" in label
         assert "recommended" in label
         container = wizard.query_one(SetupWizardContainer)
-        assert len(container.active_ids) == 5
+        assert len(container.active_ids) == 6
         nav = wizard.query_one(WizardNavigation)
-        assert nav.total_steps == 5
+        assert nav.total_steps == 6
 
 
 @pytest.mark.asyncio
-async def test_nav_text_total_syncs_when_protect_keys_joins_on_key_entry():
-    """TASK-2154.9 (FR-02): the conditional protect-keys step joins the
-    quick track once a secret exists -- the "Step X of Y" text must update
-    in the same refresh as the progress dots; before this fix the text
-    total lagged one navigation behind."""
+async def test_nav_text_total_is_stable_when_a_key_is_entered():
+    """TASK-21148 (UAT N-6): entering a key must NOT change the step total —
+    Protect is always on the track, so "Step X of Y" never moves its
+    goalposts mid-flight (the old behavior this test's predecessor pinned)."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
         nav = wizard.query_one(WizardNavigation)
-        assert STEP_PROTECT not in container.active_ids
-        assert nav.total_steps == 5
+        assert STEP_PROTECT in container.active_ids
+        assert nav.total_steps == 6
 
         container.note_key_entered()
         await pilot.pause(0.1)

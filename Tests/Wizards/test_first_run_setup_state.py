@@ -474,7 +474,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 
 class TestActiveStepIds:
     def test_full_track_without_key(self):
-        """Voice follows Model; Speech remains after RAG in the Full track."""
+        """Voice follows Model; Speech remains after RAG; Protect is always
+        present (TASK-21148, UAT N-6 — stable step totals)."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
@@ -485,6 +486,7 @@ class TestActiveStepIds:
             STEP_TOOLS,
             STEP_NOTES,
             STEP_APPEARANCE,
+            STEP_PROTECT,
             STEP_SUMMARY,
         )
 
@@ -504,11 +506,14 @@ class TestActiveStepIds:
         )
 
     def test_quick_track(self):
+        # TASK-21148 (UAT N-6): Protect is always on the track — the step
+        # total never changes mid-flight when a key is entered.
         assert active_step_ids(TRACK_QUICK, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
             STEP_MODEL,
             STEP_VOICE,
+            STEP_PROTECT,
             STEP_SUMMARY,
         )
 

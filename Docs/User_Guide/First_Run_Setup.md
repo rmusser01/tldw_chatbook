@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-08 (TASK-21146: online model-list consent lives on the Summary step).
+> Verified against: first-run wizard implementation, 2026-08 (TASK-21148: layout/density — stable step totals, stacked tracker titles, outcome-first Voice step, small-terminal hint).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 every step can be skipped (Next moves on without configuring it), Escape asks
@@ -23,8 +23,10 @@ navigation buttons — fix it and press Next again, or go Back.
 ## The two tracks
 
 - **Quick setup (recommended)** — connect one provider, pick a default model,
-  done. Everything else stays at recommended defaults (tools off, RAG off,
-  default theme, notes sync off).
+  optionally try a voice and protect your keys, done. Everything else stays at
+  recommended defaults (tools off, RAG off, default theme, notes sync off).
+  The step count never changes mid-run — the key-protection step is always
+  shown, and simply says so when there is nothing to protect yet.
 - **Full setup** — also walks through RAG/embeddings, built-in tools, notes
   sync, appearance, and key encryption.
 
@@ -39,6 +41,11 @@ navigation buttons — fix it and press Next again, or go Back.
 | Tools | Built-in tool gates (all off by default) | `[tools]` in config.toml (Settings ▸ Advanced Config) — there is no Tools category |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
+
+The Voice step leads with a sample text and **Test and Hear**; the endpoint,
+model, and output settings sit under its "Advanced" section. On terminals
+smaller than about 100×30 the wizard shows a one-line nudge — everything
+still works, steps just scroll.
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
