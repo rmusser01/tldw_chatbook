@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 
 from Tests.Chat.conftest import StreamingGateway
+from Tests.console_provider_doubles import provider_resolution
 
 
 # `controller_with_two_sessions` (and its `StreamingGateway` provider stub)
@@ -444,17 +445,13 @@ class TwoStreamGateway:
         self.release = {"a": asyncio.Event(), "b": asyncio.Event()}
 
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(
+                   ready=True,
+                   provider="llama_cpp",
+                   model="test-model",
+                   base_url="http://127.0.0.1:9099",
+                   visible_copy="",
+               )
 
     @staticmethod
     def _key_for(messages: list[dict]) -> str:

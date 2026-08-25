@@ -48,6 +48,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+from Tests.console_provider_doubles import with_destination
 
 
 SENTINEL = "AGENTS_AUTOMATIC_CHANNEL_SENTINEL_71f584"
@@ -926,7 +927,7 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 
     class Gateway:
         async def resolve_for_send(self, _selection):
-            return ConsoleProviderResolution(
+            return with_destination(ConsoleProviderResolution(
                 provider="OpenAI",
                 base_url="https://user:password@api.example/v1?secret=yes",
                 model="test-model",
@@ -934,7 +935,7 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
                 readiness_key="openai",
                 execution_key="openai",
                 max_tokens=128,
-            )
+            ))
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -977,7 +978,7 @@ async def test_folderless_session_skips_optional_project_instructions_and_runs(
 
     class Gateway:
         async def resolve_for_send(self, _selection):
-            return ConsoleProviderResolution(
+            return with_destination(ConsoleProviderResolution(
                 provider="DeepSeek",
                 base_url="https://api.deepseek.com",
                 model="deepseek-chat",
@@ -985,7 +986,7 @@ async def test_folderless_session_skips_optional_project_instructions_and_runs(
                 readiness_key="deepseek",
                 execution_key="deepseek",
                 max_tokens=128,
-            )
+            ))
 
     async def select_binding(*args):
         setup_calls.append(args)
@@ -1068,7 +1069,7 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry():
     class Gateway:
         async def resolve_for_send(self, _selection):
             provider_calls.append(True)
-            return ConsoleProviderResolution(
+            return with_destination(ConsoleProviderResolution(
                 provider="OpenAI",
                 base_url="http://127.0.0.1:18991/v1",
                 model="gpt-4o-mini",
@@ -1076,7 +1077,7 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry():
                 readiness_key="openai",
                 execution_key="openai",
                 max_tokens=128,
-            )
+            ))
 
     class Bridge:
         def run_reply(self, **_kwargs):

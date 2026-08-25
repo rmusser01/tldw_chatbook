@@ -47,6 +47,7 @@ from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
+from Tests.console_provider_doubles import with_destination
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
@@ -338,7 +339,7 @@ class _CountingResolutionGateway:
 
     async def resolve_for_send(self, selection):
         self.resolve_calls += 1
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=selection.base_url or "http://127.0.0.1:9099",
             model=(
@@ -347,7 +348,7 @@ class _CountingResolutionGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-        )
+        ))
 
 
 async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:

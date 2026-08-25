@@ -45,6 +45,7 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
+from Tests.console_provider_doubles import provider_resolution, with_destination
 
 
 def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
@@ -117,7 +118,7 @@ class _Gateway:
         self.child_calls = 0
 
     async def resolve_for_send(self, selection):
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider="llama_cpp",
             base_url="",
             model="test-model",
@@ -125,7 +126,7 @@ class _Gateway:
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
             max_tokens=128,
-        )
+        ))
 
     async def stream_chat(self, resolution, messages, **kwargs):
         system = str(messages[0].get("content", "")) if messages else ""
@@ -708,13 +709,13 @@ class _ParkingGateway:
         self.release = threading.Event()
 
     async def resolve_for_send(self, _selection):
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider="llama_cpp",
             base_url="",
             model="test-model",
             ready=True,
             execution_key="llama_cpp",
-        )
+        ))
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()
@@ -1367,7 +1368,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     class _FakeGateway:
         async def resolve_for_send(self, _selection):
-            return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+            return provider_resolution(ready=True, provider="llama_cpp", visible_copy="")
 
         async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:

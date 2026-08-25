@@ -26,6 +26,7 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import with_destination
 
 
 @pytest.fixture
@@ -47,7 +48,7 @@ class _CapturingGateway:
         self.captured = None
 
     async def resolve_for_send(self, selection):
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider=selection.provider,
             base_url=selection.base_url or "",
             model=(
@@ -58,7 +59,7 @@ class _CapturingGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-        )
+        ))
 
     async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]

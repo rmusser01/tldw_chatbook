@@ -56,6 +56,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _fence(name, args):
@@ -72,12 +73,12 @@ class _Gateway:
         self.calls = 0
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(
-            ready=True,
-            provider="llama_cpp",
-            model="test-model",
-            visible_copy="",
-        )
+        return provider_resolution(
+                   ready=True,
+                   provider="llama_cpp",
+                   model="test-model",
+                   visible_copy="",
+               )
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         chunks = self._scripts[self.calls]

@@ -46,6 +46,7 @@ from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
+from Tests.console_provider_doubles import provider_resolution
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
@@ -96,14 +97,14 @@ class _AnthropicCostGateway:
         self.sent_messages: list[list[dict]] = []
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            provider="anthropic",
-            base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
-            ready=True,
-            visible_copy="",
-            prompt_caching=True,
-        )
+        return provider_resolution(
+                   provider="anthropic",
+                   base_url=selection.base_url or "",
+                   model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
+                   ready=True,
+                   visible_copy="",
+                   prompt_caching=True,
+               )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.sent_messages.append(list(messages))
@@ -123,14 +124,14 @@ class _AnthropicWaitingGateway:
         self.release = asyncio.Event()
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            provider="anthropic",
-            base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
-            ready=True,
-            visible_copy="",
-            prompt_caching=True,
-        )
+        return provider_resolution(
+                   provider="anthropic",
+                   base_url=selection.base_url or "",
+                   model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
+                   ready=True,
+                   visible_copy="",
+                   prompt_caching=True,
+               )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         yield "partial"

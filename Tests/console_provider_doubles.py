@@ -21,12 +21,15 @@ this helper attaches it only when ``ready`` is true.
 
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, TypeVar
 
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
+
+_R = TypeVar("_R")
 
 #: What a cold local provider says while its readiness probe is still warming.
 DEFAULT_BLOCKED_COPY = "WIP: provider warming up"
@@ -69,4 +72,31 @@ def provider_resolution(
     )
     if ready:
         resolution.resolved_destination = resolve_console_destination(resolution)
+    return resolution
+
+
+def with_destination(resolution: _R) -> _R:
+    """Attach the destination the production gateway attaches to a REAL one.
+
+    `ConsoleProviderResolution.resolved_destination` defaults to None, and the
+    real gateway fills it in immediately after building the resolution. A test
+    that constructs the dataclass directly skips that step and hands the
+    controller a ready resolution with no destination -- the same refusal
+    :func:`provider_resolution` exists to prevent, in the typed shape.
+
+    Args:
+        resolution: A ready or not-ready provider resolution.
+
+    Returns:
+        The resolution carrying a typed destination when it is ready, and
+        unchanged when it is not. Frozen dataclasses are replaced rather than
+        mutated.
+    """
+
+    if not getattr(resolution, "ready", False):
+        return resolution
+    destination = resolve_console_destination(resolution)
+    if dataclasses.is_dataclass(resolution):
+        return dataclasses.replace(resolution, resolved_destination=destination)
+    resolution.resolved_destination = destination
     return resolution

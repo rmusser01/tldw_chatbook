@@ -465,11 +465,22 @@ def _real_controller(
 
 
 def _real_assistant(store: ConsoleChatStore):
-    return next(
-        message
-        for message in store.messages_for_session(store.active_session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
+    """Return the session's assistant row, naming the failure when there is none.
+
+    A bare `next(...)` here raised StopIteration out of the calling coroutine,
+    which Python re-raises as `RuntimeError: coroutine raised StopIteration` --
+    a message that names neither the store, the session, nor the fact that the
+    send produced no assistant row at all.
+    """
+    messages = list(store.messages_for_session(store.active_session_id))
+    assistant = next(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), None
     )
+    assert assistant is not None, (
+        "the send produced no ASSISTANT row; the session holds "
+        f"{[(m.role.value, m.content[:24]) for m in messages]}"
+    )
+    return assistant
 
 
 def _citation_row_counts(db: CharactersRAGDB) -> dict[str, int]:

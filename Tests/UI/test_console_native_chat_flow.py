@@ -100,6 +100,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from Tests.console_provider_doubles import provider_resolution, with_destination
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
@@ -352,7 +353,7 @@ class _PromptImprovementGateway:
         self.stream_calls = 0
 
     async def resolve_for_send(self, selection):
-        return ConsoleProviderResolution(
+        return with_destination(ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=selection.base_url or "http://127.0.0.1:9099",
             model=selection.explicit_model
@@ -361,7 +362,7 @@ class _PromptImprovementGateway:
             ready=True,
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
-        )
+        ))
 
     async def complete_auxiliary(self, request):
         self.auxiliary_calls += 1
@@ -1528,13 +1529,13 @@ class RestoredConsoleHarness(ConsolidatedCSSApp):
 
 class BlockedGateway:
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            provider="llama_cpp",
-            base_url=selection.base_url or "",
-            model="test-model",
-            ready=False,
-            visible_copy="Provider blocked: llama.cpp unavailable.",
-        )
+        return provider_resolution(
+                   provider="llama_cpp",
+                   base_url=selection.base_url or "",
+                   model="test-model",
+                   ready=False,
+                   visible_copy="Provider blocked: llama.cpp unavailable.",
+               )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         raise AssertionError("Blocked gateway should not stream")
