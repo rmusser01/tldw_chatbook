@@ -52,8 +52,15 @@ def test_each_vendored_table_is_present_under_tiktokens_own_key(
     It would simply download again -- which is the failure this directory
     exists to prevent, and which is invisible on a machine with a warm cache
     or network access.
+
+    Args:
+        label: Human-readable name of the encoding table, for failure copy.
+        url: Download URL tiktoken would fetch; its sha1 IS the cache key.
     """
-    expected = CACHE_DIR / hashlib.sha1(url.encode()).hexdigest()
+    # Non-cryptographic: this sha1 must match tiktoken's own cache keying,
+    # so the algorithm is not ours to choose. Same suppression as
+    # `Tests/Chunking/test_tokens_offsets.py`.
+    expected = CACHE_DIR / hashlib.sha1(url.encode()).hexdigest()  # nosec B324
     assert expected.is_file(), (
         f"{label} is missing from the vendored cache. tiktoken keys entries by "
         f"sha1 of the download URL, so it must be named {expected.name}. See "
@@ -70,7 +77,16 @@ def test_encodings_load_with_the_network_guard_active() -> None:
     evidence that tokenizing needs no network, which asserting on file presence
     alone would not give.
     """
-    tiktoken = pytest.importorskip("tiktoken")
+    # Deliberately NOT `importorskip`: tiktoken is a core dependency in
+    # `pyproject.toml`, so a missing import means a broken environment, not an
+    # absent optional extra. Skipping here would recreate the exact blind spot
+    # this PR exists to close -- the CI-only failure was invisible locally
+    # precisely because tiktoken was not installed, and a guard that skips
+    # under that condition reports green for the environment that cannot see
+    # the bug. (`requirements-test.txt` does not pull tiktoken in, so that
+    # environment is reachable.) The sibling HuggingFace guard DOES use
+    # `importorskip`, correctly: `huggingface_hub` is an optional extra.
+    import tiktoken
 
     assert tiktoken.get_encoding("gpt2").encode("hello world")
     assert tiktoken.get_encoding("cl100k_base").encode("hello world")
