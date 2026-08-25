@@ -84,6 +84,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
+    STEP_RAG,
+    STEP_SPEECH,
     STEP_SUMMARY,
     STEP_TOOLS,
     STEP_VOICE,
@@ -3054,3 +3056,64 @@ def test_setup_wizard_constructs_before_base_init_sets_app_instance():
     app_instance = SimpleNamespace(app_config={})
     wizard = SetupWizardContainer(app_instance)
     assert wizard.app_instance is app_instance
+
+
+# ---------------------------------------------------------------------------
+# TASK-21139 / UAT F-1: cold full-track entry to Speech must keep keyboard
+# input alive. SpeechSetupStep's first on_show schedules a
+# refresh(recompose=True); show_step's focus fix then targets a child of the
+# pre-recompose tree, and the recompose detaches the focused widget. Textual
+# 8.2.8 leaves app.focused on the detached node, so every subsequent key
+# event (ctrl+n / ctrl+b / escape / tab, even the app palette) dispatches
+# into a dead message pump and the wizard soft-locks until the process is
+# killed. This walks the exact cold path and asserts both the mechanism
+# (focus stays attached through the first-show recompose) and the behavior
+# (a real ctrl+b key event still navigates).
+# ---------------------------------------------------------------------------
+
+
+def _current_step_id(container: SetupWizardContainer) -> "str | None":
+    step = container.steps[container.current_step]
+    return step.config.id if step.config else None
+
+
+@pytest.mark.asyncio
+async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 50)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            app.screen.query_one("#setup-track-full", RadioButton).value = True
+            await pilot.pause()
+            for expected in (
+                STEP_PROVIDER,
+                STEP_MODEL,
+                STEP_VOICE,
+                STEP_RAG,
+                STEP_SPEECH,
+            ):
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda expected=expected: _current_step_id(container) == expected,
+                )
+            # Let the first-show lazy load's recompose land before checking —
+            # the orphaning happens on that recompose, not on arrival.
+            await pilot.pause(0.3)
+            focused = app.focused
+            assert focused is not None, "focus lost entering Speech cold"
+            assert focused.is_attached and focused.display, (
+                f"focus orphaned on detached widget {focused!r} (F-1 soft-lock)"
+            )
+            # The mechanism assertion above is necessary but not sufficient —
+            # prove a real key event still reaches the wizard's bindings.
+            await pilot.press("ctrl+b")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_RAG
+            )

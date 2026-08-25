@@ -8,6 +8,7 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import asyncio
+
 import hashlib
 import hmac
 import math
@@ -467,6 +468,96 @@ class SetupStep(WizardStep):
             self.query_one(".setup-step-error", Static).update(message)
         except Exception:
             logger.warning("Setup step error had nowhere to render: {}", message)
+
+    def refresh(
+        self,
+        *regions,
+        repaint: bool = True,
+        layout: bool = False,
+        recompose: bool = False,
+    ):
+        """TASK-21139 (UAT F-1): recompose must never orphan keyboard focus.
+
+        A recompose rebuilds this step's children; if ``app.focused`` is one
+        of them, Textual 8.2.8 leaves it pointing at the DETACHED widget --
+        every subsequent key event then dispatches into a dead message pump,
+        so no binding anywhere (container ctrl+n/ctrl+b, screen escape, even
+        the app palette) ever resolves and the wizard soft-locks. Confirmed
+        live: SpeechSetupStep's first ``on_show`` schedules exactly this
+        recompose an instant before ``show_step``'s focus fix targets a
+        pre-recompose child. The heal runs after every recompose (first-show
+        load, load-completion, discovery updates alike) because a one-shot
+        fix at the focus site would be re-orphaned by the next recompose.
+        """
+        if recompose:
+            try:
+                self.call_after_refresh(self._heal_orphaned_focus)
+            except Exception:
+                # Not mounted yet (compose-time refresh): nothing to heal.
+                pass
+        return super().refresh(
+            *regions, repaint=repaint, layout=layout, recompose=recompose
+        )
+
+    def _heal_orphaned_focus(self) -> None:
+        """Re-anchor focus if the recompose just detached the focused widget.
+
+        No-ops when focus is alive (attached and displayed) or when this
+        step is hidden -- a background recompose on a non-visible step must
+        never steal focus from the step the user is on. Restore priority:
+        the same-id widget in the rebuilt tree (so focus appears not to
+        move), then this step's preferred/first focusable, then the wizard
+        nav bar -- mirroring show_step()'s F-B focus fix so the container
+        stays in the focused widget's ancestry and ctrl+n/ctrl+b resolve.
+        """
+        try:
+            app = self.app
+        except Exception:
+            return
+        focused = app.focused
+        if focused is not None and focused.is_attached and focused.display:
+            return
+        if not self.display or not self.is_attached:
+            return
+        target: Optional[Widget] = None
+        prior_id = getattr(focused, "id", None) if focused is not None else None
+        if prior_id:
+            try:
+                candidate = self.query_one(f"#{prior_id}", Widget)
+                if (
+                    candidate.focusable
+                    and candidate.display
+                    and not candidate.has_class("hidden")
+                ):
+                    target = candidate
+            except Exception:
+                target = None
+        if target is None:
+            preferred = self.preferred_focus()
+            if (
+                preferred is not None
+                and preferred.focusable
+                and preferred.display
+                and not preferred.has_class("hidden")
+            ):
+                target = preferred
+        if target is None:
+            target = next(
+                (
+                    widget
+                    for widget in self.walk_children(Widget)
+                    if widget.focusable
+                    and widget.display
+                    and not widget.has_class("hidden")
+                ),
+                None,
+            )
+        if target is None:
+            try:
+                target = self.screen.query_one("#wizard-next", Button)
+            except Exception:
+                return
+        target.focus()
 
 
 @dataclass(frozen=True, slots=True)
