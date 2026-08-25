@@ -1382,3 +1382,84 @@ def test_has_binding_for_note_or_path_matches_the_any_scan_it_replaces(
         store.has_binding_for_note_or_path(
             "folder/root", note_scope_id="s", note_id="n", relative_path="p"
         )
+
+
+def test_candidate_binding_ids_matches_the_full_scan_it_replaces(
+    tmp_path: Path,
+) -> None:
+    """TASK-21532: the narrow projection answers the retired expression exactly.
+
+    The seeded store holds one binding in EVERY durable binding state, so a
+    projection that dropped or widened the state filter returns a different
+    tuple here rather than the same one.
+    """
+
+    store = _seeded_binding_store(tmp_path)
+
+    def retired_projection(root_id: str) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                binding.binding_id
+                for binding in store.list_bindings(root_id)
+                if binding.state is NotesSyncBindingState.CANDIDATE
+            )
+        )
+
+    assert store.candidate_binding_ids("root-1") == retired_projection("root-1")
+    assert store.candidate_binding_ids("root-1") == ("binding-0",)
+    # root-2's only binding is active, so the state filter is load-bearing in
+    # both directions rather than merely agreeing by accident.
+    assert store.candidate_binding_ids("root-2") == retired_projection("root-2")
+    assert store.candidate_binding_ids("root-2") == ()
+    with pytest.raises(ValueError, match="root_id"):
+        store.candidate_binding_ids("folder/root")
+
+
+def test_candidate_binding_ids_orders_by_binding_id_and_never_leaks_a_root(
+    tmp_path: Path,
+) -> None:
+    """TASK-21532: order and root ownership are the activation's contract.
+
+    ``activate_migration_candidate`` is handed this tuple verbatim, and the
+    caller compares it as a set against the reviewed plan -- so a projection
+    that returned another root's candidates would activate bindings nobody
+    reviewed.
+    """
+
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(_root(state=NotesSyncRootState.PENDING))
+    assert store.candidate_binding_ids("root-1") == ()
+
+    for suffix in ("c", "a", "b"):
+        store.create_binding(
+            _binding(
+                binding_id=f"binding-{suffix}",
+                note_id=f"note-{suffix}",
+                relative_path=f"folder/note-{suffix}.md",
+                identity_digest=hashlib.sha256(suffix.encode()).hexdigest(),
+                state=NotesSyncBindingState.CANDIDATE,
+            )
+        )
+    store.create_root(_root(root_id="root-2", state=NotesSyncRootState.PENDING))
+    store.create_binding(
+        _binding(
+            binding_id="binding-aaa-on-root-2",
+            root_id="root-2",
+            note_id="note-only-on-root-2",
+            relative_path="folder/only-on-root-2.md",
+            identity_digest=hashlib.sha256(b"root-2").hexdigest(),
+            state=NotesSyncBindingState.CANDIDATE,
+        )
+    )
+
+    # "binding-aaa-on-root-2" sorts between "binding-a" and "binding-b", so a
+    # missing root filter changes the tuple rather than only appending to it.
+    assert store.candidate_binding_ids("root-1") == (
+        "binding-a",
+        "binding-b",
+        "binding-c",
+    )
+    assert store.candidate_binding_ids("root-2") == ("binding-aaa-on-root-2",)
+    assert store.candidate_binding_ids("root-1") == tuple(
+        sorted(binding.binding_id for binding in store.list_bindings("root-1"))
+    )
