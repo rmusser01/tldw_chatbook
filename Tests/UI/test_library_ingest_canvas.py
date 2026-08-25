@@ -20,7 +20,7 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import (
     Button,
     Checkbox,
@@ -1788,15 +1788,15 @@ async def test_local_prompt_receipt_hides_retained_server_only_keep_original_fil
     monkeypatch.setattr(
         library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
     )
-    monkeypatch.setattr(
-        library_screen_module,
-        "save_setting_to_cli_config",
-        lambda _section, _key, value: backend.__setitem__("value", value) or True,
-    )
     app = _build_test_app()
     app._resolve_ingest_backend = lambda: backend["value"]
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
+    # Persistence is already covered at the worker boundary. Keep this mounted
+    # receipt test deterministic by replacing the @work wrapper itself.
+    screen._save_library_ingest_backend = lambda value: backend.__setitem__(
+        "value", value
+    )
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
         (), form=screen._library_ingest_form, ingest_backend=backend["value"],
         runtime_source="server", server_ingest_available=True,
@@ -1813,7 +1813,10 @@ async def test_local_prompt_receipt_hides_retained_server_only_keep_original_fil
 
         screen.query_one("#opt-generic-keep_original_file", Checkbox).value = True
         await pilot.pause()
-        screen.query_one("#library-ingest-backend-switch", Button).press()
+        backend_switch = screen.query_one("#library-ingest-backend-switch", Button)
+        assert backend_switch.disabled is False
+        backend_switch.press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
 
         prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)

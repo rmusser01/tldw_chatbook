@@ -5177,7 +5177,7 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
     app.server_media_reading_service = _CancellableService()
 
     async with app.run_test() as pilot:
-        job = _queued_server_job(app, remote_job_id="11")
+        _queued_server_job(app, remote_job_id="11")
         app.cancel_remote_ingest_batch("batch-1")
 
         # The request alone must not move the local job.
@@ -5414,8 +5414,6 @@ async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> No
     the dataclass's guarantee instead of this fallback, and would pass even if
     the fallback were inverted.
     """
-    from types import SimpleNamespace
-
     db = _make_db(tmp_path)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
     app = _IngestRunnerHarness(db)

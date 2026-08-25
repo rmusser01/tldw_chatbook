@@ -1,145 +1,186 @@
-# Research — authority-explicit workspace foundation
+# Research Workspace
 
-## What this screen is for
+Research is Chatbook's authority-explicit workspace for collecting sources and
+taking canonical Quick Notes. It is a separate screen from the durable Research
+Runs operator.
 
-Research is the destination for workspace-scoped research. In the current
-foundation phase, it lets you choose the Local or Server workspace catalog,
-inspect the separate Sources, Grounded Chat, and Studio regions, and arrange
-their panes. It does not yet ingest sources, send grounded-chat messages, or
-generate Studio outputs.
-
-Research has two separate screens:
-
-- **Workspace** is the new source-to-answer-to-output workbench.
-- **Runs** is the existing durable Research Runs operator for run lifecycle,
-  checkpoints, events, bundles, and artifacts.
-
-The mode buttons navigate between real screens. Opening **Runs** does not embed
-or replace Workspace, and direct links to the existing `research` route still
-open Runs.
-
-## Getting there
+## Open Research
 
 - Press **F10** from anywhere to open Research Workspace.
-- Select **F10 Research** in the top navigation bar.
-- Open **Ctrl+P** and choose "Tab Navigation: Switch to Research". Search
-  aliases include "research workspace", "research runs", "research sessions",
-  "deep research", and "notebook"; the destination command opens Workspace.
+- Choose **F10 Research** in the top navigation bar.
+- Open **Ctrl+P** and choose **Tab Navigation: Switch to Research**.
 
-Research sits after Library and before Artifacts. Inside the Research header,
-use **Workspace** and **Runs** to move between its two screens.
+Research has two real screen modes:
 
-## Layout tour
+- **Workspace** opens the source workbench.
+- **Runs** opens the existing Research Runs screen for run lifecycle,
+  checkpoints, events, bundles, and artifacts.
 
-The pinned header keeps three different facts separate:
+Changing modes navigates between screens; it does not embed one in the other.
+Saved or programmatic links to the existing `research` route continue to open
+Runs.
 
-- **Workspace data: Local | Server** chooses the complete workspace catalog
-  and identity authority for this screen.
-- **Processing: not configured** is a separate processing-route status. Local
-  data does not promise on-device inference.
-- **Sources: 0 ready** reports source readiness. Source attachment arrives in
-  a later phase.
+## Choose the data authority
 
-Below the header are the Sources, Grounded Chat, and Studio regions. The status
-row names the selected catalog, whether recovery is required, and that the
-current surface is foundation-only.
+The pinned **Workspace data: Local | Server** selector chooses the complete
+owner used by the workspace catalog, sources, notes, and every mutation on this
+screen.
 
-### Workspace data authority
+- **Local** uses this installation's Local Library, Local Notes, and Local
+  workspace memberships.
+- **Server** uses one qualified server profile, principal, and server workspace.
 
-**Local** reads only this installation's local research-workspace catalog.
-**Server** reads only the selected server profile and principal's catalog.
-Workspace identities remain qualified by Local/Server authority and, for
-Server, by profile and principal. Identically named or numbered Local and
-Server workspaces are not combined.
+The two authorities are never blended. Selecting Server does not copy Server
+Media or notes into Local databases. If the selected server is missing,
+unreachable, unauthorized, or unsupported, Server remains selected and the
+screen shows recovery. It does not fall back to Local.
 
-Switching authority is not a Copy, sync, or fallback operation. If Server is
-missing, unreachable, or needs authentication, **Server remains selected** and
-the screen shows the problem and recovery. It never substitutes Local data.
+The **Processing** status is separate. Local data ownership does not imply that
+future inference will run on-device.
 
-### Responsive panes
+## Collapse Sources and Studio
 
-At wide widths, Sources and Studio can be collapsed independently around the
-dominant Grounded Chat pane. The visible controls are exact ASCII labels:
+Sources and Studio are independently collapsible around the central Grounded
+Chat region. The visible labels are exact ASCII:
 
-| Pane | Expanded: collapse | Collapsed: reveal |
+| Pane | Collapse | Reveal |
 |---|---|---|
 | Sources | **`<---`** | **`--->`** |
 | Studio | **`--->`** | **`<---`** |
 
-The full control names are "Collapse Sources pane", "Expand Sources pane",
-"Collapse Studio pane", and "Expand Studio pane". Collapsing a focused pane
-moves focus to its reveal control; expanding it moves focus into the revealed
-pane. When both side panes are collapsed, Grounded Chat uses the available
-width.
+Each control has a full accessible action name. Focus moves to a surviving
+reveal control after collapse and into the revealed pane after expansion.
+Responsive collapse does not overwrite the stored wide-layout preference.
 
-From 100 through 149 columns, Chat appears with at most one companion pane and
-the **Sources (0)**, **Chat**, and **Studio (0)** pane controls choose what is
-visible. Below 100 columns, exactly one pane is visible and those same controls
-switch it. Responsive collapse is temporary: widening the terminal restores
-your stored wide-layout choices.
+At medium widths, **Sources**, **Chat**, and **Studio** choose the active
+companion layout. At narrow widths they switch the one visible pane.
 
-## Features & controls
+## Sources
 
-| Control | What it does now |
-|---|---|
-| **Workspace** | Opens the Research Workspace screen. |
-| **Runs** | Opens the separate durable Research Runs screen. |
-| **Local** | Selects and loads only the Local workspace catalog. |
-| **Server** | Selects and loads only the active Server catalog, or keeps Server selected with recovery. |
-| **Manage Workspaces...** | Opens Settings workspace management. |
-| **`<---` / `--->`** | Collapses or reveals the corresponding wide/medium side pane with focus relocation. |
-| **Sources (0) / Chat / Studio (0)** | Chooses the visible pane arrangement at medium and narrow widths. |
+### Add sources
 
-Pane preferences are a **device-only overlay** stored privately on this
-installation and keyed by the qualified workspace identity. They are not
-uploaded, shared, or available on another device. Width-forced collapse is not
-saved over those choices.
+Choose **Add Sources** or use **Quick add URL**. The Add dialog always displays
+the captured authority and offers five paths:
 
-## Common tasks
+- **Import Files** in Local or **Upload** in Server: choose one file for one
+  durable receipt.
+- **Local Library** or **My Media**: search, page, select, and associate an
+  existing canonical catalog item.
+- **URL**: add one URL or a batch with one URL per line.
+- **Paste**: add titled text through private managed staging.
+- **Search Local** or **Search Server**: Local searches the Local Library. The
+  Server web-search variant is visibly **Unavailable** because this client has
+  no configured canonical web-search result owner; use **My Media** or add a
+  result URL through URL intake.
 
-1. **Inspect Local workspaces.** Open Research with **F10**, choose **Local**,
-   and read the selected Local workspace name in the workspace row.
-2. **Check a Server catalog without fallback.** Choose **Server**. If the
-   configured server is ready, its qualified catalog loads. Otherwise, leave
-   Server selected and follow the displayed retry, configuration, or
-   authentication recovery.
-3. **Give Chat more room.** At a wide terminal, use Sources **`<---`** and
-   Studio **`--->`**. Use Sources **`--->`** or Studio **`<---`** to restore a
-   pane.
-4. **Move between Workspace and Runs.** Use the header's **Workspace** and
-   **Runs** buttons. Each is a separate screen with its own state.
-5. **Manage Local workspace records.** Choose **Manage Workspaces...** to open
-   Settings. Full local workspace management and destructive deletion remain
-   Settings-owned.
+Every intake first creates or reuses an item in the selected authority's
+general catalog:
 
-## Keyboard & commands
+- Local: a normal Library Media item, followed by
+  `WorkspaceMembership(role="source")`.
+- Server: a normal Server Media item, followed by a server workspace-source
+  row.
 
-Research Workspace adds no screen-local letter shortcuts in this foundation
-phase. Use Tab/Shift+Tab to move through visible controls. Global keys and
-pane-cycle behavior are described in the [guide index](index.md).
+The qualified workspace target is saved before intake begins. Navigating to a
+different workspace while work finishes cannot retarget it. A
+`workspace:<name>` keyword may be added for search display, but that tag is not
+membership and cannot grant ownership.
 
-## Related settings & docs
+### Browse and organize
 
-- **Settings ▸ Workspaces** owns full Local workspace management.
-- [Library](library.md) owns global source browsing, ingestion, and editing.
-- [Console](console.md) remains the live agent/tool surface; Research Workspace
-  is not a second Console.
-- The approved architecture is recorded in
-  [ADR-078](../../backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md).
+The Sources pane includes:
 
-## Quirks & troubleshooting
+- Refresh and current-page text filtering.
+- Advanced readiness, type, date, and direct-selection filters.
+- Manual, title, and updated-time sorting.
+- **Select all**, **Select visible**, **Clear**, and an exact selected count.
+- **Preview visible selected** and **Remove visible selected** batch actions.
+- Per-source Select/Deselect, details, device folders, Preview/annotate,
+  reorder, and Remove controls.
+- Previous/Next pagination.
 
-- This is the TASK-21507 foundation only. Sources has no Add/ingest action,
-  Grounded Chat has no Send action, and Studio has no Generate or Quick Notes
-  editor yet. The empty copy is intentional; future controls are not advertised
-  as working.
-- **Processing: not configured** is honest Phase 1 status. Choosing Local says
-  where workspace data is owned, not where a future model request will run.
-- If Local storage could not initialize, Local remains selected with a recovery
-  message. If Server is unavailable, Server remains selected; choose another
-  authority only by explicitly pressing its selector.
-- Pane choices persist only after a qualified research workspace is available.
-  They are presentation preferences, not canonical workspace data.
+**Move / Copy** remains visible but unavailable until a canonical transfer
+owner is implemented. Unsupported owner fields such as URL, file size,
+duration, or page count are not guessed.
+
+Remove means **unlink this workspace association**. It also removes that
+source from this workspace's selected retrieval scope, but it does not delete
+the canonical Local Library or Server Media item. Catalog deletion remains a
+separate owner-routed action.
+
+### Selection and readiness
+
+Desired source selection and effective retrieval readiness are different:
+
+- Selection records what should ground future requests and persists even while
+  a source is parsing or indexing.
+- Readiness reports attached, parsing, indexing, FTS-ready, vector-ready,
+  failed, unavailable, or stale.
+- Hybrid is effective only when both FTS and vector paths are ready. Missing
+  embeddings are labeled FTS-only, never Hybrid/vector ready.
+
+Use **Refresh** to re-read owner state. Failed receipt stages show a
+stage-specific action such as **Retry Local/Server ingest**, **Retry workspace
+link**, or **Retry readiness**. A catalog success is never rolled back because
+association or readiness later fails.
+
+### Receipts, folders, and annotations
+
+Recent receipts independently show catalog, workspace-link, and readiness
+outcomes. They remain available after the Add dialog closes and survive
+restart. The list is bounded; the general Library operation history remains
+the full catalog history.
+
+Nested source folders and source annotations are **Device-only organization**.
+They are stored in the private Research overlay keyed by the complete qualified
+workspace identity. They are not filesystem roots, canonical memberships,
+uploaded server records, shared content, or cross-device state.
+
+## Quick Notes
+
+Quick Notes lives in Studio and supports:
+
+- Load, New, search, Previous/Next, and a canonical note selector.
+- Title, comma-separated tags, Markdown Edit/Preview, Save, and Delete.
+- Capture selected-source provenance.
+- Download as Markdown, Clear, and one-level Undo.
+
+Local notes are normal Local Notes records plus a
+`WorkspaceMembership(role="note")`. Server notes use the canonical server
+workspace-notes API. Titles, bodies, tags, and provenance never enter the
+device overlay or a parallel Research note store.
+
+Updates use the owner's expected version. A stale save never overwrites
+silently; choose **Reload**, **Copy as new**, or **Cancel**. Before authority,
+workspace, or editor navigation, a non-empty dirty draft is saved to its exact
+captured owner. If saving fails, navigation pauses with **Retry**, **Discard
+editor changes**, and **Cancel**.
+
+Server Quick Note Delete is visible but disabled because the current server
+endpoint does not enforce the supplied expected version. Use a server client
+that provides versioned deletion. **Capture message** is also disabled until
+Grounded Chat exposes a canonical message owner.
+
+## Current limitations
+
+- Grounded Chat is mounted as a separate work area, but persistent grounded
+  messaging belongs to the next implementation phase and Send is not offered.
+- Studio output generators are not yet available. Summary, Flashcards, Quiz,
+  Report, Compare Sources, and the extended output set remain future phases;
+  this screen does not advertise working generation buttons.
+- Cross-authority Move/Copy is not implemented in this phase.
+- Server web search and version-safe Server Quick Note deletion remain
+  unavailable for the reasons shown beside their controls.
+
+## Related settings and screens
+
+- **Settings ▸ Workspaces** remains the full Local workspace manager.
+- [Library](library.md) owns global Local catalog browsing, ingestion, and
+  editing.
+- [Console](console.md) remains the live agent and tool surface.
+- [ADR-078](../../backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md)
+  records the authority, canonical-owner, overlay, and unlink boundaries.
 
 —
-*Verified against codex/research-workspace @ 5370de4aa + TASK-21507 Task 5 — 2026-08-24*
+*Verified against `codex/research-workspace` — 2026-08-24. Targeted Research
+Workspace verification was run; the full pytest suite was not run.*

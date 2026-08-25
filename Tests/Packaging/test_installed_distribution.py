@@ -92,6 +92,13 @@ APACHE_SUBTREE_LICENSE_PATHS = frozenset(
         "tldw_chatbook/tldw_api/LICENSE",
     }
 )
+PERSONA_VISUAL_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v40_to_v41_persona_visual.sql"
+)
+CONSOLE_PROJECT_CONTEXT_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v41_to_v42_console_project_context.sql"
+)
 RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/"
     "chachanotes_v42_to_v43_research_quick_note_proofs.sql"
