@@ -355,3 +355,164 @@ async def test_tick_scope_rebuilds_when_registry_changes_mid_scope():
             refreshed = controller._build_console_workspace_context_state()
             assert refreshed is not first
             assert refreshed.active_workspace_id == "workspace-delta"
+
+
+@pytest.mark.asyncio
+async def test_tick_scope_rebuilds_when_session_is_created_mid_scope():
+    """The PR #660 letter, store half: a session created mid-tick rebuilds.
+
+    ``_sync_console_native_session_tabs`` can create a session between the
+    tick's builds; the fingerprint's store-sessions component is the ONLY
+    thing keeping the later reads fresh. Adversarial review (TASK-22201)
+    proved a mutant with that component deleted passed every prior test:
+    the registry mid-scope test above cannot see it (a session create
+    touches no registry table), and a create was masked one layer deeper
+    still by the per-session queued-counts token changing length. The
+    activation test below pins the fully-masked case.
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        store = console._console_chat_store
+        assert store is not None
+
+        with controller.tick_workspace_build_scope():
+            first = controller._build_console_workspace_context_state()
+            assert controller._build_console_workspace_context_state() is first
+
+            session = store.create_session(
+                title="Mid-tick session", activate=True
+            )
+
+            refreshed = controller._build_console_workspace_context_state()
+            assert refreshed is not first, (
+                "session created mid-scope was served from the stale cache"
+            )
+            refreshed_ids = {
+                str(row.conversation_id) for row in refreshed.conversation_rows
+            }
+            assert f"native:{session.id}" in refreshed_ids
+
+
+@pytest.mark.asyncio
+async def test_tick_scope_rebuilds_when_session_is_activated_mid_scope():
+    """Activating a DIFFERENT session mid-scope must rebuild, not reuse.
+
+    The narrowest #660 shape: activation changes no session-row fields and
+    no queued counts, so only the fingerprint's ``active_session_id``
+    component can catch it — the exact component the review's escaping
+    mutant had deleted.
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        store = console._console_chat_store
+        assert store is not None
+        extra = store.create_session(title="Background session", activate=False)
+        # Settle the out-of-scope create so only the activation is mid-scope.
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        with controller.tick_workspace_build_scope():
+            first = controller._build_console_workspace_context_state()
+            assert controller._build_console_workspace_context_state() is first
+
+            store.switch_session(extra.id)
+
+            refreshed = controller._build_console_workspace_context_state()
+            assert refreshed is not first, (
+                "session activation mid-scope was served from the stale cache"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 4. Prepared-union projection equivalence
+# ---------------------------------------------------------------------------
+
+
+def test_prepared_union_projection_matches_self_contained_projection():
+    """The build's prepared-union tree == the standalone projection's tree.
+
+    TASK-22201 replaced the tree projection's own merge/canonical/overlay
+    pass with the state build's already-processed union, partitioned back
+    out by display identity. This pins the equivalence on the divergence
+    candidates adversarial review probed: a page-attempt row sharing
+    display identity with a browser row (the browser copy must win), and
+    an attempt row whose canonical owner moved (the filter must drop it
+    from both paths).
+    """
+    from types import SimpleNamespace
+
+    from Tests.UI.test_console_workspace_controller import (
+        _browser_row,
+        _workspace_controller,
+    )
+    from tldw_chatbook.UI.Console_Modules.workspace import PageAttemptState
+
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+            SimpleNamespace(workspace_id="workspace-8", name="Eight", archived=False),
+        ),
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry)
+    )
+    browser_rows = (
+        _browser_row("shared", "Shared (browser copy)"),
+        _browser_row("browser-only", "Browser only"),
+    )
+    controller._workspace_page_attempts["workspace-7"] = PageAttemptState(
+        rows=(
+            _browser_row("shared", "Shared (attempt copy)"),
+            _browser_row("attempt-only", "Attempt only"),
+            _browser_row("moved-away", "Moved away"),
+        )
+    )
+    controller._canonical_owner_observations["moved-away"] = "workspace-8"
+
+    # Standalone path (prepared_rows omitted): the self-contained pipeline.
+    standalone = controller.workspace_tree_projection(browser_rows)
+
+    # Prepared path: the build's exact union recipe, handed to the projection.
+    controller._prune_stale_workspace_page_attempts()
+    union = controller._merge_console_browser_rows(
+        browser_rows,
+        *(
+            attempt.rows
+            for attempt in controller._workspace_page_attempts.values()
+        ),
+    )
+    union = controller._rows_with_latest_canonical_owner(union)
+    union = controller._overlay_current_console_browser_markers(union)
+    prepared = controller.workspace_tree_projection(
+        browser_rows, prepared_rows=union
+    )
+
+    assert prepared == standalone
+    # The seeded shapes actually exercised the interesting paths.
+    seven = next(node for node in prepared if node.workspace_id == "workspace-7")
+    ids = [row.conversation_id for row in seven.conversations]
+    assert "shared" in ids and "attempt-only" in ids
+    assert "moved-away" not in ids
+    shared_titles = [
+        row.title for row in seven.conversations if row.conversation_id == "shared"
+    ]
+    assert shared_titles == ["Shared (browser copy)"]
+
+    # Partitioning the union back out by display identity must equal the
+    # base pipeline over the browser rows alone.
+    base_rows = controller._merge_console_browser_rows(browser_rows)
+    identities = {
+        controller._console_browser_display_identity(row) for row in base_rows
+    }
+    base_rows = controller._rows_with_latest_canonical_owner(base_rows)
+    base_rows = controller._overlay_current_console_browser_markers(base_rows)
+    partition = tuple(
+        row
+        for row in union
+        if controller._console_browser_display_identity(row) in identities
+    )
+    assert partition == base_rows
