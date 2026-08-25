@@ -173,8 +173,17 @@ class _ContextBoundedSection(ConsoleBoundedSection):
         )
 
     def _run_scheduled_reconcile(self) -> None:
+        scoped = self._reconcile_scoped
         previous_demand = self.desired_content_lines
         super()._run_scheduled_reconcile()
+        if scoped:
+            # TASK-22203: a scoped pass owns only this section's local
+            # geometry (the workspace action row's one-row display flip); its
+            # demand delta is self-absorbed within the current allocation and
+            # must not fan the cursor move out into the rail-wide allocation
+            # pipeline. Any unscoped request coalescing into the same pass
+            # already demoted ``_reconcile_scoped`` before this ran.
+            return
         if self.desired_content_lines != previous_demand:
             self._allocation_owner.request_allocation_reconcile()
 

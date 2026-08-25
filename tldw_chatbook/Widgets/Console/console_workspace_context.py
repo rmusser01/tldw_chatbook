@@ -1418,7 +1418,15 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         return f"Selected: {label} · Enter open"
 
     def _update_workspace_tree_selection_context(self) -> None:
-        """Patch selected copy and expose the full value only when clipped."""
+        """Patch selected copy and expose the full value only when clipped.
+
+        TASK-22203: every Tree cursor move lands here, so both writes are
+        equality-guarded. A changed copy repaints with ``layout=False``
+        because the slot's geometry is pinned at compose time (one
+        ``nowrap``/``ellipsis`` row — ``#console-workspace-tree-selection-
+        context`` in the CSS pins ``height/min/max: 1``); the unguarded
+        ``Static.update`` default armed one screen layout pass per arrow key.
+        """
 
         if not self.is_mounted:
             return
@@ -1429,9 +1437,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         except NoMatches:
             return
         copy = self._workspace_tree_selection_copy(self._workspace_tree_context_data)
-        context.update(copy)
+        if context.content != copy:
+            context.update(copy, layout=False)
         width = max(0, context.content_region.width)
-        context.tooltip = Text(copy) if width and cell_len(copy) > width else None
+        tooltip = Text(copy) if width and cell_len(copy) > width else None
+        current = context.tooltip
+        current_plain = current.plain if isinstance(current, Text) else current
+        if (tooltip.plain if tooltip is not None else None) != current_plain:
+            context.tooltip = tooltip
 
     def _workspace_tree_context_is_markable(self, data: Any | None) -> bool:
         """Return whether ``data`` may expose the contextual star action."""
@@ -1446,20 +1459,35 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
 
     def _reconcile_workspace_action_owners(self) -> None:
-        """Reallocate bounded and outer owners after the action-row fit."""
+        """Re-fit the bounded owner's local geometry after the action-row fit.
+
+        TASK-22203: this used to also request the rail-wide allocation
+        reconcile (``console-left-rail``), so every workspace<->conversation
+        cursor crossing ran the full 7-section, ~45-``query_one`` rail
+        measure (measured: 45 rail ``query_one`` + 1 allocation pass + 8
+        section reconciles per arrow key). The action row's one-row flip only
+        needs the owning bounded section to re-fit its fixed chrome against
+        its existing allocation, so the request is SCOPED — the bounded
+        section runs the same reconcile but skips the demand-change
+        escalation into the allocator. Genuine content changes still escalate
+        through the ordinary (unscoped) reconcile requests issued by state
+        pushes and resizes. The known, bounded trade: while the rail has
+        spare space, the section keeps its current allocation until the next
+        genuine allocation trigger instead of growing by the flipped row.
+        """
 
         for ancestor in self.ancestors:
-            ancestor_id = getattr(ancestor, "id", None)
-            if ancestor_id == "console-bounded-section-workspace":
+            if getattr(ancestor, "id", None) == "console-bounded-section-workspace":
+                request_scoped = getattr(
+                    ancestor, "request_scoped_reconcile", None
+                )
+                if callable(request_scoped):
+                    request_scoped()
+                    return
                 request_reconcile = getattr(ancestor, "request_reconcile", None)
                 if callable(request_reconcile):
                     request_reconcile()
-            elif ancestor_id == "console-left-rail":
-                request_allocation = getattr(
-                    ancestor, "request_allocation_reconcile", None
-                )
-                if callable(request_allocation):
-                    request_allocation()
+                return
 
     def _compose_session_context(
         self,
