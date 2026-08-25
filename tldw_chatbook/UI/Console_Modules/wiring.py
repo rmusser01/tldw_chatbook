@@ -947,7 +947,9 @@ def build_console_controllers(
             )
         ),
         realtime_adopt_transcript=(
-            lambda transcript: screen._console_realtime_adopt_transcript(transcript)
+            lambda transcript: screen._realtime._console_realtime_adopt_transcript(
+                transcript
+            )
         ),
         realtime_session_accessor=lambda: screen._realtime.session,
         run_pending_voice_action=(
@@ -991,7 +993,7 @@ def build_console_controllers(
         ),
         realtime_session_accessor=lambda: screen._realtime.session,
         enter_realtime_loop=(
-            lambda capture_live: screen._enter_console_realtime_loop(
+            lambda capture_live: screen._realtime._enter_console_realtime_loop(
                 capture_live=capture_live
             )
         ),

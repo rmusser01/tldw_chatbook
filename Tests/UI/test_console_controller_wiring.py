@@ -243,15 +243,15 @@ def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> Non
     screen._restore_console_voice_chip.assert_called_once_with()
 
 
-def test_realtime_outgoing_edges_stay_late_bound_to_screen_until_method_move() -> None:
+def test_realtime_outgoing_edges_target_controller_after_method_move() -> None:
     screen = _unmounted_console()
     transcript_calls: list[str] = []
     entry_calls: list[bool] = []
-    screen._console_realtime_adopt_transcript = lambda transcript: (
+    screen._realtime._console_realtime_adopt_transcript = lambda transcript: (
         transcript_calls.append(transcript) or True
     )
-    screen._enter_console_realtime_loop = lambda *, capture_live: entry_calls.append(
-        capture_live
+    screen._realtime._enter_console_realtime_loop = lambda *, capture_live: (
+        entry_calls.append(capture_live)
     )
 
     assert screen._dictation._console_realtime_adopt_transcript("late words") is True
