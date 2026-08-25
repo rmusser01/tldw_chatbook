@@ -6,16 +6,18 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-24'
+updated_date: '2026-08-25 16:21'
 labels:
   - performance
   - watchlists
   - ux
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Source: holistic performance review of dev `a71e62e4b` (2026-08-24). Evidence, measurements,
 and full file:line cites: `Docs/Design/2026-08-24-holistic-perf-review.md` (finding 22211).
 
@@ -30,12 +32,14 @@ and Watchlists does not. Aggravator (medium confidence): `_available_layout_widt
 `workbench.size.width` (`watchlists_collections_screen.py:2999`), which is
 scrollbar-sensitive — a scrollbar toggle at the boundary could flap the layout with no
 user resize.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
+<!-- AC:BEGIN -->
 - [x] Repeated +/-1-cell width changes at a collapse boundary cause no mount/remove churn (hysteresis test at the boundary, both directions)
 - [x] The width source is not flappable by a scrollbar toggle, or a code-level guard absorbs sub-hysteresis changes (the repo rule: never trust a CSS-only guard)
 - [x] Approach consistent with the Library reader's hysteresis precedent
+<!-- AC:END -->
 
 ## Implementation Plan
 
