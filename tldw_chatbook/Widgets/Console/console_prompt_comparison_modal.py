@@ -20,7 +20,7 @@ class ConsolePromptComparisonModal(
 ):
     """Compare the original and improved drafts without editing either copy."""
 
-    DEFAULT_CSS = """
+    BUNDLED_SCREEN_CSS = """
     ConsolePromptComparisonModal {
         align: center middle;
     }
