@@ -1226,6 +1226,53 @@ class NotesDeviceStateStore:
             ).fetchone()
         return row is not None
 
+    def candidate_binding_ids(self, root_id: str) -> tuple[str, ...]:
+        """Return this root's candidate binding ids, ordered by binding id.
+
+        Migration activation needs exactly this set to check the reviewed
+        plan covers every candidate, and to hand
+        :meth:`activate_migration_candidate` the ids it will transition. It
+        read them by hydrating every binding of the root through
+        :meth:`list_bindings` and keeping one field per record -- the shape
+        TASK-21129 measured, where ``_binding_from_row`` (thirteen columns, a
+        nested serialization profile and an enum coercion per row) was 88% of
+        the cost. Re-measured here on the same store at 1,000 bindings, the
+        full read is 15.3 ms / 1,058,854 B peak and this projection is
+        0.30 ms / 120,992 B (TASK-21532).
+
+        This is the third narrow projection of the same table and it is a new
+        shape rather than a reuse: ``active_binding_note_ids`` projects
+        ``note_id`` for the ``active`` state and ``has_binding_for_note_or_path``
+        is a ``LIMIT 1`` predicate, so neither can answer "which bindings of
+        this root are candidates". Like both of them it is served entirely by
+        ``idx_notes_sync_bindings_root(root_id, state, binding_id)`` -- a
+        covering-index search that also supplies the ordering, so no temporary
+        B-tree sort is built.
+
+        SQL ``ORDER BY binding_id`` under the default BINARY collation orders
+        by UTF-8 bytes, which is the same order as the Python ``sorted()`` on
+        code points it replaces.
+
+        Args:
+            root_id: The opaque sync root whose candidate bindings to project.
+
+        Returns:
+            tuple[str, ...]: Binding ids of this root's candidate bindings,
+            ordered by binding id.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT binding_id FROM notes_sync_bindings
+                WHERE root_id = ? AND state = ?
+                ORDER BY binding_id
+                """,
+                (root_id, NotesSyncBindingState.CANDIDATE.value),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def list_binding_summaries(
         self,
         root_id: str,

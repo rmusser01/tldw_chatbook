@@ -1349,6 +1349,102 @@ async def test_migration_activation_has_no_read_after_commit_folder_rollback_win
     await owner.shutdown()
 
 
+class _ActivationBindingReadCensus:
+    """Shadow the store's binding reads and record where each one ran.
+
+    Instance shadowing, not class patching, so the real method still runs --
+    an assertion about thread placement is only honest if the subject under
+    it is the production implementation (the TASK-21129 executor census uses
+    the same idiom for the same reason).
+    """
+
+    def __init__(self, store: NotesDeviceStateStore) -> None:
+        self.calls: list[tuple[str, bool]] = []
+        for name in ("list_bindings", "candidate_binding_ids"):
+            setattr(store, name, self._wrap(name, getattr(store, name)))
+
+    def _wrap(self, name, function):
+        def wrapper(*args, **kwargs):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                on_loop = False
+            else:
+                on_loop = True
+            self.calls.append((name, on_loop))
+            return function(*args, **kwargs)
+
+        return wrapper
+
+    def named(self, name: str) -> list[tuple[str, bool]]:
+        return [call for call in self.calls if call[0] == name]
+
+
+@pytest.mark.asyncio
+async def test_migration_activation_projects_candidate_ids_without_a_read_all(
+    tmp_path: Path,
+) -> None:
+    """TASK-21532: the activation keeps one field per record, so it reads one.
+
+    With a stub adapter the candidate set was the only binding read left in
+    ``_activate_root``, so ``list_bindings`` must not run at all here -- and
+    ``on_loop`` is decided inside the store call itself, so a projection that
+    moved back onto the event loop fails even though the caller is still
+    ``async def``.
+    """
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "legacy-projection"
+    root_path.mkdir()
+    root_id = "legacy-root-" + "d" * 40
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PAUSED,
+            last_status_code="migration_review_required",
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=_C,
+            state=NotesSyncBindingState.CANDIDATE,
+            serialization=NotesSyncSerializationProfile(False, "lf", False, 0o644),
+            content_digest=_A,
+            note_version=1,
+        )
+    )
+    census = _ActivationBindingReadCensus(store)
+    adapter = _MultiRootAdapter([_input(file_digest=_A, note_digest=_A)])
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    review = await owner.check_root(root_id)
+
+    result = await owner.activate_root(root_id, review.observation_token)
+
+    assert result.accepted is True
+    # The activation reached the store for the candidate set, off the loop.
+    projections = census.named("candidate_binding_ids")
+    assert len(projections) == 1, census.calls
+    assert projections[0][1] is False, "the projection ran on the event loop"
+    # And it never materialized every binding of the root to get there.
+    assert census.named("list_bindings") == [], census.calls
+    # The projected tuple really did drive the transition -- not vacuous, the
+    # binding starts as a candidate and only this path activates it.
+    assert store.get_binding("binding-1").state is NotesSyncBindingState.ACTIVE
+    await owner.shutdown()
+
+
 @pytest.mark.asyncio
 async def test_activation_recovery_record_has_no_postcommit_read_and_reopens_blocked(
     tmp_path: Path,

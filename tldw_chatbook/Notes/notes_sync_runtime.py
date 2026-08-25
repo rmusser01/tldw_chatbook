@@ -506,6 +506,15 @@ class _ProductionRuntimeAdapter:
                 if error.reason_code != "missing_target":
                     raise RuntimeError("root_discovery_incomplete") from None
 
+        # TASK-21532: this read-all stays. It looks like the projection shape
+        # below it -- one field, `binding.state` -- but the same tuple is the
+        # input to every loop that follows, and between them they consume all
+        # thirteen hydrated columns: `binding_id` and `note_id` (the note
+        # observation pass), `normalized_relative_path`,
+        # `stable_identity_digest`, `content_digest`, `note_scope_id`,
+        # `note_version`, `serialization` and `state` (each
+        # `BindingObservation`). A narrow projection here would have to be
+        # followed by the full read anyway.
         bindings = await asyncio.to_thread(self._store.list_bindings, root.root_id)
         if any(
             binding.state
@@ -2557,14 +2566,13 @@ class NotesSyncRuntimeOwner:
                     NotesSyncRootState.ACTIVE,
                 )
             else:
-                candidate_ids = tuple(
-                    sorted(
-                        binding.binding_id
-                        for binding in await asyncio.to_thread(
-                            self._store.list_bindings, root_id
-                        )
-                        if binding.state is NotesSyncBindingState.CANDIDATE
-                    )
+                # TASK-21532: the narrow projection, not a read-all. This is
+                # the third full binding hydration of one activation (both
+                # `_review_candidate` and `_fresh_authority` already made one
+                # each, and those genuinely consume every column) and the
+                # only one that keeps a single field per record.
+                candidate_ids = await asyncio.to_thread(
+                    self._store.candidate_binding_ids, root_id
                 )
                 reviewed_binding_ids = {
                     action.binding_id
