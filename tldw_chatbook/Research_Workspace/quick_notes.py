@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping
 from dataclasses import dataclass
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -86,6 +87,8 @@ class ResearchNoteSaveRequest:
                 max_chars=1024,
             ),
         )
+        if re.fullmatch(r"research-note-[0-9a-f]{32}", self.operation_id) is None:
+            raise ValueError("operation_id is not an app-minted Quick Note token")
         object.__setattr__(self, "note_id", note_id)
         object.__setattr__(self, "tags", tags)
         object.__setattr__(

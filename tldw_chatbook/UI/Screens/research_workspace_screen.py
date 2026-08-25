@@ -591,6 +591,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         if expected_ref is not None and capture.ref != expected_ref:
             return
         section = self.query_one(ResearchQuickNotesSection)
+        # A refresh is an authority-bound capability negotiation. Fail closed
+        # immediately so an exception cannot leave the previous owner's
+        # mutation controls enabled.
+        section.sync_capabilities({})
         section.show_recovery(
             f"Loading {capture.ref.data_source.value.title()} workspace notes..."
         )

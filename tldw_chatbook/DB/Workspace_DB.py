@@ -22,7 +22,7 @@ class WorkspaceDB(BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
     _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
 
 CREATE TABLE research_source_operations (
@@ -78,6 +78,74 @@ ON research_source_operations (
 );
 
 INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+
+COMMIT;
+"""
+    _MIGRATE_V3_TO_V4_SQL = """BEGIN IMMEDIATE;
+
+DELETE FROM workspace_memberships AS pending
+WHERE pending.item_type = 'note'
+  AND pending.role = 'note_pending'
+  AND EXISTS (
+      SELECT 1
+      FROM workspace_memberships AS visible
+      WHERE visible.workspace_id = pending.workspace_id
+        AND visible.item_type = pending.item_type
+        AND visible.item_id = pending.item_id
+        AND visible.role = 'note'
+  );
+
+UPDATE workspace_memberships
+SET role = 'note'
+WHERE item_type = 'note' AND role = 'note_pending';
+
+CREATE TABLE research_quick_note_receipts (
+    receipt_id TEXT PRIMARY KEY CHECK (length(trim(receipt_id)) BETWEEN 1 AND 1024),
+    data_source TEXT NOT NULL DEFAULT 'local' CHECK (data_source = 'local'),
+    workspace_id TEXT NOT NULL CHECK (length(trim(workspace_id)) BETWEEN 1 AND 1024),
+    local_user_id TEXT NOT NULL CHECK (length(trim(local_user_id)) BETWEEN 1 AND 1024),
+    operation_token TEXT NOT NULL CHECK (length(trim(operation_token)) BETWEEN 1 AND 1024),
+    operation_kind TEXT NOT NULL CHECK (operation_kind IN ('create', 'delete')),
+    canonical_note_id TEXT NOT NULL CHECK (length(trim(canonical_note_id)) BETWEEN 1 AND 1024),
+    expected_version INTEGER DEFAULT NULL CHECK (
+        (operation_kind = 'create' AND expected_version IS NULL)
+        OR
+        (operation_kind = 'delete'
+         AND expected_version IS NOT NULL
+         AND expected_version >= 1)
+    ),
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (
+        state IN ('pending', 'owner_committed')
+    ),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (
+        (state = 'pending' AND revision = 1)
+        OR (state = 'owner_committed' AND revision >= 2)
+    ),
+    created_at TEXT NOT NULL CHECK (length(trim(created_at)) BETWEEN 1 AND 128),
+    updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) BETWEEN 1 AND 128),
+    FOREIGN KEY(workspace_id)
+        REFERENCES workspace_records(workspace_id)
+        ON DELETE CASCADE,
+    UNIQUE(workspace_id, local_user_id, operation_token, operation_kind)
+);
+
+CREATE INDEX idx_research_quick_note_receipts_reconcile
+ON research_quick_note_receipts (
+    local_user_id,
+    state,
+    updated_at,
+    receipt_id
+);
+
+CREATE INDEX idx_research_quick_note_receipts_owner
+ON research_quick_note_receipts (
+    workspace_id,
+    local_user_id,
+    operation_kind,
+    canonical_note_id
+);
+
+INSERT OR IGNORE INTO schema_version (version) VALUES (4);
 
 COMMIT;
 """
@@ -314,8 +382,18 @@ COMMIT;
                 ).fetchone()
                 is not None
             )
+            v4_table_exists = (
+                conn.execute(
+                    """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'research_quick_note_receipts'
+                """
+                ).fetchone()
+                is not None
+            )
             needs_v2 = version < 2 or not v2_index_exists
             needs_v3 = version < 3 or not v3_table_exists
+            needs_v4 = version < 4 or not v4_table_exists
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
@@ -331,6 +409,8 @@ COMMIT;
         if not needs_v2:
             if needs_v3:
                 self._migrate_v2_to_v3()
+            if needs_v4:
+                self._migrate_v3_to_v4()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -382,6 +462,8 @@ COMMIT;
 
         if needs_v3:
             self._migrate_v2_to_v3()
+        if needs_v4:
+            self._migrate_v3_to_v4()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -389,6 +471,16 @@ COMMIT;
         with self.connection() as conn:
             try:
                 conn.executescript(self._MIGRATE_V2_TO_V3_SQL)
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _migrate_v3_to_v4(self) -> None:
+        """Add payload-free durable receipts for Local Quick Notes."""
+
+        with self.connection() as conn:
+            try:
+                conn.executescript(self._MIGRATE_V3_TO_V4_SQL)
             except Exception:
                 conn.rollback()
                 raise

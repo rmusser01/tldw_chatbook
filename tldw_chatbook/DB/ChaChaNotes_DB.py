@@ -12799,6 +12799,9 @@ UPDATE db_schema_version
         """
         now = self._get_current_utc_timestamp_iso()
         client_id_to_use = item_data.get("client_id", self.client_id)
+        value_is_sensitive = table_name == "keywords"
+        logged_value = "<redacted>" if value_is_sensitive else main_col_value
+        conflict_entity_id = "redacted-keyword" if value_is_sensitive else main_col_value
 
         other_cols = list(other_fields_map.keys())
         other_placeholders_list = ["?"] * len(other_cols)
@@ -12875,12 +12878,12 @@ UPDATE db_schema_version
                     ).rowcount
                     if row_count_undelete == 0:
                         raise ConflictError(
-                            f"Failed to undelete {table_name} '{main_col_value}' due to version mismatch or it became active/disappeared.",
+                            f"Failed to undelete {table_name} '{logged_value}' due to version mismatch or it became active/disappeared.",
                             entity=table_name,
-                            entity_id=main_col_value,
+                            entity_id=conflict_entity_id,
                         )
                     logger.info(
-                        f"Undeleted and updated {table_name} '{main_col_value}' with ID: {item_id}, new version {next_version}."
+                        f"Undeleted and updated {table_name} '{logged_value}' with ID: {item_id}, new version {next_version}."
                     )
                     return item_id
 
@@ -12888,7 +12891,7 @@ UPDATE db_schema_version
                 cursor_insert = conn.execute(query, params_tuple_insert)
                 item_id_insert = cursor_insert.lastrowid
                 logger.info(
-                    f"Added {table_name} '{main_col_value}' with ID: {item_id_insert}."
+                    f"Added {table_name} '{logged_value}' with ID: {item_id_insert}."
                 )
                 return item_id_insert
         except sqlite3.IntegrityError as e:
@@ -12897,12 +12900,12 @@ UPDATE db_schema_version
                 in str(e).lower()
             ):  # Use lower for robustness
                 logger.warning(
-                    f"{table_name} with {unique_col_name} '{main_col_value}' already exists and is active."
+                    f"{table_name} with {unique_col_name} '{logged_value}' already exists and is active."
                 )
                 raise ConflictError(
-                    f"{table_name} '{main_col_value}' already exists and is active.",
+                    f"{table_name} '{logged_value}' already exists and is active.",
                     entity=table_name,
-                    entity_id=main_col_value,
+                    entity_id=conflict_entity_id,
                 ) from e
             raise CharactersRAGDBError(
                 f"Database integrity error adding {table_name}: {e}"
@@ -12910,7 +12913,7 @@ UPDATE db_schema_version
         except ConflictError:  # From undelete path
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error adding {table_name} '{main_col_value}': {e}")
+            logger.error(f"Database error adding {table_name} '{logged_value}': {e}")
             raise
         return None  # Should not be reached if exceptions are raised properly
 
@@ -12961,12 +12964,15 @@ UPDATE db_schema_version
             f"SELECT * FROM {table_name} WHERE {unique_col_name} = ? AND deleted = 0"
         )
         try:
-            cursor = self.execute_query(query, (value,))
+            cursor = self.execute_query(
+                query, (value,), redact_params=table_name == "keywords"
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
         except CharactersRAGDBError as e:
+            logged_value = "<redacted>" if table_name == "keywords" else value
             logger.error(
-                f"Database error fetching {table_name} by {unique_col_name} '{value}': {e}"
+                f"Database error fetching {table_name} by {unique_col_name} '{logged_value}': {e}"
             )
             raise
 
@@ -13328,10 +13334,19 @@ UPDATE db_schema_version
             LIMIT ?
         """
         try:
-            cursor = self.execute_query(query, (search_term, limit))
+            cursor = self.execute_query(
+                query,
+                (search_term, limit),
+                redact_params=main_table_name == "keywords",
+            )
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching {main_table_name} for '{search_term}': {e}")
+            logged_term = (
+                "<redacted>" if main_table_name == "keywords" else search_term
+            )
+            logger.error(
+                f"Error searching {main_table_name} for '{logged_term}': {e}"
+            )
             raise
 
     # Keywords

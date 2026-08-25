@@ -204,6 +204,55 @@ class WorkspaceRuntimeBinding:
 
 
 @dataclass(frozen=True)
+class ResearchQuickNoteReceipt:
+    """Payload-free durable intent for one Local Quick Note mutation."""
+
+    receipt_id: str
+    workspace_id: str
+    local_user_id: str
+    operation_token: str
+    operation_kind: str
+    canonical_note_id: str
+    expected_version: int | None
+    state: str = "pending"
+    revision: int = 1
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+    data_source: str = "local"
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "receipt_id",
+            "workspace_id",
+            "local_user_id",
+            "operation_token",
+            "canonical_note_id",
+            "created_at",
+            "updated_at",
+        ):
+            object.__setattr__(
+                self, field_name, _required_text(getattr(self, field_name), field_name)
+            )
+        if self.data_source != "local":
+            raise ValueError("data_source is invalid")
+        if self.operation_kind not in {"create", "delete"}:
+            raise ValueError("operation_kind is invalid")
+        if self.state not in {"pending", "owner_committed"}:
+            raise ValueError("state is invalid")
+        if type(self.revision) is not int or self.revision < 1:
+            raise ValueError("revision is invalid")
+        if (self.state == "pending" and self.revision != 1) or (
+            self.state == "owner_committed" and self.revision < 2
+        ):
+            raise ValueError("state and revision are inconsistent")
+        if self.operation_kind == "create":
+            if self.expected_version is not None:
+                raise ValueError("create receipt cannot have expected_version")
+        elif type(self.expected_version) is not int or self.expected_version < 1:
+            raise ValueError("delete receipt requires expected_version")
+
+
+@dataclass(frozen=True)
 class WorkspaceEligibility:
     """Decision for a workspace-sensitive item operation."""
 

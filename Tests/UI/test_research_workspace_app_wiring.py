@@ -25,6 +25,8 @@ from tldw_chatbook.UI.Screens.research_workspace_screen import (
     ResearchWorkspaceScreen,
 )
 from tldw_chatbook.Workspaces.models import WorkspaceRecord
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.app import TldwCli
 
 
@@ -181,42 +183,6 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
 ) -> None:
     import tldw_chatbook.app as app_module
 
-    class Registry(_LocalWorkspaceService):
-        def __init__(self) -> None:
-            super().__init__()
-            self.memberships = []
-
-        def link_membership(self, workspace_id, **kwargs):
-            membership = SimpleNamespace(workspace_id=workspace_id, **kwargs)
-            if not any(
-                item.workspace_id == workspace_id
-                and item.item_id == membership.item_id
-                and item.role == membership.role
-                for item in self.memberships
-            ):
-                self.memberships.append(membership)
-            return membership
-
-        def unlink_membership(self, workspace_id, **kwargs):
-            before = len(self.memberships)
-            self.memberships = [
-                item
-                for item in self.memberships
-                if not (
-                    item.workspace_id == workspace_id
-                    and item.item_id == kwargs["item_id"]
-                    and item.role == kwargs["role"]
-                )
-            ]
-            return len(self.memberships) != before
-
-        def get_item_memberships(self, item_type, item_id):
-            return tuple(
-                item
-                for item in self.memberships
-                if item.item_type == item_type and item.item_id == item_id
-            )
-
     class Notes:
         def __init__(self) -> None:
             self.calls = []
@@ -234,7 +200,9 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
                 "version": 1,
             }
 
-    registry = Registry()
+    registry_db = WorkspaceDB(tmp_path / "workspace-owner.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id="local-research", name="Research")
     notes = Notes()
     app = _unmounted_app(
         local_service=registry,
@@ -247,14 +215,47 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
     screen = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
     port = screen.controller.port_for_data_source(WorkspaceDataSource.LOCAL)
 
-    await port.save_note(
-        QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, registry.workspace_id),
-        ResearchNoteSaveRequest(title="Owner trace", content="Canonical body"),
-    )
+    try:
+        await port.save_note(
+            QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local-research"),
+            ResearchNoteSaveRequest(title="Owner trace", content="Canonical body"),
+        )
 
-    assert port._notes_user_id == app.notes_user_id
-    assert notes.calls[0]["scope"] == "local_note"
-    assert notes.calls[0]["user_id"] == app.notes_user_id
+        assert port._notes_user_id == app.notes_user_id
+        assert notes.calls[0]["scope"] == "local_note"
+        assert notes.calls[0]["user_id"] == app.notes_user_id
+    finally:
+        registry_db.close()
+
+
+@pytest.mark.asyncio
+async def test_app_startup_reconciliation_globally_clears_absent_owner_receipt(
+    tmp_path: Path,
+) -> None:
+    class MissingNotes:
+        async def get_note_detail(self, **_kwargs):
+            return None
+
+    registry_db = WorkspaceDB(tmp_path / "startup-receipt.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id="workspace-startup", name="Startup")
+    registry.claim_quick_note_create(
+        "workspace-startup",
+        local_user_id="startup-user",
+        operation_token="research-note-cccccccccccccccccccccccccccccccc",
+    )
+    app = TldwCli.__new__(TldwCli)
+    app.workspace_registry_service = registry
+    app.notes_scope_service = MissingNotes()
+    app.notes_user_id = "startup-user"
+    try:
+        await app._reconcile_research_quick_notes_startup()
+        receipts, total = registry.list_quick_note_receipts(
+            "startup-user", limit=100
+        )
+        assert receipts == () and total == 0
+    finally:
+        registry_db.close()
 
 
 @pytest.mark.asyncio

@@ -10412,6 +10412,28 @@ class TldwCli(
             ),
         )
 
+    async def _reconcile_research_quick_notes_startup(self) -> None:
+        """Resume one bounded global Local Quick Note receipt page."""
+
+        from .Research_Workspace import LocalResearchWorkspaceAdapter
+
+        registry = getattr(self, "workspace_registry_service", None)
+        notes_scope = getattr(self, "notes_scope_service", None)
+        notes_user_id = str(getattr(self, "notes_user_id", "") or "").strip()
+        if registry is None or notes_scope is None or not notes_user_id:
+            return
+        try:
+            await LocalResearchWorkspaceAdapter(
+                registry,
+                notes_scope_service=notes_scope,
+                notes_user_id=notes_user_id,
+            ).reconcile_quick_notes()
+        except Exception as exc:  # noqa: BLE001 - startup recovery must degrade safely
+            logger.warning(
+                "Research Quick Note startup reconciliation deferred: {}",
+                type(exc).__name__,
+            )
+
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
         from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
@@ -12119,6 +12141,12 @@ class TldwCli(
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
         self._restore_ingest_jobs_and_schedule_research_sources()
+        self.run_worker(
+            self._reconcile_research_quick_notes_startup(),
+            group="research-quick-notes-startup-reconciliation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:

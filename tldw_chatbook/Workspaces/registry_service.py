@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 import json
 from pathlib import Path
 import sqlite3
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from loguru import logger
 
@@ -25,6 +25,7 @@ from .models import (
     DEFAULT_WORKSPACE_NAME,
     RuntimeBindingKind,
     RuntimeBindingStatus,
+    ResearchQuickNoteReceipt,
     WorkspaceAuthority,
     WorkspaceMembership,
     WorkspaceRecord,
@@ -914,21 +915,401 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows), total
 
-    def list_workspace_note_receipts(
+    @staticmethod
+    def _quick_note_identity(
+        *, workspace_id: str, local_user_id: str, operation_token: str, kind: str
+    ) -> tuple[str, str]:
+        seed = "|".join(
+            ("chatbook-quick-note-v1", workspace_id, local_user_id, operation_token)
+        )
+        canonical_note_id = f"research-note-{uuid5(NAMESPACE_URL, seed).hex}"
+        receipt_id = f"quick-note-receipt-{uuid5(NAMESPACE_URL, seed + '|' + kind).hex}"
+        return receipt_id, canonical_note_id
+
+    def claim_quick_note_create(
         self,
         workspace_id: str,
         *,
+        local_user_id: str,
+        operation_token: str,
+    ) -> ResearchQuickNoteReceipt:
+        """Idempotently claim an owner-qualified Local note create intent."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_token = _normalize_required_text(operation_token, "operation_token")
+        if self.get_workspace(safe_workspace_id) is None:
+            raise WorkspaceNotFound(safe_workspace_id)
+        receipt_id, note_id = self._quick_note_identity(
+            workspace_id=safe_workspace_id,
+            local_user_id=safe_user_id,
+            operation_token=safe_token,
+            kind="create",
+        )
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO research_quick_note_receipts (
+                        receipt_id, data_source, workspace_id, local_user_id,
+                        operation_token, operation_kind, canonical_note_id,
+                        expected_version, state, revision, created_at, updated_at
+                    ) VALUES (?, 'local', ?, ?, ?, 'create', ?, NULL,
+                              'pending', 1, ?, ?)
+                    """,
+                    (
+                        receipt_id,
+                        safe_workspace_id,
+                        safe_user_id,
+                        safe_token,
+                        note_id,
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (receipt_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        receipt = _quick_note_receipt_from_row(row)
+        if (
+            receipt.workspace_id != safe_workspace_id
+            or receipt.local_user_id != safe_user_id
+            or receipt.operation_token != safe_token
+            or receipt.canonical_note_id != note_id
+            or receipt.operation_kind != "create"
+        ):
+            raise WorkspaceRegistryServiceError("Quick Note receipt identity mismatch.")
+        return receipt
+
+    def claim_quick_note_delete(
+        self,
+        workspace_id: str,
+        *,
+        local_user_id: str,
+        canonical_note_id: str,
+        expected_version: int,
+    ) -> ResearchQuickNoteReceipt:
+        """Durably record a delete before mutating its canonical Notes owner."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_note_id = _normalize_required_text(canonical_note_id, "canonical_note_id")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("expected_version must be a positive integer")
+        operation_token = "research-note-delete-" + uuid5(
+            NAMESPACE_URL,
+            "|".join(
+                (
+                    "chatbook-quick-note-delete-v1",
+                    safe_workspace_id,
+                    safe_user_id,
+                    safe_note_id,
+                    str(expected_version),
+                )
+            ),
+        ).hex
+        receipt_id, _ = self._quick_note_identity(
+            workspace_id=safe_workspace_id,
+            local_user_id=safe_user_id,
+            operation_token=operation_token,
+            kind="delete",
+        )
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO research_quick_note_receipts (
+                        receipt_id, data_source, workspace_id, local_user_id,
+                        operation_token, operation_kind, canonical_note_id,
+                        expected_version, state, revision, created_at, updated_at
+                    ) VALUES (?, 'local', ?, ?, ?, 'delete', ?, ?,
+                              'pending', 1, ?, ?)
+                    """,
+                    (
+                        receipt_id,
+                        safe_workspace_id,
+                        safe_user_id,
+                        operation_token,
+                        safe_note_id,
+                        expected_version,
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (receipt_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        receipt = _quick_note_receipt_from_row(row)
+        if (
+            receipt.workspace_id != safe_workspace_id
+            or receipt.local_user_id != safe_user_id
+            or receipt.canonical_note_id != safe_note_id
+            or receipt.expected_version != expected_version
+            or receipt.operation_kind != "delete"
+        ):
+            raise WorkspaceRegistryServiceError("Quick Note receipt identity mismatch.")
+        return receipt
+
+    def list_quick_note_receipts(
+        self,
+        local_user_id: str,
+        *,
+        workspace_id: str | None = None,
+        operation_kind: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
-        """Return payload-free pending Local Quick Note association receipts."""
+    ) -> tuple[tuple[ResearchQuickNoteReceipt, ...], int]:
+        """List a bounded, owner-filtered receipt page for reconciliation."""
 
-        return self.list_workspace_note_memberships(
-            workspace_id,
-            limit=limit,
-            offset=offset,
-            role="note_pending",
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_workspace_id = (
+            _normalize_required_text(workspace_id, "workspace_id")
+            if workspace_id is not None
+            else None
         )
+        if operation_kind is not None and operation_kind not in {"create", "delete"}:
+            raise ValueError("operation_kind is invalid")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        params = (
+            safe_user_id,
+            safe_workspace_id,
+            safe_workspace_id,
+            operation_kind,
+            operation_kind,
+        )
+        try:
+            with self.db.connection() as conn:
+                total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) FROM research_quick_note_receipts
+                        WHERE local_user_id = ?
+                          AND (? IS NULL OR workspace_id = ?)
+                          AND (? IS NULL OR operation_kind = ?)
+                        """,
+                        params,
+                    ).fetchone()[0]
+                )
+                rows = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE local_user_id = ?
+                      AND (? IS NULL OR workspace_id = ?)
+                      AND (? IS NULL OR operation_kind = ?)
+                    ORDER BY updated_at ASC, receipt_id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    params + (limit, offset),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return tuple(_quick_note_receipt_from_row(row) for row in rows), total
+
+    def mark_quick_note_owner_committed(
+        self, receipt_id: str, local_user_id: str, *, expected_revision: int
+    ) -> ResearchQuickNoteReceipt:
+        """Advance one receipt from pending to owner_committed exactly once."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE research_quick_note_receipts
+                    SET state = 'owner_committed', revision = revision + 1,
+                        updated_at = ?
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND state = 'pending' AND revision = ?
+                    """,
+                    (now, safe_receipt_id, safe_user_id, expected_revision),
+                )
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                    """,
+                    (safe_receipt_id, safe_user_id),
+                ).fetchone()
+                if row is None or (
+                    cursor.rowcount == 0
+                    and not (
+                        row["state"] == "owner_committed"
+                        and int(row["revision"]) >= expected_revision + 1
+                    )
+                ):
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return _quick_note_receipt_from_row(row)
+
+    def discard_quick_note_receipt(
+        self, receipt_id: str, local_user_id: str, *, expected_revision: int
+    ) -> bool:
+        """Discard a receipt after proving no canonical recovery work remains."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND revision = ?
+                    """,
+                    (safe_receipt_id, safe_user_id, expected_revision),
+                )
+                return cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def complete_quick_note_create(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        title: str,
+    ) -> bool:
+        """Atomically link the canonical note and consume its committed receipt."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_title = str(title).strip()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = 'create'
+                      AND state = 'owner_committed' AND revision = ?
+                    """,
+                    (safe_receipt_id, safe_user_id, expected_revision),
+                ).fetchone()
+                if row is None:
+                    return False
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_memberships (
+                        membership_id, workspace_id, item_type, item_id, role,
+                        transfer_policy, title, created_at
+                    ) VALUES (?, ?, 'note', ?, 'note', 'reference', ?, ?)
+                    """,
+                    (
+                        self._id_factory(),
+                        row["workspace_id"],
+                        row["canonical_note_id"],
+                        safe_title,
+                        self._now_factory(),
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (safe_receipt_id,),
+                )
+                return True
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def complete_quick_note_delete(
+        self, receipt_id: str, local_user_id: str, *, expected_revision: int
+    ) -> bool:
+        """Atomically remove every projection and consume a committed delete."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = 'delete'
+                      AND state = 'owner_committed' AND revision = ?
+                    """,
+                    (safe_receipt_id, safe_user_id, expected_revision),
+                ).fetchone()
+                if row is None:
+                    return False
+                note_id = str(row["canonical_note_id"])
+                conn.execute(
+                    "DELETE FROM workspace_memberships WHERE item_type = 'note' AND item_id = ?",
+                    (note_id,),
+                )
+                scope_rows = conn.execute(
+                    "SELECT workspace_id, payload FROM workspace_rag_scopes"
+                ).fetchall()
+                for scope_row in scope_rows:
+                    try:
+                        scope = parse_scope(json.loads(scope_row["payload"]))
+                    except (TypeError, ValueError):
+                        scope = None
+                    if scope is None:
+                        conn.execute(
+                            "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                            (scope_row["workspace_id"],),
+                        )
+                        continue
+                    remaining = tuple(
+                        item
+                        for item in scope.items
+                        if not (
+                            item.source_type == "note" and item.source_id == note_id
+                        )
+                    )
+                    if remaining == scope.items:
+                        continue
+                    if not remaining and not scope.empty_is_scoped:
+                        conn.execute(
+                            "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                            (scope_row["workspace_id"],),
+                        )
+                        continue
+                    updated = RagScope(
+                        items=remaining,
+                        updated_at=self._now_factory(),
+                        empty_is_scoped=scope.empty_is_scoped,
+                    )
+                    conn.execute(
+                        """
+                        UPDATE workspace_rag_scopes SET payload = ?, updated_at = ?
+                        WHERE workspace_id = ?
+                        """,
+                        (
+                            json.dumps(serialize_scope(updated)),
+                            updated.updated_at,
+                            scope_row["workspace_id"],
+                        ),
+                    )
+                conn.execute(
+                    "DELETE FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (safe_receipt_id,),
+                )
+                return True
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
     def get_workspace_source_membership(
         self, workspace_id: str, membership_id: str
@@ -1615,6 +1996,23 @@ def _membership_from_row(row: sqlite3.Row) -> WorkspaceMembership:
         transfer_policy=WorkspaceTransferPolicy(row["transfer_policy"]),
         title=row["title"],
         created_at=row["created_at"],
+    )
+
+
+def _quick_note_receipt_from_row(row: sqlite3.Row) -> ResearchQuickNoteReceipt:
+    return ResearchQuickNoteReceipt(
+        receipt_id=row["receipt_id"],
+        data_source=row["data_source"],
+        workspace_id=row["workspace_id"],
+        local_user_id=row["local_user_id"],
+        operation_token=row["operation_token"],
+        operation_kind=row["operation_kind"],
+        canonical_note_id=row["canonical_note_id"],
+        expected_version=row["expected_version"],
+        state=row["state"],
+        revision=int(row["revision"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 

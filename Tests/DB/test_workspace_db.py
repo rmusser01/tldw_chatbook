@@ -105,6 +105,47 @@ _OPERATION_COLUMNS = {
     "updated_at",
 }
 
+_QUICK_NOTE_RECEIPT_COLUMNS = {
+    "receipt_id",
+    "data_source",
+    "workspace_id",
+    "local_user_id",
+    "operation_token",
+    "operation_kind",
+    "canonical_note_id",
+    "expected_version",
+    "state",
+    "revision",
+    "created_at",
+    "updated_at",
+}
+
+
+def _create_genuine_v3_database(path: Path) -> None:
+    _create_genuine_v2_database(path)
+    connection = sqlite3.connect(path)
+    connection.executescript(WorkspaceDB._MIGRATE_V2_TO_V3_SQL)
+    connection.execute(
+        """
+        INSERT INTO workspace_memberships
+          (membership_id, workspace_id, item_type, item_id, role,
+           transfer_policy, title, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "legacy-pending",
+            "local-kept",
+            "note",
+            "legacy-note",
+            "note_pending",
+            "reference",
+            "",
+            "2026-08-24T00:00:00Z",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
 
 def _create_genuine_v2_database(path: Path) -> None:
     connection = sqlite3.connect(path)
@@ -205,7 +246,7 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == [1, 2, 3]
+        assert [row[0] for row in versions] == [1, 2, 3, 4]
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
@@ -274,6 +315,128 @@ def test_workspace_v3_inline_migration_matches_packaged_sql_byte_for_byte() -> N
     assert (
         migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V2_TO_V3_SQL
     )
+
+
+def test_genuine_v3_upgrade_adds_payload_free_quick_note_receipts_and_hides_legacy_role(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "historical-v3.sqlite"
+    _create_genuine_v3_database(path)
+
+    db = WorkspaceDB(path)
+
+    assert db.get_schema_version() == 4
+    with db.connection() as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(research_quick_note_receipts)"
+            )
+        }
+        assert columns == _QUICK_NOTE_RECEIPT_COLUMNS
+        assert not columns & {
+            "title",
+            "content",
+            "body",
+            "tags",
+            "keywords",
+            "provenance",
+            "path",
+            "url",
+        }
+        assert connection.execute(
+            "SELECT COUNT(*) FROM workspace_memberships WHERE role = 'note_pending'"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            """
+            SELECT role FROM workspace_memberships
+            WHERE membership_id = 'legacy-pending'
+            """
+        ).fetchone()[0] == "note"
+    db.close()
+
+
+def test_workspace_v4_inline_migration_matches_packaged_sql_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    migration_path = (
+        Path(__file__).parents[2]
+        / "tldw_chatbook/DB/migrations/workspaces_v3_to_v4_quick_note_receipts.sql"
+    )
+    assert migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V3_TO_V4_SQL
+
+    path = tmp_path / "rollback-v3.sqlite"
+    _create_genuine_v3_database(path)
+
+    class BrokenV4WorkspaceDB(WorkspaceDB):
+        _MIGRATE_V3_TO_V4_SQL = WorkspaceDB._MIGRATE_V3_TO_V4_SQL.replace(
+            "COMMIT;", "INSERT INTO table_that_does_not_exist VALUES (1);\n\nCOMMIT;"
+        )
+
+    with pytest.raises(sqlite3.Error):
+        BrokenV4WorkspaceDB(path)
+
+    connection = sqlite3.connect(path)
+    assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='research_quick_note_receipts'"
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT role FROM workspace_memberships WHERE membership_id='legacy-pending'"
+    ).fetchone()[0] == "note_pending"
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("overrides"),
+    [
+        {"data_source": "server"},
+        {"operation_kind": "archive"},
+        {"state": "done"},
+        {"revision": 0},
+        {"state": "owner_committed", "revision": 1},
+        {"local_user_id": ""},
+        {"created_at": ""},
+        {"updated_at": ""},
+        {"operation_kind": "create", "expected_version": 1},
+        {"operation_kind": "delete", "expected_version": None},
+    ],
+)
+def test_quick_note_receipt_table_rejects_invalid_owner_state_and_version_guards(
+    tmp_path: Path, overrides: dict[str, object]
+) -> None:
+    db = WorkspaceDB(tmp_path / "invalid-receipt.sqlite")
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+    LocalWorkspaceRegistryService(db).create_workspace(
+        workspace_id="workspace-1", name="Workspace"
+    )
+    values: dict[str, object] = {
+        "receipt_id": "receipt-1",
+        "data_source": "local",
+        "workspace_id": "workspace-1",
+        "local_user_id": "notes-user",
+        "operation_token": "research-note-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation_kind": "delete",
+        "canonical_note_id": "note-1",
+        "expected_version": 1,
+        "state": "pending",
+        "revision": 1,
+        "created_at": "2026-08-24T00:00:00Z",
+        "updated_at": "2026-08-24T00:00:00Z",
+    }
+    values.update(overrides)
+    fields = tuple(values)
+    with pytest.raises(sqlite3.IntegrityError):
+        with db.transaction() as connection:
+            connection.execute(
+                f"""
+                INSERT INTO research_quick_note_receipts ({', '.join(fields)})
+                VALUES ({', '.join('?' for _ in fields)})
+                """,
+                tuple(values[field] for field in fields),
+            )
+    db.close()
 
 
 @pytest.mark.parametrize(

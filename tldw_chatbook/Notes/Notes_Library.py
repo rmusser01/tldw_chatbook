@@ -172,6 +172,11 @@ class NotesInteropService:
 
     # --- Note Methods ---
 
+    def note_transaction(self, user_id: str) -> Any:
+        """Return the canonical Notes transaction for one mutation owner."""
+
+        return self._get_db(user_id).transaction(immediate=True)
+
     def add_note(
         self, user_id: str, title: str, content: str, note_id: Optional[str] = None
     ) -> str:

@@ -256,6 +256,8 @@ class LocalResearchWorkspaceAdapter:
         self._require_local_ref(ref)
         capabilities = dict(_LOCAL_CAPABILITIES)
         available = self._notes_scope is not None and bool(self._notes_user_id)
+        if available:
+            await self.reconcile_quick_notes()
         note_capability = (
             _LOCAL_AVAILABLE
             if available
@@ -272,6 +274,13 @@ class LocalResearchWorkspaceAdapter:
         )
         return capabilities
 
+    async def reconcile_quick_notes(self) -> None:
+        """Resume one bounded global page of durable Local note receipts."""
+
+        notes = self._require_notes_scope("list_notes")
+        async with self._note_write_lock:
+            await self._reconcile_quick_note_receipts(notes, workspace_id=None)
+
     async def list_notes(
         self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest
     ) -> ResearchNotePage:
@@ -280,7 +289,9 @@ class LocalResearchWorkspaceAdapter:
         if not isinstance(page, ResearchNotePageRequest):
             raise TypeError("page must be ResearchNotePageRequest")
         async with self._note_write_lock:
-            await self._reconcile_pending_note_receipts(notes, ref)
+            await self._reconcile_quick_note_receipts(
+                notes, workspace_id=ref.workspace_id
+            )
         if not page.query:
             memberships, total = await asyncio.to_thread(
                 self._service.list_workspace_note_memberships,
@@ -392,15 +403,13 @@ class LocalResearchWorkspaceAdapter:
                 raise ValueError("Local Notes returned a mismatched canonical note id")
             return note
 
-        note_id = request.operation_id
-        await asyncio.to_thread(
-            self._service.link_membership,
+        receipt = await asyncio.to_thread(
+            self._service.claim_quick_note_create,
             ref.workspace_id,
-            item_type="note",
-            item_id=note_id,
-            role="note_pending",
-            title="",
+            local_user_id=self._notes_user_id,
+            operation_token=request.operation_id,
         )
+        note_id = receipt.canonical_note_id
         note = await self._load_local_note(notes, ref, note_id)
         if note is None:
             try:
@@ -424,57 +433,116 @@ class LocalResearchWorkspaceAdapter:
                 note = self._note_from_row(ref, row)
         if note.note_id != note_id:
             raise ValueError("Local Notes returned a mismatched canonical note id")
-        await self._promote_pending_note(ref, note)
-        return note
-
-    async def _promote_pending_note(
-        self, ref: QualifiedWorkspaceRef, note: ResearchQuickNote
-    ) -> None:
-        await asyncio.to_thread(
-            self._service.link_membership,
-            ref.workspace_id,
-            item_type="note",
-            item_id=note.note_id,
-            role="note",
+        if not self._note_matches_request(note, request):
+            await asyncio.to_thread(
+                self._service.discard_quick_note_receipt,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+            )
+            raise ResearchNoteConflictError(ref, note_id)
+        if receipt.state == "pending":
+            receipt = await asyncio.to_thread(
+                self._service.mark_quick_note_owner_committed,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+            )
+        completed = await asyncio.to_thread(
+            self._service.complete_quick_note_create,
+            receipt.receipt_id,
+            self._notes_user_id,
+            expected_revision=receipt.revision,
             title=note.title,
         )
-        await asyncio.to_thread(
-            self._service.unlink_membership,
-            ref.workspace_id,
-            item_type="note",
-            item_id=note.note_id,
-            role="note_pending",
-        )
+        if not completed:
+            if not await self._is_workspace_note(ref, note.note_id):
+                raise ValueError("Local Quick Note association did not settle")
+        return note
 
-    async def _reconcile_pending_note_receipts(
-        self, notes: Any, ref: QualifiedWorkspaceRef
+    async def _reconcile_quick_note_receipts(
+        self, notes: Any, *, workspace_id: str | None
     ) -> None:
-        list_receipts = getattr(self._service, "list_workspace_note_receipts", None)
-        if not callable(list_receipts):
-            return
-        processed = 0
-        while processed <= 10_000:
-            receipts, total = await asyncio.to_thread(
-                list_receipts, ref.workspace_id, limit=100, offset=0
+        """Resume a bounded receipt page without reading content from registry state."""
+
+        for operation_kind in ("delete", "create"):
+            receipts, _ = await asyncio.to_thread(
+                self._service.list_quick_note_receipts,
+                self._notes_user_id,
+                workspace_id=workspace_id,
+                operation_kind=operation_kind,
+                limit=100,
+                offset=0,
             )
-            if not receipts:
-                return
             for receipt in receipts:
-                note = await self._load_local_note(notes, ref, receipt.item_id)
-                if note is None:
+                receipt_ref = QualifiedWorkspaceRef(
+                    WorkspaceDataSource.LOCAL, receipt.workspace_id
+                )
+                note = await self._load_local_note(
+                    notes, receipt_ref, receipt.canonical_note_id
+                )
+                if receipt.operation_kind == "create":
+                    if receipt.state == "pending":
+                        if note is None:
+                            await asyncio.to_thread(
+                                self._service.discard_quick_note_receipt,
+                                receipt.receipt_id,
+                                self._notes_user_id,
+                                expected_revision=receipt.revision,
+                            )
+                            continue
+                        receipt = await asyncio.to_thread(
+                            self._service.mark_quick_note_owner_committed,
+                            receipt.receipt_id,
+                            self._notes_user_id,
+                            expected_revision=receipt.revision,
+                        )
+                    if note is None:
+                        await asyncio.to_thread(
+                            self._service.discard_quick_note_receipt,
+                            receipt.receipt_id,
+                            self._notes_user_id,
+                            expected_revision=receipt.revision,
+                        )
+                        continue
                     await asyncio.to_thread(
-                        self._service.unlink_membership,
-                        ref.workspace_id,
-                        item_type="note",
-                        item_id=receipt.item_id,
-                        role="note_pending",
+                        self._service.complete_quick_note_create,
+                        receipt.receipt_id,
+                        self._notes_user_id,
+                        expected_revision=receipt.revision,
+                        title=note.title,
                     )
-                else:
-                    await self._promote_pending_note(ref, note)
-            processed += len(receipts)
-            if len(receipts) >= total:
-                return
-        raise ValueError("Local Quick Note receipt reconciliation exceeded its bound")
+                    continue
+
+                if receipt.state == "pending" and note is not None:
+                    try:
+                        await notes.delete_note(
+                            scope="local_note",
+                            note_id=receipt.canonical_note_id,
+                            version=receipt.expected_version,
+                            user_id=self._notes_user_id,
+                        )
+                    except ConflictError:
+                        await asyncio.to_thread(
+                            self._service.discard_quick_note_receipt,
+                            receipt.receipt_id,
+                            self._notes_user_id,
+                            expected_revision=receipt.revision,
+                        )
+                        continue
+                if receipt.state == "pending":
+                    receipt = await asyncio.to_thread(
+                        self._service.mark_quick_note_owner_committed,
+                        receipt.receipt_id,
+                        self._notes_user_id,
+                        expected_revision=receipt.revision,
+                    )
+                await asyncio.to_thread(
+                    self._service.complete_quick_note_delete,
+                    receipt.receipt_id,
+                    self._notes_user_id,
+                    expected_revision=receipt.revision,
+                )
 
     async def delete_note(
         self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
@@ -487,6 +555,13 @@ class LocalResearchWorkspaceAdapter:
             safe_note_id = str(note_id)
             if not await self._is_workspace_note(ref, safe_note_id):
                 raise ValueError("Local note is not associated with this workspace")
+            receipt = await asyncio.to_thread(
+                self._service.claim_quick_note_delete,
+                ref.workspace_id,
+                local_user_id=self._notes_user_id,
+                canonical_note_id=safe_note_id,
+                expected_version=expected_version,
+            )
             try:
                 deleted = await notes.delete_note(
                     scope="local_note",
@@ -497,6 +572,12 @@ class LocalResearchWorkspaceAdapter:
             except ConflictError as exc:
                 remaining = await self._load_local_note(notes, ref, safe_note_id)
                 if remaining is not None:
+                    await asyncio.to_thread(
+                        self._service.discard_quick_note_receipt,
+                        receipt.receipt_id,
+                        self._notes_user_id,
+                        expected_revision=receipt.revision,
+                    )
                     raise ResearchNoteConflictError(ref, safe_note_id) from exc
                 deleted = True
             if type(deleted) is not bool:
@@ -506,27 +587,18 @@ class LocalResearchWorkspaceAdapter:
                 if remaining is not None:
                     return False
                 deleted = True
-            memberships = await asyncio.to_thread(
-                self._service.get_item_memberships, "note", safe_note_id
+            receipt = await asyncio.to_thread(
+                self._service.mark_quick_note_owner_committed,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
             )
-            ordered_memberships = sorted(
-                memberships,
-                key=lambda item: (
-                    item.workspace_id == ref.workspace_id and item.role == "note",
-                    item.workspace_id,
-                    item.role,
-                ),
+            await asyncio.to_thread(
+                self._service.complete_quick_note_delete,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
             )
-            for membership in ordered_memberships:
-                if membership.role not in {"note", "note_pending"}:
-                    continue
-                await asyncio.to_thread(
-                    self._service.unlink_membership,
-                    membership.workspace_id,
-                    item_type="note",
-                    item_id=safe_note_id,
-                    role=membership.role,
-                )
             return deleted
 
     async def list_sources(
@@ -1005,6 +1077,20 @@ class LocalResearchWorkspaceAdapter:
         needle = query.casefold()
         haystack = " ".join((note.title, note.content, *note.tags)).casefold()
         return needle in haystack
+
+    @staticmethod
+    def _note_matches_request(
+        note: ResearchQuickNote, request: ResearchNoteSaveRequest
+    ) -> bool:
+        """Require exact canonical owner content before association promotion."""
+
+        return (
+            note.title == request.title
+            and note.content == request.content
+            and note.tags == request.tags
+            and note.message_ids == request.message_ids
+            and note.source_ids == request.source_ids
+        )
 
     @staticmethod
     def _matching_attach_intent(

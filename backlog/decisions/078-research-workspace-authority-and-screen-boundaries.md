@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-23
-- **Last amended:** 2026-08-24 (durable Research ingest dispatch eligibility)
+- **Last amended:** 2026-08-24 (durable Local Quick Note receipts)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
 - **Amends:** ADR-015 (shell destination taxonomy); ADR-028 (adds Research
@@ -141,16 +141,38 @@ independently retryable.
 
 Local Quick Note creation is the narrow exception to create-then-associate
 ordering because Notes and the workspace registry are independent SQLite
-owners with no shared transaction. Before the canonical Notes write, the
-registry reserves the generated canonical UUID in a payload-free
-`WorkspaceMembership(item_type="note", role="note_pending")`. Notes then writes
-that exact UUID; the registry adds the authoritative `role="note"` membership
-and removes the pending receipt. A retry or restart may inspect the canonical
-owner by that reserved identity and finish promotion idempotently. The receipt
-never stores the body, tags, or provenance, and it is not workspace membership
-for listing/retrieval until promoted. This ordering avoids both deleting an
-independently useful canonical Note and creating duplicates after a partial
-cross-owner failure.
+owners with no shared transaction. Before the canonical Notes write, WorkspaceDB
+claims a row in the dedicated `research_quick_note_receipts` ledger. The
+payload-free row binds the Local workspace ID, canonical Notes user/client,
+app-minted operation token, operation kind, deterministic owner-qualified Note
+UUID, state, revision, and timestamps. It never enters `workspace_memberships`,
+Console context, or RAG scope, and it stores no title, body, tags, provenance,
+path, or URL. Consequently, identical operation tokens cannot associate one
+user's or workspace's Note with another owner.
+
+The canonical Notes row and its keywords commit in one Notes-owner transaction.
+Create retry verifies the exact canonical title, body, tags, and provenance
+before advancing the receipt from `pending` to `owner_committed`; only that
+state may atomically add the authoritative `WorkspaceMembership(role="note")`
+and consume the receipt. On restart, existence of the exact owner-qualified,
+app-minted canonical UUID is proof that the atomic Notes transaction committed,
+so reconciliation may advance and promote it without copying its payload into
+the receipt. A pending create with no owner row is safe to clear; an identity or
+payload mismatch observed during an explicit retry is never promoted. Startup
+processes one bounded owner-filtered global page, and workspace listing also
+reconciles one bounded page. Age orders recovery work but never expires a
+receipt that could represent live canonical work.
+
+Local Quick Note deletion records a durable receipt before the optimistic Notes
+soft delete. Once the canonical owner is absent or tombstoned, one WorkspaceDB
+transaction removes every membership role for that Note across all workspaces,
+removes matching Note items from every stored RAG scope, and consumes the
+receipt. This preserves the existing canonical-delete semantics: a Local Note
+is one shared general-Library record, so deleting it invalidates every workspace
+projection rather than pretending one workspace owns a private copy. An
+interrupted cleanup resumes at startup even when the Note no longer appears in
+the UI. This protocol avoids both duplicate canonical Notes after create
+failure and dangling workspace/RAG projections after delete failure.
 
 ### 5. Server folders and annotations are explicit device-only overlays
 

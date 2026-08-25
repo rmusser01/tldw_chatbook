@@ -180,12 +180,15 @@ class _MountedNotePort:
         self.saved = []
         self.deleted = []
         self.conflict = False
+        self.fail_capabilities = False
         self.row = note(ref)
 
     async def list_workspaces(self, *, include_archived=False):
         return (ResearchWorkspaceSummary(ref=self.ref, name="Notes workspace"),)
 
     async def capabilities(self, ref):
+        if self.fail_capabilities:
+            raise WorkspaceRegistryServiceError("injected capability failure")
         available = ResearchCapability(True, "available", "Available.", "notes")
         return {
             "list_sources": available,
@@ -507,6 +510,43 @@ async def test_capability_refresh_from_full_to_empty_resets_every_control_fail_c
             assert section.query_one(f"#{widget_id}").disabled
         assert "unavailable" in str(
             section.query_one("#research-quick-note-owner-limits", Static).render()
+        ).lower()
+
+
+@pytest.mark.asyncio
+async def test_capability_refresh_exception_immediately_disables_previous_actions() -> None:
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    port = _MountedNotePort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    app = _ResearchHarness(screen)
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if controller.visible_note_page is not None:
+                break
+        section = screen.query_one(ResearchQuickNotesSection)
+        assert not section.query_one("#research-quick-note-save", Button).disabled
+
+        port.fail_capabilities = True
+        await screen._refresh_quick_notes(expected_ref=LOCAL_REF)
+
+        for widget_id in (
+            "research-quick-note-search",
+            "research-quick-note-load",
+            "research-quick-note-new",
+            "research-quick-note-save",
+            "research-quick-note-delete",
+        ):
+            assert section.query_one(f"#{widget_id}").disabled
+        assert "retry" in str(
+            section.query_one("#research-quick-note-status", Static).render()
         ).lower()
 
 

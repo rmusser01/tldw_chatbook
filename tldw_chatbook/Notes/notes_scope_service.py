@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from enum import Enum
 from functools import partial
 from typing import Any, NoReturn, Optional
@@ -1003,13 +1004,29 @@ class NotesScopeService:
         )
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(user_id)
+            transaction_factory = getattr(
+                self.local_notes_service, "note_transaction", None
+            )
+            owner_transaction = (
+                transaction_factory(local_user_id)
+                if callable(transaction_factory)
+                else nullcontext()
+            )
             if note_id:
-                updated = self.local_notes_service.update_note(
-                    local_user_id,
-                    note_id,
-                    {"title": title, "content": content},
-                    version,
-                )
+                keyword_result: list[str] | None = None
+                with owner_transaction:
+                    updated = self.local_notes_service.update_note(
+                        local_user_id,
+                        note_id,
+                        {"title": title, "content": content},
+                        version,
+                    )
+                    if updated and keywords is not None:
+                        keyword_result = self._sync_local_note_keywords(
+                            user_id=local_user_id,
+                            note_id=note_id,
+                            keywords=keywords,
+                        )
                 if updated:
                     self._enqueue_local_note_upsert(
                         sync_v2_profile=sync_v2_profile,
@@ -1030,18 +1047,22 @@ class NotesScopeService:
                     "version": (version + 1) if version is not None else None,
                     "title": title,
                     "content": content,
-                    "keywords": self._sync_local_note_keywords(
-                        user_id=local_user_id,
-                        note_id=note_id,
-                        keywords=keywords,
-                    ),
+                    "keywords": keyword_result or [],
                 }
-            created_note_id = self.local_notes_service.add_note(
-                local_user_id,
-                title,
-                content,
-                note_id=create_note_id,
-            )
+            keyword_result = None
+            with owner_transaction:
+                created_note_id = self.local_notes_service.add_note(
+                    local_user_id,
+                    title,
+                    content,
+                    note_id=create_note_id,
+                )
+                if created_note_id and keywords is not None:
+                    keyword_result = self._sync_local_note_keywords(
+                        user_id=local_user_id,
+                        note_id=created_note_id,
+                        keywords=keywords,
+                    )
             if not created_note_id:
                 return created_note_id
             self._enqueue_local_note_upsert(
@@ -1061,11 +1082,7 @@ class NotesScopeService:
                 "version": 1,
                 "title": title,
                 "content": content,
-                "keywords": self._sync_local_note_keywords(
-                    user_id=local_user_id,
-                    note_id=created_note_id,
-                    keywords=keywords,
-                ),
+                "keywords": keyword_result or [],
             }
 
         if normalized_scope == ScopeType.SERVER_NOTE:
