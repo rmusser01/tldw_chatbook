@@ -81,6 +81,57 @@
     TraceFiltersDialog #trace-filter-dialog-actions Button { min-width: 9; }
 
 
+/* ===== WIDGET: ConsolePromptComparisonModal (Widgets/Console/console_prompt_comparison_modal.py) ===== */
+
+
+
+    ConsolePromptComparisonModal #console-prompt-comparison-modal {
+        width: 90%;
+        max-width: 100;
+        min-width: 40;
+        height: 88%;
+        max-height: 40;
+        min-height: 16;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsolePromptComparisonModal .console-prompt-comparison-label {
+        width: 100%;
+        height: 1;
+        color: gray;
+        text-style: bold;
+    }
+
+    ConsolePromptComparisonModal #console-prompt-comparison-before,
+    ConsolePromptComparisonModal #console-prompt-comparison-after {
+        width: 100%;
+        height: 1fr;
+        min-height: 4;
+        border: solid gray;
+        background: black;
+    }
+
+    ConsolePromptComparisonModal #console-prompt-comparison-actions {
+        width: 100%;
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    ConsolePromptComparisonModal #console-prompt-comparison-restore {
+        width: 18;
+        min-width: 18;
+    }
+
+    ConsolePromptComparisonModal #console-prompt-comparison-keep {
+        width: 22;
+        min-width: 22;
+    }
+
+
 /* ===== WIDGET: TraceExportDialog (Widgets/Console/trace_export_dialog.py) ===== */
 
 
