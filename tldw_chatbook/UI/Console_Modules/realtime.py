@@ -2300,7 +2300,15 @@ class ConsoleRealtimeController:
             )
 
     def handle_key(self, key: str) -> bool:
-        """Handle realtime key policy and report whether Escape was consumed."""
+        """Handle realtime key policy and report whether Escape was consumed.
+
+        Args:
+            key: Textual key identifier for the current key event.
+
+        Returns:
+            True when Escape requested loop exit and the event must be consumed;
+            False otherwise.
+        """
         session = self.session
         if session is None:
             return False
