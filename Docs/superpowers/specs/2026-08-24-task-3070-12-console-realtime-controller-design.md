@@ -1,6 +1,8 @@
 # TASK-3070.12 Console Realtime Controller Design
 
-**Status:** approved by the owner 2026-08-24; review amendments applied 2026-08-25
+**Status:** approved by the owner 2026-08-24; review amendments and the mandatory
+evidence-only `dev` drift amendment applied 2026-08-25. The ownership design and
+56/0/1 classification are unchanged.
 
 **Task:** `TASK-3070.12 - Extract Console realtime orchestration ownership`
 
@@ -24,19 +26,21 @@ The exact method membership remains executable source-of-truth in
 `Tests/Architecture/test_console_wave6_closeout_inventory.py`. This design does not
 reclassify that reviewed inventory.
 
-The branch was rebased and revalidated on `dev` at `7f38cb6ef` before implementation
-planning. The exact 57-method realtime family is unchanged. At that base,
-`ChatScreen` has 20,017 lines and 633 direct methods. All seven closeout inventory
+The branch was rebased and revalidated on `dev` at `8b0180118` before implementation.
+The required current-base drift gate found that four unrelated commits had added 37
+net lines while leaving the exact 57-method realtime family, its 1,997/19 source
+spans, and the 56/0/1 classification unchanged. At this amended base, `ChatScreen`
+has 20,054 lines and 633 direct methods. All seven closeout inventory
 tests pass, and 147 focused realtime tests pass. Two mounted Buddy assertions already
 fail because their test app leaves the lazily initialized `persona_buddy_controller`
 as `None`; both failures reproduce before this extraction. One older TASK-3070.9
-intermediate line ceiling also fails because current `dev` has 20,017 lines against
+intermediate line ceiling also fails because current `dev` has 20,054 lines against
 its 19,922-line delivery ceiling; the realtime extraction's conservative result is
-18,039 lines, so this task must earn that test back without weakening it.
+18,076 lines, so this task must earn that test back without weakening it.
 
 The combined TASK-3070.12/.13 conservative projection remains valid at this base:
-17,383 lines and 562 direct methods after the frozen removals, below the immutable
-17,727 / 593 ceilings by 344 lines and 31 methods. The implementation must not hide
+17,420 lines and 562 direct methods after the frozen removals, below the immutable
+17,727 / 593 ceilings by 307 lines and 31 methods. The implementation must not hide
 the baseline defects and must keep all currently passing behavioral coverage green.
 
 ## Goals

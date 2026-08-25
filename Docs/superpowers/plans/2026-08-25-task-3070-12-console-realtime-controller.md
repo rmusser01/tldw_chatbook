@@ -16,11 +16,11 @@
 - Design: `Docs/superpowers/specs/2026-08-24-task-3070-12-console-realtime-controller-design.md`
 - Characterization owner: `Tests/Architecture/test_console_wave6_closeout_inventory.py`
 - Reviewed classification: 57 realtime methods = 56 moves, 0 delegates, 1 screen stay (`_repaint_console_realtime_chip`).
-- Planning base: `7f38cb6ef09ade054c755600c5b48435571482da`; current `ChatScreen` = 20,017 physical lines / 633 direct methods.
-- Conservative task result: no more than 18,039 physical lines / 577 direct methods.
+- Planning base after the mandatory drift amendment: `8b0180118e5305b90b1f76b04a80c22c251f7047`; current `ChatScreen` = 20,054 physical lines / 633 direct methods.
+- Conservative task result: no more than 18,076 physical lines / 577 direct methods. The unchanged TASK-3070.12/.13 combined projection is 17,420 / 562, still below the immutable 17,727 / 593 ceilings by 307 lines / 31 methods.
 - Local full-suite execution is prohibited. GitHub Actions remains the broad integration gate.
 - Two focused Buddy tests are already red at the planning base because their skeletal app does not install a lazily constructed Buddy controller. Correct only that test fixture by assigning a real `PersonaBuddyController`; do not change production lazy-loading behavior.
-- The Wave 6 inventory has one unrelated pre-existing red ratchet (`test_first_chat_task_ratchet_is_earned` at 20,017 > 19,922). This extraction must earn that assertion back without raising or weakening a ceiling.
+- The Wave 6 inventory has one unrelated pre-existing red ratchet (`test_first_chat_task_ratchet_is_earned` at 20,054 > 19,922). This extraction must earn that assertion back without raising or weakening a ceiling.
 
 ## ADR check
 
@@ -81,16 +81,16 @@ Reason: this task directly applies the accepted controller/region ownership rule
   - descriptor access before wiring raises `RuntimeError` rather than being swallowed as a missing optional attribute;
   - controller source has no `query`, `query_one`, `focus`, `push_screen`, modal construction, `ChatScreen`, or AST attribute access to the sibling-controller slots `self._dictation`, `self._hands_free`, or `self._session`;
   - `build_console_controllers()` assigns `screen._realtime` exactly once and no other production function constructs the controller;
-  - `chat_screen.py` is at most 18,039 lines and 577 direct methods.
+  - `chat_screen.py` is at most 18,076 lines and 577 direct methods.
 
   Add an executable `test_origin_dev_realtime_family_and_projection_still_match_review` which reads `origin/dev:tldw_chatbook/UI/Screens/chat_screen.py` with bounded `git show` and asserts:
 
   - the exact direct-method names containing `console_realtime` equal `REALTIME_METHODS` (57 total);
   - the exact move/delegate/stay classification remains 56/0/1;
   - realtime candidate and stay spans remain 1,997 and 19 physical lines;
-  - subtracting the 1,978-line / 56-method extraction from the current `origin/dev` counts projects no higher than the reviewed 18,039-line / 577-method result.
+  - subtracting the 1,978-line / 56-method extraction from the current `origin/dev` counts projects no higher than the amended 18,076-line / 577-method result.
 
-  This is the current-base/rebase drift gate. The frozen amendment tests remain historical evidence and do not substitute for it.
+  This is the current-base/rebase drift gate. It must remain durable after merge: when `origin/dev` still has the pre-extraction family, run the family/span/projection assertions above; when `origin/dev` already contains this extraction, require its screen/controller sources to satisfy the same final 56/0/1 ownership contract instead of applying pre-extraction arithmetic. Any partial or unrecognized state fails. The frozen amendment tests remain historical evidence and do not substitute for this live-base check.
 
 - [ ] **Step 2: Run the new architecture file and observe RED**
 
@@ -143,7 +143,53 @@ Reason: this task directly applies the accepted controller/region ownership rule
           # Store only the named callables; never store ChatScreen or sibling controllers.
   ```
 
-  The constructor signature must name each real dependency instead of hiding them in a dependency object. Use late-bound callables for mutable framework/application seams, including chat-store/runtime/dictation access, provider-session/recorder/sink factories, notifications, UI marshaling/scheduling, chip repaint, voice-chip restore, and pipeline fallback. Snapshot only an identity whose lifetime is demonstrably stable and document that exception; otherwise use a callable.
+  The constructor signature must name each real dependency instead of hiding them in a dependency object. This implementation chooses no `app_instance` snapshot; wire exactly these 18 keyword-only callables:
+
+  ```text
+  ensure_session_settings
+  chat_store_accessor
+  runtime_accessor
+  dictation_state_accessor
+  request_dictation_stop
+  pipeline_blocker
+  enter_pipeline_loop
+  recorder_factory_accessor
+  provider_session_factory_accessor
+  sink_factory_accessor
+  notify
+  ui_thread_id_accessor
+  event_loop_accessor
+  set_interval
+  run_worker
+  defer_native_sync
+  repaint_chip
+  restore_voice_chip
+  ```
+
+  Each wiring value is a lambda which resolves the current screen/app service at call time. Factory accessors preserve later test injection; `ui_thread_id_accessor` and `event_loop_accessor` let `_console_realtime_marshal` keep its existing stale-session/thread policy without retaining the app; `defer_native_sync` performs the existing `call_later` scheduling at call time. The controller accepts no ambient `screen`, `app_instance`, dependency object, `*args`, or `**kwargs` escape hatch.
+
+  Freeze the wiring lookup roots as part of the architecture contract; a correctly named dependency wired to an arbitrary screen/DOM method is still a boundary violation:
+
+  | Dependency | Only permitted screen-rooted lookup(s) |
+  |---|---|
+  | `ensure_session_settings` | `_session._ensure_active_console_session_settings` |
+  | `chat_store_accessor` | `_ensure_console_chat_store` |
+  | `runtime_accessor` | `_console_runtime` |
+  | `dictation_state_accessor` | `_console_dictation_state` |
+  | `request_dictation_stop` | `_request_console_dictation_stop` |
+  | `pipeline_blocker` | `_hands_free._console_pipeline_hands_free_blocker` |
+  | `enter_pipeline_loop` | `_hands_free._enter_console_hands_free_pipeline_loop` |
+  | `recorder_factory_accessor` | `app_instance` plus exact `getattr(..., "console_realtime_recorder_factory", None)` |
+  | `provider_session_factory_accessor` | `app_instance` plus exact `getattr(..., "console_realtime_session_factory", None)` |
+  | `sink_factory_accessor` | `app_instance` plus exact `getattr(..., "console_realtime_sink_factory", None)` |
+  | `notify` | `app_instance.notify` |
+  | `ui_thread_id_accessor` | `app_instance._thread_id` |
+  | `event_loop_accessor` | `app_instance` plus exact `getattr(..., "_loop", None)` |
+  | `set_interval` | `set_interval` |
+  | `run_worker` | `run_worker` |
+  | `defer_native_sync` | `call_later` and `_sync_native_console_chat_ui` |
+  | `repaint_chip` | `_repaint_console_realtime_chip` |
+  | `restore_voice_chip` | `_restore_console_voice_chip` |
 
 - [ ] **Step 3: Construct the controller in the existing builder**
 
@@ -500,7 +546,7 @@ Perform this task only after the extraction checkpoint is committed and the work
   ../../.venv/bin/python -m pytest Tests/Architecture/test_console_realtime_controller_boundary.py::test_origin_dev_realtime_family_and_projection_still_match_review -q
   ```
 
-  This test inspects the freshly fetched `origin/dev`, not the historical amendment revision. If the exact 57-method family, 1,997/19 spans, 56/0/1 classification, or conservative 18,039/577 projection changed, stop and amend the design/task before continuing. Never rewrite frozen evidence or raise a ratchet to absorb drift.
+  This test inspects the freshly fetched `origin/dev`, not the historical amendment revision. If the exact 57-method family, 1,997/19 spans, 56/0/1 classification, or conservative 18,076/577 projection changed, stop and amend the design/task before continuing. Never rewrite frozen evidence or raise a ratchet to absorb drift.
 
 - [ ] **Step 4: Run final focused evidence after rebase**
 
