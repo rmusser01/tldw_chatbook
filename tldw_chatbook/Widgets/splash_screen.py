@@ -85,6 +85,17 @@ class SplashScreen(Container):
         self.show_progress = show_progress
         self.reduced_motion = bool(reduced_motion)
 
+        # TASK-21591. Textual routes a key event to `App.focused or
+        # App.screen` and bubbles it UPWARD from there, so a Container that
+        # is never focused never sees one -- `on_key` below could not fire
+        # and the shipped, default-true `[splash_screen] skip_on_keypress`
+        # was inert. Focus is what makes the skip reachable, so it is taken
+        # only when the skip is wanted: with `skip_on_keypress = false` this
+        # widget stays unfocusable, which also keeps the Settings splash
+        # PREVIEW (which passes False) from stealing focus from the settings
+        # controls around it.
+        self.can_focus = bool(skip_on_keypress)
+
         # Animation state
         self.start_time = time.time()
         self.animation_timer: Optional[Timer] = None
@@ -298,6 +309,11 @@ class SplashScreen(Container):
         # Start the splash screen
         await self._start_splash()
 
+        # TASK-21591: take focus so key events are routed here rather than to
+        # the screen. Only when the skip is enabled -- see `__init__`.
+        if self.skip_on_keypress:
+            self.focus()
+
         # Schedule auto-close
         if self.duration > 0:
             self.auto_close_timer = self.set_timer(self.duration, self._request_close)
@@ -467,7 +483,22 @@ class SplashScreen(Container):
             pass
 
     async def on_key(self, event: events.Key) -> None:
-        """Handle key press events."""
+        """Dismiss the splash on any key, when the skip is enabled.
+
+        TASK-21591. The key is CONSUMED: the splash is a modal overlay over
+        an app that is not interactive yet, and while it is up the key's
+        whole job is to dismiss it. Letting the event bubble instead was
+        tried and rejected -- it preserved ``ctrl+q``/``ctrl+p`` during the
+        splash, but it also let a shell-destination key through, and because
+        ``action_shell_destination`` *posts* its ``NavigateToScreen`` the
+        request was then handled AFTER the now-immediate splash close had
+        pushed the initial screen, so F9 mid-splash landed the user on
+        Settings. That is the exact behaviour task-1339 locked (see
+        ``test_navigation_keypress_during_splash_is_safely_ignored``).
+        Stopping the event keeps every already-decided contract intact; the
+        cost is that ``ctrl+q`` during the splash dismisses it and needs a
+        second press to quit, which no task or test has asserted otherwise.
+        """
         if self.skip_on_keypress and not self._skip_requested:
             event.stop()
             event.prevent_default()
