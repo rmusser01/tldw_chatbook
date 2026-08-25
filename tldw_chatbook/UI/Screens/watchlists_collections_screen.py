@@ -15,7 +15,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -225,6 +225,8 @@ from ..Watchlists_Modules.watchlists_workbench import (
 )
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
+
+LayoutRecomputeCause = Literal["initial", "resize", "explicit", "article_focus"]
 
 logger = logger.bind(module="WatchlistsCollectionsScreen")
 WC_LOCAL_PAGE_SIZE = 5
@@ -1015,6 +1017,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         loaded_layout = load_region_layout()
         self.set_reactive(WatchlistsCollectionsScreen.region_layout, loaded_layout)
         self._effective_region_layout = loaded_layout
+        self._responsive_region_layout: RegionLayout | None = None
         self._article_focus_active = False
         self._responsive_priority_target: Region | None = None
         self._layout_request_generation = 0
@@ -1158,7 +1161,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # future caller) still gets the persistence reconciliation pass
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
-        self._recompute_effective_layout()
+        self._recompute_effective_layout(cause="initial")
         server_read = (
             self.active_section == "items" and self.runtime_backend != "local"
         )
@@ -1175,17 +1178,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._refresh_overview_data()
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Re-derive responsive state without changing the preference.
-
-        Threads the current effective layout as ``previous`` so the
-        resolver's boundary hysteresis (TASK-22211) can absorb
-        sub-hysteresis width changes -- the +/-1-cell oscillation of a
-        drag-resize, and the 2-cell delta of an ancestor scrollbar
-        appearing or disappearing -- instead of mounting/removing a whole
-        pane per Resize event. Only this resize path threads state: manual
-        gestures and section switches still resolve fresh.
-        """
-        self._recompute_effective_layout(previous=self._effective_region_layout)
+        """Re-derive responsive state without changing the preference."""
+        self._recompute_effective_layout(cause="resize")
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply a validated section/run deep link from shell navigation."""
@@ -3044,38 +3038,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 ),
             )
 
-    def _available_layout_width(self) -> int:
-        """Best live width for the pure responsive resolver.
-
-        Scrollbar-toggle flap (TASK-22211): the preferred candidate,
-        ``workbench.size.width``, shrinks by the scrollbar width (2 cells)
-        when an ancestor grows a vertical scrollbar (the Screen defaults to
-        ``overflow-y: auto``), so a measurement taken across a scrollbar
-        toggle can differ by 2 with no user resize. That delta is absorbed
-        in CODE, not CSS: a scrollbar toggle posts no Resize to this
-        Screen (Textual posts Resize to the resized widget only, and it
-        does not bubble), so it cannot trigger a recompute by itself, and
-        every resize-driven recompute threads the previous effective
-        layout into the resolver whose `LAYOUT_HYSTERESIS_WIDTH` (4) is
-        deliberately wider than the scrollbar -- see `on_resize` and
-        `resolve_effective_layout`. Measuring the genuinely narrower width
-        when a scrollbar is really present remains correct; only the
-        sub-hysteresis flap is suppressed.
-        """
-        if not self.is_mounted:
-            return 10_000
-        candidates: list[int] = []
-        try:
-            workbench = self.query_one(WatchlistsWorkbench)
-            candidates.extend((workbench.size.width, workbench.container_size.width))
-        except Exception:
-            pass
-        candidates.append(self.size.width)
-        try:
-            candidates.append(self.app.size.width)
-        except Exception:
-            pass
-        return next((width for width in candidates if width > 0), 10_000)
+    def _available_layout_width(self) -> int | None:
+        """Return positive screen allocation, never descendant content width."""
+        width = self.size.width
+        return width if width > 0 else None
 
     def _next_layout_request_token(self) -> int:
         """Allocate the one current controller/workbench request token."""
@@ -3099,46 +3065,55 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _recompute_effective_layout(
         self,
         *,
+        cause: LayoutRecomputeCause,
         section: str | None = None,
         request_workbench: bool = True,
         previous: RegionLayout | None = None,
     ) -> int | None:
-        """Resolve and push transient responsive/Article Focus state.
+        """Resolve and push transient responsive/Article Focus state."""
+        width = self._available_layout_width()
+        if width is None:
+            return None
 
-        Args:
-            section: Section to resolve for; defaults to the active one.
-            request_workbench: Whether to push the result at the workbench.
-            previous: Previously resolved effective layout, threaded into
-                the resolver for boundary hysteresis (TASK-22211). Only the
-                resize path passes it: a Resize-driven recompute must not
-                flip a pane on a sub-hysteresis width change, while manual
-                gestures, section switches, and the first resolve keep
-                today's fresh (hysteresis-free) resolution.
-        """
         section = self.active_section if section is None else section
         read_mode = section == "items"
-        width = self._available_layout_width()
         mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
-        unprioritized = resolve_effective_layout(
-            self.region_layout,
-            width=width,
-            read_mode=read_mode,
-            article_focus=False,
-            priority_target=None,
-        )
-        preferred_mounted = frozenset(self.region_layout.collapsed.intersection(mounted))
-        if unprioritized.collapsed == preferred_mounted:
-            self._responsive_priority_target = None
+        responsive = self._responsive_region_layout
+        if cause != "article_focus" or responsive is None:
+            previous = responsive if cause == "resize" else None
+            unprioritized = resolve_effective_layout(
+                self.region_layout,
+                width=width,
+                read_mode=read_mode,
+                article_focus=False,
+                priority_target=None,
+                previous=previous,
+            )
+            preferred_mounted = frozenset(
+                self.region_layout.collapsed.intersection(mounted)
+            )
+            if unprioritized.collapsed == preferred_mounted:
+                self._responsive_priority_target = None
 
-        effective = resolve_effective_layout(
-            self.region_layout,
-            width=width,
-            read_mode=read_mode,
-            article_focus=self._article_focus_active,
-            priority_target=self._responsive_priority_target,
-            previous=previous,
-        )
+            responsive = resolve_effective_layout(
+                self.region_layout,
+                width=width,
+                read_mode=read_mode,
+                article_focus=False,
+                priority_target=self._responsive_priority_target,
+                previous=previous,
+            )
+            self._responsive_region_layout = responsive
+
+        effective = responsive
+        if self._article_focus_active:
+            effective = RegionLayout(
+                collapsed=responsive.collapsed.union(mounted)
+            )
+
         previous = self._effective_region_layout
+        if effective == previous:
+            return None
         if (
             read_mode
             and not previous.is_collapsed(Region.ITEMS)
@@ -3234,7 +3209,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 happens to leave the persisted collapsed set unchanged.
         """
         self.region_layout = layout
-        self._recompute_effective_layout()
+        self._recompute_effective_layout(cause="explicit")
         self._schedule_layout_persist(layout)
 
     def _schedule_layout_persist(self, layout: RegionLayout) -> None:
@@ -3464,7 +3439,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.notify("Article Focus is available on Read.", markup=False)
             return
         self._article_focus_active = not self._article_focus_active
-        self._recompute_effective_layout()
+        self._recompute_effective_layout(cause="article_focus")
 
     def action_toggle_left_rail(self) -> None:
         self._toggle_preferred_region(Region.LEFT_RAIL)
@@ -3494,7 +3469,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self._responsive_priority_target is region:
                 self._responsive_priority_target = None
         self.region_layout = preferred
-        token = self._recompute_effective_layout()
+        token = self._recompute_effective_layout(cause="explicit")
         request_token = token or self._current_layout_request_token
         self._manual_layout_rollback = ManualLayoutRollback(
             token=request_token,
@@ -3530,7 +3505,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._article_focus_active = rollback.article_focus_before
             self._responsive_priority_target = rollback.priority_before
             self._manual_layout_rollback = None
-            self._recompute_effective_layout()
+            self._recompute_effective_layout(cause="explicit")
             if current_preferred != rollback.preferred_before:
                 self._schedule_layout_persist(rollback.preferred_before)
             return
@@ -4449,7 +4424,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if intent is None:
             section = self.active_section
             self._recompute_effective_layout(
-                section=section, request_workbench=False
+                cause="explicit", section=section, request_workbench=False
             )
             token = self._next_layout_request_token()
             detail_builder = self._build_detail_pane
@@ -4762,7 +4737,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         WC_SNAPSHOT_TIMEOUT_SECONDS,
                         self._apply_snapshot_timeout_if_still_loading,
                     )
-        self._recompute_effective_layout(request_workbench=False)
+        self._recompute_effective_layout(
+            cause="explicit", request_workbench=False
+        )
         if self.active_section == "overview":
             self.selected_entity = None
         if self.active_section != WATCHLISTS_SECTION_RUNS:

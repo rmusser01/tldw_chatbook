@@ -1076,6 +1076,134 @@ async def test_resize_derives_effective_layout_without_persisting_preference(
         assert writes == []
 
 
+async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        assert screen._responsive_region_layout is not None
+        assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
+        grip = screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip)
+        focused = screen.query_one("#items-table", ListView)
+        focused.focus()
+        await pilot.pause()
+        assert screen.focused is focused
+
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+
+        for width in (145, 146, 147, 148, 147, 148, 147, 148):
+            await pilot.resize_terminal(width, 50)
+            await _settle(pilot, host)
+            assert screen._responsive_region_layout.is_collapsed(
+                Region.RIGHT_RAIL
+            )
+            assert screen.query_one(
+                "#wl-grip-right_rail", WatchlistsPaneGrip
+            ) is grip
+            assert screen.focused is focused
+
+        assert requests == []
+
+        await pilot.resize_terminal(149, 50)
+        await _settle(pilot, host)
+        assert len(requests) == 1
+        assert not screen._responsive_region_layout.is_collapsed(
+            Region.RIGHT_RAIL
+        )
+        assert screen.query("#wl-region-right_rail")
+        assert screen.query_one(
+            "#wl-grip-right_rail", WatchlistsPaneGrip
+        ) is grip
+        assert screen.focused is focused
+
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+        assert len(requests) == 1
+        assert not screen._responsive_region_layout.is_collapsed(
+            Region.RIGHT_RAIL
+        )
+        assert screen.focused is focused
+
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        assert len(requests) == 2
+        assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
+        assert not screen.query("#wl-region-right_rail")
+        assert screen.query_one(
+            "#wl-grip-right_rail", WatchlistsPaneGrip
+        ) is grip
+        assert screen.focused is focused
+
+
+async def test_zero_width_never_seeds_or_replaces_responsive_history(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        workbench = screen.query_one(WatchlistsWorkbench)
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: None)
+        screen._responsive_region_layout = None
+        before_zero = (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        )
+
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert screen._responsive_region_layout is None
+        assert (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        ) == before_zero
+        assert requests == []
+
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: 144)
+        screen.on_resize(None)
+        await _settle(pilot, host)
+        baseline = screen._responsive_region_layout
+        assert baseline is not None
+        positive_state = (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        )
+        positive_request_count = len(requests)
+
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: None)
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert screen._responsive_region_layout == baseline
+        assert (
+            screen._effective_region_layout,
+            screen._current_layout_request_token,
+            screen._layout_request_generation,
+        ) == positive_state
+        assert len(requests) == positive_request_count
+
+
 async def test_article_focus_is_transient_and_restores_exact_preference() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1670,7 +1798,7 @@ async def test_failed_manual_expansion_survives_resize_request_supersession(
             nonlocal failures
             failures += 1
             if failures == 1:
-                screen._recompute_effective_layout()
+                screen._recompute_effective_layout(cause="resize")
             if failures <= 2:
                 raise RuntimeError("navigation failed after resize")
             return original_factory()

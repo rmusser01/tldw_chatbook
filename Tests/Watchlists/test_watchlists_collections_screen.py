@@ -2,12 +2,14 @@
 
 from contextlib import asynccontextmanager
 import threading
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, Mock
 
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.geometry import Size
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
@@ -64,6 +66,15 @@ def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
     assert hasattr(collections_module, "SectionViewIntent")
     assert not hasattr(collections_module, "_ManualLayoutRollback")
     assert not hasattr(collections_module, "_SectionViewIntent")
+
+
+def test_layout_width_uses_only_positive_screen_allocation() -> None:
+    receiver = SimpleNamespace(size=Size(145, 50))
+
+    assert WatchlistsCollectionsScreen._available_layout_width(receiver) == 145
+
+    receiver.size = Size(0, 50)
+    assert WatchlistsCollectionsScreen._available_layout_width(receiver) is None
 
 
 @pytest.fixture
