@@ -12,6 +12,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     LIBRARY_MAX_WIDTH,
     LIBRARY_MIN_WIDTH,
     LIBRARY_TARGET_WIDTH,
+    MEDIA_READER_LAYOUT_PROFILE,
     PANE_GRIP_WIDTH,
     READER_COMFORT_WIDTH,
     SELECTION_SETTLE_SECONDS,
@@ -194,10 +195,20 @@ def test_explicit_open_priority_survives_narrow_resize_resolution() -> None:
 
 def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
     preferences = normalize_media_reader_preferences({})
-    collapsed = resolve_media_reader_layout(121, preferences)
-    boundary = resolve_media_reader_layout(122, preferences, previous=collapsed)
+    nominal_width = (
+        2 * PANE_GRIP_WIDTH
+        + LIBRARY_TARGET_WIDTH
+        + ITEMS_TARGET_WIDTH
+        + MEDIA_READER_LAYOUT_PROFILE.work_min_width
+    )
+    collapsed = resolve_media_reader_layout(nominal_width - 1, preferences)
+    boundary = resolve_media_reader_layout(
+        nominal_width,
+        preferences,
+        previous=collapsed,
+    )
     reopened = resolve_media_reader_layout(
-        122 + LAYOUT_HYSTERESIS_WIDTH,
+        nominal_width + LAYOUT_HYSTERESIS_WIDTH,
         preferences,
         previous=boundary,
     )
