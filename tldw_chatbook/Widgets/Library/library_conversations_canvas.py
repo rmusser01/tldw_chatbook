@@ -1,4 +1,4 @@
-"""Library Browse ▸ Conversations canvas: saved-chat list and preview."""
+"""Library Browse ▸ Conversations canvas: saved-chat list and bulk actions."""
 
 from __future__ import annotations
 
@@ -25,8 +25,10 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
-    """Render the saved-conversation list with a preview + Console handoff.
+class LibraryConversationsCanvas(
+    PostRecomposeCallback, RecomposeCaptureGuard, Vertical
+):
+    """Render the saved-conversation list, paging, filtering, and bulk actions.
 
     Attributes:
         canvas: Current conversations canvas display state.
@@ -54,7 +56,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         self.refresh(recompose=True)
 
     def compose(self) -> ComposeResult:
-        """Render the status line, conversation rows, and selection preview.
+        """Render the status line, conversation rows, and list-owned controls.
 
         Returns:
             ComposeResult for the conversations canvas.
@@ -64,9 +66,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         pager = self.canvas.pager
         title_count = pager.title_count if pager is not None else None
         title = (
-            "Conversations"
-            if title_count is None
-            else f"Conversations ({title_count})"
+            "Conversations" if title_count is None else f"Conversations ({title_count})"
         )
         yield Static(
             title,
@@ -124,9 +124,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         # Disable only when nothing to select AND not already in select mode --
         # in select mode "Done" must stay pressable so the user can always exit,
         # even if the rows dropped to zero (e.g. a background snapshot refresh).
-        select_disabled = actions_disabled or (
-            rendered_count == 0 and not select_mode
-        )
+        select_disabled = actions_disabled or (rendered_count == 0 and not select_mode)
         select_btn = Button(
             # task-4023 AC#1 (RC-07): disabled carries the non-colour "○"
             # marker; the F-018 reason tooltip below says why.
@@ -189,9 +187,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     # task-4023 AC#1 (RC-07): "○" disabled marker; base
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch.
-                    library_disabled_action_label(
-                        "Export selected", export_disabled
-                    ),
+                    library_disabled_action_label("Export selected", export_disabled),
                     id="library-conversations-export-selected",
                     classes="library-canvas-action",
                     compact=True,
@@ -335,29 +331,3 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 if next_disabled:
                     next_page.tooltip = next_reason
                 yield next_page
-
-        preview = Vertical(id="library-conversation-preview")
-        preview.styles.height = "auto"
-        has_preview = bool(self.canvas.selected_id and self.canvas.preview_lines)
-        preview.display = has_preview
-        with preview:
-            yield Static(
-                "\n".join(self.canvas.preview_lines),
-                id="library-conversation-preview-lines",
-                markup=False,
-            )
-            toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.styles.height = "auto"
-            with toolbar:
-                open_console = Button(
-                    library_disabled_action_label(
-                        "Open in Console", actions_disabled
-                    ),
-                    id="library-conversation-open-console",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=actions_disabled,
-                )
-                if actions_disabled:
-                    open_console.tooltip = stale_action_reason
-                yield open_console

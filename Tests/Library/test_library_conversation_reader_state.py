@@ -100,6 +100,52 @@ def test_read_and_info_mode_changes_preserve_reader_identity() -> None:
     assert info.loaded_actions_eligible is True
 
 
+@pytest.mark.parametrize(
+    "change",
+    (
+        {"complete": False},
+        {"loading": True},
+        {"error": "later page failed"},
+    ),
+)
+def test_loaded_actions_require_complete_error_free_settlement(change) -> None:
+    """A matching first page is never actionable before exact hydration."""
+    state = replace(_loaded_state(), **change)
+
+    assert state.loaded_actions_eligible is False
+
+
+@pytest.mark.parametrize("version", (4, None))
+def test_confirmed_deletion_accepts_known_or_bootstrap_version_without_fabrication(
+    version: int | None,
+) -> None:
+    """Exact-ID absence can delete a versioned read or a pending bootstrap."""
+    state = replace(
+        _loaded_state(),
+        selected_version=version,
+        loaded_id="conversation-a" if version is not None else None,
+        loaded_version=version,
+        loaded_generation=2 if version is not None else None,
+        messages=_loaded_state().messages if version is not None else (),
+        message_total=1 if version is not None else 0,
+        complete=version is not None,
+        loading=version is None,
+    )
+
+    deleted = reader_state.confirm_conversation_deleted(
+        state,
+        "conversation-a",
+        version=version,
+        generation=state.generation,
+    )
+
+    assert deleted.unavailable and deleted.error == "Conversation deleted."
+    assert deleted.selected_id == "conversation-a"
+    assert deleted.selected_version is version
+    assert deleted.loaded_id is None and deleted.messages == ()
+    assert deleted.generation == state.generation + 1
+
+
 def _message(
     message_id: str,
     text: str,
@@ -772,7 +818,7 @@ def test_late_deletion_from_prior_generation_cannot_clear_newer_load() -> None:
 def test_bulk_projection_is_read_only_and_preserves_last_single_preview() -> None:
     loaded = _loaded_state()
 
-    bulk = project_conversation_multiselect(loaded, selected_count=3)
+    bulk = project_conversation_multiselect(loaded, active=True, selected_count=3)
 
     assert bulk.bulk_selected_count == 3
     assert bulk.loaded_id == loaded.loaded_id
@@ -781,7 +827,7 @@ def test_bulk_projection_is_read_only_and_preserves_last_single_preview() -> Non
     assert bulk.loaded_generation == loaded.loaded_generation
     assert bulk.loaded_actions_eligible is False
 
-    single = project_conversation_multiselect(bulk, selected_count=0)
+    single = project_conversation_multiselect(bulk, active=False, selected_count=0)
     assert single.loaded_actions_eligible is True
 
 
@@ -789,7 +835,7 @@ def test_multiselect_invalidates_every_late_single_detail_settlement() -> None:
     loaded = _loaded_state()
     pending, request = select_conversation(loaded, "conversation-b", version=7)
 
-    bulk = project_conversation_multiselect(pending, selected_count=2)
+    bulk = project_conversation_multiselect(pending, active=True, selected_count=2)
     page = _page("conversation-b", 7, [_message("message-2", "late")])
 
     assert bulk.generation == request.generation + 1
@@ -805,7 +851,7 @@ def test_multiselect_invalidates_every_late_single_detail_settlement() -> None:
     assert bulk.bulk_selected_count == 2
     assert bulk.loaded_actions_eligible is False
 
-    single = project_conversation_multiselect(bulk, selected_count=0)
+    single = project_conversation_multiselect(bulk, active=False, selected_count=0)
     assert single.loaded_generation == loaded.loaded_generation
     assert single.loaded_actions_eligible is False
 
@@ -818,3 +864,18 @@ def test_multiselect_invalidates_every_late_single_detail_settlement() -> None:
         _page("conversation-a", 4, [_message("message-1", "hello")]),
     )
     assert restored.loaded_actions_eligible is True
+
+
+def test_zero_count_bulk_mode_disables_actions_until_done_without_losing_preview() -> (
+    None
+):
+    loaded = _loaded_state()
+
+    entered = project_conversation_multiselect(loaded, active=True, selected_count=0)
+    cleared = project_conversation_multiselect(entered, active=True, selected_count=0)
+    exited = project_conversation_multiselect(cleared, active=False, selected_count=0)
+
+    assert entered.bulk_active and entered.bulk_selected_count == 0
+    assert cleared.bulk_active and not cleared.loaded_actions_eligible
+    assert cleared.messages == loaded.messages
+    assert not exited.bulk_active and exited.loaded_actions_eligible

@@ -2,6 +2,7 @@
 
 from .library_collections_panel import LibraryCollectionsPanel
 from .library_conversations_canvas import LibraryConversationsCanvas
+from .library_conversation_reader import LibraryConversationReader
 from .library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderPaneGrip,
@@ -98,6 +99,7 @@ __all__ = [
     "LibraryAdaptiveReaderShell",
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
+    "LibraryConversationReader",
     "LibraryExportCanvas",
     "LibraryLandingAttentionAction",
     "LibraryLandingCanvas",

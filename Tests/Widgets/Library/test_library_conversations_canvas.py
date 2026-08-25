@@ -13,7 +13,6 @@ from tldw_chatbook.Library.library_pager_state import build_library_pager_displa
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
-    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
 )
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
@@ -163,7 +162,6 @@ async def test_conversations_canvas_stale_actions_use_source_owned_recovery_reas
             "library-conversations-select-all",
             "library-conversations-select-clear",
             "library-conversations-export-selected",
-            "library-conversation-open-console",
         )
         for widget_id in stale_action_ids:
             button = pilot.app.query_one(f"#{widget_id}", Button)
@@ -178,29 +176,39 @@ async def test_conversations_canvas_stale_actions_use_source_owned_recovery_reas
         next_page = pilot.app.query_one("#library-conversations-next", Button)
         assert str(previous.tooltip) == pager.previous_reason
         assert str(next_page.tooltip) == pager.next_reason
-        assert pilot.app.query_one("#library-conversations-retry", Button).disabled is False
-        assert pilot.app.query_one("#library-conversations-filter", Input).disabled is False
+        assert (
+            pilot.app.query_one("#library-conversations-retry", Button).disabled
+            is False
+        )
+        assert (
+            pilot.app.query_one("#library-conversations-filter", Input).disabled
+            is False
+        )
+
+
+async def test_conversations_canvas_has_no_embedded_work_preview(widget_pilot):
+    """The retained work pane is the sole transcript and handoff owner."""
+    row = LibraryConversationRow(
+        conversation_id="c1",
+        title="Trip planning",
+        secondary="3 messages",
+        selected=True,
+    )
+    async with await widget_pilot(
+        LibraryConversationsCanvas,
+        canvas=_state(
+            rows=(row,),
+            selected_id="c1",
+            preview_lines=("Trip planning", "Messages: 3"),
+        ),
+    ) as pilot:
+        assert not pilot.app.query("#library-conversation-preview")
+        assert not pilot.app.query("#library-conversation-open-console")
 
 
 async def test_conversations_canvas_fresh_disabled_reasons_remain_specific(
     widget_pilot,
 ):
-    empty_pager = build_library_pager_display(
-        applied_page=1,
-        requested_page=1,
-        page_size=20,
-        row_count=0,
-        total=0,
-        freshness="fresh",
-    )
-    async with await widget_pilot(
-        LibraryConversationsCanvas,
-        canvas=_state(empty_copy="No conversations yet.", pager=empty_pager),
-    ) as pilot:
-        await pilot.pause()
-        select = pilot.app.query_one("#library-conversations-select-toggle", Button)
-        assert str(select.tooltip) == LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-
     row = LibraryConversationRow(
         conversation_id="c1",
         title="Trip planning",
@@ -240,14 +248,17 @@ async def test_conversations_filter_input_renders_above_the_empty_state_text(
     item 1 moves it above, matching Notes/Prompts (title -> filter -> empty/rows)."""
     async with await widget_pilot(
         LibraryConversationsCanvas,
-        canvas=_state(empty_copy="No conversations yet. Chat in Console and it appears here."),
+        canvas=_state(
+            empty_copy="No conversations yet. Chat in Console and it appears here."
+        ),
     ) as pilot:
         await pilot.pause()
         screen = pilot.app.screen
         ids_in_order = [
             widget.id
             for widget in screen.walk_children()
-            if widget.id in {"library-conversations-filter", "library-conversations-status"}
+            if widget.id
+            in {"library-conversations-filter", "library-conversations-status"}
         ]
         assert ids_in_order == [
             "library-conversations-filter",

@@ -70,14 +70,19 @@ class ConversationReaderState:
     error: str | None = None
     loading: bool = False
     unavailable: bool = False
+    bulk_active: bool = False
     bulk_selected_count: int = 0
 
     @property
     def loaded_actions_eligible(self) -> bool:
         """Whether actions may target the currently selected loaded item."""
         return (
-            self.bulk_selected_count == 0
+            not self.bulk_active
+            and self.bulk_selected_count == 0
             and not self.unavailable
+            and self.complete
+            and not self.loading
+            and self.error is None
             and self.selected_id is not None
             and self.selected_id == self.loaded_id
             and self.selected_version == self.loaded_version
@@ -109,6 +114,7 @@ def select_conversation(
             error=None,
             loading=True,
             unavailable=False,
+            bulk_active=False,
             bulk_selected_count=0,
         ),
         request,
@@ -431,7 +437,28 @@ def mark_conversation_deleted(
     """Apply a matching deletion settlement and clear its loaded transcript."""
     if not _matches_request(state, request):
         return state
-    conversation_id = request.conversation_id
+    return confirm_conversation_deleted(
+        state,
+        request.conversation_id,
+        version=request.version,
+        generation=request.generation,
+    )
+
+
+def confirm_conversation_deleted(
+    state: ConversationReaderState,
+    conversation_id: str,
+    *,
+    version: int | None,
+    generation: int,
+) -> ConversationReaderState:
+    """Apply an exact-ID deletion fence, including a version bootstrap epoch."""
+    if (
+        state.selected_id != conversation_id
+        or state.selected_version != version
+        or state.generation != generation
+    ):
+        return state
     selected = state.selected_id == conversation_id
     loaded = state.loaded_id == conversation_id
     deleted = replace(
@@ -453,20 +480,34 @@ def mark_conversation_deleted(
 def project_conversation_multiselect(
     state: ConversationReaderState,
     *,
+    active: bool,
     selected_count: int,
 ) -> ConversationReaderState:
     """Project read-only bulk selection without replacing the single preview."""
+    if type(active) is not bool:
+        raise TypeError("active must be a boolean.")
     if type(selected_count) is not int or selected_count < 0:
         raise ValueError("selected_count must be a non-negative integer.")
-    entering = selected_count > 0 and state.bulk_selected_count == 0
+    if not active:
+        selected_count = 0
+    entering = active and not state.bulk_active
     if not entering:
-        return replace(state, bulk_selected_count=selected_count)
+        return replace(
+            state,
+            bulk_active=active,
+            bulk_selected_count=selected_count,
+        )
     if not state.loading:
-        return replace(state, bulk_selected_count=selected_count)
+        return replace(
+            state,
+            bulk_active=True,
+            bulk_selected_count=selected_count,
+        )
     generation = state.generation + 1
     return replace(
         state,
         generation=generation,
         loading=False,
+        bulk_active=True,
         bulk_selected_count=selected_count,
     )
