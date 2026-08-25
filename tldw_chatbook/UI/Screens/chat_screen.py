@@ -48,7 +48,14 @@ from ..Navigation.pending_handoff_store import (
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
-from .trajectory_screen import TrajectoryScreen
+
+# `TrajectoryScreen` is deliberately NOT imported here (TASK-22213): its
+# module drags `trajectory_import` -> `trajectory_export` plus the timeline
+# widgets (~4,400 LOC) onto the Chat first-paint import leg, and its only
+# use is the `y` action's push. It is imported locally in
+# `action_open_trajectory_view`; the guard is
+# `Tests/Packaging/test_rag_boot_import_closure.py`
+# (`test_chat_screen_import_does_not_execute_the_deferred_packages`).
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
@@ -3489,7 +3496,14 @@ class ChatScreen(BaseAppScreen):
         task-5: the snapshot is built off the UI thread (DB reads); the
         screen is pushed with live tail-follow callables wired to the
         store's payload-revision bus.
+
+        TASK-22213: `TrajectoryScreen` is imported here, not at module
+        scope, so the ~4,400-LOC trajectory family stays off the Chat
+        first-paint import leg. The first `y` press pays the one-time
+        import (tens of ms); every later press hits `sys.modules`.
         """
+        from .trajectory_screen import TrajectoryScreen
+
         store = self._console_chat_store or self._ensure_console_chat_store()
         session = getattr(store, "_sessions", {}).get(
             getattr(store, "active_session_id", None)

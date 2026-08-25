@@ -44,6 +44,23 @@ DEFERRED_PREFIXES = (
     "tldw_chatbook.Internal_Prompts",
 )
 
+#: Modules TASK-22213 removed from the Chat first-paint import leg. The
+#: trajectory FAMILY is listed, not just the screen: `trajectory_screen`
+#: drags `trajectory_import` -> `trajectory_export` plus the two timeline
+#: widgets, so a guard naming only the screen would stay green while a new
+#: direct import of any sibling put ~4,400 LOC back on the leg.
+#: `Chat.trajectory` itself is deliberately NOT here -- `chat_screen`
+#: legitimately imports it (snapshot dataclasses + `derive_trajectory` for
+#: the `y` action's off-thread build), and `agent_service` needs its
+#: redaction helpers on the same leg.
+CHAT_LEG_DEFERRED_MODULES = (
+    "tldw_chatbook.UI.Screens.trajectory_screen",
+    "tldw_chatbook.Chat.trajectory_import",
+    "tldw_chatbook.Chat.trajectory_export",
+    "tldw_chatbook.UI.Widgets.trajectory_timeline",
+    "tldw_chatbook.UI.Widgets.trace_filter_bar",
+)
+
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
     """Run a Python snippet in a fresh interpreter with isolated config/data dirs.
@@ -143,6 +160,85 @@ def test_app_import_does_not_execute_the_deferred_rag_packages(
         f"stdout={result.stdout}\nstderr={result.stderr[-4000:]}"
     )
     assert "APP_CLOSURE_OK" in result.stdout
+
+
+_CHAT_SCREEN_IMPORT_SNIPPET = _RESIDENT_HELPER + """
+CHAT_LEG_DEFERRED_MODULES = {chat_leg!r}
+
+import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401
+
+loaded = resident()
+assert not loaded, f"deferred packages resident after chat_screen import: {{loaded}}"
+
+on_leg = [m for m in CHAT_LEG_DEFERRED_MODULES if sys.modules.get(m) is not None]
+assert not on_leg, f"trajectory family resident after chat_screen import: {{on_leg}}"
+
+# Anti-vacuity 1: the leg actually ran. `chat_screen` pulls the Console
+# controller (and through it agent_service) at module scope -- if either
+# stops being resident here, this test is no longer walking the leg it
+# guards and must be re-pointed, not deleted.
+for expected in (
+    "tldw_chatbook.Chat.console_chat_controller",
+    "tldw_chatbook.Agents.agent_service",
+    "tldw_chatbook.Chat.trajectory",
+):
+    assert expected in sys.modules, f"expected leg member missing: {{expected}}"
+
+# Anti-vacuity 2: the deferred symbols still RESOLVE on demand. A guard
+# that only proves absence would be satisfied by deleting the features.
+from tldw_chatbook.Chat import console_chat_controller
+
+prompt = console_chat_controller.get_internal_prompt("console.rewind_summarize")
+assert isinstance(prompt, str) and prompt.strip(), prompt
+assert "tldw_chatbook.Internal_Prompts" in sys.modules, (
+    "asking the controller seam for a prompt did not import Internal_Prompts"
+)
+
+from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Internal_Prompts import CATALOG
+
+assert (
+    agent_service.SUBAGENT_SYSTEM_PROMPT
+    == CATALOG["agents.subagent_system"].default
+), "agent_service's lazy SUBAGENT_SYSTEM_PROMPT drifted from the catalog"
+assert (
+    agent_service.get_internal_prompt("agents.subagent_system")
+    == agent_service.SUBAGENT_SYSTEM_PROMPT
+)
+
+# ...and the `y` navigation seam still reaches the real screen class.
+from textual.screen import Screen
+
+from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+
+assert issubclass(TrajectoryScreen, Screen)
+print("CHAT_SCREEN_CLOSURE_OK")
+""".format(chat_leg=CHAT_LEG_DEFERRED_MODULES)
+
+
+def test_chat_screen_import_does_not_execute_the_deferred_packages(
+    tmp_path: Path,
+) -> None:
+    """`import UI.Screens.chat_screen` resolves no deferred package (TASK-22213).
+
+    The one-module blind spot: the app-import test above never walks the
+    Chat first-paint leg, so `Internal_Prompts` (10 modules, via
+    `console_chat_controller` and `agent_service`) and the ~4,400-LOC
+    trajectory family (via a module-level `TrajectoryScreen` import) rode it
+    for a release while every import guard stayed green. This imports the
+    Chat screen module exactly as the initial screen push does and asserts
+    both families stay off the leg -- then proves each still resolves on
+    demand.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    result = _run_isolated_python(tmp_path, _CHAT_SCREEN_IMPORT_SNIPPET)
+    assert result.returncode == 0, (
+        "import UI.Screens.chat_screen must not execute the deferred "
+        f"packages:\nstdout={result.stdout}\nstderr={result.stderr[-4000:]}"
+    )
+    assert "CHAT_SCREEN_CLOSURE_OK" in result.stdout
 
 
 _CHAT_RAG_EVENTS_SNIPPET = _RESIDENT_HELPER + """
