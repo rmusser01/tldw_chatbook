@@ -131,7 +131,9 @@ class ChatPersistenceService:
         """
         if type(message_id) is not str or not message_id:
             return None
-        message = self.db.get_message_by_id(message_id)
+        # TASK-22226: per-send settle/continuation reconciles call this for
+        # just-written rows -- read the version without hydrating the BLOB.
+        message = self.db.get_message_by_id_without_blob(message_id)
         if message is None or message.get("deleted"):
             return None
         version = message.get("version")
@@ -1343,13 +1345,23 @@ class ChatPersistenceService:
                             created_message_id, list(generation_metadata)
                         )
                     if feedback is not None:
-                        created_message = self.db.get_message_by_id(created_message_id)
+                        # TASK-22226: this readback only feeds the feedback
+                        # update's optimistic lock -- read the DB-normalized
+                        # version without hydrating the image BLOB.
+                        created_message = self.db.get_message_by_id_without_blob(
+                            created_message_id
+                        )
                         self.db.update_message(
                             created_message_id,
                             {"feedback": feedback},
                             expected_version=created_message["version"],
                         )
-                created_message = self.db.get_message_by_id(created_message_id)
+                # TASK-22226: only ``version`` (message_revision) is consumed
+                # here; write_prepared independently re-validates it against
+                # the messages row inside this same transaction.
+                created_message = self.db.get_message_by_id_without_blob(
+                    created_message_id
+                )
                 self.citation_repository.write_prepared(
                     cursor,
                     prepared_citation,
@@ -1379,7 +1391,11 @@ class ChatPersistenceService:
         else:
             created_message_id = self.db.add_message(message_payload)
         if feedback is not None:
-            created_message = self.db.get_message_by_id(created_message_id)
+            # TASK-22226: version-only readback -- never rehydrate the BLOB
+            # that was just written.
+            created_message = self.db.get_message_by_id_without_blob(
+                created_message_id
+            )
             self.db.update_message(
                 created_message_id,
                 {"feedback": feedback},
