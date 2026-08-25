@@ -3,45 +3,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Mapping
+from typing import Literal
 
-LIBRARY_TARGET_WIDTH = 28
-LIBRARY_MIN_WIDTH = 24
-LIBRARY_MAX_WIDTH = 48
-ITEMS_TARGET_WIDTH = 40
-ITEMS_MIN_WIDTH = 32
-ITEMS_MAX_WIDTH = 72
-READER_COMFORT_WIDTH = 44
-PANE_GRIP_WIDTH = 5
-LAYOUT_HYSTERESIS_WIDTH = 4
+from .library_adaptive_reader_state import (
+    ITEMS_MAX_WIDTH as ITEMS_MAX_WIDTH,
+    ITEMS_MIN_WIDTH as ITEMS_MIN_WIDTH,
+    ITEMS_TARGET_WIDTH as ITEMS_TARGET_WIDTH,
+    LAYOUT_HYSTERESIS_WIDTH as LAYOUT_HYSTERESIS_WIDTH,
+    LIBRARY_MAX_WIDTH as LIBRARY_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH as LIBRARY_MIN_WIDTH,
+    LIBRARY_TARGET_WIDTH as LIBRARY_TARGET_WIDTH,
+    PANE_GRIP_WIDTH as PANE_GRIP_WIDTH,
+    READER_COMFORT_WIDTH as READER_COMFORT_WIDTH,
+    AdaptiveReaderEffectiveLayout,
+    AdaptiveReaderLayoutPreferences,
+    AdaptiveReaderLayoutProfile,
+    PaneName,
+    normalize_adaptive_reader_preferences,
+    resolve_adaptive_reader_layout,
+)
+
 SELECTION_SETTLE_SECONDS = 0.12
 
 ReaderMode = Literal["read", "analysis", "highlights", "info"]
-PaneName = Literal["library", "items"]
 BackingMediaId = int | str
 
-
-@dataclass(frozen=True)
-class MediaReaderLayoutPreferences:
-    """Persisted manual pane choices and normalized target widths."""
-
-    library_open: bool = True
-    items_open: bool = True
-    custom_widths_enabled: bool = False
-    library_width: int = LIBRARY_TARGET_WIDTH
-    items_width: int = ITEMS_TARGET_WIDTH
-
-
-@dataclass(frozen=True)
-class MediaReaderEffectiveLayout:
-    """One rendered layout derived from preferences and available width."""
-
-    library_open: bool
-    items_open: bool
-    library_width: int
-    items_width: int
-    reader_width: int
-    priority_pane: PaneName | None
+MediaReaderLayoutPreferences = AdaptiveReaderLayoutPreferences
+MediaReaderEffectiveLayout = AdaptiveReaderEffectiveLayout
+MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile()
+normalize_media_reader_preferences = normalize_adaptive_reader_preferences
 
 
 def _validate_media_identity(canonical_id: str, backing_id: BackingMediaId) -> None:
@@ -174,69 +164,6 @@ class LibraryMediaReaderSessionState:
         return f"Loading preview for “{selected}”… showing “{loaded}” until ready."
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if type(value) is bool:
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "off"}:
-            return False
-    return default
-
-
-def _coerce_width(value: Any, default: int, minimum: int, maximum: int) -> int:
-    if type(value) is int:
-        width = value
-    elif isinstance(value, str):
-        try:
-            width = int(value.strip())
-        except ValueError:
-            return default
-    else:
-        return default
-    return min(max(width, minimum), maximum)
-
-
-def normalize_media_reader_preferences(
-    raw: Mapping[str, Any],
-) -> MediaReaderLayoutPreferences:
-    """Normalize persisted values without importing application configuration.
-
-    Args:
-        raw: Untrusted persisted preference values.
-
-    Returns:
-        Normalized pane-open and width preferences.
-    """
-    library_open = _coerce_bool(raw.get("library_open"), True)
-    items_open = _coerce_bool(raw.get("items_open"), True)
-    custom_widths_enabled = _coerce_bool(raw.get("custom_widths_enabled"), False)
-    if not custom_widths_enabled:
-        return MediaReaderLayoutPreferences(
-            library_open=library_open,
-            items_open=items_open,
-        )
-    return MediaReaderLayoutPreferences(
-        library_open=library_open,
-        items_open=items_open,
-        custom_widths_enabled=True,
-        library_width=_coerce_width(
-            raw.get("library_width"),
-            LIBRARY_TARGET_WIDTH,
-            LIBRARY_MIN_WIDTH,
-            LIBRARY_MAX_WIDTH,
-        ),
-        items_width=_coerce_width(
-            raw.get("items_width"),
-            ITEMS_TARGET_WIDTH,
-            ITEMS_MIN_WIDTH,
-            ITEMS_MAX_WIDTH,
-        ),
-    )
-
-
 def resolve_media_reader_layout(
     width: int,
     preferences: MediaReaderLayoutPreferences,
@@ -244,12 +171,7 @@ def resolve_media_reader_layout(
     previous: MediaReaderEffectiveLayout | None = None,
     priority: PaneName | None = None,
 ) -> MediaReaderEffectiveLayout:
-    """Resolve preferred panes into one overflow-free effective layout.
-
-    The two fixed grips always consume ten columns. Normal responsive
-    resolution keeps target widths and collapses Library before Items. An
-    explicit open instead protects the requested pane, collapses its sibling,
-    and may use the requested pane's declared minimum.
+    """Resolve Media preferences through the shared adaptive layout policy.
 
     Args:
         width: Available shell width in terminal cells.
@@ -258,111 +180,14 @@ def resolve_media_reader_layout(
         priority: Pane explicitly requested by the user, if any.
 
     Returns:
-        Overflow-free effective pane geometry.
-
-    Raises:
-        TypeError: If ``preferences`` has the wrong type.
-        ValueError: If ``width`` is not a non-negative integer or ``priority``
-            is unsupported.
+        Media-compatible effective pane geometry.
     """
-    if type(width) is not int or width < 0:
-        raise ValueError("width must be a non-negative integer.")
-    if not isinstance(preferences, MediaReaderLayoutPreferences):
-        raise TypeError("preferences must be MediaReaderLayoutPreferences.")
-    if priority not in {None, "library", "items"}:
-        raise ValueError("priority must be library, items, or None.")
-    if priority is None and previous is not None:
-        inherited = previous.priority_pane
-        if (
-            inherited == "library"
-            and preferences.library_open
-            or inherited == "items"
-            and preferences.items_open
-        ):
-            priority = inherited
-
-    grip_width = 2 * PANE_GRIP_WIDTH
-    library_open = preferences.library_open
-    items_open = preferences.items_open
-    if priority is not None:
-        if priority == "library":
-            library_open = True
-        else:
-            items_open = True
-
-        full_width = (
-            grip_width
-            + (preferences.library_width if library_open else 0)
-            + (preferences.items_width if items_open else 0)
-            + READER_COMFORT_WIDTH
-        )
-        if width < full_width:
-            if priority == "library":
-                items_open = False
-                library_width = (
-                    preferences.library_width
-                    if width
-                    >= grip_width + preferences.library_width + READER_COMFORT_WIDTH
-                    else LIBRARY_MIN_WIDTH
-                )
-                items_width = 0
-            else:
-                library_open = False
-                library_width = 0
-                items_width = (
-                    preferences.items_width
-                    if width
-                    >= grip_width + preferences.items_width + READER_COMFORT_WIDTH
-                    else ITEMS_MIN_WIDTH
-                )
-            return MediaReaderEffectiveLayout(
-                library_open=library_open,
-                items_open=items_open,
-                library_width=library_width,
-                items_width=items_width,
-                reader_width=max(width - grip_width - library_width - items_width, 0),
-                priority_pane=priority,
-            )
-        priority = None
-
-    def required_width(open_library: bool, open_items: bool) -> int:
-        return (
-            grip_width
-            + (preferences.library_width if open_library else 0)
-            + (preferences.items_width if open_items else 0)
-            + READER_COMFORT_WIDTH
-        )
-
-    if width < required_width(library_open, items_open):
-        library_open = False
-    if width < required_width(library_open, items_open):
-        items_open = False
-
-    if previous is not None:
-        nominal_width = required_width(library_open, items_open)
-        if (
-            library_open
-            and not previous.library_open
-            and width < nominal_width + LAYOUT_HYSTERESIS_WIDTH
-        ):
-            library_open = False
-        if (
-            items_open
-            and not previous.items_open
-            and width
-            < required_width(library_open, items_open) + LAYOUT_HYSTERESIS_WIDTH
-        ):
-            items_open = False
-
-    library_width = preferences.library_width if library_open else 0
-    items_width = preferences.items_width if items_open else 0
-    return MediaReaderEffectiveLayout(
-        library_open=library_open,
-        items_open=items_open,
-        library_width=library_width,
-        items_width=items_width,
-        reader_width=max(width - grip_width - library_width - items_width, 0),
-        priority_pane=priority,
+    return resolve_adaptive_reader_layout(
+        width,
+        preferences,
+        MEDIA_READER_LAYOUT_PROFILE,
+        previous=previous,
+        priority=priority,
     )
 
 

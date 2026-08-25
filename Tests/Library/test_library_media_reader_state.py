@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     READER_COMFORT_WIDTH,
     SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
+    MediaReaderEffectiveLayout,
     MediaReaderLayoutPreferences,
     begin_selection,
     enter_external_detail,
@@ -26,6 +27,13 @@ from tldw_chatbook.Library.library_media_reader_state import (
     settle_failure,
     settle_success,
 )
+
+
+def test_media_layout_public_names_remain_importable() -> None:
+    preferences = MediaReaderLayoutPreferences()
+    layout = resolve_media_reader_layout(160, preferences)
+
+    assert isinstance(layout, MediaReaderEffectiveLayout)
 
 
 def test_default_preferences_are_both_open_and_fixed() -> None:
