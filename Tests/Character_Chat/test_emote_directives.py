@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.Character_Chat.emote_directives as emote_directives_module
 from tldw_chatbook.Character_Chat.emote_directives import (
     EMOTE_EVENT_LIMIT,
     STREAM_PREFIX_BUFFER_LIMIT,
@@ -15,7 +16,9 @@ from tldw_chatbook.Character_Chat.emote_directives import (
     append_character_emote_prompt_instruction,
     normalize_character_emote_state,
     parse_character_emote_directives,
+    project_character_emote_assets,
     project_character_emote_states,
+    utf16_length,
 )
 
 pytestmark = pytest.mark.unit
@@ -174,6 +177,114 @@ def test_flush_accepts_unterminated_directive_that_cancel_discards() -> None:
     assert parser.flush().events == (CharacterEmoteEvent("surprised", 0),)
 
 
+def _drive_stream(
+    parser: CharacterEmoteStreamParser,
+    chunks: list[str],
+) -> tuple[str, tuple[CharacterEmoteEvent, ...], int]:
+    visible: list[str] = []
+    events: list[CharacterEmoteEvent] = []
+    for chunk in chunks:
+        result = parser.push(chunk)
+        visible.append(result.visible_text)
+        events.extend(result.events)
+    flushed = parser.flush()
+    visible.append(flushed.visible_text)
+    events.extend(flushed.events)
+    return "".join(visible), tuple(events), parser._clean_length
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        pytest.param(
+            ["Emo", "te: smug\nHello\nWorld"],
+            id="directive-split-across-chunks-mid-prefix",
+        ),
+        pytest.param(
+            ["Before\nEmote", ": sad\nAfter"],
+            id="chunk-ends-mid-emote-marker",
+        ),
+        pytest.param(
+            ["Text\n``", "`\ncode\nEmote: hidden\n``", "`\nAfter"],
+            id="chunk-ends-mid-fence-marker",
+        ),
+        pytest.param(
+            ["Emote: a\nEmote: b\n", "Emote: c\nVisible tail"],
+            id="back-to-back-directives",
+        ),
+        pytest.param(
+            ["Hi \U0001f600 there\nEmo", "te: happy\nTail \U0001f389 end"],
+            id="astral-utf16-offsets",
+        ),
+        pytest.param(
+            list("Emote: smug\nA\n```\nEmote: x\n```\nEmote: sad\nB"),
+            id="one-char-chunk-stream",
+        ),
+    ],
+)
+def test_run_publishing_is_equivalent_to_char_by_char(chunks: list[str]) -> None:
+    """TASK-22227: run publishing must match per-character publishing exactly.
+
+    Same visible text, same events (states AND UTF-16 offsets), and the same
+    internal clean-length accumulator, for the given chunking versus the
+    degenerate one-character stream versus the one-shot parser.
+    """
+
+    text = "".join(chunks)
+    run_visible, run_events, run_clean = _drive_stream(
+        CharacterEmoteStreamParser(), chunks
+    )
+    char_visible, char_events, char_clean = _drive_stream(
+        CharacterEmoteStreamParser(), list(text)
+    )
+    oneshot = parse_character_emote_directives(text)
+
+    assert run_visible == char_visible == oneshot.clean_text
+    assert run_events == char_events == oneshot.events
+    assert run_clean == char_clean == utf16_length(run_visible)
+
+
+def test_stream_publishes_runs_not_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22227: visible text is published in newline/chunk-bounded runs.
+
+    The per-character implementation paid one ``utf16_length`` encode per
+    visible character (~16k for a 16k-char reply); runs pay at most one per
+    chunk continuation plus a small constant per line.
+    """
+
+    calls = {"count": 0}
+    real_utf16_length = emote_directives_module.utf16_length
+
+    def counting_utf16_length(value: str) -> int:
+        calls["count"] += 1
+        return real_utf16_length(value)
+
+    monkeypatch.setattr(
+        emote_directives_module, "utf16_length", counting_utf16_length
+    )
+
+    paragraph = (
+        "The rain had not stopped since morning, and the streets shone like "
+        "polished slate under the gas lamps as she counted the doorways.\n"
+    )
+    parts: list[str] = [paragraph]
+    for state in ("thinking", "surprised", "happy", "sad"):
+        parts.extend([f"Emote: {state}\n", paragraph * 31])
+    reply = "".join(parts)
+    assert len(reply) > 16_000
+    chunks = [reply[index : index + 64] for index in range(0, len(reply), 64)]
+
+    visible, events, _clean = _drive_stream(CharacterEmoteStreamParser(), chunks)
+    stream_publish_calls = calls["count"]
+
+    oneshot = parse_character_emote_directives(reply)
+    assert visible == oneshot.clean_text
+    assert events == oneshot.events
+    assert stream_publish_calls <= len(chunks) + 2 * reply.count("\n") + 8
+
+
 def test_prompt_projection_uses_only_round_tripping_canonical_keys() -> None:
     assets = [
         {"expression_key": "neutral", "display_label": "Wrong label"},
@@ -192,6 +303,65 @@ def test_prompt_projection_uses_only_round_tripping_canonical_keys() -> None:
         "quiet_focus",
         "happy",
     )
+
+
+def test_asset_projection_maps_states_to_first_round_tripping_sources() -> None:
+    """TASK-22227: the slug->source map mirrors the states projection exactly."""
+
+    assets = [
+        {"expression_key": "neutral", "id": 1},
+        {"expression_key": "custom:quiet_focus", "id": 2},
+        {"expression_key": "joy", "id": 3},
+        {"expression_key": "custom:joy", "id": 4},
+        {"expression_key": "../../bad", "id": 5},
+        {"expression_key": "happy", "id": 6},
+        {"expression_key": "neutral", "id": 7},
+        {"display_label": "label-only-must-not-project", "id": 8},
+    ]
+
+    projected = project_character_emote_assets(assets)
+
+    assert tuple(projected) == project_character_emote_states(assets)
+    assert [(state, source["id"]) for state, source in projected.items()] == [
+        ("neutral", 1),
+        ("quiet_focus", 2),
+        ("happy", 6),
+    ]
+
+
+def test_asset_projection_normalizes_each_asset_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22227: projection is O(assets) -- two normalize calls per asset."""
+
+    calls = {"normalize_state": 0, "normalize_key": 0}
+    real_normalize_state = emote_directives_module.normalize_character_emote_state
+    real_normalize_key = emote_directives_module.normalize_expression_key
+
+    def counting_state(value: object) -> str | None:
+        calls["normalize_state"] += 1
+        return real_normalize_state(value)
+
+    def counting_key(value: str) -> str | None:
+        calls["normalize_key"] += 1
+        return real_normalize_key(value)
+
+    monkeypatch.setattr(
+        emote_directives_module, "normalize_character_emote_state", counting_state
+    )
+    monkeypatch.setattr(
+        emote_directives_module, "normalize_expression_key", counting_key
+    )
+
+    assets = [
+        {"expression_key": f"custom:state_{index:02d}", "id": index + 1}
+        for index in range(40)
+    ]
+    projected = project_character_emote_assets(assets)
+
+    assert len(projected) == 40
+    assert calls["normalize_state"] <= len(assets)
+    assert calls["normalize_key"] <= len(assets)
 
 
 def test_prompt_projection_keeps_first_asset_order_and_caps_instruction() -> None:

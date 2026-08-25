@@ -7936,6 +7936,8 @@ class ConsoleChatStore:
             mood_label = capture.events[-1].state
         elif successful and not capture.fail_closed:
             try:
+                # Runs at most once per completed character turn; measured
+                # ~2.3 ms at 16k chars (TASK-22227) -- bounded, kept on-loop.
                 detected = detect_character_mood(
                     assistant_text=message.content,
                     user_text=self._preceding_user_text(message.id),

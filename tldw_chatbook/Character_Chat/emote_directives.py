@@ -158,41 +158,67 @@ def parse_character_emote_directives(text: str) -> CharacterEmoteParseResult:
     )
 
 
+def _candidate_emote_slug(
+    asset: Mapping[str, object] | object,
+) -> tuple[str, str] | None:
+    """Return ``(slug, raw_key)`` when the asset's canonical key round-trips."""
+
+    raw_key = (
+        asset.get("expression_key")
+        if isinstance(asset, Mapping)
+        else getattr(asset, "expression_key", None)
+    )
+    if not isinstance(raw_key, str):
+        return None
+    slug = (
+        raw_key[len(CUSTOM_EXPRESSION_PREFIX) :]
+        if raw_key.startswith(CUSTOM_EXPRESSION_PREFIX)
+        else raw_key
+    )
+    if normalize_character_emote_state(slug) != slug:
+        return None
+    if normalize_expression_key(slug) != raw_key:
+        return None
+    return slug, raw_key
+
+
+def project_character_emote_assets(
+    assets: Iterable[Mapping[str, object] | object],
+) -> dict[str, Mapping[str, object] | object]:
+    """Map each projected safe slug to its first source asset, in order.
+
+    Single pass -- each asset is normalized exactly once (TASK-22227), so a
+    caller that needs the source asset for every projected state stays
+    O(assets) instead of re-projecting singleton tuples per state. The key
+    order and membership are identical to ``project_character_emote_states``:
+    a slug projects only when exactly one distinct canonical key maps to it,
+    and the mapped asset is the first round-tripping candidate for that slug.
+    """
+
+    candidates: list[tuple[str, Mapping[str, object] | object]] = []
+    keys_by_slug: dict[str, set[str]] = {}
+    for asset in assets:
+        candidate = _candidate_emote_slug(asset)
+        if candidate is None:
+            continue
+        slug, raw_key = candidate
+        candidates.append((slug, asset))
+        keys_by_slug.setdefault(slug, set()).add(raw_key)
+
+    projected: dict[str, Mapping[str, object] | object] = {}
+    for slug, asset in candidates:
+        if slug in projected or len(keys_by_slug[slug]) != 1:
+            continue
+        projected[slug] = asset
+    return projected
+
+
 def project_character_emote_states(
     assets: Iterable[Mapping[str, object] | object],
 ) -> tuple[str, ...]:
     """Project ordered safe emote slugs from canonical expression keys."""
 
-    candidates: list[tuple[str, str]] = []
-    keys_by_slug: dict[str, set[str]] = {}
-    for asset in assets:
-        raw_key = (
-            asset.get("expression_key")
-            if isinstance(asset, Mapping)
-            else getattr(asset, "expression_key", None)
-        )
-        if not isinstance(raw_key, str):
-            continue
-        slug = (
-            raw_key[len(CUSTOM_EXPRESSION_PREFIX) :]
-            if raw_key.startswith(CUSTOM_EXPRESSION_PREFIX)
-            else raw_key
-        )
-        if normalize_character_emote_state(slug) != slug:
-            continue
-        if normalize_expression_key(slug) != raw_key:
-            continue
-        candidates.append((slug, raw_key))
-        keys_by_slug.setdefault(slug, set()).add(raw_key)
-
-    states: list[str] = []
-    seen: set[str] = set()
-    for slug, _raw_key in candidates:
-        if slug in seen or len(keys_by_slug[slug]) != 1:
-            continue
-        states.append(slug)
-        seen.add(slug)
-    return tuple(states)
+    return tuple(project_character_emote_assets(assets))
 
 
 def append_character_emote_prompt_instruction(
@@ -257,8 +283,7 @@ class CharacterEmoteStreamParser:
         working = self._clone()
         visible_parts: list[str] = []
         events: list[CharacterEmoteEvent] = []
-        for character in chunk:
-            working._consume(character, visible_parts, events)
+        working._consume_chunk(chunk, visible_parts, events)
         self._adopt(working)
         return CharacterEmoteStreamResult("".join(visible_parts), tuple(events))
 
@@ -324,67 +349,125 @@ class CharacterEmoteStreamParser:
         self._directive_invalid = other._directive_invalid
         self._finished = other._finished
 
-    def _consume(
+    def _consume_chunk(
         self,
-        character: str,
+        chunk: str,
         visible_parts: list[str],
         events: list[CharacterEmoteEvent],
     ) -> None:
-        if self._mode == "ordinary":
-            self._publish(character, visible_parts)
-            if character == "\n":
-                self._mode = "prefix"
-            return
+        """Consume one chunk, publishing visible text in newline-bounded runs.
 
-        if self._mode == "fence":
-            self._publish(character, visible_parts)
-            if character == "\n":
+        TASK-22227: the original implementation consumed per character, paying
+        one ``utf-16-le`` encode plus a list append per visible character
+        (~16k encodes for a 16k-char reply). Runs preserve the per-character
+        semantics exactly -- the modes, the bounded prefix fence for partial
+        ``Emote:``/fence markers, and the UTF-16 event offsets (``utf16_length``
+        is additive over concatenation) -- while publishing each ordinary or
+        fenced span between line boundaries as a single string.
+        """
+
+        index = 0
+        length = len(chunk)
+        while index < length:
+            if self._mode == "ordinary":
+                newline = chunk.find("\n", index)
+                if newline == -1:
+                    self._publish(chunk[index:], visible_parts)
+                    return
+                self._publish(chunk[index : newline + 1], visible_parts)
+                self._mode = "prefix"
+                index = newline + 1
+            elif self._mode == "fence":
+                newline = chunk.find("\n", index)
+                if newline == -1:
+                    self._publish(chunk[index:], visible_parts)
+                    return
+                self._publish(chunk[index : newline + 1], visible_parts)
                 self._in_fence = not self._in_fence
                 self._mode = "prefix"
-            return
-
-        if self._mode == "directive":
-            if character == "\n":
+                index = newline + 1
+            elif self._mode == "directive":
+                newline = chunk.find("\n", index)
+                end = length if newline == -1 else newline
+                if not self._directive_invalid:
+                    for position in range(index, end):
+                        self._consume_directive_character(chunk[position])
+                        if self._directive_invalid:
+                            break
+                if newline == -1:
+                    return
                 self._finish_directive(events)
                 self._mode = "prefix"
+                index = newline + 1
             else:
-                self._consume_directive_character(character)
-            return
+                index = self._consume_prefix_run(chunk, index, visible_parts)
 
-        if character == "\n":
-            self._publish(self._prefix + character, visible_parts)
-            self._prefix = ""
-            return
+    def _consume_prefix_run(
+        self,
+        chunk: str,
+        index: int,
+        visible_parts: list[str],
+    ) -> int:
+        """Consume prefix-mode characters; return the next unconsumed index.
 
-        self._prefix += character
-        stripped = self._prefix.lstrip()
-        lowered = stripped.lower()
+        The per-character scan here is bounded by ``STREAM_PREFIX_BUFFER_LIMIT``
+        (+1) per line start. On a not-a-control decision the buffered prefix
+        and the remainder of the current line are published as ONE run.
+        """
 
-        if not self._in_fence and lowered.startswith("emote:"):
-            remainder = stripped[len("emote:") :]
-            self._prefix = ""
-            self._mode = "directive"
-            for item in remainder:
-                self._consume_directive_character(item)
-            return
+        length = len(chunk)
+        while index < length:
+            character = chunk[index]
+            if character == "\n":
+                self._publish(self._prefix + character, visible_parts)
+                self._prefix = ""
+                index += 1
+                continue
 
-        if stripped.startswith("```"):
+            self._prefix += character
+            index += 1
+            stripped = self._prefix.lstrip()
+            lowered = stripped.lower()
+
+            if not self._in_fence and lowered.startswith("emote:"):
+                remainder = stripped[len("emote:") :]
+                self._prefix = ""
+                self._mode = "directive"
+                for item in remainder:
+                    self._consume_directive_character(item)
+                return index
+
+            if stripped.startswith("```"):
+                buffered = self._prefix
+                self._prefix = ""
+                self._mode = "fence"
+                newline = chunk.find("\n", index)
+                if newline == -1:
+                    self._publish(buffered + chunk[index:], visible_parts)
+                    return length
+                self._publish(buffered + chunk[index : newline + 1], visible_parts)
+                self._in_fence = not self._in_fence
+                self._mode = "prefix"
+                index = newline + 1
+                continue
+
+            possible_directive = not self._in_fence and "emote:".startswith(lowered)
+            possible_fence = "```".startswith(stripped)
+            if possible_directive or possible_fence:
+                if len(self._prefix) <= STREAM_PREFIX_BUFFER_LIMIT:
+                    continue
+
             buffered = self._prefix
             self._prefix = ""
-            self._mode = "fence"
-            self._publish(buffered, visible_parts)
-            return
-
-        possible_directive = not self._in_fence and "emote:".startswith(lowered)
-        possible_fence = "```".startswith(stripped)
-        if possible_directive or possible_fence:
-            if len(self._prefix) <= STREAM_PREFIX_BUFFER_LIMIT:
-                return
-
-        buffered = self._prefix
-        self._prefix = ""
-        self._mode = "ordinary"
-        self._publish(buffered, visible_parts)
+            self._mode = "ordinary"
+            newline = chunk.find("\n", index)
+            if newline == -1:
+                self._publish(buffered + chunk[index:], visible_parts)
+                return length
+            self._publish(buffered + chunk[index : newline + 1], visible_parts)
+            self._mode = "prefix"
+            index = newline + 1
+        return index
 
     def _consume_directive_character(self, character: str) -> None:
         if self._directive_invalid:
