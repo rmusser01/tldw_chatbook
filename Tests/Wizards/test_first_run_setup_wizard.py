@@ -5147,7 +5147,7 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             assert model_step.selected_model_id == ""
             assert model_step._selection_discovery_key is None
             assert model_step._effective_model_id() == ""
-            error = str(model_step.query_one(".setup-step-error", Static).renderable)
+            error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
             assert "connection settings changed" in error.lower()
 
             for _ in range(30):
@@ -5299,7 +5299,7 @@ async def test_mounted_selection_precondition_rejects_completed_config_write_bef
         assert not container.provider_setup_committed
         assert model_step.selected_model_id == ""
         assert model_step._selection_discovery_key is None
-        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
         assert "connection settings changed" in error.lower()
 
 
@@ -5841,7 +5841,7 @@ async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
         assert getattr(result, "conflict_reason", None) == "identity_changed"
         assert model_step.selected_model_id == ""
         assert model_step._selection_discovery_key is None
-        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
         assert "connection settings changed" in error.lower()
         rendered = pilot.app.export_screenshot()
         assert "manual-idempotent-key-a" not in rendered
@@ -6512,7 +6512,7 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
         assert not container.provider_setup_committed
         assert model_step.selected_model_id == ""
         assert model_step._selection_discovery_key is None
-        error = str(model_step.query_one(".setup-step-error", Static).renderable)
+        error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
         assert "connection settings changed" in error.lower()
         rendered = pilot.app.export_screenshot()
         assert "writer-entry-saved-canary" not in rendered

@@ -464,10 +464,23 @@ class SetupStep(WizardStep):
         return None
 
     def show_step_error(self, message: str) -> None:
+        """Render a step error on the wizard's pinned error strip.
+
+        TASK-21140 (UAT W-1/G-3 and the F-1 investigation): the previous
+        per-step ``.setup-step-error`` tail Static sat at the BOTTOM of an
+        overflowing scroll region -- a refused Next rendered its reason
+        below the fold and the wizard just looked stuck. The pinned strip
+        lives in the container chrome between the step body and the nav
+        bar, so it is visible at any terminal size. It is cleared on every
+        step change (``show_step``).
+        """
         try:
-            self.query_one(".setup-step-error", Static).update(message)
+            strip = self.screen.query_one("#setup-step-error-pinned", Static)
         except Exception:
             logger.warning("Setup step error had nowhere to render: {}", message)
+            return
+        strip.update(message)
+        strip.remove_class("hidden")
 
     def refresh(
         self,
@@ -1112,7 +1125,6 @@ class ProviderStep(SetupStep):
             yield Static(
                 "", id="setup-provider-probe-status", classes="setup-probe-status"
             )
-            yield Static("", classes="setup-step-error")
 
     # TASK-1498: providers most first-time users are actually looking for, in
     # display order. Filtered against the live catalog, so a missing key
@@ -3034,7 +3046,6 @@ class ModelStep(SetupStep):
             yield Button(
                 "Retry", id="setup-model-retry", variant="default", classes="hidden"
             )
-            yield Static("", classes="setup-step-error")
 
     def _current_provider(self) -> tuple[str, str]:
         provider_draft = self._current_provider_draft()
@@ -3903,7 +3914,6 @@ class VoiceSetupStep(SetupStep):
                 id="setup-voice-default",
                 value=False,
             )
-            yield Static("", classes="setup-step-error")
 
     def _selected_authentication(self) -> str:
         pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
@@ -3980,7 +3990,7 @@ class VoiceSetupStep(SetupStep):
         try:
             current = self._draft_from_controls()
         except (TypeError, ValueError):
-            self.query_one(".setup-step-error", Static).update(
+            self.show_step_error(
                 "Enter a valid speed before changing the service preset."
             )
             return
@@ -4419,7 +4429,6 @@ class RagStep(SetupStep):
             with RadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
                     yield SetupRadioButton(model_id)
-            yield Static("", classes="setup-step-error")
 
     def _embedding_model_ids(self) -> list[str]:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
@@ -4700,7 +4709,6 @@ class SpeechSetupStep(SetupStep):
                 id="setup-speech-choose-transcribe-cpp-gguf",
                 disabled=self._external_commit_pending,
             )
-            yield Static("", classes="setup-step-error")
             yield Label("Language", classes="setup-field-label")
             with RadioSet(
                 id="setup-speech-language-choice", classes="setup-choice-list"
@@ -6155,7 +6163,6 @@ class ToolsStep(SetupStep):
                             classes="setup-tool-desc",
                             markup=False,
                         )
-            yield Static("", classes="setup-step-error")
 
     # TASK-1501: plain-language names and one-line descriptions per built-in
     # tool. The ⚠ marks tools that create or change data on disk — a static
@@ -6230,9 +6237,11 @@ class NotesSyncStep(SetupStep):
                 "After setup, use Library → Notes → Add from files… to review a folder before activating sync.",
                 classes="setup-subtitle",
             )
+            # TASK-21140 (UAT G-3): reassurance, not an error — the error
+            # class painted this calm sentence bold red-on-maroon.
             yield Static(
                 "Nothing is activated during first-run setup.",
-                classes="setup-step-error",
+                classes="setup-step-note",
             )
 
     async def commit(self) -> tuple[bool, str]:
@@ -6284,7 +6293,6 @@ class AppearanceStep(SetupStep):
                 yield SetupRadioButton("Surprise me (random)", value=True)
                 for card_name in self._card_names()[:10]:
                     yield SetupRadioButton(card_name)
-            yield Static("", classes="setup-step-error")
 
     def _theme_buttons(self, names: list[str]):
         """Radio rows for theme names, marking the persisted one "(current)".
@@ -6479,7 +6487,6 @@ class WelcomeStep(SetupStep):
                 yield SetupRadioButton(
                     "Full setup — configure everything", id="setup-track-full"
                 )
-            yield Static("", classes="setup-step-error")
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}
@@ -6520,7 +6527,6 @@ class ProtectKeysStep(SetupStep):
                 "Set a password", id="setup-protect-set-password", variant="primary"
             )
             yield Static("", id="setup-protect-status", classes="setup-probe-status")
-            yield Static("", classes="setup-step-error")
 
     @on(Button.Pressed, "#setup-protect-set-password")
     def _on_set_password(self) -> None:
@@ -7582,6 +7588,17 @@ class SetupWizardContainer(WizardContainer):
             classes="setup-step-error hidden",
             markup=False,
         )
+        # TASK-21140 (UAT W/G findings): the one step-error surface, pinned
+        # between the scrollable step body and the nav bar so a refused Next
+        # is always explained on screen. Steps' show_step_error() renders
+        # here; the old per-step tail Statics sat below the fold of every
+        # overflowing step and made commit failures invisible.
+        yield Static(
+            "",
+            id="setup-step-error-pinned",
+            classes="setup-step-error hidden",
+            markup=False,
+        )
         yield WizardNavigation(classes="wizard-navigation")
 
     def _post_mount_hook(self) -> None:
@@ -8068,6 +8085,7 @@ class SetupWizardContainer(WizardContainer):
             return
         step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
+        self._clear_pinned_step_error()
         self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]
@@ -8526,6 +8544,16 @@ class SetupWizardContainer(WizardContainer):
         self._set_advancing(True)
         self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
 
+    def _clear_pinned_step_error(self) -> None:
+        """Empty and hide the pinned error strip (on every step change)."""
+
+        try:
+            strip = self.query_one("#setup-step-error-pinned", Static)
+        except NoMatches:
+            return
+        strip.update("")
+        strip.add_class("hidden")
+
     def _set_advancing(self, active: bool) -> None:
         """Fence navigation while a step's config handoff is settling."""
 
@@ -8540,7 +8568,10 @@ class SetupWizardContainer(WizardContainer):
                     return
                 ok, error = await step.commit()
                 if not ok:
-                    step.show_step_error(f"{error}  (Retry, or Skip this step.)")
+                    # TASK-21140 (UAT F-1 follow-on): the old suffix offered
+                    # "Skip this step", a control that does not exist. Name
+                    # only affordances that are on screen.
+                    step.show_step_error(f"{error}  Retry with Next, or go Back.")
                     return
             if isinstance(step, WelcomeStep):
                 self.select_track(step.chosen_track())

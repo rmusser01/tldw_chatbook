@@ -1,10 +1,14 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-07 (this page ships with it).
+> Verified against: first-run wizard implementation, 2026-08 (TASK-21140: pinned step-error surface).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
-every step has a Skip, Escape asks before closing, and anything you configure
-(or don't) can be changed later in Settings.
+every step can be skipped (Next moves on without configuring it), Escape asks
+before closing, and anything you configure (or don't) can be changed later in
+Settings.
+
+If a step can't save what you entered, the reason appears just above the
+navigation buttons — fix it and press Next again, or go Back.
 
 ## The two tracks
 

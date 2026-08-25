@@ -1086,6 +1086,9 @@ SmartContentTree Tree > .selected-node {
     text-style: bold;
     margin-top: 1;
 }
+/* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
+   the error class and rendered reassurance as a failure. */
+.setup-step-note { color: $text-muted; margin-top: 1; }
 .setup-field-label { margin-top: 1; }
 .setup-probe-status { color: $text-muted; margin-top: 1; }
 .setup-summary-row { height: 1; }

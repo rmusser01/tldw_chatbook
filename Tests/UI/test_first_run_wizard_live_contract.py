@@ -3117,3 +3117,53 @@ async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
             await _wait_until(
                 pilot, lambda: _current_step_id(container) == STEP_RAG
             )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21140: step-commit failures render on the pinned error strip in the
+# wizard chrome (visible at any terminal size — the old per-step tail Static
+# sat below the fold of overflowing steps), and the strip clears on the next
+# successful step change.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            strip = app.screen.query_one("#setup-step-error-pinned", Static)
+            assert strip.has_class("hidden"), "strip must start hidden (UAT W-1)"
+
+            async def failing_commit():
+                return False, "Boom failed."
+
+            welcome = container.steps[0]
+            monkeypatch.setattr(welcome, "commit", failing_commit)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: "Boom failed." in str(strip.renderable)
+            )
+            assert not strip.has_class("hidden")
+            # Honest affordances only — no phantom "Skip this step" control.
+            assert "Skip this step" not in str(strip.renderable)
+            assert _current_step_id(container) == STEP_WELCOME
+
+            async def passing_commit():
+                return True, ""
+
+            monkeypatch.setattr(welcome, "commit", passing_commit)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+            assert strip.has_class("hidden")
+            assert str(strip.renderable) == ""
