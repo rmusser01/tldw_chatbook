@@ -1,7 +1,7 @@
 ---
 id: TASK-21700
 title: >-
-  RAG cache-hit log writes the user search query into a persistent sink
+  RAG diagnostics render the user search query and whole model replies
 status: Done
 assignee: []
 created_date: '2026-08-24'
@@ -13,6 +13,15 @@ priority: medium
 ---
 
 ## Description
+
+> **Title corrected 2026-08-24.** This was filed as "…into a persistent sink". That framing was
+> **wrong**, and the implementation disproved it by measurement: the shipped
+> `PrivateRotatingFileHandler` carries a **default-deny** `PersistentDiagnosticFilter`, so none of
+> these statements reach the log file. The provable blast radius is the **live terminal and the
+> in-app Logs view**, not a file a user attaches to a bug report. The finding still stands — the
+> sweep found three sites *worse* than the one originally filed — but the severity is narrower than
+> the title claimed, and the title should not keep asserting something that was measured false.
+
 
 `RAG_Search/simplified/rag_service.py` logs a cache hit at INFO level with the first 50
 characters of the user's search query interpolated into the message. Search queries are user
