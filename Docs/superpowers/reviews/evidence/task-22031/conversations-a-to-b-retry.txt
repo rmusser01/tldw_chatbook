@@ -1,5 +1,5 @@
                      ╭────────────╮
- ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs  F9 Settings
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Log  More ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -11,21 +11,21 @@
 │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │ ▊ Filter conversations… (Enter)    ▎ │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
 │ │                          │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      ▊ Find in complete transcript…                                             ▎  │
 │ │ ──────────────────────── │     │                                      │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
-│ │ Browse               ▾   │     │    Alpha planning                    │                                                                                    │
-│ │    Media (0)             │     │      1 messages - 1d                 │      │ user · 2026-08-24T12:00:00Z                                                 │
+│ │  Browse             ▾    │     │    Alpha planning                    │                                                                                    │
+│ │    Media (0)             │     │      1 messages - 2d                 │      │ user · 2026-08-24T12:00:00Z                                                 │
 │ │  ▸ Conversations (2)     │     │                                      │      │ A deterministic complete transcript proves the retained Work pane stays     │
 │ │    Notes (0)             │     │  ▸ Beta review                       │      │ readable while Library and Items change around it.                          │
-│ │    Prompts — reuse       │     │      1 messages - 19h                │                                                                                    │
+│ │    Prompts — reuse       │     │      1 messages - 1d                 │                                                                                    │
 │ │    Skills (0)            │     │                                      │                                                                                    │
 │ │    Collections           │     │                                      │                                                                                    │
 │ │    Search / RAG          │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │                                      │                                                                                    │
-│ │ Create               ▾   │     │                                      │                                                                                    │
+│ │  Create             ▾    │     │                                      │                                                                                    │
 │ │    New note              │     │                                      │                                                                                    │
 │ │    New prompt            │     │                                      │                                                                                    │
 │ │    New skill             │     │                                      │                                                                                    │
 │ │ ──────────────────────── │<--- │                                      │<---                                                                                │
-│ │ Study                ▾   │     │                                      │                                                                                    │
+│ │  Study              ▾    │     │                                      │                                                                                    │
 │ │    Study decks           │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │    Flashcards            │     │                                      │                                                                                    │
@@ -33,11 +33,11 @@
 │ │    Quizzes               │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │                                      │                                                                                    │
-│ │ Import / Export      ▾   │     │                                      │                                                                                    │
+│ │  Import / Export    ▾    │     │                                      │                                                                                    │
 │ │    Import…               │     │                                      │                                                                                    │
 │ │    Export                │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │                                      │                                                                                    │
-│ │ Details              ▸   │     │                                      │                                                                                    │
+│ │  Details            ▸    │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │

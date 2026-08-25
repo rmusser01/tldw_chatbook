@@ -1,5 +1,5 @@
                      ╭────────────╮
- ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M  More ▾
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 W  More ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐

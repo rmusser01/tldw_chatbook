@@ -1,5 +1,5 @@
                      ╭────────────╮
- ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M  More ▾
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 W  More ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -12,10 +12,10 @@
 │      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      ▊ Find in complete transcript…                 ▎  │
 │      │                                                      │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
 │      │  ▸ Alpha planning — an intentionally long convers…   │                                                        │
-│      │      1 messages - 1d                                 │      │ user · 2026-08-24T12:00:00Z                     │
+│      │      1 messages - 2d                                 │      │ user · 2026-08-24T12:00:00Z                     │
 │      │                                                      │      │ A deterministic complete transcript proves      │
 │      │    Beta review                                       │      │ the retained Work pane stays readable while     │
-│      │      1 messages - 19h                                │      │ Library and Items change around it.             │
+│      │      1 messages - 1d                                 │      │ Library and Items change around it.             │
 │ ---> │                                                      │<---                                                    │
 │      │                                                      │                                                        │
 │      │                                                      │                                                        │

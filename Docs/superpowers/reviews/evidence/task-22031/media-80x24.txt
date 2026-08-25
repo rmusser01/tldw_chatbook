@@ -1,5 +1,5 @@
                      ╭────────────╮
- ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watc  More ▾
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Rol  More ▾
 ────────────────────────────────────────────────────────────────────────────────
  Library | Local
           Select a media item to read it here.

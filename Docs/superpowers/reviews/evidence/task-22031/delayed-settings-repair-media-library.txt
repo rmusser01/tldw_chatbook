@@ -1,5 +1,5 @@
                      ╭────────────╮
- ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs  F9 Settings
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Log  More ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -11,7 +11,7 @@
 │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │    type: All types      Export…      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │  ▸ Product Demo Video                │                                                                                    │
-│ │ Browse               ▾   │     │      video · 7w                      │                                                                                    │
+│ │  Browse             ▾    │     │      video · 7w                      │                                                                                    │
 │ │  ▸ Media (2)             │     │                                      │                                                                                    │
 │ │    Conversations (2)     │     │    Interview Recording               │                                                                                    │
 │ │    Notes (0)             │     │      audio · 7w                      │                                                                                    │
@@ -20,12 +20,12 @@
 │ │    Collections           │     │                                      │                                                                                    │
 │ │    Search / RAG          │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │                                      │                                                                                    │
-│ │ Create               ▾   │     │                                      │                                                                                    │
+│ │  Create             ▾    │     │                                      │                                                                                    │
 │ │    New note              │     │                                      │                                                                                    │
 │ │    New prompt            │     │                                      │                                                                                    │
 │ │    New skill             │     │                                      │                                                                                    │
 │ │ ──────────────────────── │<--- │                                      │<---                                                                                │
-│ │ Study                ▾   │     │                                      │                                                                                    │
+│ │  Study              ▾    │     │                                      │                                                                                    │
 │ │    Study decks           │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │    Flashcards            │     │                                      │                                                                                    │
@@ -33,11 +33,11 @@
 │ │    Quizzes               │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │                                      │                                                                                    │
-│ │ Import / Export      ▾   │     │                                      │                                                                                    │
+│ │  Import / Export    ▾    │     │                                      │                                                                                    │
 │ │    Import…               │     │                                      │                                                                                    │
 │ │    Export                │     │                                      │                                                                                    │
 │ │ ──────────────────────── │     │                                      │                                                                                    │
-│ │ Details              ▸   │     │                                      │                                                                                    │
+│ │  Details            ▸    │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │
 │ │                          │     │                                      │                                                                                    │

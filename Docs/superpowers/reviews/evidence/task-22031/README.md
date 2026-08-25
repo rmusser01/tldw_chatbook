@@ -2,8 +2,10 @@
 
 ## Outcome
 
-The production-shaped verification matrix passed on commit
-`1a3ca3ad80e90f02fb39f09c27e8aced646d114d`. No product defect reproduced.
+The production-shaped verification matrix passed again after rebasing the product tree at
+`5245922ed91aa59dee1e16a0a1ed5eebc387b9d7` onto `origin/dev` `9548de416`. No product defect
+reproduced. The evidence-only follow-up normalizes exported SVG whitespace and makes the Media
+geometry fixture explicitly independent from preceding failed-repair probes.
 
 This rig mounts the real `LibraryScreen`, exact `TldwCli.CSS_PATH` production
 stylesheet sequence, retained reader widgets, workers, and Textual compositor. It
@@ -16,35 +18,33 @@ is the machine-readable rollup.
 
 - Effective package import:
   `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-media-reader/tldw_chatbook/__init__.py`
-- Final scratch root: `/private/tmp/task22031-live-1a3ca.XGZpkQ`
-- Effective config: `/private/tmp/task22031-live-1a3ca.XGZpkQ/config.toml`
+- Final scratch root: `/private/tmp/task22031-live-postrebase.pmO4OG`
+- Effective config: `/private/tmp/task22031-live-postrebase.pmO4OG/config.toml`
 - Effective data directory:
-  `/private/tmp/task22031-live-1a3ca.XGZpkQ/data/verify_task22031`
+  `/private/tmp/task22031-live-postrebase.pmO4OG/data/verify_task22031`
 - `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`,
   `TLDW_CONFIG_PATH`, `TLDW_TEST_MODE`, and the data directory were set before
   importing `tldw_chatbook`; model-catalog network refresh was disabled.
 - The driver refuses to import the app when any isolation boundary is absent or
   when config/data/package provenance falls outside the expected roots.
-- Real config SHA-256 before and after:
+- The original pre-rebase fingerprint sentinel recorded the real config SHA-256 before and after as:
   `edc7a780b61ae285b5082f1dfab1381981b7d7bcd9efb2b38f38e2fc4effbbd1`
   (53,496 bytes both times).
-- Real `default_user` profile tree SHA-256 before and after:
+- The same sentinel recorded the real `default_user` profile tree SHA-256 before and after as:
   `7d6173b83a867f7ccf8a5520dbbc04fd50cf618ded95c8ff567912fcfdf393c0`
   (147 files both times).
-- Git status before and after showed only the existing untracked
-  `Docs/superpowers/reviews/evidence/` path; no tracked generated CSS or product
-  file changed.
+- The post-rebase rerun changed only this evidence bundle; no product or generated CSS file changed.
 
 Final command (absolute venv interpreter and explicit worktree import order):
 
 ```bash
-env HOME=/private/tmp/task22031-live-1a3ca.XGZpkQ \
-  XDG_CONFIG_HOME=/private/tmp/task22031-live-1a3ca.XGZpkQ/xdg-config \
-  XDG_DATA_HOME=/private/tmp/task22031-live-1a3ca.XGZpkQ/xdg-data \
-  XDG_CACHE_HOME=/private/tmp/task22031-live-1a3ca.XGZpkQ/xdg-cache \
-  TLDW_CONFIG_PATH=/private/tmp/task22031-live-1a3ca.XGZpkQ/config.toml \
+env HOME=/private/tmp/task22031-live-postrebase.pmO4OG \
+  XDG_CONFIG_HOME=/private/tmp/task22031-live-postrebase.pmO4OG/xdg-config \
+  XDG_DATA_HOME=/private/tmp/task22031-live-postrebase.pmO4OG/xdg-data \
+  XDG_CACHE_HOME=/private/tmp/task22031-live-postrebase.pmO4OG/xdg-cache \
+  TLDW_CONFIG_PATH=/private/tmp/task22031-live-postrebase.pmO4OG/config.toml \
   TLDW_TEST_MODE=1 TLDW_DISABLE_MODEL_CATALOG_NETWORK=1 \
-  TASK22031_DATA_DIR=/private/tmp/task22031-live-1a3ca.XGZpkQ/data/verify_task22031 \
+  TASK22031_DATA_DIR=/private/tmp/task22031-live-postrebase.pmO4OG/data/verify_task22031 \
   PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-media-reader \
   ../../.venv/bin/python \
   Docs/superpowers/reviews/evidence/task-22031/task22031_live_matrix.py
@@ -198,7 +198,7 @@ The evidence rig also drives the two final review blockers through the real moun
 
 ## Evidence integrity
 
-The refreshed candidate contains 105 files totaling 5,221,422 bytes. All JSON
+The refreshed candidate contains 105 files totaling 5,308,152 bytes. All JSON
 artifacts and the isolated TOML config parse, the driver parses and passes Ruff,
 `git diff --check` passes, and the summary records the exact four terminal sizes for
 both Conversations and Media. Import provenance points at this worktree, and the

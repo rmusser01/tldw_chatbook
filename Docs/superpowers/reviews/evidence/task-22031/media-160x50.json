@@ -1,7 +1,7 @@
 {
   "effective": {
     "items_open": true,
-    "library_open": false,
+    "library_open": true,
     "priority_pane": null
   },
   "focused_control": {
@@ -11,12 +11,12 @@
     "region": {
       "height": 43,
       "width": 5,
-      "x": 63,
+      "x": 75,
       "y": 5
     }
   },
   "grip_names": [
-    "Expand Library pane",
+    "Collapse Library pane",
     "Collapse Items pane"
   ],
   "grip_widths": [
@@ -26,26 +26,26 @@
   "regions": {
     "items": {
       "height": 43,
-      "width": 56,
-      "x": 7,
+      "width": 40,
+      "x": 35,
       "y": 5
     },
     "items_grip": {
       "height": 43,
       "width": 5,
-      "x": 63,
+      "x": 75,
       "y": 5
     },
     "library": {
-      "height": 0,
-      "width": 0,
-      "x": 0,
-      "y": 0
+      "height": 43,
+      "width": 28,
+      "x": 2,
+      "y": 5
     },
     "library_grip": {
       "height": 43,
       "width": 5,
-      "x": 2,
+      "x": 30,
       "y": 5
     },
     "shell": {
@@ -56,8 +56,8 @@
     },
     "work": {
       "height": 43,
-      "width": 90,
-      "x": 68,
+      "width": 78,
+      "x": 80,
       "y": 5
     }
   },

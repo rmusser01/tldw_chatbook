@@ -131,6 +131,14 @@ def _region(region) -> dict[str, int]:
 
 def _capture(app, name: str, facts: dict[str, object]) -> None:
     svg_path = app.save_screenshot(filename=f"{name}.svg", path=str(EVIDENCE_DIR))
+    svg = Path(svg_path)
+    svg.write_text(
+        "\n".join(
+            line.rstrip() for line in svg.read_text(encoding="utf-8").splitlines()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (EVIDENCE_DIR / f"{name}.txt").write_text(
         _screen_text(app) + "\n", encoding="utf-8"
     )
@@ -1399,6 +1407,8 @@ async def media_geometry_matrix(summary: dict[str, object]) -> None:
     matrix: list[dict[str, object]] = []
     for width, height in SIZES:
         app = _build_media_test_app()
+        app.app_config["library"].setdefault("reader", {})["library_open"] = True
+        app.app_config["library"].setdefault("media_reader", {})["items_open"] = True
         host = LibraryProductionCSSHarness(app)
         async with host.run_test(size=(width, height)) as pilot:
             screen, shell = await _open_media_shell(host, pilot)
@@ -1426,6 +1436,12 @@ async def media_geometry_matrix(summary: dict[str, object]) -> None:
                 ],
             }
             assert facts["work_mounted"] and facts["grip_widths"] == [5, 5]
+            if (width, height) == (160, 50):
+                assert facts["effective"] == {
+                    "library_open": True,
+                    "items_open": True,
+                    "priority_pane": None,
+                }
             assert shell.region.contains_region(shell.work.region)
             focused_grip = await _focus_and_wait(
                 screen, pilot, f"#{shell.items_grip.id}"
