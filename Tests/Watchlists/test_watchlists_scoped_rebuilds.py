@@ -1756,6 +1756,8 @@ async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noo
             attempted_layout=layout,
             attempted_preferred=screen.region_layout,
             preferred_before=screen.region_layout,
+            effective_before=screen._effective_region_layout,
+            responsive_before=screen._responsive_region_layout,
             article_focus_before=screen._article_focus_active,
             priority_lease_before=screen._responsive_priority_lease,
         )
@@ -1804,12 +1806,16 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         lease_before = ResponsivePriorityLease(
             Region.RIGHT_RAIL, read_mode=False
         )
+        effective_before = effective.toggle_preferred(Region.RIGHT_RAIL)
+        responsive_before = effective.toggle_preferred(Region.LEFT_RAIL)
         token1 = screen._next_layout_request_token()
         screen._manual_layout_rollback = ManualLayoutRollback(
             token=token1,
             attempted_layout=effective,
             attempted_preferred=preferred,
             preferred_before=preferred.toggle_preferred(Region.LEFT_RAIL),
+            effective_before=effective_before,
+            responsive_before=responsive_before,
             article_focus_before=screen._article_focus_active,
             priority_lease_before=lease_before,
         )
@@ -1819,6 +1825,11 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         assert (
             screen._manual_layout_rollback.priority_lease_before
             == lease_before
+        )
+        assert screen._manual_layout_rollback.effective_before == effective_before
+        assert (
+            screen._manual_layout_rollback.responsive_before
+            == responsive_before
         )
         screen.post_message(
             RegionLayoutApplyFailed(
@@ -1896,6 +1907,78 @@ async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
 
         assert screen.region_layout == preferred
         assert persisted == [preferred]
+
+
+async def test_failed_responsive_inspector_open_restores_layout_snapshots(
+    monkeypatch,
+) -> None:
+    """A failed dead-band reopen keeps controller and DOM fallbacks aligned."""
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: persisted.append(layout) or True,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        await pilot.resize_terminal(144, 50)
+        await _settle(pilot, host)
+        await pilot.resize_terminal(145, 50)
+        await _settle(pilot, host)
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        preferred_before = screen.region_layout
+        effective_before = screen._effective_region_layout
+        responsive_before = screen._responsive_region_layout
+        focus_before = screen._article_focus_active
+        parked_lease = ResponsivePriorityLease(
+            Region.LEFT_RAIL, read_mode=False
+        )
+        screen._responsive_priority_lease = parked_lease
+
+        assert not preferred_before.is_collapsed(Region.RIGHT_RAIL)
+        assert effective_before.is_collapsed(Region.RIGHT_RAIL)
+        assert responsive_before == effective_before
+        assert workbench.region_layout == effective_before
+
+        requests: list[tuple[int, RegionLayout]] = []
+        real_request = workbench.request_region_layout
+
+        def record_request(layout: RegionLayout, *, token: int) -> None:
+            requests.append((token, layout))
+            real_request(layout, token=token)
+
+        monkeypatch.setattr(workbench, "request_region_layout", record_request)
+        original_factory = workbench._content[Region.RIGHT_RAIL]
+
+        def fail_inspector_factory():
+            raise RuntimeError("inspector failed")
+
+        workbench._content[Region.RIGHT_RAIL] = fail_inspector_factory
+        persisted.clear()
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+
+        assert len(requests) == 1
+        assert not requests[0][1].is_collapsed(Region.RIGHT_RAIL)
+        assert workbench.region_layout == effective_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._responsive_region_layout == responsive_before
+        assert screen.region_layout == preferred_before
+        assert screen._article_focus_active is focus_before
+        assert screen._responsive_priority_lease == parked_lease
+        assert screen._manual_layout_rollback is None
+        assert persisted == []
+
+        requests.clear()
+        screen.on_resize(None)
+        await _settle(pilot, host)
+
+        assert requests == []
+        assert workbench.region_layout == effective_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._responsive_region_layout == responsive_before
+        assert screen._responsive_priority_lease == parked_lease
+        workbench._content[Region.RIGHT_RAIL] = original_factory
 
 
 async def test_failed_manual_expansion_rolls_back_full_layout_intent(

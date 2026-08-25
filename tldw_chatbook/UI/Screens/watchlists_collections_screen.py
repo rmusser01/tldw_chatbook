@@ -429,6 +429,8 @@ class ManualLayoutRollback:
     attempted_layout: RegionLayout
     attempted_preferred: RegionLayout
     preferred_before: RegionLayout
+    effective_before: RegionLayout
+    responsive_before: RegionLayout | None
     article_focus_before: bool
     priority_lease_before: ResponsivePriorityLease | None
 
@@ -3065,6 +3067,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 attempted_layout=self._effective_region_layout,
                 attempted_preferred=rollback.attempted_preferred,
                 preferred_before=rollback.preferred_before,
+                effective_before=rollback.effective_before,
+                responsive_before=rollback.responsive_before,
                 article_focus_before=rollback.article_focus_before,
                 priority_lease_before=rollback.priority_lease_before,
             )
@@ -3483,6 +3487,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         before = (
             self.region_layout,
             self._effective_region_layout,
+            self._responsive_region_layout,
             self._article_focus_active,
             self._responsive_priority_lease,
         )
@@ -3514,8 +3519,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 attempted_layout=self._effective_region_layout,
                 attempted_preferred=preferred,
                 preferred_before=before[0],
-                article_focus_before=before[2],
-                priority_lease_before=before[3],
+                effective_before=before[1],
+                responsive_before=before[2],
+                article_focus_before=before[3],
+                priority_lease_before=before[4],
             )
         self._schedule_layout_persist(preferred)
 
@@ -3542,8 +3549,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.region_layout = rollback.preferred_before
             self._article_focus_active = rollback.article_focus_before
             self._responsive_priority_lease = rollback.priority_lease_before
+            self._responsive_region_layout = rollback.responsive_before
+            self._effective_region_layout = event.fallback
             self._manual_layout_rollback = None
-            self._recompute_effective_layout(cause="explicit")
             if current_preferred != rollback.preferred_before:
                 self._schedule_layout_persist(rollback.preferred_before)
             return
