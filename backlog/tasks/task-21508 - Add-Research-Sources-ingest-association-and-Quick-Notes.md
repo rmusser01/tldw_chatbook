@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 21:01'
+updated_date: '2026-08-25 04:55'
 labels:
   - research
   - workspace
@@ -54,11 +54,13 @@ Follow `Docs/superpowers/plans/2026-08-23-research-workspace-sources-quick-notes
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- Implemented the ADR-078 contract across the separate F10 Research Workspace screen: explicit qualified Local/Server authority, durable source operations, canonical Library/Media ownership before idempotent workspace association, independent readiness, association-only removal, and device-only source organization.
-- Added the complete Sources workbench and canonical Quick Notes surface, including owner-routed search and mutations, receipts and retry recovery, desired-versus-effective readiness, optimistic conflicts, provenance, navigation guards, and honest disabled states where the canonical Server contract cannot safely provide an operation.
-- Added real SQLite and Server-fake round-trip coverage for duplicate reuse, captured-workspace late completion, bounded restart resume, association failure retention, unlink-without-delete, tags-not-membership, exact Server identity, and no Local blending. Required inverse mutations were each observed failing their named guard and restored.
-- Corrected installed-distribution migration packaging so the v40-to-v43 runtime chain is present and directly exercised from source, sdist, and wheel installations. Updated the Research Workspace user guide with the exact controls, ownership, recovery, privacy, and current limitations.
-- Targeted verification: DB/Workspace/Research/integration 444 passed; App/Library/Notes 600 passed; Library runner 146 passed with one Windows-only skip; Research UI 171 passed; shell Research 6 passed; API/private-path 131 passed; Packaging 43 passed; Library canvas 136 passed; CSS/parity 65 passed. Ruff lint passed for all 105 changed Python files; scoped format, changed-production compileall, migration artifact parity, privacy/no-blend scans, Impeccable detector, and `git diff --check` passed. The broad legacy formatter inventory still reports 47 pre-existing whole-file candidates and was not mechanically rewritten.
-- Isolated live verification used temporary config, data, cache, and XDG directories and opened the production F10 destination as `ResearchWorkspaceScreen`. No test Server API was available, so live Server verification was not attempted and is not claimed. The full pytest suite was not run, per repository policy.
-- ADR check: no new ADR was required; `backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md` remains the governing decision.
+- Implemented ADR-078 across the separate F10 Research Workspace: qualified Local or Server ownership, durable staged source operations, canonical catalog ownership before idempotent workspace association, association-only removal, independent readiness, device-only organization, and canonical Quick Notes with conflict and navigation guards.
+- Added real SQLite Local round trips and a production-seam Server round trip through app dispatch, registry reconciliation, terminal listener, scheduler, coordinator, generated My Media catalog, and exact workspace-source association. Injected Local Media and registry spies prove zero Server-path Local calls; profile, principal, and result-ID mismatches fail closed.
+- Fixed asynchronous Library backend switching so the canvas keeps rendering its persisted owner while pending intent sequences rapid clicks; writes serialize, and completion repaints only on the Textual UI loop for the current generation. Delayed success, failure recovery, and rapid Server to Local to Server tests use the real decorated worker.
+- Corrected installed migration packaging through v43 and updated the Research Workspace guide with exact navigation, authority, controls, canonical ownership, recovery, privacy, and limitations.
+- Fix-round verification: 188 changed-area UI and integration checks passed; remote or Server runner slice 20 passed; installed-distribution packaging 43 passed. Four new review inverses each failed and were restored: missing completion repaint, missing generation fence, Server ID copied to Local media, and constant fake catalog.
+- Default Ruff passed across the fix inventory and UP017 passed across the six Task 6 files plus the Fix 1 unit test. The broader UP selector retains 11 findings only on lines unchanged from the pre-Task-6 base; a full production-screen UP017 probe retains four pre-existing findings outside the fix hunks. No whole-file upgrade-selector claim is made. Changed-range format, compileall, package artifact probes, privacy or no-blend scans, Impeccable detector, and diff checks passed.
+- The full Library screen file has 31 passing checks and one stale top-button selector failure reproduced identically at exact base ebf80f954; all four changed backend or owner tests pass. The full pytest suite was not run under repository policy.
+- Isolated F10 live smoke used temporary config, XDG, and data roots. No test Server API was available, so live Server behavior was not attempted or claimed.
+- ADR check: no new ADR was required; backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md remains governing.
 <!-- SECTION:NOTES:END -->

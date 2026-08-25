@@ -1,6 +1,7 @@
 """LibraryScreen rail-level UI tests."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -706,8 +707,8 @@ def test_backend_switch_flips_and_persists_the_target(monkeypatch) -> None:
     # `save_setting_to_cli_config` it wraps) keeps this test's own subject
     # -- which target the handler decides to persist -- intact.
     saved: list[tuple] = []
-    screen._save_library_ingest_backend = (
-        lambda target: saved.append(("library.ingest", "backend", target)) or True
+    screen._save_library_ingest_backend = lambda target, _generation: (
+        saved.append(("library.ingest", "backend", target)) or True
     )
 
     screen.handle_library_ingest_backend_switch(MagicMock())
@@ -726,8 +727,8 @@ def test_backend_switch_returns_to_local(monkeypatch) -> None:
     # `@work(thread=True)` instance method rather than the module-level
     # config function it wraps.
     saved: list[tuple] = []
-    screen._save_library_ingest_backend = (
-        lambda target: saved.append(("library.ingest", "backend", target)) or True
+    screen._save_library_ingest_backend = lambda target, _generation: (
+        saved.append(("library.ingest", "backend", target)) or True
     )
 
     screen.handle_library_ingest_backend_switch(MagicMock())
@@ -755,8 +756,9 @@ def test_save_library_ingest_backend_writes_the_real_dotted_section() -> None:
     submission` elsewhere in this test suite.
     """
     screen = _minimal_ingest_screen()
+    screen._library_ingest_backend_generation = 1
 
-    LibraryScreen._save_library_ingest_backend.__wrapped__(screen, "server")
+    LibraryScreen._save_library_ingest_backend.__wrapped__(screen, "server", 1)
 
     assert get_cli_setting("library.ingest", "backend", None) == "server"
     on_disk = toml.load(_get_effective_config_path())
@@ -779,6 +781,28 @@ def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:
     state = screen._build_library_ingest_state()
 
     assert state.show_backend_switch is False
+
+
+def test_pending_backend_choice_does_not_impersonate_persisted_owner() -> None:
+    """The canvas stays on the durable owner until its worker confirms the save."""
+
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="server")
+    screen.app_instance.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_source="server", server_configured=True)
+    )
+    screen.app_instance.media_db = object()
+    screen.app_instance.server_media_reading_service = SimpleNamespace(
+        submit_ingest_jobs=lambda **_kwargs: None
+    )
+    screen._server_binding_is_shipped_placeholder = lambda: False
+    screen._library_ingest_backend_target = "local"
+    screen._library_ingest_registry = MagicMock(return_value=MagicMock(jobs=lambda: ()))
+
+    state = screen._build_library_ingest_state()
+
+    assert state.ingest_backend == "server"
 
 
 def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> None:

@@ -11,6 +11,7 @@ import asyncio
 from copy import deepcopy
 import inspect
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1778,54 +1779,241 @@ async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus
         assert screen.app.focused is prompt
 
 
-@pytest.mark.asyncio
-@pytest.mark.allow_network
-async def test_local_prompt_receipt_hides_retained_server_only_keep_original_file(
-    monkeypatch: pytest.MonkeyPatch,
+async def _wait_for_thread_signal(
+    signal: threading.Event,
+    pilot,
+    *,
+    what: str,
 ) -> None:
-    """A Local textarea edit cannot disclose a Server-only retained option."""
-    backend = {"value": "server"}
-    monkeypatch.setattr(
-        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
-    )
-    app = _build_test_app()
+    """Bound a mounted wait for one production thread-worker checkpoint."""
+
+    for _ in range(200):
+        if signal.is_set():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _backend_switch_screen(app, backend: dict[str, str]) -> LibraryScreen:
+    """Build the real mounted ingest canvas around a controllable owner."""
+
     app._resolve_ingest_backend = lambda: backend["value"]
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
-    # Persistence is already covered at the worker boundary. Keep this mounted
-    # receipt test deterministic by replacing the @work wrapper itself.
-    screen._save_library_ingest_backend = lambda value: backend.__setitem__(
-        "value", value
-    )
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
-        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
-        runtime_source="server", server_ingest_available=True,
+        (),
+        form=screen._library_ingest_form,
+        ingest_backend=backend["value"],
+        runtime_source="server",
+        server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
     screen._library_ingest_form.analyze = True
     screen._library_ingest_form.expanded_type_groups.add("generic")
+    return screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_backend_switch_repaints_after_delayed_persistence_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed Server-to-Local save removes Server-only controls."""
+
+    backend = {"value": "server"}
+    save_entered = threading.Event()
+    release_save = threading.Event()
+    real_save = library_screen_module.save_setting_to_cli_config
+
+    def delayed_save(section: str, key: str, target: str) -> bool:
+        if (section, key) != ("library.ingest", "backend"):
+            return real_save(section, key, target)
+        save_entered.set()
+        assert release_save.wait(5.0), "test never released backend persistence"
+        backend["value"] = target
+        return True
+
+    app = _build_test_app()
+    screen = _backend_switch_screen(app, backend)
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", delayed_save
+    )
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
 
-        screen.query_one("#opt-generic-keep_original_file", Checkbox).value = True
-        await pilot.pause()
-        backend_switch = screen.query_one("#library-ingest-backend-switch", Button)
-        assert backend_switch.disabled is False
-        backend_switch.press()
-        await pilot.pause()
-        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_thread_signal(
+                save_entered, pilot, what="backend persistence start"
+            )
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+            assert screen.query_one("#opt-generic-keep_original_file", Checkbox)
+            release_save.set()
+            for _ in range(200):
+                if (
+                    backend["value"] == "local"
+                    and screen._library_ingest_backend_target is None
+                    and len(screen.query("#opt-generic-keep_original_file")) == 0
+                ):
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("backend persistence never completed")
+            await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
 
-        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
-        prompt.text = "Summarize this import."
-        await pilot.pause()
+            prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+            prompt.text = "Summarize this import."
+            await pilot.pause()
 
-        title = str(screen.query_one("#type-group-generic", Collapsible).title)
-        assert backend["value"] == "local"
-        assert "Keep original file" not in title
+            title = str(screen.query_one("#type-group-generic", Collapsible).title)
+            assert "Keep original file" not in title
+    finally:
+        release_save.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_backend_switch_failure_restores_persisted_server_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Local preference save repaints the persisted owner."""
+
+    backend = {"value": "server"}
+    save_entered = threading.Event()
+    release_save = threading.Event()
+    real_save = library_screen_module.save_setting_to_cli_config
+
+    def failing_save(section: str, key: str, target: str) -> bool:
+        if (section, key) != ("library.ingest", "backend"):
+            return real_save(section, key, target)
+        save_entered.set()
+        assert release_save.wait(5.0), "test never released backend persistence"
+        raise OSError("private fixture detail")
+
+    app = _build_test_app()
+    screen = _backend_switch_screen(app, backend)
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", failing_save
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_thread_signal(
+                save_entered, pilot, what="failing backend persistence start"
+            )
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+            persisted_control = screen.query_one(
+                "#opt-generic-keep_original_file", Checkbox
+            )
+
+            release_save.set()
+            for _ in range(200):
+                controls = screen.query("#opt-generic-keep_original_file")
+                if (
+                    screen._library_ingest_backend_target is None
+                    and len(controls) == 1
+                    and controls.first() is not persisted_control
+                ):
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("failed preference never repainted owner state")
+            assert backend["value"] == "server"
+    finally:
+        release_save.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_rapid_backend_switch_keeps_latest_server_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale Local completion cannot repaint or outlast a newer Server choice."""
+
+    backend = {"value": "server"}
+    entered = {"local": threading.Event(), "server": threading.Event()}
+    release = {"local": threading.Event(), "server": threading.Event()}
+    saves: list[str] = []
+    real_save = library_screen_module.save_setting_to_cli_config
+
+    def delayed_save(section: str, key: str, target: str) -> bool:
+        if (section, key) != ("library.ingest", "backend"):
+            return real_save(section, key, target)
+        saves.append(target)
+        entered[target].set()
+        assert release[target].wait(5.0), f"test never released {target} save"
+        backend["value"] = target
+        return True
+
+    app = _build_test_app()
+    screen = _backend_switch_screen(app, backend)
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", delayed_save
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_thread_signal(
+                entered["local"], pilot, what="first Local preference save"
+            )
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+            await pilot.pause()
+            latest_pending_control = screen.query_one(
+                "#opt-generic-keep_original_file", Checkbox
+            )
+
+            release["local"].set()
+            await _wait_for_thread_signal(
+                entered["server"], pilot, what="latest Server preference save"
+            )
+            assert backend["value"] == "local"
+            await pilot.pause()
+            assert (
+                screen.query_one("#opt-generic-keep_original_file", Checkbox)
+                is latest_pending_control
+            )
+
+            release["server"].set()
+            for _ in range(200):
+                controls = screen.query("#opt-generic-keep_original_file")
+                if (
+                    backend["value"] == "server"
+                    and screen._library_ingest_backend_target is None
+                    and len(controls) == 1
+                    and controls.first() is not latest_pending_control
+                ):
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("latest Server preference never persisted")
+            await pilot.pause()
+            assert saves == ["local", "server"]
+            assert screen.query_one("#opt-generic-keep_original_file", Checkbox)
+    finally:
+        release["local"].set()
+        release["server"].set()
 
 
 @pytest.mark.asyncio
@@ -2294,7 +2482,7 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen.refresh = MagicMock()
 
-    def save_backend(target: str) -> None:
+    def save_backend(target: str, _generation: int) -> None:
         backend["value"] = target
 
     # task-15470: the actual persistence call moved into a

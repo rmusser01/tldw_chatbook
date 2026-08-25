@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 
 import pytest
@@ -619,7 +619,7 @@ async def test_visible_batch_selection_excludes_selected_rows_hidden_by_each_fil
 
     app = _SourcesHarness()
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
-    recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     alpha = ResearchSourceSummary(
         ref=ref,
         source_id="membership-alpha",

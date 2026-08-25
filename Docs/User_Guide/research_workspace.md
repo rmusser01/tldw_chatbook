@@ -81,6 +81,10 @@ general catalog:
 - Server: a normal Server Media item, followed by a server workspace-source
   row.
 
+A completed Server receipt uses the media ID returned by that canonical My
+Media result. Chatbook does not mirror the Server ID into Local Library media
+or create a Local fallback record.
+
 The qualified workspace target is saved before intake begins. Navigating to a
 different workspace while work finishes cannot retarget it. A
 `workspace:<name>` keyword may be added for search display, but that tag is not

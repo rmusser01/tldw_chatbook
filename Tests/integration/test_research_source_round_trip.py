@@ -8,17 +8,21 @@ own the individual adapters; this file proves those owners agree on identity.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
+from textual.app import App
 
+from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
     LibraryIngestJobRegistry,
     plan_restore,
 )
@@ -51,7 +55,7 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _operation(
@@ -350,18 +354,102 @@ def test_workspace_keyword_is_projection_not_membership(tmp_path: Path) -> None:
     assert media_db.get_media_by_id(media_id)["id"] == media_id
 
 
+class _ServerRoundTripApp(LibraryIngestQueueMixin, App):
+    """Bounded real ingest host: production mixin, registry, and workers."""
+
+    REMOTE_INGEST_POLL_SECONDS = 0.01
+
+    def __init__(self, local_media_spy: object) -> None:
+        super().__init__()
+        self._init_library_ingest_runtime_state()
+        self.media_db = local_media_spy
+        self.runtime_policy = SimpleNamespace(
+            state=SimpleNamespace(active_source="server")
+        )
+
+    def _resolve_ingest_backend(self) -> str:
+        return "server"
+
+
 class _ServerCatalog:
-    def __init__(self, media_id: int) -> None:
-        self.media_id = media_id
+    """Fake external owner whose catalog is created only by real dispatch/poll."""
+
+    def __init__(self, *, mismatched_result: bool = False) -> None:
+        self._mismatched_result = mismatched_result
+        self._next_remote_job_id = 40
+        self._next_media_id = 880
+        self._pending: dict[str, dict[str, object]] = {}
+        self.media: dict[int, dict[str, object]] = {}
         self.sources: dict[str, dict[str, object]] = {}
-        self.calls: list[dict[str, object]] = []
+        self.submit_calls: list[dict[str, object]] = []
+        self.batch_calls: list[str] = []
+
+    async def submit_ingest_jobs(self, **kwargs: object) -> dict[str, object]:
+        self.submit_calls.append(dict(kwargs))
+        self._next_remote_job_id += 1
+        self._next_media_id += 1
+        remote_job_id = str(self._next_remote_job_id)
+        batch_id = f"batch-{remote_job_id}"
+        self._pending[remote_job_id] = {
+            "batch_id": batch_id,
+            "media_id": self._next_media_id,
+            "title": str(kwargs.get("title") or "Server paper"),
+        }
+        return {
+            "batch_id": batch_id,
+            "jobs": [{"id": int(remote_job_id), "status": "queued"}],
+            "errors": [],
+        }
+
+    async def list_media_ingest_jobs(
+        self,
+        batch_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> dict[str, object]:
+        del offset, limit
+        self.batch_calls.append(batch_id)
+        remote_job_id, pending = next(
+            (
+                (job_id, row)
+                for job_id, row in self._pending.items()
+                if row["batch_id"] == batch_id
+            ),
+            ("", None),
+        )
+        if pending is None:
+            return {"batch_id": batch_id, "jobs": []}
+        media_id = int(pending["media_id"])
+        self.media.setdefault(
+            media_id,
+            {
+                "id": media_id,
+                "title": pending["title"],
+                "remote_job_id": remote_job_id,
+            },
+        )
+        result_media_id = media_id + 100 if self._mismatched_result else media_id
+        return {
+            "batch_id": batch_id,
+            "jobs": [
+                {
+                    "id": int(remote_job_id),
+                    "status": "completed",
+                    "result": {"media_id": result_media_id},
+                }
+            ],
+            "has_more": False,
+        }
 
     async def save_workspace_source(self, **kwargs: object) -> dict[str, object]:
-        self.calls.append(dict(kwargs))
+        media_id = int(kwargs["media_id"])
+        if media_id not in self.media:
+            raise ValueError("workspace association referenced non-catalog media")
         row = {
             "id": kwargs["source_id"],
             "workspace_id": kwargs["workspace_id"],
-            "media_id": kwargs.get("media_id", self.media_id),
+            "media_id": media_id,
             "title": kwargs.get("title", "Server paper"),
             "source_type": kwargs.get("source_type", "document"),
             "selected": kwargs.get("selected", True),
@@ -370,68 +458,220 @@ class _ServerCatalog:
         self.sources[str(row["id"])] = row
         return row
 
-    def my_media(self) -> tuple[int, ...]:
-        return (self.media_id,)
+    def my_media(self) -> tuple[dict[str, object], ...]:
+        return tuple(self.media[media_id] for media_id in sorted(self.media))
 
 
-@pytest.mark.asyncio
-async def test_server_catalog_and_workspace_source_remain_remote_only(
+def _wire_server_round_trip(
     tmp_path: Path,
-) -> None:
+    *,
+    active_context: SimpleNamespace,
+    captured_context: SimpleNamespace | None = None,
+    mismatched_result: bool = False,
+) -> tuple[
+    _ServerRoundTripApp,
+    ResearchSourceOperationStore,
+    ResearchSourceOperation,
+    _ServerCatalog,
+    MagicMock,
+    MagicMock,
+    LibraryIngestJobsDB,
+]:
     local_media = MediaDatabase(tmp_path / "local-media.sqlite", client_id="no-blend")
-    local_registry = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "local-workspaces.sqlite", client_id="no-blend")
+    local_media_spy = MagicMock(spec=MediaDatabase, wraps=local_media)
+    local_registry_spy = MagicMock(spec=LocalWorkspaceRegistryService)
+    app = _ServerRoundTripApp(local_media_spy)
+    jobs_db = LibraryIngestJobsDB(tmp_path / "server-ingest-jobs.sqlite")
+    app.library_ingest_jobs.attach_store(jobs_db)
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: active_context
     )
-    context = SimpleNamespace(
-        active_server_id="profile-a",
-        auth_token="fixture-token",
-        credential_source="fixture",
-    )
-    principal_id = event_principal_id_from_active_context(context) or ""
+    server = _ServerCatalog(mismatched_result=mismatched_result)
+    app.server_media_reading_service = server
     store = ResearchSourceOperationStore(
         WorkspaceDB(tmp_path / "receipts.sqlite", client_id="server-round-trip")
     )
+    operation_context = captured_context or active_context
     operation = store.create(
         _operation(
             "server-round-trip",
             data_source=WorkspaceDataSource.SERVER,
             workspace_id="server-workspace-7",
             server_profile_id="profile-a",
-            principal_id=principal_id,
+            principal_id=(
+                event_principal_id_from_active_context(operation_context) or ""
+            ),
         )
     )
-    jobs = LibraryIngestJobRegistry()
-    job = jobs.submit(
-        source_path="paper.pdf",
-        title="Server paper",
-        detected_type="pdf",
-        origin="server",
-        research_source_operation_id=operation.operation_id,
-    )
-    _link_job(store, operation, job.job_id)
-    jobs.mark_remote_done(job.job_id, remote_media_id="884")
-    server = _ServerCatalog(media_id=884)
-
-    settled = await ResearchSourceAssociationCoordinator(
+    coordinator = ResearchSourceAssociationCoordinator(
         operation_store=store,
-        ingest_jobs=jobs,
-        local_registry=local_registry,
+        ingest_jobs=app.library_ingest_jobs,
+        local_registry=local_registry_spy,
         server_service=server,
-        server_context_provider=SimpleNamespace(get_active_context=lambda: context),
-    ).resume(operation.operation_id)
-
-    assert settled.catalog_status is SourceOperationStatus.SUCCEEDED
-    assert settled.association_status is SourceOperationStatus.SUCCEEDED
-    assert settled.canonical_item_id == "884"
-    assert server.my_media() == (884,)
-    assert server.sources[settled.workspace_source_id]["media_id"] == 884
-    assert server.sources[settled.workspace_source_id]["workspace_id"] == (
-        "server-workspace-7"
+        server_context_provider=app.server_context_provider,
     )
-    assert local_media.get_media_by_id(884) is None
-    assert local_registry.get_item_memberships("media", "884") == ()
-    assert jobs.get_job(job.job_id).media_id is None
-    assert jobs.get_job(job.job_id).remote_media_id == "884"
+    app.research_source_operation_store = store
+    app.research_source_association_scheduler = ResearchSourceAssociationScheduler(
+        coordinator=coordinator,
+        operation_store=store,
+    )
+    return (
+        app,
+        store,
+        operation,
+        server,
+        local_media_spy,
+        local_registry_spy,
+        jobs_db,
+    )
+
+
+async def _wait_for_operation_status(
+    app: _ServerRoundTripApp,
+    pilot,
+    store: ResearchSourceOperationStore,
+    operation_id: str,
+    *,
+    association_status: SourceOperationStatus,
+) -> ResearchSourceOperation:
+    for _ in range(300):
+        operation = store.get(operation_id)
+        if operation is not None and operation.association_status is association_status:
+            return operation
+        await pilot.pause(0.02)
+    raise AssertionError(f"operation never reached {association_status.value}")
+
+
+@pytest.mark.asyncio
+async def test_server_catalog_and_workspace_source_remain_remote_only(
+    tmp_path: Path,
+) -> None:
+    context = SimpleNamespace(
+        active_server_id="profile-a",
+        auth_token="fixture-token",
+        credential_source="fixture",
+    )
+    (
+        app,
+        store,
+        operation,
+        server,
+        local_media_spy,
+        local_registry_spy,
+        jobs_db,
+    ) = _wire_server_round_trip(tmp_path, active_context=context)
+    source = tmp_path / "server-paper.pdf"
+    source.write_bytes(b"%PDF-1.4\nfixture")
+    assert server.my_media() == ()
+
+    async with app.run_test() as pilot:
+        job = app.prepare_research_source_ingest_job(
+            source_path=str(source),
+            title="Server paper",
+            research_source_operation_id=operation.operation_id,
+            required_origin="server",
+        )
+        operation = store.advance_stage(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.IN_PROGRESS,
+            expected_revision=operation.revision,
+            ingest_job_id=job.job_id,
+        )
+        app._dispatch_research_source_catalog_job(job.job_id)
+        settled = await _wait_for_operation_status(
+            app,
+            pilot,
+            store,
+            operation.operation_id,
+            association_status=SourceOperationStatus.SUCCEEDED,
+        )
+
+    catalog = server.my_media()
+    assert len(catalog) == 1
+    canonical_media = catalog[0]
+    assert canonical_media["title"] == "Server paper"
+    assert settled.catalog_status is SourceOperationStatus.SUCCEEDED
+    assert settled.canonical_item_id == str(canonical_media["id"])
+    assert settled.workspace_source_id in server.sources
+    assert server.sources[settled.workspace_source_id] == {
+        "id": settled.workspace_source_id,
+        "workspace_id": "server-workspace-7",
+        "media_id": canonical_media["id"],
+        "title": "Server paper",
+        "source_type": "pdf",
+        "selected": True,
+        "version": 1,
+    }
+    terminal = app.library_ingest_jobs.get_job(job.job_id)
+    assert terminal is not None and terminal.state is IngestJobState.DONE
+    assert canonical_media["remote_job_id"] == terminal.remote_job_id
+    assert terminal.media_id is None
+    assert terminal.remote_media_id == str(canonical_media["id"])
+    assert server.submit_calls and server.batch_calls
+    assert local_media_spy.mock_calls == []
+    assert local_registry_spy.mock_calls == []
+    jobs_db.close()
+
+
+@pytest.mark.asyncio
+async def test_server_remote_result_missing_from_my_media_fails_closed(
+    tmp_path: Path,
+) -> None:
+    context = SimpleNamespace(
+        active_server_id="profile-a",
+        auth_token="fixture-token",
+        credential_source="fixture",
+    )
+    (
+        app,
+        store,
+        operation,
+        server,
+        local_media_spy,
+        local_registry_spy,
+        jobs_db,
+    ) = _wire_server_round_trip(
+        tmp_path,
+        active_context=context,
+        mismatched_result=True,
+    )
+    source = tmp_path / "mismatched-server-paper.pdf"
+    source.write_bytes(b"%PDF-1.4\nfixture")
+
+    async with app.run_test() as pilot:
+        job = app.prepare_research_source_ingest_job(
+            source_path=str(source),
+            title="Server paper",
+            research_source_operation_id=operation.operation_id,
+            required_origin="server",
+        )
+        operation = store.advance_stage(
+            operation.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.IN_PROGRESS,
+            expected_revision=operation.revision,
+            ingest_job_id=job.job_id,
+        )
+        app._dispatch_research_source_catalog_job(job.job_id)
+        failed = await _wait_for_operation_status(
+            app,
+            pilot,
+            store,
+            operation.operation_id,
+            association_status=SourceOperationStatus.FAILED,
+        )
+
+    assert failed.catalog_status is SourceOperationStatus.SUCCEEDED
+    assert failed.error_code == "association_failed"
+    assert server.my_media()
+    assert failed.canonical_item_id != str(server.my_media()[0]["id"])
+    assert server.sources == {}
+    assert local_media_spy.mock_calls == []
+    assert local_registry_spy.mock_calls == []
+    terminal = app.library_ingest_jobs.get_job(job.job_id)
+    assert terminal is not None and terminal.media_id is None
+    jobs_db.close()
 
 
 @pytest.mark.asyncio
@@ -450,41 +690,33 @@ async def test_server_identity_mismatch_fails_closed_without_local_call(
         auth_token="active-token" if mismatch == "principal" else "submitted-token",
         credential_source="fixture",
     )
-    store = ResearchSourceOperationStore(
-        WorkspaceDB(tmp_path / "receipts.sqlite", client_id="server-mismatch")
+    (
+        app,
+        _store,
+        operation,
+        server,
+        local_media_spy,
+        local_registry_spy,
+        jobs_db,
+    ) = _wire_server_round_trip(
+        tmp_path,
+        active_context=active,
+        captured_context=submitted,
     )
-    operation = store.create(
-        _operation(
-            f"server-mismatch-{mismatch}",
-            data_source=WorkspaceDataSource.SERVER,
-            workspace_id="server-workspace-7",
-            server_profile_id="profile-a",
-            principal_id=event_principal_id_from_active_context(submitted) or "",
+    source = tmp_path / "identity-mismatch.pdf"
+    source.write_bytes(b"%PDF-1.4\nfixture")
+
+    with pytest.raises(ValueError, match="captured Server workspace authority"):
+        app.prepare_research_source_ingest_job(
+            source_path=str(source),
+            research_source_operation_id=operation.operation_id,
+            required_origin="server",
         )
-    )
-    jobs = LibraryIngestJobRegistry()
-    job = jobs.submit(
-        source_path="paper.pdf",
-        origin="server",
-        research_source_operation_id=operation.operation_id,
-    )
-    _link_job(store, operation, job.job_id)
-    jobs.mark_remote_done(job.job_id, remote_media_id="884")
 
-    class NoLocal:
-        def link_membership(self, *args: object, **kwargs: object) -> None:
-            raise AssertionError("Server identity failure must not call Local")
-
-    server = _ServerCatalog(media_id=884)
-    failed = await ResearchSourceAssociationCoordinator(
-        operation_store=store,
-        ingest_jobs=jobs,
-        local_registry=NoLocal(),
-        server_service=server,
-        server_context_provider=SimpleNamespace(get_active_context=lambda: active),
-    ).resume(operation.operation_id)
-
-    assert failed.catalog_status is SourceOperationStatus.SUCCEEDED
-    assert failed.association_status is SourceOperationStatus.FAILED
-    assert failed.error_code == "server_context_changed"
-    assert server.calls == []
+    assert app.library_ingest_jobs.jobs() == ()
+    assert server.submit_calls == []
+    assert server.my_media() == ()
+    assert server.sources == {}
+    assert local_media_spy.mock_calls == []
+    assert local_registry_spy.mock_calls == []
+    jobs_db.close()
