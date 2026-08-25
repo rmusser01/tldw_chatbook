@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 
 _WORKSPACE_V2_SCHEMA = """
@@ -586,6 +587,81 @@ def test_workspace_v6_inline_migration_matches_packaged_sql_and_rolls_back(
         ("legitimate-blank-prefixed-note",),
     ).fetchone() is not None
     connection.close()
+
+
+@pytest.mark.parametrize(
+    ("seconds_from_deadline", "expected_discarded"),
+    [(-1, False), (0, True), (1, True)],
+)
+def test_v5_receipt_abandonment_uses_exact_instant_across_timestamp_formats(
+    tmp_path: Path,
+    seconds_from_deadline: int,
+    expected_discarded: bool,
+) -> None:
+    """A migrated SQLite timestamp and runtime ISO offset compare chronologically."""
+
+    path = tmp_path / f"v5-boundary-{seconds_from_deadline}.sqlite"
+    _create_early_branch_v4_database(path)
+    connection = sqlite3.connect(path)
+    connection.executescript(WorkspaceDB._MIGRATE_V4_TO_V5_SQL)
+    connection.execute(
+        """
+        INSERT INTO research_quick_note_receipts (
+            receipt_id, data_source, server_profile_id, principal_id,
+            workspace_id, local_user_id, operation_token, operation_kind,
+            canonical_note_id, owner_proof, lease_token, lease_expires_at,
+            expected_version, state, revision, failure_count, next_retry_at,
+            blocked_reason_code, created_at, updated_at
+        ) VALUES (?, 'local', '', '', ?, ?, ?, 'create', ?, ?, ?, ?, NULL,
+                  'pending', 1, 0, ?, '', ?, ?)
+        """,
+        (
+            "receipt-boundary",
+            "local-kept",
+            "notes-user",
+            "research-note-123e4567e89b42d3a456426614174000",
+            "research-note-123e4567e89b42d3a456426614174000",
+            "a" * 64,
+            "b" * 64,
+            "2026-08-24T13:00:30-07:00",
+            "2026-08-24T13:00:00-07:00",
+            "2026-08-24T13:00:00-07:00",
+            "2026-08-24T13:00:00-07:00",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    deadline = "2026-08-31T13:00:00-07:00"
+    now = {
+        -1: "2026-08-31T12:59:59-07:00",
+        0: deadline,
+        1: "2026-08-31T13:00:01-07:00",
+    }[seconds_from_deadline]
+    db = WorkspaceDB(path)
+    registry = LocalWorkspaceRegistryService(db, now_factory=lambda: now)
+    try:
+        receipt = registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[0][0]
+        with db.connection() as migrated:
+            elapsed_days = migrated.execute(
+                """
+                SELECT julianday(abandon_after) - julianday(created_at)
+                  FROM research_quick_note_receipts
+                 WHERE receipt_id = ?
+                """,
+                (receipt.receipt_id,),
+            ).fetchone()[0]
+        assert elapsed_days == pytest.approx(7.0)
+        assert registry.discard_abandoned_quick_note_receipt(
+            receipt.receipt_id,
+            "notes-user",
+            expected_revision=receipt.revision,
+            expected_lease_token=receipt.lease_token,
+        ) is expected_discarded
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize(

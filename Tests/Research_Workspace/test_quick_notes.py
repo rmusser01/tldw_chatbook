@@ -388,6 +388,7 @@ class RecordingRegistry:
 class RecordingNotesScope:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.private_proofs: dict[str, str] = {}
         self.rows = {
             "note-1": {
                 "id": "note-1",
@@ -433,6 +434,9 @@ class RecordingNotesScope:
             "keywords": list(kwargs.get("keywords") or ()),
         }
         self.rows[note_id] = row
+        owner_proof = kwargs.get("internal_research_owner_proof")
+        if owner_proof is not None:
+            self.private_proofs[note_id] = str(owner_proof)
         return row
 
     async def delete_note(self, **kwargs):
@@ -442,19 +446,22 @@ class RecordingNotesScope:
                 "stale", entity="notes", entity_id=str(kwargs["note_id"])
             )
         self.rows.pop(str(kwargs["note_id"]), None)
+        self.private_proofs.pop(str(kwargs["note_id"]), None)
         return True
 
-    async def remove_internal_note_keyword(self, **kwargs):
-        self.calls.append(("remove_internal_keyword", kwargs))
-        row = self.rows.get(str(kwargs["note_id"]))
-        if row is None:
+    async def has_internal_research_quick_note_owner_proof(self, **kwargs):
+        self.calls.append(("has_internal_proof", kwargs))
+        return self.private_proofs.get(str(kwargs["note_id"])) == str(
+            kwargs["owner_proof"]
+        )
+
+    async def remove_internal_research_quick_note_owner_proof(self, **kwargs):
+        self.calls.append(("remove_internal_proof", kwargs))
+        note_id = str(kwargs["note_id"])
+        if self.private_proofs.get(note_id) != str(kwargs["owner_proof"]):
             return False
-        keyword = str(kwargs["keyword"])
-        row["keywords"] = [
-            value for value in row.get("keywords", []) if str(value) != keyword
-        ]
+        del self.private_proofs[note_id]
         return True
-
 
 class FailingMembershipRegistry:
     """Inject one role-specific registry failure while retaining real SQLite."""
@@ -575,8 +582,10 @@ async def test_local_create_preclaims_canonical_id_then_promotes_note_membership
         "review",
         "research-message-id:bWVzc2FnZS03",
         "research-source-id:c291cmNlLTk",
-        "research-receipt-proof:owner-proof-1234567890abcdef1234567890abcdef",
     ]
+    assert save_kwargs["internal_research_owner_proof"] == (
+        "owner-proof-1234567890abcdef1234567890abcdef"
+    )
     expected_note_id = saved.note_id
     assert save_kwargs["create_note_id"] == expected_note_id
     assert registry.calls[0] == (
@@ -2210,10 +2219,9 @@ async def test_poison_receipt_backoff_does_not_starve_later_actionable_receipt(
         "content": "Recoverable owner",
         "version": 1,
         "last_modified": "2026-08-24T00:00:00Z",
-        "keywords": [
-            f"research-receipt-proof:{healthy.owner_proof}",
-        ],
+        "keywords": [],
     }
+    notes.private_proofs[healthy.canonical_note_id] = healthy.owner_proof
     adapter = LocalResearchWorkspaceAdapter(
         registry, notes_scope_service=notes, notes_user_id="notes-user"
     )
@@ -2401,7 +2409,11 @@ async def test_internal_receipt_proof_is_atomic_hidden_and_never_logged(tmp_path
         policy_enforcer=None,
     )
     registry_db = WorkspaceDB(tmp_path / "proof-workspace.sqlite")
-    registry = LocalWorkspaceRegistryService(registry_db)
+    receipt_tokens = iter(("private-owner-proof", "private-lease-token"))
+    expected_owner_proof = hashlib.sha256(b"private-owner-proof").hexdigest()
+    registry = LocalWorkspaceRegistryService(
+        registry_db, receipt_token_factory=lambda: next(receipt_tokens)
+    )
     registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
     adapter = LocalResearchWorkspaceAdapter(
         registry, notes_scope_service=notes_scope, notes_user_id="notes-user"
@@ -2447,12 +2459,69 @@ async def test_internal_receipt_proof_is_atomic_hidden_and_never_logged(tmp_path
         assert library_page["items"][0]["keywords"] == ["visible-tag"]
         graph = notes_scope._build_local_notes_graph(user_id="notes-user")
         assert "research-receipt-proof:" not in repr(graph)
+        connection = notes_db.get_connection()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM keywords WHERE keyword LIKE ?",
+            ("research-receipt-proof:%",),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?",
+            ("%research-receipt-proof:%",),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?",
+            (f"%{expected_owner_proof}%",),
+        ).fetchone()[0] == 0
         assert created.tags == ("visible-tag",)
         assert "research-receipt-proof:" not in "\n".join(messages)
+        assert expected_owner_proof not in "\n".join(messages)
     finally:
         registry_db.close()
         notes_db.close_connection()
         logger.remove(sink)
+
+
+@pytest.mark.asyncio
+async def test_private_proof_failure_rolls_back_canonical_note_and_sync_log(
+    tmp_path,
+) -> None:
+    class FailProofInterop(NotesInteropService):
+        def add_internal_research_quick_note_owner_proof(self, *args, **kwargs):
+            raise CharactersRAGDBError("injected private proof failure")
+
+    notes_db = CharactersRAGDB(
+        str(tmp_path / "proof-atomic.sqlite"), client_id="template"
+    )
+    interop = FailProofInterop(
+        base_db_directory=tmp_path,
+        api_client_id="research-client",
+        global_db_to_use=notes_db,
+    )
+    notes_scope = NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    note_id = "research-note-123e4567e89b42d3a456426614174000"
+    try:
+        with pytest.raises(CharactersRAGDBError, match="private proof failure"):
+            await notes_scope.save_note(
+                scope="local_note",
+                note_id=None,
+                create_note_id=note_id,
+                title="Atomic owner",
+                content="Canonical body",
+                keywords=["visible-tag"],
+                internal_research_owner_proof="a" * 64,
+                version=None,
+                user_id="notes-user",
+            )
+        assert notes_db.get_note_by_id(note_id) is None
+        assert notes_db.get_connection().execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity_id = ?", (note_id,)
+        ).fetchone()[0] == 0
+    finally:
+        notes_db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -2464,11 +2533,13 @@ async def test_create_reopens_from_projection_committed_and_removes_private_proo
             super().__init__(**kwargs)
             self.fail_cleanup = True
 
-        async def remove_internal_note_keyword(self, **kwargs):
+        async def remove_internal_research_quick_note_owner_proof(self, **kwargs):
             if self.fail_cleanup:
                 self.fail_cleanup = False
                 raise CharactersRAGDBError("private cleanup failure")
-            return await super().remove_internal_note_keyword(**kwargs)
+            return await super().remove_internal_research_quick_note_owner_proof(
+                **kwargs
+            )
 
     clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
     notes_path = tmp_path / "projection-proof-notes.sqlite"
@@ -2503,39 +2574,27 @@ async def test_create_reopens_from_projection_committed_and_removes_private_proo
         )[0][0]
         assert receipt.state == "projection_committed"
         assert registry.get_item_memberships("note", receipt.canonical_note_id)
-        internal_rows = [
-            row
-            for row in notes_db.get_keywords_for_note(receipt.canonical_note_id)
-            if str(row["keyword"]).startswith("research-receipt-proof:")
-        ]
-        assert len(internal_rows) == 1
-        internal_row = internal_rows[0]
-        internal_keyword = str(internal_row["keyword"])
+        assert notes_db.has_research_quick_note_owner_proof(
+            receipt.canonical_note_id, receipt.owner_proof
+        )
         assert all(
             not str(row["keyword"]).startswith("research-receipt-proof:")
-            for row in interop.get_keywords_for_note(
-                "notes-user", receipt.canonical_note_id
-            )
+            for row in notes_db.get_keywords_for_note(receipt.canonical_note_id)
         )
-        assert interop.get_keyword_by_id("notes-user", int(internal_row["id"])) is None
-        assert interop.get_keyword_by_text("notes-user", internal_keyword) is None
-        assert interop.get_notes_for_keyword(
-            "notes-user", int(internal_row["id"]), limit=100
-        ) == []
-        assert internal_keyword not in {
-            str(row["keyword"])
-            for row in interop.list_keywords("notes-user", limit=100, offset=0)
-        }
+        assert notes_db.get_connection().execute(
+            "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?",
+            (f"%{receipt.owner_proof}%",),
+        ).fetchone()[0] == 0
         assert interop.search_keywords(
             "notes-user", "research-receipt-proof", limit=100
         ) == []
         assert notes_db.get_keywords_for_notes_batch(
             [receipt.canonical_note_id]
         ) == {}
-        assert internal_keyword not in {
-            str(row["keyword"])
+        assert all(
+            not str(row["keyword"]).startswith("research-receipt-proof:")
             for row in notes_db.list_keywords(limit=100, offset=0)
-        }
+        )
         assert notes_db.search_keywords(
             "research-receipt-proof", limit=100
         ) == []
@@ -2558,9 +2617,8 @@ async def test_create_reopens_from_projection_committed_and_removes_private_proo
         assert registry.list_quick_note_receipts(
             "notes-user", include_blocked=True, limit=100
         )[1] == 0
-        assert all(
-            not str(row["keyword"]).startswith("research-receipt-proof:")
-            for row in notes_db.get_keywords_for_note(receipt.canonical_note_id)
+        assert not notes_db.has_research_quick_note_owner_proof(
+            receipt.canonical_note_id, receipt.owner_proof
         )
     finally:
         registry_db.close()

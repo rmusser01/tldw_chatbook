@@ -187,19 +187,35 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
     class Notes:
         def __init__(self) -> None:
             self.calls = []
+            self.rows = {}
+            self.private_proofs = {}
 
         async def get_note_detail(self, **kwargs):
-            return None
+            return self.rows.get(kwargs["note_id"])
 
         async def save_note(self, **kwargs):
             self.calls.append(kwargs)
-            return {
+            row = {
                 "id": kwargs["create_note_id"],
                 "title": kwargs["title"],
                 "content": kwargs["content"],
                 "keywords": kwargs["keywords"],
                 "version": 1,
             }
+            self.rows[row["id"]] = row
+            self.private_proofs[row["id"]] = kwargs[
+                "internal_research_owner_proof"
+            ]
+            return row
+
+        async def has_internal_research_quick_note_owner_proof(self, **kwargs):
+            return self.private_proofs.get(kwargs["note_id"]) == kwargs["owner_proof"]
+
+        async def remove_internal_research_quick_note_owner_proof(self, **kwargs):
+            if self.private_proofs.get(kwargs["note_id"]) != kwargs["owner_proof"]:
+                return False
+            del self.private_proofs[kwargs["note_id"]]
+            return True
 
     registry_db = WorkspaceDB(tmp_path / "workspace-owner.sqlite")
     registry = LocalWorkspaceRegistryService(registry_db)
@@ -230,7 +246,7 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
 
 
 @pytest.mark.asyncio
-async def test_app_startup_reconciliation_clears_absent_owner_after_lease_expiry(
+async def test_app_startup_reconciliation_clears_absent_owner_only_after_grace(
     tmp_path: Path,
 ) -> None:
     class MissingNotes:
@@ -260,6 +276,15 @@ async def test_app_startup_reconciliation_clears_absent_owner_after_lease_expiry
             "startup-user", include_blocked=True, limit=100
         )[1] == 1
         current += timedelta(seconds=31)
+        await app._reconcile_research_quick_notes_startup()
+        assert registry.list_quick_note_receipts(
+            "startup-user", include_blocked=True, limit=100
+        )[1] == 1
+        current = datetime(2026, 8, 31, tzinfo=timezone.utc) - timedelta(seconds=1)
+        assert registry.list_quick_note_receipts(
+            "startup-user", include_blocked=True, limit=100
+        )[1] == 1
+        current += timedelta(seconds=1)
         await app._reconcile_research_quick_notes_startup()
         receipts, total = registry.list_quick_note_receipts(
             "startup-user", include_blocked=True, limit=100

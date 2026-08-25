@@ -898,6 +898,19 @@ AFTER DELETE ON notes BEGIN
   VALUES('delete',old.rowid,old.title,old.content);
 END;
 
+/* Private, local-only Research Quick Note recovery ownership.
+   Deliberately has no sync/FTS/export trigger or ordinary Notes metadata seam. */
+CREATE TABLE IF NOT EXISTS research_quick_note_owner_proofs(
+  note_id     TEXT PRIMARY KEY NOT NULL
+              REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  owner_proof TEXT NOT NULL CHECK (
+      length(owner_proof) = 64
+      AND owner_proof = lower(owner_proof)
+      AND owner_proof NOT GLOB '*[^0-9a-f]*'
+  ),
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 /*----------------------------------------------------------------
   7. Linking tables (no FTS)
 ----------------------------------------------------------------*/
@@ -2926,6 +2939,64 @@ ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
     _MIGRATE_V41_TO_V42_SQL = """
 ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql.
+    # This table is private local recovery state: no trigger may project it to
+    # sync_log, FTS, keyword/tag surfaces, exports, graph, or RAG.
+    _MIGRATE_V42_TO_V43_CREATE_SQL = """CREATE TABLE research_quick_note_owner_proofs(
+  note_id     TEXT PRIMARY KEY NOT NULL
+              REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  owner_proof TEXT NOT NULL CHECK (
+      length(owner_proof) = 64
+      AND owner_proof = lower(owner_proof)
+      AND owner_proof NOT GLOB '*[^0-9a-f]*'
+  ),
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+    _MIGRATE_V42_TO_V43_BACKFILL_SQL = """
+INSERT OR IGNORE INTO research_quick_note_owner_proofs (note_id, owner_proof)
+SELECT nk.note_id,
+       substr(k.keyword, length('research-receipt-proof:') + 1)
+  FROM note_keywords AS nk
+  JOIN keywords AS k ON k.id = nk.keyword_id
+ WHERE k.keyword LIKE 'research-receipt-proof:%'
+   AND length(substr(k.keyword, length('research-receipt-proof:') + 1)) = 64
+   AND substr(k.keyword, length('research-receipt-proof:') + 1)
+       = lower(substr(k.keyword, length('research-receipt-proof:') + 1))
+   AND substr(k.keyword, length('research-receipt-proof:') + 1)
+       NOT GLOB '*[^0-9a-f]*';
+"""
+    _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL = """
+DELETE FROM sync_log
+ WHERE entity = 'note_keywords'
+   AND EXISTS (
+       SELECT 1
+         FROM keywords AS k
+        WHERE k.keyword LIKE 'research-receipt-proof:%'
+          AND CAST(json_extract(sync_log.payload, '$.keyword_id') AS INTEGER) = k.id
+   );
+"""
+    _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL = """
+DELETE FROM sync_log
+ WHERE entity = 'keywords'
+   AND entity_id IN (
+       SELECT CAST(id AS TEXT)
+         FROM keywords
+        WHERE keyword LIKE 'research-receipt-proof:%'
+   );
+"""
+    _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL = """
+DELETE FROM keywords WHERE keyword LIKE 'research-receipt-proof:%';
+"""
+    _MIGRATE_V42_TO_V43_SQL = (
+        _MIGRATE_V42_TO_V43_CREATE_SQL
+        + _MIGRATE_V42_TO_V43_BACKFILL_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
+    )
 
     # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
@@ -5813,10 +5884,11 @@ UPDATE db_schema_version
             ) from exc
 
     def _migrate_from_v42_to_v43(self, conn: sqlite3.Connection) -> None:
-        """Add the local-only ``message_exchanges`` table (task-18300, Console
-        Conversation Inspector): per-message provider-exchange capture rows.
-        No sync triggers, no FTS -- local-only precedent (v29->v30
-        usage_json)."""
+        """Add local message exchanges and private Quick Note owner proofs.
+
+        Both features first shipped from schema version 42, so they share one
+        atomic migration and one guarded version transition to 43.
+        """
         if self._get_db_version(conn) != 42:
             raise SchemaError(
                 f"[{self._SCHEMA_NAME} V42→V43] Migration requires schema version 42"
@@ -5845,10 +5917,98 @@ UPDATE db_schema_version
                         "Message exchanges migration contains incomplete SQL"
                     )
 
-                # The migration file is DDL-only (see its header); the
-                # version bump is a separate, rowcount-guarded UPDATE here
-                # -- matching the v29->v30 usage_json shape -- rather than
-                # embedded in the script like the v32-v39 migrations do.
+                table_row = cursor.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    ("research_quick_note_owner_proofs",),
+                ).fetchone()
+                if table_row is None:
+                    cursor.execute(self._MIGRATE_V42_TO_V43_CREATE_SQL)
+                else:
+                    columns = cursor.execute(
+                        "PRAGMA table_info(research_quick_note_owner_proofs)"
+                    ).fetchall()
+                    column_shape = [
+                        (
+                            str(row[1]),
+                            str(row[2]).upper(),
+                            int(row[3]),
+                            row[4],
+                            int(row[5]),
+                        )
+                        for row in columns
+                    ]
+                    expected_shape = [
+                        ("note_id", "TEXT", 1, None, 1),
+                        ("owner_proof", "TEXT", 1, None, 0),
+                        ("created_at", "DATETIME", 1, "CURRENT_TIMESTAMP", 0),
+                    ]
+                    foreign_keys = cursor.execute(
+                        "PRAGMA foreign_key_list(research_quick_note_owner_proofs)"
+                    ).fetchall()
+                    has_exact_foreign_key = len(foreign_keys) == 1 and (
+                        str(foreign_keys[0][2]),
+                        str(foreign_keys[0][3]),
+                        str(foreign_keys[0][4]),
+                        str(foreign_keys[0][5]).upper(),
+                        str(foreign_keys[0][6]).upper(),
+                    ) == ("notes", "note_id", "id", "CASCADE", "CASCADE")
+                    normalized_sql = " ".join(
+                        str(table_row[0] or "").lower().split()
+                    )
+                    has_canonical_check = all(
+                        fragment in normalized_sql
+                        for fragment in (
+                            "length(owner_proof) = 64",
+                            "owner_proof = lower(owner_proof)",
+                            "owner_proof not glob '*[^0-9a-f]*'",
+                        )
+                    )
+                    trigger_count = int(
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM sqlite_master "
+                            "WHERE type = 'trigger' AND tbl_name = ?",
+                            ("research_quick_note_owner_proofs",),
+                        ).fetchone()[0]
+                    )
+                    if (
+                        column_shape != expected_shape
+                        or not has_exact_foreign_key
+                        or not has_canonical_check
+                        or trigger_count != 0
+                    ):
+                        raise SchemaError(
+                            f"[{self._SCHEMA_NAME} V42→V43] Existing private proof table has an incompatible shape"
+                        )
+
+                conflicting_legacy_proof = cursor.execute(
+                    """
+                    SELECT 1
+                      FROM research_quick_note_owner_proofs AS p
+                      JOIN note_keywords AS nk ON nk.note_id = p.note_id
+                      JOIN keywords AS k ON k.id = nk.keyword_id
+                     WHERE k.keyword LIKE 'research-receipt-proof:%'
+                       AND length(substr(k.keyword, length('research-receipt-proof:') + 1)) = 64
+                       AND p.owner_proof <> substr(
+                           k.keyword, length('research-receipt-proof:') + 1
+                       )
+                     LIMIT 1
+                    """
+                ).fetchone()
+                if conflicting_legacy_proof is not None:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V42→V43] Conflicting private proof ownership"
+                    )
+                for remediation_sql in (
+                    self._MIGRATE_V42_TO_V43_BACKFILL_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL,
+                ):
+                    cursor.execute(remediation_sql)
+
+                # Both v42 feature additions commit behind one guarded schema
+                # transition so a partial failure cannot stamp either one as
+                # complete independently.
                 version_cursor = cursor.execute(
                     """
                     UPDATE db_schema_version
@@ -13705,6 +13865,71 @@ UPDATE db_schema_version
             logger.error(f"Database error adding note '{title.strip()}': {e}")
             raise
 
+    @staticmethod
+    def _validate_research_quick_note_owner_proof(owner_proof: str) -> str:
+        """Validate one hashed private recovery proof without echoing it."""
+
+        if not isinstance(owner_proof, str) or re.fullmatch(
+            r"[0-9a-f]{64}", owner_proof
+        ) is None:
+            raise ValueError("Research Quick Note owner proof is invalid.")
+        return owner_proof
+
+    def add_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Store private recovery ownership; never project it to sync or metadata."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        with self.transaction() as cursor:
+            result = cursor.execute(
+                """
+                INSERT INTO research_quick_note_owner_proofs (note_id, owner_proof)
+                VALUES (?, ?)
+                """,
+                (note_id.strip(), safe_proof),
+            )
+        return result.rowcount == 1
+
+    def has_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Verify exact private recovery ownership without exposing the proof row."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        row = self.get_connection().execute(
+            """
+            SELECT 1
+              FROM research_quick_note_owner_proofs
+             WHERE note_id = ? AND owner_proof = ?
+             LIMIT 1
+            """,
+            (note_id.strip(), safe_proof),
+        ).fetchone()
+        return row is not None
+
+    def remove_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Remove only the exact private proof held by a recovery receipt."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        with self.transaction() as cursor:
+            result = cursor.execute(
+                """
+                DELETE FROM research_quick_note_owner_proofs
+                 WHERE note_id = ? AND owner_proof = ?
+                """,
+                (note_id.strip(), safe_proof),
+            )
+        return result.rowcount == 1
+
     def get_note_by_id(self, note_id: str) -> Optional[Dict[str, Any]]:
         query = "SELECT * FROM notes WHERE id = ? AND deleted = 0"
         cursor = self.execute_query(query, (note_id,))
@@ -15106,55 +15331,6 @@ UPDATE db_schema_version
         return self._manage_link(
             "note_keywords", "note_id", note_id, "keyword_id", keyword_id, "unlink"
         )
-
-    def unlink_note_from_keyword_by_text(
-        self, note_id: str, keyword_text: str
-    ) -> bool:
-        """Atomically remove one exact keyword link without exposing its row."""
-
-        if not isinstance(note_id, str) or not note_id.strip():
-            raise InputError("Note ID cannot be empty.")
-        if not isinstance(keyword_text, str) or not keyword_text.strip():
-            raise InputError("Keyword text cannot be empty.")
-        now_iso = self._get_current_utc_timestamp_iso()
-        try:
-            with self.transaction() as conn:
-                keyword = conn.execute(
-                    "SELECT id FROM keywords WHERE keyword = ? AND deleted = 0",
-                    (keyword_text.strip(),),
-                ).fetchone()
-                if keyword is None:
-                    return False
-                keyword_id = int(keyword["id"])
-                cursor = conn.execute(
-                    "DELETE FROM note_keywords WHERE note_id = ? AND keyword_id = ?",
-                    (note_id.strip(), keyword_id),
-                )
-                if cursor.rowcount > 0:
-                    conn.execute(
-                        """
-                        INSERT INTO sync_log (
-                            entity, entity_id, operation, timestamp,
-                            client_id, version, payload
-                        ) VALUES ('note_keywords', ?, 'delete', ?, ?, 1, ?)
-                        """,
-                        (
-                            f"{note_id.strip()}_{keyword_id}",
-                            now_iso,
-                            self.client_id,
-                            json.dumps(
-                                {"note_id": note_id.strip(), "keyword_id": keyword_id}
-                            ),
-                        ),
-                    )
-                return cursor.rowcount > 0
-        except sqlite3.Error as exc:
-            logger.opt(exception=True).error(
-                "SQLite error removing a note keyword by exact text"
-            )
-            raise CharactersRAGDBError(
-                "Database error removing the note keyword link"
-            ) from exc
 
     def get_keywords_for_note(
         self, note_id: str

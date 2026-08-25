@@ -92,6 +92,10 @@ APACHE_SUBTREE_LICENSE_PATHS = frozenset(
         "tldw_chatbook/tldw_api/LICENSE",
     }
 )
+RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v42_to_v43_research_quick_note_proofs.sql"
+)
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
     "admiration",
@@ -887,6 +891,7 @@ assert {
     "visual_identity_bindings",
 } <= installed_tables
 assert "transcript_annotations" in installed_tables
+assert "research_quick_note_owner_proofs" in installed_tables
 upgraded_db.close_connection()
 print(f"installed-wheel-v35-to-current-ok v{current_schema_version}")
 """

@@ -185,6 +185,33 @@ class NotesInteropService:
 
         return self._get_db(user_id).transaction(immediate=True)
 
+    def add_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Store one private recovery proof outside all ordinary Notes metadata."""
+
+        return self._get_db(user_id).add_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
+    def has_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Verify one exact private recovery proof without returning its payload."""
+
+        return self._get_db(user_id).has_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
+    def remove_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Remove only the exact private proof held by the caller."""
+
+        return self._get_db(user_id).remove_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
     def add_note(
         self, user_id: str, title: str, content: str, note_id: Optional[str] = None
     ) -> str:
@@ -775,26 +802,6 @@ class NotesInteropService:
             for row in db.get_keywords_for_note(note_id=note_id)
             if not _is_internal_research_keyword(row)
         ]
-
-    def get_internal_keywords_for_note(
-        self, user_id: str, note_id: str
-    ) -> List[Dict[str, Any]]:
-        """Return raw keywords solely for receipt recovery."""
-
-        return self._get_db(user_id).get_keywords_for_note(note_id=note_id)
-
-    def remove_internal_note_keyword(
-        self, user_id: str, note_id: str, keyword_text: str
-    ) -> bool:
-        """Remove an exact recovery marker without exposing it to ordinary callers."""
-
-        if not isinstance(keyword_text, str) or not keyword_text.startswith(
-            _RESEARCH_RECEIPT_PROOF_PREFIX
-        ):
-            raise ValueError("Only internal Research receipt keywords may be removed.")
-        return self._get_db(user_id).unlink_note_from_keyword_by_text(
-            note_id=note_id, keyword_text=keyword_text
-        )
 
     def get_notes_for_keyword(
         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0

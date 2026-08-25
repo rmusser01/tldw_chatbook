@@ -1551,7 +1551,7 @@ class LocalWorkspaceRegistryService:
                     DELETE FROM research_quick_note_receipts
                     WHERE receipt_id = ? AND local_user_id = ?
                       AND revision = ? AND lease_token = ?
-                      AND abandon_after <= ?
+                      AND julianday(abandon_after) <= julianday(?)
                     """,
                     (
                         safe_receipt_id,

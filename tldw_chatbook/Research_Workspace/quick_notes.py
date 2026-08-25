@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping
 from dataclasses import dataclass
-import hmac
 import re
 from typing import Any
 from uuid import RFC_4122, UUID, uuid4
@@ -248,27 +247,6 @@ def _bounded_values(
 def _is_provenance_keyword(value: str) -> bool:
     return value.startswith(_RECEIPT_PROOF_PREFIX) or any(
         value.startswith(prefix) for prefix in _PROVENANCE_PREFIXES.values()
-    )
-
-
-def encode_receipt_proof(owner_proof: str) -> str:
-    """Encode the private receipt proof as an owner-internal keyword."""
-
-    proof = _required_text(owner_proof, "owner_proof", max_chars=256)
-    if len(proof) < 32:
-        raise ValueError("owner_proof is invalid")
-    return _RECEIPT_PROOF_PREFIX + proof
-
-
-def note_has_receipt_proof(values: object, owner_proof: str) -> bool:
-    """Return whether canonical owner keywords contain the exact private proof."""
-
-    if not isinstance(values, (list, tuple)):
-        return False
-    expected = encode_receipt_proof(owner_proof)
-    return any(
-        isinstance(value, str) and hmac.compare_digest(value.strip(), expected)
-        for value in values[:171]
     )
 
 

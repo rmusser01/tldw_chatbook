@@ -42,8 +42,6 @@ from .quick_notes import (
     ResearchNoteSaveRequest,
     ResearchQuickNote,
     encode_note_keywords,
-    encode_receipt_proof,
-    note_has_receipt_proof,
     split_note_keywords,
 )
 from .source_operations import (
@@ -424,10 +422,8 @@ class LocalResearchWorkspaceAdapter:
                     create_note_id=note_id,
                     title=request.title,
                     content=request.content,
-                    keywords=[
-                        *encode_note_keywords(request),
-                        encode_receipt_proof(receipt.owner_proof),
-                    ],
+                    keywords=encode_note_keywords(request),
+                    internal_research_owner_proof=receipt.owner_proof,
                     version=None,
                     user_id=self._notes_user_id,
                 )
@@ -441,7 +437,12 @@ class LocalResearchWorkspaceAdapter:
         if note.note_id != note_id:
             raise ValueError("Local Notes returned a mismatched canonical note id")
         is_workspace_note = await self._is_workspace_note(ref, note_id)
-        has_proof = note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
+        has_proof = await notes.has_internal_research_quick_note_owner_proof(
+            scope="local_note",
+            note_id=note_id,
+            owner_proof=receipt.owner_proof,
+            user_id=self._notes_user_id,
+        )
         if is_workspace_note and receipt.state == "pending" and not has_proof:
             if not self._note_matches_request(note, request):
                 await asyncio.to_thread(
@@ -493,16 +494,20 @@ class LocalResearchWorkspaceAdapter:
                 title=note.title,
             )
         if has_proof:
-            await notes.remove_internal_note_keyword(
+            await notes.remove_internal_research_quick_note_owner_proof(
                 scope="local_note",
                 note_id=note.note_id,
-                keyword=encode_receipt_proof(receipt.owner_proof),
+                owner_proof=receipt.owner_proof,
                 user_id=self._notes_user_id,
             )
         cleaned = await self._load_local_note_row(notes, note.note_id)
-        if cleaned is None or note_has_receipt_proof(
-            cleaned.get("keywords"), receipt.owner_proof
-        ):
+        proof_remains = await notes.has_internal_research_quick_note_owner_proof(
+            scope="local_note",
+            note_id=note.note_id,
+            owner_proof=receipt.owner_proof,
+            user_id=self._notes_user_id,
+        )
+        if cleaned is None or proof_remains:
             raise CharactersRAGDBError("Local Notes proof cleanup did not settle")
         completed = await asyncio.to_thread(
             self._service.complete_quick_note_create,
@@ -616,6 +621,7 @@ class LocalResearchWorkspaceAdapter:
         ref: QualifiedWorkspaceRef,
         row: Mapping[str, Any] | None,
     ) -> None:
+        notes = self._require_notes_scope("save_note")
         if row is None:
             discarded = await asyncio.to_thread(
                 self._service.discard_abandoned_quick_note_receipt,
@@ -634,7 +640,12 @@ class LocalResearchWorkspaceAdapter:
                     reason_code="owner_missing",
                 )
             return
-        has_proof = note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
+        has_proof = await notes.has_internal_research_quick_note_owner_proof(
+            scope="local_note",
+            note_id=receipt.canonical_note_id,
+            owner_proof=receipt.owner_proof,
+            user_id=self._notes_user_id,
+        )
         if (
             str(row.get("id") or "") != receipt.canonical_note_id
             or (receipt.state != "projection_committed" and not has_proof)
@@ -668,17 +679,20 @@ class LocalResearchWorkspaceAdapter:
                 title=note.title,
             )
         if has_proof:
-            notes = self._require_notes_scope("save_note")
-            await notes.remove_internal_note_keyword(
+            await notes.remove_internal_research_quick_note_owner_proof(
                 scope="local_note",
                 note_id=note.note_id,
-                keyword=encode_receipt_proof(receipt.owner_proof),
+                owner_proof=receipt.owner_proof,
                 user_id=self._notes_user_id,
             )
             cleaned = await self._load_local_note_row(notes, note.note_id)
-            if cleaned is None or note_has_receipt_proof(
-                cleaned.get("keywords"), receipt.owner_proof
-            ):
+            proof_remains = await notes.has_internal_research_quick_note_owner_proof(
+                scope="local_note",
+                note_id=note.note_id,
+                owner_proof=receipt.owner_proof,
+                user_id=self._notes_user_id,
+            )
+            if cleaned is None or proof_remains:
                 raise CharactersRAGDBError("Local Notes proof cleanup did not settle")
         await asyncio.to_thread(
             self._service.complete_quick_note_create,

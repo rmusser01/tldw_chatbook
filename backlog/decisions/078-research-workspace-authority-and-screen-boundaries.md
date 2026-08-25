@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-23
-- **Last amended:** 2026-08-24 (durable Local Quick Note receipts)
+- **Last amended:** 2026-08-24 (private Local Quick Note recovery proof)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
 - **Amends:** ADR-015 (shell destination taxonomy); ADR-028 (adds Research
@@ -157,21 +157,30 @@ context, or RAG scope, and it stores no title, body, tags, provenance, path, or
 URL. Consequently, identical tokens or delimiter-shaped identities cannot
 associate one user's or workspace's Note with another owner.
 
-The canonical Notes row, user keywords/provenance, and an internal receipt-proof
-keyword commit in one Notes-owner transaction. Create retry verifies the exact
-canonical title, body, tags, provenance, qualified identity, and proof before
-advancing `pending` to `owner_committed`. One WorkspaceDB transaction then adds
-the authoritative `WorkspaceMembership(role="note")` and records
-`projection_committed`. Recovery next atomically removes the proof keyword from
-the Notes owner, verifies its absence, and only then consumes the exact receipt.
-Crashes at each boundary resume from the durable state. Ordinary Library
-keyword reads, list/search, exports, graphs, RAG tag batches, and Research tags
-hide the proof even while cleanup is pending; only the narrow receipt-recovery
-seam may read or remove it. Deterministic UUID existence or a caller token alone
-is never proof of owner commit. Restart promotion requires the exact qualified
-receipt plus its random proof marker and canonical owner invariants, except that
-a `projection_committed` receipt may resume after its proof has already been
-removed.
+The canonical Notes row, user keywords/provenance, and a private hashed recovery
+proof commit in one Notes-owner transaction. Notes schema v43 stores that proof
+only in `research_quick_note_owner_proofs`, keyed by canonical Note ID with an
+owner-bound foreign-key cascade and no sync, keyword, FTS, export, graph, or RAG
+trigger. The narrow recovery seam can only add, verify, or remove an exact
+Note/proof pair; it never lists or returns proof payloads. Create retry verifies
+the exact canonical title, body, tags, provenance, qualified identity, and
+private proof before advancing `pending` to `owner_committed`. One WorkspaceDB
+transaction then adds the authoritative `WorkspaceMembership(role="note")` and
+records `projection_committed`. Recovery next atomically removes the private
+proof from the Notes owner, verifies its absence, and only then consumes the
+exact receipt. Crashes at each boundary resume from the durable state.
+Deterministic UUID existence or a caller token alone is never proof of owner
+commit. Restart promotion requires the exact qualified receipt plus its private
+proof and canonical owner invariants, except that a `projection_committed`
+receipt may resume after its proof has already been removed.
+
+The genuine Notes v42→v43 migration backfills only canonical historical
+receipt-proof keyword links into the private table, removes their keyword and
+note-keyword sync-log payloads, then deletes every reserved proof keyword in the
+same version-guarded transaction. New writes never create an ordinary proof
+keyword. Library keyword reads, sync/export, list/search, graphs, RAG tag
+batches, Research tags, Notes bodies, and logs therefore cannot observe the
+proof; legacy keyword filtering remains defense in depth during migration.
 
 A pending create carries a short durable work lease and revision fence.
 Reconciliation does not inspect or clear it while the lease is live. Lease
@@ -211,7 +220,10 @@ unreleased proof-less receipt ledger but preserves every membership, including
 blank `research-note-*` rows, because WorkspaceDB cannot consult the independent
 Notes owner to classify them safely. V5→v6 preserves those memberships and all
 safe v5 receipt rows while adding abandonment and proof-cleanup recovery state.
-No migration heuristic promotes or deletes an ordinary membership.
+Runtime abandonment compares parsed SQLite Julian instants rather than raw
+timestamp text, so historical space-separated UTC values and runtime ISO/offset
+values share the same exact seven-day boundary. No migration heuristic promotes
+or deletes an ordinary membership.
 
 ### 5. Server folders and annotations are explicit device-only overlays
 
