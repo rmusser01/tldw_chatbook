@@ -504,6 +504,41 @@ async def test_selection_copy_writes_are_equality_guarded_and_layout_free(
         assert all(layout is False for _copy, layout in writes), writes
         assert context.region == slot_region
 
+        # Review hardening (TASK-22203): a copy WIDER than the slot must not
+        # bank a geometry change for the next real layout pass. This is the
+        # contract that makes ``layout=False`` safe at all — the CSS pins the
+        # slot to a single ``nowrap``/``ellipsis`` row, so no copy can change
+        # its height. Asserting the region right after the write cannot detect
+        # the pin being removed: ``layout=False`` itself freezes the stale
+        # region (and even an ancestor-level layout keeps the Static's cached
+        # content height). The honest probe arms the layout pass the guarded
+        # write withheld — ``context.refresh(layout=True)``, exactly what
+        # ``update()`` would have armed, and what any later slot-level
+        # invalidation (width relabel recompose, resize) performs — and
+        # requires the one-row geometry to survive it. Unpin the CSS
+        # (``height: 1``/``text-wrap: nowrap``) and this overlong copy
+        # re-measures to several rows on that pass, and reds here.
+        overlong = WorkspaceTreeNodeData.conversation(
+            "workspace-1",
+            "conversation-3",
+            "An overlong conversation title that cannot possibly fit the "
+            "selection slot at this rail width without wrapping",
+            starred=False,
+            selected=False,
+            star_enabled=True,
+        )
+        tray.sync_workspace_tree_context(overlong)
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        assert len(writes) == 3, writes
+        assert all(layout is False for _copy, layout in writes), writes
+        assert context.region == slot_region
+        context.refresh(layout=True)
+        await pilot.pause()
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        assert context.region == slot_region
+
 
 @pytest.mark.asyncio
 async def test_selection_tooltip_writes_are_equality_guarded_when_clipped(
