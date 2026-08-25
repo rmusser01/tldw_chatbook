@@ -34,7 +34,7 @@ No new module or shared split-pane abstraction is introduced. Watchlists duplica
 - Modify: `Tests/Watchlists/test_watchlists_responsive_layout.py`
 - Modify: `tldw_chatbook/UI/Watchlists_Modules/region_layout.py:48-175`
 
-- [ ] **Step 1: Extend the test helper and write failing boundary tests**
+- [x] **Step 1: Extend the test helper and write failing boundary tests**
 
 Update the local helper so tests can supply responsive history:
 
@@ -100,7 +100,7 @@ Also add tests for:
 - `previous=None` preserving every existing nominal breakpoint;
 - manual preferred collapses and Article Focus remaining authoritative.
 
-- [ ] **Step 2: Run the pure layout tests and verify RED**
+- [x] **Step 2: Run the pure layout tests and verify RED**
 
 Run:
 
@@ -110,7 +110,7 @@ Run:
 
 Expected: FAIL because `resolve_effective_layout` does not accept `previous` and `LAYOUT_HYSTERESIS_WIDTH` does not exist.
 
-- [ ] **Step 3: Implement the minimal pure resolver change**
+- [x] **Step 3: Implement the minimal pure resolver change**
 
 Add the Watchlists-local semantic constant:
 
@@ -144,13 +144,13 @@ return RegionLayout(collapsed=frozenset(set(mounted) - accepted_open))
 
 Keep the Article Focus early return before hysteresis. Build `candidates` with the existing priority-target move before reversing it, so reopening uses the priority-adjusted order. Do not iterate a set when order affects the result.
 
-- [ ] **Step 4: Run the pure layout tests and verify GREEN**
+- [x] **Step 4: Run the pure layout tests and verify GREEN**
 
 Run the same command from Step 2.
 
 Expected: all tests in `test_watchlists_responsive_layout.py` PASS.
 
-- [ ] **Step 5: Commit the pure policy**
+- [x] **Step 5: Commit the pure policy**
 
 ```bash
 git add Tests/Watchlists/test_watchlists_responsive_layout.py tldw_chatbook/UI/Watchlists_Modules/region_layout.py
@@ -164,7 +164,7 @@ git commit -m "fix(watchlists): add responsive layout hysteresis"
 - Modify: `Tests/Watchlists/test_watchlists_scoped_rebuilds.py`
 - Modify: `tldw_chatbook/UI/Screens/watchlists_collections_screen.py:18-22, 410-435, 1008-1030, 3038-3120`
 
-- [ ] **Step 1: Write failing width-authority and no-op request tests**
+- [x] **Step 1: Write failing width-authority and no-op request tests**
 
 In `test_watchlists_collections_screen.py`, use a minimal fake receiver with a Textual `Size` and call `_available_layout_width` unbound. Assert a positive `self.size.width` is returned without querying the workbench, while zero returns `None`:
 
@@ -188,7 +188,7 @@ In `test_watchlists_scoped_rebuilds.py`, mount the screen, explicitly establish 
 
 Add a zero-width controller test that first calls recomputation with no responsive history, then after a positive baseline. In both zero-width cases assert no history change, no token increment, and no workbench request.
 
-- [ ] **Step 2: Run the new controller tests and verify RED**
+- [x] **Step 2: Run the new controller tests and verify RED**
 
 Run only the new node IDs:
 
@@ -202,7 +202,7 @@ Run only the new node IDs:
 
 Expected: FAIL because workbench width remains authoritative, responsive history is not separate, and equal effective layouts still allocate request tokens.
 
-- [ ] **Step 3: Add explicit recompute causes and responsive baseline state**
+- [x] **Step 3: Add explicit recompute causes and responsive baseline state**
 
 Import `Literal` and define:
 
@@ -247,7 +247,7 @@ Inside recomputation:
 5. Derive Article Focus as an effective overlay without replacing the responsive baseline.
 6. Compare the result with the controller's current `_effective_region_layout`. Update the responsive baseline even when the visible overlay is unchanged, but return before item-state capture, token allocation, and workbench request if desired effective layout is equal.
 
-- [ ] **Step 4: Run the new controller tests and relevant existing layout tests**
+- [x] **Step 4: Run the new controller tests and relevant existing layout tests**
 
 Run:
 
@@ -263,7 +263,7 @@ Run:
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 5: Commit width authority and request suppression**
+- [x] **Step 5: Commit width authority and request suppression**
 
 ```bash
 git add Tests/Watchlists/test_watchlists_collections_screen.py Tests/Watchlists/test_watchlists_scoped_rebuilds.py tldw_chatbook/UI/Screens/watchlists_collections_screen.py
@@ -278,7 +278,7 @@ git commit -m "fix(watchlists): stabilize responsive layout requests"
 - Modify: `Tests/Watchlists/test_watchlists_cold_open_layout.py`
 - Modify: `tldw_chatbook/UI/Screens/watchlists_collections_screen.py:410-435, 1015-1030, 3054-3120, 3423-3515, 4400-4460, 4710-4755`
 
-- [ ] **Step 1: Write failing intent-lifecycle tests**
+- [x] **Step 1: Write failing intent-lifecycle tests**
 
 Add mounted tests for these exact contracts:
 
@@ -294,7 +294,7 @@ Add mounted tests for these exact contracts:
 
 Extend `test_layout_intent_dataclasses_use_pascal_case_names` to include `ResponsivePriorityLease` and update direct `ManualLayoutRollback` fixtures to use `priority_lease_before`.
 
-- [ ] **Step 2: Run the lifecycle tests and verify RED**
+- [x] **Step 2: Run the lifecycle tests and verify RED**
 
 Run the new node IDs plus the existing failure/supersession cases:
 
@@ -309,7 +309,7 @@ Run the new node IDs plus the existing failure/supersession cases:
 
 Expected: new tests FAIL because the controller still stores only a target region, clears it outside its originating mode, and attaches rollback to a fallback token.
 
-- [ ] **Step 3: Implement the lease and rollback contract**
+- [x] **Step 3: Implement the lease and rollback contract**
 
 Replace `ManualLayoutRollback.priority_before` with:
 
@@ -340,7 +340,7 @@ In `_toggle_preferred_region`:
 
 Update `_next_layout_request_token` to re-key an existing in-flight rollback with its full lease snapshot. Update failure handling to restore the full lease before explicit recomputation. Do not modify the lease in failed section-swap fallback handling.
 
-- [ ] **Step 4: Run lifecycle and regression tests and verify GREEN**
+- [x] **Step 4: Run lifecycle and regression tests and verify GREEN**
 
 Run:
 
@@ -356,7 +356,7 @@ Run:
 
 Expected: all selected changed-functionality tests PASS. Do not run the full repository suite.
 
-- [ ] **Step 5: Commit the completed controller lifecycle**
+- [x] **Step 5: Commit the completed controller lifecycle**
 
 ```bash
 git add Tests/Watchlists/test_watchlists_collections_screen.py Tests/Watchlists/test_watchlists_scoped_rebuilds.py Tests/Watchlists/test_watchlists_cold_open_layout.py tldw_chatbook/UI/Screens/watchlists_collections_screen.py
@@ -369,7 +369,7 @@ git commit -m "fix(watchlists): preserve responsive pane priority"
 - Modify: `backlog/tasks/task-22211 - Watchlists-responsive-layout-needs-hysteresis-at-its-collapse-boundaries.md`
 - Verify only: all Python and test files changed in Tasks 1-3
 
-- [ ] **Step 1: Run the complete changed-functionality test set**
+- [x] **Step 1: Run the complete changed-functionality test set**
 
 Run only the affected Watchlists layout files:
 
@@ -385,7 +385,7 @@ Run only the affected Watchlists layout files:
 
 Expected: all selected tests PASS with no errors or failures.
 
-- [ ] **Step 2: Run static checks limited to modified code**
+- [x] **Step 2: Run static checks limited to modified code**
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
@@ -400,7 +400,7 @@ git diff --check
 
 Expected: both commands exit 0.
 
-- [ ] **Step 3: Perform a bounded self-review**
+- [x] **Step 3: Perform a bounded self-review**
 
 Inspect `git diff origin/dev...HEAD` and confirm:
 
@@ -413,7 +413,7 @@ Inspect `git diff origin/dev...HEAD` and confirm:
 - rollback state exists only for a real request token;
 - no Library import or shared split-pane abstraction was introduced.
 
-- [ ] **Step 4: Close the Backlog task only after evidence is green**
+- [x] **Step 4: Close the Backlog task only after evidence is green**
 
 The Backlog Implementation Plan and ADR assessment were recorded before Task 1 began.
 Check all three acceptance criteria, add concise Implementation Notes naming the pure
@@ -422,14 +422,14 @@ targeted tests, and modified files, then set status to Done through the Backlog 
 
 Do not add a lessons entry unless implementation reveals a new evidenced trap beyond the existing performance-review and testing lessons.
 
-- [ ] **Step 5: Commit closeout metadata**
+- [x] **Step 5: Commit closeout metadata**
 
 ```bash
 git add "backlog/tasks/task-22211 - Watchlists-responsive-layout-needs-hysteresis-at-its-collapse-boundaries.md"
 git commit -m "docs(watchlists): close task 22211"
 ```
 
-- [ ] **Step 6: Verify Backlog CLI resolution**
+- [x] **Step 6: Verify Backlog CLI resolution**
 
 ```bash
 backlog task 22211 --plain
