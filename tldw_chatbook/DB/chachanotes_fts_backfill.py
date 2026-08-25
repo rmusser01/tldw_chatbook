@@ -10,6 +10,23 @@ completion, and ``app.py`` wires it into a ``run_worker(thread=True)`` call at
 mount (next to the structurally identical subscriptions backfill,
 ``Subscriptions/fts_backfill.py``) so the reinsert never blocks boot.
 
+Pacing (task-22200): the loop originally ran its ``BEGIN IMMEDIATE`` chunks
+back to back, so an upgrading user's whole first session contended with a
+write-lock convoy -- every UI write (also ``BEGIN IMMEDIATE``, 15 s busy
+timeout) had to race the next chunk's begin for the lock. The driver now
+sleeps :data:`INTER_CHUNK_PAUSE_SECONDS` after every chunk that indexed rows,
+bounding the backfill's write-lock duty cycle (measured ~3-5 ms of chunk work
+per 100 ms pause on a default-size chunk) so a foreground writer acquires the
+lock inside the gap instead. A chunk that itself dies on SQLite's plain
+lock-queue timeout (``database is locked`` after the busy handler expires --
+the RETRYABLE kind; the non-retryable snapshot-upgrade form only exists for
+DEFERRED read-then-write transactions, which the IMMEDIATE chunk is not) is
+retried through the bounded :data:`_LOCKED_RETRY_BACKOFF_SECONDS` schedule
+instead of killing the run until the next boot. Both sleeps are cut at
+:data:`_ABORT_POLL_SECONDS` granularity when the caller provides
+``should_abort`` -- app shutdown must interrupt an in-flight pause, because a
+cancel that only sets a flag cannot cut a plain ``time.sleep``.
+
 Search semantics during the window, chosen deliberately (task-21100 notes):
 the index is empty-but-consistent after the upgrade commits and fills oldest
 rowid first; message-content search returns progressively more history until
@@ -23,12 +40,31 @@ itself (``messages_fts_docsize`` membership), not in any caller.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import sqlite3
+import time
+from typing import Callable, Optional, TYPE_CHECKING
 
 from loguru import logger
 
 if TYPE_CHECKING:
     from .ChaChaNotes_DB import CharactersRAGDB
+
+#: Pause between chunks. Chosen against measurement, not taste: a default
+#: 500-row chunk of typical chat text holds the write lock for single-digit
+#: milliseconds, so 0.1 s caps the backfill's lock duty cycle at a few
+#: percent while still finishing a 100k-message history in tens of seconds
+#: of added wall time (background thread; nobody is waiting on it).
+INTER_CHUNK_PAUSE_SECONDS = 0.1
+
+#: Slice size for abort-checked sleeps. Also the worst-case extra shutdown
+#: latency a sleeping backfill adds once the worker is cancelled.
+_ABORT_POLL_SECONDS = 0.05
+
+#: Escalating waits before retrying a chunk that lost the lock queue. Each
+#: failed attempt already sat out the connection's 15 s busy handler, so
+#: these are deliberately short -- the point is to survive one slow
+#: foreground transaction, not to poll a wedged database forever.
+_LOCKED_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0)
 
 
 class ChaChaNotesFTSBackfillError(RuntimeError):
@@ -48,45 +84,141 @@ class ChaChaNotesFTSBackfillError(RuntimeError):
         self.rows_indexed = rows_indexed
 
 
+def _is_lock_queue_timeout(exc: BaseException) -> bool:
+    """True when ``exc`` (or its cause chain) is SQLite's plain busy/locked
+    timeout -- the contention signal the backoff schedule exists for. Walks
+    the chain because the DB layer sometimes wraps ``sqlite3`` errors in
+    ``CharactersRAGDBError`` (``raise ... from``)."""
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, sqlite3.OperationalError):
+            message = str(current).lower()
+            if "database is locked" in message or "database is busy" in message:
+                return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _interruptible_sleep(
+    seconds: float,
+    should_abort: Optional[Callable[[], bool]],
+    sleep: Callable[[float], None],
+) -> bool:
+    """Sleep ``seconds``, abort-checked. Returns True if aborted.
+
+    Without ``should_abort`` this is a single ``sleep`` call (keeps injected
+    recorders 1:1 with pauses in tests). With it, the wait is sliced into
+    ``_ABORT_POLL_SECONDS`` steps so a cancelled worker stops within one
+    slice instead of finishing the whole pause.
+    """
+    if seconds <= 0:
+        return bool(should_abort and should_abort())
+    if should_abort is None:
+        sleep(seconds)
+        return False
+    remaining = seconds
+    while remaining > 0:
+        if should_abort():
+            return True
+        step = min(_ABORT_POLL_SECONDS, remaining)
+        sleep(step)
+        remaining -= step
+    return should_abort()
+
+
 def backfill_chachanotes_messages_fts(
-    db: "CharactersRAGDB", chunk_size: int = 500
+    db: "CharactersRAGDB",
+    chunk_size: int = 500,
+    *,
+    pause_seconds: float = INTER_CHUNK_PAUSE_SECONDS,
+    should_abort: Optional[Callable[[], bool]] = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Index every live ``messages`` row missing from ``messages_fts``.
 
     ``CharactersRAGDB.backfill_messages_fts`` indexes at most ``chunk_size``
     rows per call and reports ``0`` once nothing remains past its cursor.
     Looping it to completion here is what makes the wired path resumable and
-    idempotent: an interrupted run (app killed mid-loop, worker cancelled)
-    leaves some rows unindexed for the next call to pick up, and a call made
-    after completion does no writes at all. The ascending in-run cursor only
-    skips rows this run has already walked past; a restart begins at 0 and is
-    always correct, because rows below the cursor can only be indexed (never
-    un-indexed while live) by the triggers.
+    idempotent: an interrupted run (app killed mid-loop, worker cancelled,
+    ``should_abort`` fired) leaves some rows unindexed for the next call to
+    pick up, and a call made after completion does no writes at all. The
+    ascending in-run cursor only skips rows this run has already walked past;
+    a restart begins at 0 and is always correct, because rows below the
+    cursor can only be indexed (never un-indexed while live) by the triggers.
+
+    Pacing (task-22200): after every chunk that indexed rows the loop sleeps
+    ``pause_seconds`` so foreground ``BEGIN IMMEDIATE`` writers acquire the
+    lock between chunks; a chunk lost to the busy-handler timeout is retried
+    through ``_LOCKED_RETRY_BACKOFF_SECONDS`` before the run gives up. The
+    no-work path (first chunk finds nothing -- every boot after completion)
+    performs no sleep at all, so the boot probe stays one indexed scan.
 
     Args:
         db: The ``CharactersRAGDB`` instance to backfill. Thread-local
             connections make sharing the app's instance safe from a worker
             thread.
         chunk_size: Rows to index per underlying call.
+        pause_seconds: Sleep between chunks. ``0`` disables pacing (tests,
+            offline tools with exclusive access).
+        should_abort: Polled between chunks and inside every sleep; when it
+            returns True the run stops cleanly, returning the rows indexed so
+            far. Stopping is not failing -- the frontier lives in the DB and
+            the next run resumes it.
+        sleep: Injection seam for the pacing/backoff waits (tests).
 
     Returns:
         Total number of rows indexed by this call (``0`` if there was
-        nothing left to index).
+        nothing left to index; may be partial if ``should_abort`` fired).
 
     Raises:
         ChaChaNotesFTSBackfillError: If the underlying call raises partway
-            through the run. Wraps the original exception (``raise ... from``)
-            and records how many rows this run had already indexed.
+            through the run (after exhausting the lock-timeout retries, for
+            contention errors). Wraps the original exception
+            (``raise ... from``) and records how many rows this run had
+            already indexed.
     """
     total = 0
     cursor = 0
+    locked_retries = 0
     while True:
+        if should_abort is not None and should_abort():
+            logger.info(
+                "ChaChaNotes messages FTS backfill stopping on abort signal "
+                "after {} row(s); the next run resumes from the database's "
+                "own frontier.",
+                total,
+            )
+            return total
         try:
             indexed, cursor = db.backfill_messages_fts(
                 chunk_size=chunk_size, after_rowid=cursor
             )
         except Exception as exc:
+            if (
+                _is_lock_queue_timeout(exc)
+                and locked_retries < len(_LOCKED_RETRY_BACKOFF_SECONDS)
+            ):
+                backoff = _LOCKED_RETRY_BACKOFF_SECONDS[locked_retries]
+                locked_retries += 1
+                logger.warning(
+                    "ChaChaNotes messages FTS backfill chunk lost the lock "
+                    "queue (attempt {}/{}); backing off {}s before retrying.",
+                    locked_retries,
+                    len(_LOCKED_RETRY_BACKOFF_SECONDS),
+                    backoff,
+                )
+                if _interruptible_sleep(backoff, should_abort, sleep):
+                    logger.info(
+                        "ChaChaNotes messages FTS backfill stopping on abort "
+                        "signal during contention backoff after {} row(s).",
+                        total,
+                    )
+                    return total
+                continue
             raise ChaChaNotesFTSBackfillError(total) from exc
+        locked_retries = 0
         if indexed == 0:
             break
         total += indexed
@@ -96,6 +228,13 @@ def backfill_chachanotes_messages_fts(
             indexed,
             total,
         )
+        if _interruptible_sleep(pause_seconds, should_abort, sleep):
+            logger.info(
+                "ChaChaNotes messages FTS backfill stopping on abort signal "
+                "during the inter-chunk pause after {} row(s).",
+                total,
+            )
+            return total
 
     if total:
         logger.info(
