@@ -12,7 +12,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
 
-from tldw_chatbook.Library.library_adaptive_reader_state import (
+from tldw_chatbook.Utils.adaptive_reader_state import (
     PANE_GRIP_WIDTH,
     AdaptiveReaderEffectiveLayout,
     PaneName,

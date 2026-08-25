@@ -1,4 +1,16 @@
-"""Pure responsive-layout state shared by Library adaptive readers."""
+"""Pure responsive-layout state shared by Library adaptive readers.
+
+Layering (TASK-22223): this module is a config-safe leaf. `config.py`'s
+`_load_settings_uncached` normalizes persisted reader preferences through
+`normalize_adaptive_reader_preferences` at config-module import, so this
+module must stay importable without executing any feature package: stdlib
+imports only, and it must live under a package whose `__init__` has no side
+effects (`Utils/__init__.py` is empty). It previously lived at
+`Library/library_adaptive_reader_state.py`, where the `Library` package
+`__init__` dragged the collections/tool service stack -- and a live import
+cycle through `runtime_policy.bootstrap` -- into every config import.
+Guarded by `Tests/Packaging/test_config_import_closure.py`.
+"""
 
 from __future__ import annotations
 

@@ -8630,3 +8630,36 @@ effect survives neither, report the wash and lean on the deterministic axes
 instead — module censuses and closure diffs don't have a noise floor (here:
 −32 modules on the bare chat_screen leg, −5 at warm `_ui_ready`, both exactly
 reproducible while the wall-clock delta evaporated).
+
+---
+
+## A function-scope import is not lazy if the function runs at module import
+
+**TASK-22223, 2026-08-25.** `config.py`'s `_load_settings_uncached` imported
+`Library.library_adaptive_reader_state` under a comment stating "Lazy import
+avoids pulling the Library package through config's module initialization
+path" — but `load_settings()` is called at config **module scope**, so the
+"lazy" import fired on every `import tldw_chatbook.config`. The Library
+package `__init__` dragged 66 feature modules (collections/tool services →
+Sync_Interop → Chat → Skills_Interop → runtime_policy) into every config
+import, and closed a live cycle: any module importing
+`runtime_policy.bootstrap` before config (e.g.
+`Character_Chat/server_character_persona_service.py`) died with
+`ImportError ... partially initialized module`, so
+`Tests/Character_Chat/test_character_persona_scope_service.py` could not even
+be collected when run solo — while passing in full-suite order, where an
+earlier module always imported config first. The comment was reviewed and
+merged; the claim was never probed.
+
+**What to do.** A deferral claim is an assertion about *when code runs*, and
+the evidence is a `sys.modules` probe in a fresh interpreter, not the comment
+or the indentation. Before writing (or believing) "lazy import", trace the
+enclosing function to its callers and ask whether any of them execute at
+import time — `load_settings()`-style module-scope initialization defeats
+every function-scope import above it. Encode the claim as a
+subprocess-isolated closure guard (`Tests/Packaging/test_config_import_closure.py`
+is the shape: import the module bare, assert the deferred packages absent,
+plus an anti-vacuity check that the replacement seam is present). And when a
+test module fails collection only when run solo, suspect an import cycle whose
+direction depends on who imports first — full-suite green is not evidence the
+import graph is acyclic.
