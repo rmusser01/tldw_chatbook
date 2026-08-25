@@ -10,7 +10,11 @@ import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    InputError,
+)
 
 
 @dataclass
@@ -1426,5 +1430,123 @@ class TestLibraryConversationSeams:
                 "rag_context" not in message and "citations" not in message
                 for message in detail["messages"]
             )
+        finally:
+            db.close_connection()
+
+    def test_real_service_pages_are_bounded_exact_and_chronological(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "paged"})
+            message_ids = [
+                db.add_message(
+                    {
+                        "conversation_id": conv_id,
+                        "sender": "user",
+                        "content": f"body-{index}",
+                    }
+                )
+                for index in range(5)
+            ]
+
+            first = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=2, max_chars=4
+            )
+            middle = service.get_library_conversation_messages(
+                conv_id, message_offset=2, message_limit=2, max_chars=4
+            )
+            last = service.get_library_conversation_messages(
+                conv_id, message_offset=4, message_limit=2, max_chars=4
+            )
+            tiny = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=1, max_chars=4
+            )
+            repeated_first = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=2, max_chars=4
+            )
+
+            assert [
+                first["message_offset"],
+                middle["message_offset"],
+                last["message_offset"],
+            ] == [0, 2, 4]
+            assert [
+                first["message_total"],
+                middle["message_total"],
+                last["message_total"],
+                tiny["message_total"],
+            ] == [5, 5, 5, 5]
+            messages = first["messages"] + middle["messages"] + last["messages"]
+            assert [message["id"] for message in messages] == message_ids
+            assert [message["text"] for message in messages] == ["body"] * 5
+            assert all(message["returned_chars"] <= 4 for message in messages)
+            assert all(message["revision"] for message in messages)
+            assert [
+                (message["id"], message["revision"])
+                for message in repeated_first["messages"]
+            ] == [(message["id"], message["revision"]) for message in first["messages"]]
+            assert first["version"] == middle["version"] == last["version"] == 1
+            assert last["has_more"] is False
+        finally:
+            db.close_connection()
+
+    def test_real_service_long_message_continuations_reassemble_once(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "long"})
+            content = "0123456789" * 4 + "tail"
+            message_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "user",
+                    "content": content,
+                }
+            )
+            assembled = ""
+            revisions = set()
+            while len(assembled) < len(content):
+                detail = service.get_library_conversation_messages(
+                    conv_id,
+                    message_id=message_id,
+                    char_start=len(assembled),
+                    max_chars=7,
+                )
+                message = detail["messages"][0]
+                assert message["char_start"] == len(assembled)
+                assert 0 < message["returned_chars"] <= 7
+                revisions.add(message["revision"])
+                assembled += message["text"]
+
+            assert assembled == content
+            assert revisions == {detail["messages"][0]["revision"]}
+            assert detail["message_total"] == 1
+            assert detail["messages"][0]["has_more"] is False
+        finally:
+            db.close_connection()
+
+    def test_real_service_empty_missing_deleted_and_unavailable_behavior(
+        self, tmp_path
+    ):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            empty_id = db.add_conversation({"title": "empty"})
+
+            empty = service.get_library_conversation_messages(empty_id, message_limit=1)
+
+            assert empty["message_total"] == 0
+            assert empty["messages"] == []
+            assert empty["has_more"] is False
+            assert service.get_library_conversation_messages("missing") is None
+
+            db.soft_delete_conversation(empty_id, expected_version=1)
+            assert service.get_library_conversation_messages(empty_id) is None
+
+            unavailable_id = db.add_conversation({"title": "unavailable"})
+            with db.transaction() as conn:
+                conn.execute("DROP TABLE messages")
+            with pytest.raises(CharactersRAGDBError):
+                service.get_library_conversation_messages(unavailable_id)
         finally:
             db.close_connection()
