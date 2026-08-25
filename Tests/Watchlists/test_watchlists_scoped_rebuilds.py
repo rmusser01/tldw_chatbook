@@ -2200,11 +2200,16 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         assert parked_lease == ResponsivePriorityLease(
             Region.RIGHT_RAIL, read_mode=True
         )
+        await pilot.resize_terminal(90, 50)
+        await _settle(pilot, host)
 
         workbench = screen.query_one(WatchlistsWorkbench)
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
-        items = screen.query_one("#watchlists-items-pane")
+        items_grip = screen.query_one("#wl-grip-items", WatchlistsPaneGrip)
         before_layout = screen._effective_region_layout
+        assert before_layout.collapsed == frozenset(
+            {Region.LEFT_RAIL, Region.ITEMS}
+        )
         original_factory = screen._build_detail_pane
         fail = True
 
@@ -2225,9 +2230,21 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         assert workbench.read_mode is True
         assert workbench.region_layout == before_layout
         assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
-        assert screen.query_one("#watchlists-items-pane") is items
+        assert screen.query_one(
+            "#wl-grip-items", WatchlistsPaneGrip
+        ) is items_grip
         assert screen._responsive_priority_lease == parked_lease
+        assert screen._responsive_region_layout == before_layout
         assert persisted == []
+
+        screen.action_article_focus()
+        await _settle(pilot, host)
+        screen.action_article_focus()
+        await _settle(pilot, host)
+
+        assert screen._effective_region_layout == before_layout
+        assert screen._responsive_region_layout == before_layout
+        assert screen._responsive_priority_lease == parked_lease
 
         fail = False
         screen.active_section = "sources"

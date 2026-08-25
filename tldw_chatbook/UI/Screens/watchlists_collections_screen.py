@@ -4496,6 +4496,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self._article_focus_active = False
             self._effective_region_layout = workbench.region_layout
+            self._responsive_region_layout = workbench.region_layout
             self._sync_backend_header_bar()
             return
         self._rendered_section = intent.section
