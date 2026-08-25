@@ -200,7 +200,7 @@ class _SignalGateway:
         self.calls = []
         self.parent_calls = 0
         self.child_calls = 0
-        self.resolution = ConsoleProviderResolution(
+        self.resolution = with_destination(ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
             model="repair-model",
@@ -222,7 +222,7 @@ class _SignalGateway:
             thinking_effort=None,
             thinking_budget_tokens=None,
             streaming=True,
-        )
+        ))
 
     async def resolve_for_send(self, _selection):
         return self.resolution
@@ -273,7 +273,10 @@ async def _real_agent_citation_controller(
         child_scripts=child_scripts,
         mark_fallback_calls=mark_fallback_calls,
     )
-    store = ConsoleChatStore()
+    # Real persistence: this rig drives a full agent turn through
+    # `submit_draft`, which refuses a non-ephemeral MANUAL send whose
+    # adapter cannot `commit_durable_turn`.
+    store = persisted_console_store()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
@@ -359,6 +362,39 @@ def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
         agent_runtime_enabled=enabled,
     )
     return controller, store, db
+
+
+def _persistence_free_controller(tmp_path, scripts):
+    """A controller with genuinely NO persistence, on an EPHEMERAL session.
+
+    The "without persistence" tests need a store whose `persistence` is None --
+    that is their whole subject -- so they cannot use `_controller`, which now
+    wires a real one so ordinary sends are accepted at all. See the note in
+    `test_stopped_via_cancel_without_persistence_stays_null` for why the
+    session must be ephemeral.
+
+    Args:
+        tmp_path: pytest tmp dir for the runs DB.
+        scripts: Provider scripts for the parent turn.
+
+    Returns:
+        ``(controller, store, runs_db)``.
+    """
+    gateway = _Gateway(scripts, ())
+    store = ConsoleChatStore()
+    store.create_session(title="Ephemeral", ephemeral=True)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    return controller, store, db
+
 
 
 @pytest.mark.parametrize(
@@ -695,7 +731,7 @@ async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
     store the native id at create): the row is NULL both at create and after
     the null-persisted-id stop.
     """
-    controller, store, db = _controller(tmp_path, [["Tok", "yo."]])
+    controller, store, db = _persistence_free_controller(tmp_path, [["Tok", "yo."]])
 
     original = controller._agent_bridge.run_reply
 
@@ -2110,6 +2146,15 @@ async def test_stopped_via_cancel_without_persistence_stays_null(tmp_path):
     must stay NULL (ordinal fallback) -- never a stale/native id."""
     gateway = _ParkingGateway()
     store = ConsoleChatStore()
+    # An EPHEMERAL session, and that is production's rule rather than a harness
+    # dodge: `submit_draft` computes
+    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`
+    # and refuses a durable turn whose adapter cannot `commit_durable_turn`.
+    # An ephemeral session is exactly the shape in which a persistence-free
+    # send is still legitimate, so this preserves what this test asserts --
+    # no persistence, therefore no persisted id -- on the path production
+    # still supports.
+    store.create_session(title="Ephemeral", ephemeral=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
