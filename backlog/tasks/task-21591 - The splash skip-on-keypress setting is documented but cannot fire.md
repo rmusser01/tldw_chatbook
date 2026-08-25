@@ -70,14 +70,30 @@ keeps the Settings splash PREVIEW (`settings_splash_screen_viewer.py`, which con
 widget with `skip_on_keypress=False`) from taking focus away from the settings controls
 around it.
 
-**`on_key` no longer stops the event, and that is the point.** Today a key pressed during the
-splash reaches nothing focused, bubbles to the screen and is dispatched against the app's
-bindings — `ctrl+q` quits, `ctrl+p` opens the palette. Focusing the splash puts a handler in
-front of that, so keeping the old `event.stop()`/`prevent_default()` would have bought the
-skip by breaking `ctrl+q` during the splash: a new defect in exchange for the fixed one.
-Letting the event bubble preserves every existing binding *and* dismisses the splash, which
-is what "skip with any keypress" means. Confirmed live: `ctrl+q` 23 ms into the splash still
-quits the app, on the fix and on the base alike.
+**`on_key` consumes the key -- after trying the opposite and finding it broke
+something already decided.** The first version deliberately did NOT stop the event, on the
+reasoning that today a key during the splash bubbles to the app's bindings, so swallowing it
+would break `ctrl+q`. That shipped green through every splash-adjacent suite and both live
+arms -- and then a wider sweep turned
+`Tests/UI/test_screen_navigation.py::test_navigation_keypress_during_splash_is_safely_ignored`
+(task-1339's regression lock) red: **F9 mid-splash landed the user on Settings**.
+
+The mechanism is worth recording because it is not visible at the call site.
+`action_shell_destination` does not navigate; it *posts* a `NavigateToScreen`, and the guard
+that swallows it lives in the handler (`_handle_screen_navigation_locked`, "initial screen
+not yet mounted"). Message order on the App queue becomes `Key` -> `Closed` -> (Key's
+binding posts) `NavigateToScreen`, so once the splash closes *immediately* the `Closed`
+handler has already pushed the initial screen by the time the navigation is handled and the
+guard no longer fires. Before this fix the splash never closed on the key, `Closed` only
+arrived at the duration timer, and the request was correctly swallowed. Making the skip work
+is precisely what re-opened that window.
+
+So the key is stopped. The splash is a modal over an app that is not interactive yet, and
+while it is up the key's only job is to dismiss it. Every already-decided contract stays
+intact; the cost is that `ctrl+q` during the splash dismisses the splash and needs a second
+press to quit -- which no task or test has ever asserted otherwise (checked: no test in the
+suite locks app bindings firing during the splash). Verified live: `F9` 29 ms into a 25 s
+splash dismissed it and left the app on Home, not Settings.
 
 Modified: `tldw_chatbook/Widgets/splash_screen.py`, `Docs/User_Guide/settings.md` (Splash
 Screen row + a new Verified-against stamp). Added: `Tests/UI/test_splash_skip_on_keypress.py`.
@@ -88,7 +104,8 @@ Screen row + a new Verified-against stamp). Added: `Tests/UI/test_splash_skip_on
 |---|---|---|
 | Space during a 25 s splash | still up at +6 s, closed only at its 25 s duration | gone within 3 s, app booted to first-run setup |
 | Space 23 ms after the first painted splash frame | no effect | dismissed; full UI (nav bar, destinations) within 3 s |
-| `ctrl+q` during the splash | app quits | app quits (unchanged) |
+| `F9` 29 ms after the first painted frame | no effect (swallowed) | splash dismissed, app settles on Home -- **not** Settings |
+| `ctrl+q` during the splash | app quits | splash dismissed; app stays up, quit takes a second press |
 | `skip_on_keypress = false` + Space | n/a | still up 5 s after the press; auto-closed after its full 20 s |
 
 **TASK-21110 checked, not regressed.** Its splash-overlapped pre-import thread starts 0.2 s
@@ -99,13 +116,18 @@ reachable and it works.
 
 ### Mutation results (every test proven to discriminate)
 
-| mutant | dismisses | reaches-bindings | no-double-close | full-duration |
-|---|---|---|---|---|
-| `can_focus` forced `False` | FAIL | FAIL | FAIL | pass |
-| `can_focus` forced `True` unconditionally | pass | pass | pass | **FAIL** |
-| `on_mount`'s `self.focus()` removed | FAIL | FAIL | FAIL | pass |
-| `event.stop()`/`prevent_default()` restored | pass | **FAIL** | pass | pass |
-| both `_skip_requested` guards dropped | pass | pass | **FAIL** | pass |
+| mutant | dismisses | key-consumed | no-double-close | full-duration | skip-off-routes-normally |
+|---|---|---|---|---|---|
+| M1 `can_focus` forced `False` | FAIL | FAIL | FAIL | pass | pass |
+| M2 `can_focus` forced `True` unconditionally | pass | FAIL | pass | **FAIL** | pass |
+| M3 `on_mount`'s `self.focus()` removed | FAIL | FAIL | FAIL | pass | pass |
+| M4 `event.stop()`/`prevent_default()` removed | pass | **FAIL** | pass | pass | pass |
+| M5 both `_skip_requested` guards dropped | pass | FAIL | **FAIL** | pass | pass |
+| M6 focus + consume made unconditional | pass | FAIL | pass | FAIL | **FAIL** |
+
+Every one of the five tests is killed by at least one mutant. M6 is compound on purpose:
+"with the skip disabled, key routing is unchanged" is only reachable by making both the
+focus and the consume unconditional.
 
 One of these is a finding in its own right: removing `self.focus()` left **all four tests
 green** at first. Textual's `App.AUTO_FOCUS = "*"` auto-focuses the first focusable widget on
@@ -124,12 +146,22 @@ mounted screen instead; the widget is out of the DOM and Textual's `_reset_focus
 on for us (verified live: after the skip the app is fully navigable). With the skip disabled
 the widget is not focusable at all, so nothing changes for the Settings preview's unmount path.
 
+### The sweep that caught it
+
+The four splash-adjacent suites and both live arms were green on the rejected version. Only
+`Tests/UI/test_screen_navigation.py` (506 tests, 5m19s) exposed it -- a file that never
+mentions the widget under change. **A behavioural change to input routing has to be run
+against the navigation suite, not only the feature's own.**
+
 ### Test counts
 
 `Tests/Widgets/test_splash_screen_config_read.py`, `Tests/UI/test_settings_splash_screen_viewer.py`,
 `test_splash_initial_screen_preimport.py`, `test_screen_preimport.py`,
 `test_screen_preimport_pacing.py`, `test_splash_skip_on_keypress.py`,
 `Tests/Utils/test_startup_polish_regressions.py`: **169 passed, 0 failed**.
+`Tests/UI/test_screen_navigation.py` + `Tests/Wizards/test_first_run_setup_wizard.py`:
+**507 passed, 0 failed** (506+1 after the correction; the rejected version failed
+`test_navigation_keypress_during_splash_is_safely_ignored` here).
 Focus/startup sweep (`test_product_maturity_phase1_keyboard_focus.py`,
 `test_workbench_pane_focus.py`, `test_product_maturity_phase1_first_run.py`,
 `test_product_maturity_phase6_focus_visual_sweep.py`,

@@ -333,10 +333,12 @@ feedback.
 
 **Skip on keypress** does what it says as of TASK-21591: with it on (the
 default), any key pressed while the splash is up dismisses it and boot
-continues immediately, and the key still reaches its normal binding — pressing
-`ctrl+q` during the splash still quits. Turn it off and the splash always runs
-its full **Duration (s)**. Before that fix the setting was inert: the splash was
-never focused, so it never saw a key.
+continues immediately. That key is consumed by the splash and does nothing
+else — pressing `F9` mid-splash skips to the app's normal startup screen
+rather than jumping to Settings, and `ctrl+q` mid-splash dismisses the splash,
+so quitting takes a second press. Turn the setting off and the splash always
+runs its full **Duration (s)**, with keys routed exactly as before. Before the
+fix the setting was inert: the splash was never focused, so it never saw a key.
 
 ### Interface — Console Behavior
 
@@ -739,9 +741,10 @@ the rest of this page's content unchanged from the prior stamp).*
 (**Skip on keypress** shipped default-true and could not fire: `SplashScreen`
 is a `Container`, Textual routes a key to the focused widget and bubbles it
 upward, and nothing focused the splash. It now takes focus when the skip is
-enabled and dismisses on any key without swallowing it. Verified in a real
-terminal, not only under Pilot: against a 25 s splash, Space 23 ms after the
-first painted frame dismissed it and boot completed, `ctrl+q` during the
-splash still quit, and with the setting off the same key left the splash up
-for its full 20 s. The rest of this page's content unchanged from the prior
-stamp.)*
+enabled, and consumes the dismissing key so a navigation key pressed during
+startup cannot also act on the app being booted. Verified in a real terminal,
+not only under Pilot: against a 25 s splash, Space 23 ms after the first
+painted frame dismissed it and boot completed; `F9` at the same moment
+dismissed it and left the app on Home, not Settings; and with the setting off
+the same key left the splash up for its full 20 s. The rest of this page's
+content unchanged from the prior stamp.)*

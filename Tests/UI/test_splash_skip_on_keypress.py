@@ -85,12 +85,17 @@ async def test_a_keypress_dismisses_the_splash_when_the_setting_is_on() -> None:
         assert app.closed[0] - app.mounted_at < 5.0
 
 
-async def test_the_skipping_key_still_reaches_the_apps_own_bindings() -> None:
-    """The splash must not buy its skip by swallowing ctrl+q.
+async def test_the_skipping_key_is_consumed_and_does_not_also_fire_a_binding() -> None:
+    """The dismissing key must not ALSO run whatever it is bound to.
 
-    Today a key pressed during the splash reaches nothing focused and is
-    dispatched against the app's bindings. Focusing the splash puts a
-    handler in front of that, so the handler has to let the event through.
+    Letting the event bubble was tried first. It kept `ctrl+q` working
+    during the splash, but it also let a shell-destination key through, and
+    since `action_shell_destination` *posts* its `NavigateToScreen`, the
+    request was handled after the now-immediate splash close had pushed the
+    initial screen -- so F9 mid-splash landed on Settings, which is the
+    exact thing `test_navigation_keypress_during_splash_is_safely_ignored`
+    (task-1339) locks against. The splash is a modal over an app that is
+    not interactive yet; the key's only job while it is up is to dismiss it.
     """
 
     app = _SplashHost(skip=True, duration=30.0)
@@ -99,10 +104,26 @@ async def test_the_skipping_key_still_reaches_the_apps_own_bindings() -> None:
         await pilot.pause()
 
         assert app.closed, "a keypress did not dismiss the splash"
-        assert app.binding_fired == ["z"], (
-            "the splash swallowed the key: an app binding pressed during the "
-            "splash no longer fires"
+        assert app.binding_fired == [], (
+            "the dismissing key also ran its app binding; a navigation key "
+            "pressed during startup would act on the app being booted"
         )
+
+
+async def test_a_key_pressed_with_the_skip_disabled_still_reaches_its_binding() -> None:
+    """Consuming the key is scoped to the skip, not to the splash being up.
+
+    With `skip_on_keypress = false` the splash takes no focus and changes
+    nothing about input routing -- the same behaviour as before TASK-21591.
+    """
+
+    app = _SplashHost(skip=False, duration=30.0)
+    async with app.run_test() as pilot:
+        await pilot.press("z")
+        await pilot.pause()
+
+        assert app.closed == []
+        assert app.binding_fired == ["z"]
 
 
 async def test_a_second_keypress_does_not_close_the_splash_twice() -> None:
