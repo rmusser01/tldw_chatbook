@@ -53,7 +53,14 @@ def _db_version(path: Path) -> int:
 
 
 def test_every_production_characters_rag_db_opener_passes_explicit_seed() -> None:
-    """Catch an opener that could bypass the config-layer seed sanitization."""
+    """Catch an opener that could bypass the config-layer seed sanitization.
+
+    Still load-bearing after task-21441 made the seed optional, and arguably
+    more so: an absent seed now DEFAULTS (to automatic retrieval off) instead
+    of raising, so a production opener that stopped passing one would silently
+    discard a user's `chat_defaults.rag_auto_retrieve_on_send = true` on
+    upgrade instead of failing loudly. This static sweep is what catches that.
+    """
 
     calls = _production_characters_rag_db_calls()
     assert calls
@@ -89,33 +96,79 @@ def test_current_database_accepts_no_console_library_migration_seed(tmp_path: Pa
     reopened.close_connection()
 
 
-@pytest.mark.parametrize("migration_seed", [None, object()])
-def test_v47_upgrade_rejects_missing_or_invalid_seed_before_ddl(
+def _v47_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    migration_seed: object,
-) -> None:
-    """A legacy v47 database must not start the v48 migration without a typed seed."""
+    *,
+    conversation_title: str | None = None,
+) -> tuple[Path, str | None]:
+    """Build a genuine v47 database, optionally holding one conversation."""
 
     path = tmp_path / "v47.sqlite"
+    conversation_id: str | None = None
     with monkeypatch.context() as v47_patch:
         v47_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 47)
         seeded = CharactersRAGDB(path, client_id="v47-seed")
+        if conversation_title is not None:
+            conversation_id = seeded.add_conversation(
+                {"title": conversation_title, "character_id": 1}
+            )
         seeded.close_connection()
     assert _db_version(path) == 47
+    return path, conversation_id
+
+
+def test_v47_upgrade_rejects_a_wrong_typed_seed_before_ddl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller defect still stops the migration before it touches the DDL."""
+
+    path, _ = _v47_database(tmp_path, monkeypatch)
     before = _schema_snapshot(path)
 
     with monkeypatch.context() as target_patch:
         target_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 48)
         with pytest.raises(
             SchemaError,
-            match="Console library migration seed is required for v47 upgrade",
+            match="must be a ConsoleLibraryMigrationSeed",
         ):
             CharactersRAGDB(
                 path,
                 client_id="v48-upgrade",
-                console_library_migration_seed=migration_seed,  # type: ignore[arg-type]
+                console_library_migration_seed=object(),  # type: ignore[arg-type]
             )
 
     assert _db_version(path) == 47
     assert _schema_snapshot(path) == before
+
+
+def test_v47_upgrade_without_a_seed_migrates_with_retrieval_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inverted half of this test, and the reason task-21441 exists.
+
+    This case used to raise, which is what stopped a ChaChaNotes database from
+    being upgradable by anything but the TUI. An absent seed now defaults to
+    the config layer's own default -- automatic retrieval off -- so the
+    migration completes and the policy it writes is the fail-safe one.
+    """
+
+    path, conversation_id = _v47_database(
+        tmp_path, monkeypatch, conversation_title="legacy"
+    )
+
+    with monkeypatch.context() as target_patch:
+        target_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 48)
+        upgraded = CharactersRAGDB(path, client_id="v48-upgrade")
+        upgraded.close_connection()
+
+    assert _db_version(path) == 48
+    with sqlite3.connect(path) as connection:
+        policy = connection.execute(
+            "SELECT auto_retrieve_on_send, assistant_library_access"
+            " FROM console_conversation_library_policy WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    assert policy == (0, 1)

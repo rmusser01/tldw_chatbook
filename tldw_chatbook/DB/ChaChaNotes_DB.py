@@ -3100,8 +3100,16 @@ UPDATE db_schema_version
             client_id: A unique identifier for this client instance. Used for
                        tracking changes in the sync log and records. Must not be empty.
             check_integrity_on_startup: Whether to run integrity check on startup.
-            console_library_migration_seed: Sanitized legacy library policy needed
-                only when migrating a pre-existing v44 database.
+            console_library_migration_seed: Sanitized legacy Console Library
+                automatic-retrieval value carried into the v47->v48 policy
+                seed. OPTIONAL: an absent seed defaults to automatic retrieval
+                OFF for every pre-existing conversation, which is both the
+                config layer's own default and the fresh-database behaviour, so
+                any caller can migrate a database without it (task-21441). Pass
+                it when the caller can read the user's configuration -- the
+                boot path does -- so a user who had automatic retrieval on keeps
+                it. A value that is not a ``ConsoleLibraryMigrationSeed``
+                raises rather than defaulting.
 
         Raises:
             ValueError: If `client_id` is empty or None.
@@ -3124,6 +3132,8 @@ UPDATE db_schema_version
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
         self.console_library_migration_seed = console_library_migration_seed
+        #: Lazily-read `messages` column set (see `_messages_table_columns`).
+        self._messages_columns_cache: frozenset[str] | None = None
 
         logger.info(
             f"Initializing CharactersRAGDB for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -6396,16 +6406,38 @@ UPDATE db_schema_version
 
         Existing conversations, including soft-deleted rows, receive the one
         sanitized legacy automatic-retrieval value supplied by the config
-        layer and assistant Library access Allowed. A fresh database may enter
-        this step without a seed because it has no legacy conversations.
+        layer and assistant Library access Allowed.
+
+        The seed is OPTIONAL (task-21441). As shipped, this step raised unless
+        the constructor was handed a ``ConsoleLibraryMigrationSeed``, with a
+        fresh database exempted -- so it bit exactly the upgrade case and the
+        class could no longer migrate itself. Every production construction
+        site threads the seed, so the TUI was insulated; nothing else was, and
+        ``Tests/Packaging/test_installed_distribution.py``'s bare open of a v35
+        database inside an installed wheel is the canary that caught it. A
+        migration that requires caller-supplied data makes "open the database"
+        mean "only from inside one application".
+
+        The default is not invented here: the seed's whole content is one
+        boolean, and ``config.load_console_library_migration_seed`` already
+        yields ``False`` for a missing or non-boolean
+        ``chat_defaults.rag_auto_retrieve_on_send``, which is also what the
+        fresh-database path has always written. Defaulting is fail-safe in the
+        direction ``console_library_policy`` itself defines -- absent authority
+        is Never/Blocked, never permission -- so the worst case for an unseeded
+        upgrade is that a user who had automatic retrieval on re-enables it,
+        against a current worst case of the database refusing to open at all.
+        A seed of the WRONG TYPE is still a hard error: that is a caller
+        defect, not an absent value.
 
         Args:
             conn: The active connection, inside ``_initialize_schema``'s
                 outer immediate transaction.
 
         Raises:
-            SchemaError: If the entry version or seed is invalid, the migration
-                file cannot be applied, or the guarded version update fails.
+            SchemaError: If the entry version is wrong, a supplied seed is not
+                a ``ConsoleLibraryMigrationSeed``, the migration file cannot be
+                applied, or the guarded version update fails.
         """
         self._require_migration_entry_version(conn, 47, "V47→V48")
         from tldw_chatbook.Chat.console_library_policy import (
@@ -6413,12 +6445,16 @@ UPDATE db_schema_version
         )
 
         seed = self.console_library_migration_seed
-        fresh_without_seed = (
-            seed is None and getattr(self, "_schema_initial_version", None) == 0
-        )
-        if not isinstance(seed, ConsoleLibraryMigrationSeed) and not fresh_without_seed:
+        if seed is not None and not isinstance(seed, ConsoleLibraryMigrationSeed):
             raise SchemaError(
-                "Console library migration seed is required for v47 upgrade."
+                "Console library migration seed must be a "
+                "ConsoleLibraryMigrationSeed for the v47 upgrade."
+            )
+        if seed is None and getattr(self, "_schema_initial_version", None) != 0:
+            logger.warning(
+                f"[{self._SCHEMA_NAME} V47→V48] No Console Library migration seed "
+                "supplied for an existing database; seeding every conversation "
+                "with automatic retrieval OFF (the config-layer default)."
             )
         auto_retrieve_on_send = (
             int(seed.auto_retrieve_on_send)
@@ -6679,18 +6715,14 @@ UPDATE db_schema_version
                     f"Checking DB schema '{self._SCHEMA_NAME}'. Current version: {current_db_version}. Code supports: {target_version}"
                 )
 
-                if current_db_version == 47 and target_version > 47:
-                    from tldw_chatbook.Chat.console_library_policy import (
-                        ConsoleLibraryMigrationSeed,
-                    )
-
-                    if not isinstance(
-                        self.console_library_migration_seed,
-                        ConsoleLibraryMigrationSeed,
-                    ):
-                        raise SchemaError(
-                            "Console library migration seed is required for v47 upgrade."
-                        )
+                # (task-21441) A pre-flight seed check lived here. It duplicated
+                # `_migrate_from_v47_to_v48`'s own requirement and, being keyed
+                # on `current_db_version == 47`, only fired for a database that
+                # entered at exactly v47 -- a v35 database walked the whole
+                # chain and died at the step itself. Both are gone: the step now
+                # defaults an absent seed. Any FUTURE step that wants
+                # caller-supplied data belongs in the step, not here, and should
+                # read this method's docstring first.
 
                 if current_db_version == target_version:
                     self._ensure_notes_fts_update_trigger_handles_undelete(conn)
@@ -10712,6 +10744,80 @@ UPDATE db_schema_version
             raise
 
     # --- Message Methods ---
+    def _messages_table_columns(self) -> frozenset[str]:
+        """Return the column names the OPEN ``messages`` table actually has.
+
+        Read once per instance with ``PRAGMA table_info``. A database's column
+        set cannot change under an open instance: ``_initialize_schema`` runs
+        to completion in ``__init__`` before any writer, and the historical
+        fixture bootstrap builds each version behind its own instance.
+        """
+        cached = getattr(self, "_messages_columns_cache", None)
+        if cached is None:
+            cached = frozenset(
+                row["name"]
+                for row in self.get_connection().execute("PRAGMA table_info(messages)")
+            )
+            self._messages_columns_cache = cached
+        return cached
+
+    def _messages_insert_statement(
+        self,
+        fields: tuple[tuple[str, Any], ...],
+    ) -> tuple[str, tuple[Any, ...]]:
+        """Build the ``messages`` INSERT for the schema this database has.
+
+        The general-purpose message writer names the column set of the NEWEST
+        schema. That is an assertion about a schema it never checks, and it
+        broke the repo's fixture doctrine when v48 added
+        ``assistant_generation_state``: ``Tests/ChaChaNotesDB/
+        historical_bootstrap.py`` builds a genuinely historical database by
+        replaying the real migration chain to an older version, and the
+        production writer could no longer populate it -- pushing migration
+        fixtures back to the hand-rolled SQL that task-16840 retired for being
+        silently wrong (task-21441). This recurs on EVERY future ``messages``
+        column, so the repair is per-schema rather than per-column: no version
+        ledger, no per-bump maintenance.
+
+        A column absent from the table is dropped only when its value is
+        ``None`` -- exactly the ``NULL`` the column would have received, so the
+        omission is provably lossless. Anything else raises, which is what
+        keeps this from masking an incompletely-migrated or corrupt database:
+        the newest columns are all nullable, so a genuine defect surfaces as a
+        non-``None`` value with nowhere to go.
+
+        Args:
+            fields: Ordered ``(column, value)`` pairs for one message row.
+
+        Returns:
+            The parameterized INSERT and its bound parameters.
+
+        Raises:
+            SchemaError: If a column carrying data is absent from the table.
+        """
+        available = self._messages_table_columns()
+        dropped_with_data = [
+            column
+            for column, value in fields
+            if column not in available and value is not None
+        ]
+        if dropped_with_data:
+            raise SchemaError(
+                f"Cannot write messages column(s) {sorted(dropped_with_data)}: "
+                f"absent from the '{self._SCHEMA_NAME}' messages table."
+            )
+        # Interpolating the column list is safe by construction, not by
+        # escaping: `written` is a SUBSET of `fields`, whose names are a fixed
+        # literal in the calling writer. No caller-supplied string reaches the
+        # SQL text; every VALUE stays bound.
+        written = [(column, value) for column, value in fields if column in available]
+        columns = ", ".join(column for column, _ in written)
+        placeholders = ", ".join("?" for _ in written)
+        return (
+            f"INSERT INTO messages ({columns}) VALUES ({placeholders})",
+            tuple(value for _, value in written),
+        )
+
     def add_message(self, msg_data: Dict[str, Any]) -> Optional[str]:
         """
         Adds a new message to a conversation, optionally with image data.
@@ -10819,33 +10925,33 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         timestamp = msg_data.get("timestamp") or now
 
-        query = """
-                INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
-                                      image_data, image_mime_type,
-                                      timestamp, ranking, last_modified, client_id, version, deleted, role,
-                                      usage_json, metadata_json, provider_continuation_json,
-                                      assistant_generation_state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
-                """
-        params = (
-            msg_id,
-            msg_data["conversation_id"],
-            msg_data.get("parent_message_id"),
-            msg_data["sender"],
-            msg_data.get("content", ""),  # Default to empty string if no text content
-            msg_data.get("image_data"),
-            msg_data.get("image_mime_type"),
-            timestamp,
-            msg_data.get("ranking"),
-            now,
-            client_id,
-            role,
-            msg_data.get("usage_json"),
-            msg_data.get("metadata_json"),
-            provider_continuation_json,
-            normalized_generation_state.value
-            if normalized_generation_state is not None
-            else None,
+        query, params = self._messages_insert_statement(
+            (
+                ("id", msg_id),
+                ("conversation_id", msg_data["conversation_id"]),
+                ("parent_message_id", msg_data.get("parent_message_id")),
+                ("sender", msg_data["sender"]),
+                # Default to empty string if no text content
+                ("content", msg_data.get("content", "")),
+                ("image_data", msg_data.get("image_data")),
+                ("image_mime_type", msg_data.get("image_mime_type")),
+                ("timestamp", timestamp),
+                ("ranking", msg_data.get("ranking")),
+                ("last_modified", now),
+                ("client_id", client_id),
+                ("version", 1),
+                ("deleted", 0),
+                ("role", role),
+                ("usage_json", msg_data.get("usage_json")),
+                ("metadata_json", msg_data.get("metadata_json")),
+                ("provider_continuation_json", provider_continuation_json),
+                (
+                    "assistant_generation_state",
+                    normalized_generation_state.value
+                    if normalized_generation_state is not None
+                    else None,
+                ),
+            )
         )
         try:
             # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
