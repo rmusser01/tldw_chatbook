@@ -816,18 +816,17 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
     host = _visual_destination_harness(app, "watchlists_collections")
 
-    entered = asyncio.Event()
-    release = asyncio.Event()
+    create_worker_entered = asyncio.Event()
+    release_create_worker = asyncio.Event()
+    submitted_backends: list[str] = []
     create_calls: list[dict[str, object]] = []
     reload_backends: list[str] = []
     notices: list[str] = []
 
-    async def gated_create(*, runtime_backend, payload):
+    async def record_create(*, runtime_backend, payload):
         create_calls.append(
             {"runtime_backend": runtime_backend, "payload": dict(payload)}
         )
-        entered.set()
-        await release.wait()
         return {"id": f"local:subscription:{source_id}", "source_id": source_id}
 
     async def record_source_reload(*, runtime_backend, **_kwargs):
@@ -841,11 +840,25 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
             if screen._tree_watchlists:
                 break
         assert screen._tree_watchlists
-        screen._controller.create_source = gated_create
+        screen._controller.create_source = record_create
         screen._controller.list_sources = record_source_reload
         screen._notify_watchlists = (
             lambda message, severity="information", **_kwargs: notices.append(message)
         )
+
+        original_create_source = screen._create_source
+
+        async def gate_before_create_body(payload, *, runtime_backend):
+            """Pause the worker before production can consult screen state."""
+            submitted_backends.append(runtime_backend)
+            create_worker_entered.set()
+            await release_create_worker.wait()
+            await original_create_source(
+                payload,
+                runtime_backend=runtime_backend,
+            )
+
+        screen._create_source = gate_before_create_body
 
         _screen, pane = await _open_sources_create_form(pilot, host)
         pane.query_one("#sources-create-name", Input).value = "Race Feed"
@@ -856,16 +869,20 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
         await pilot.pause(0.2)
         pane.query_one("#sources-create-submit", Button).press()
 
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        assert create_calls[0]["runtime_backend"] == "local"
+        await asyncio.wait_for(create_worker_entered.wait(), timeout=2)
+        assert submitted_backends == ["local"]
+        assert create_calls == [], (
+            "the gate must pause before the original _create_source body"
+        )
         await _choose_runtime_backend(screen, pilot, "server")
-        release.set()
+        release_create_worker.set()
         await host.workers.wait_for_complete()
         for _ in range(200):
             await pilot.pause(0.02)
             if reload_backends and notices:
                 break
 
+        assert create_calls[0]["runtime_backend"] == "local"
         assert bundle.list_sources(watchlist_id) == [source_id]
         assert any('Source created in "Reading".' == notice for notice in notices)
         assert reload_backends[-1] == "server"
