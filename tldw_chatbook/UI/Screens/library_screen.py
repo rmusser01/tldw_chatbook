@@ -466,6 +466,7 @@ from ...Widgets.Library import (
     MediaShellResized,
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
+    LibraryNoteWorkPane,
     LibraryNotesCanvas,
     LibraryNavigationRailHandle,
     PaneToggleRequested,
@@ -569,6 +570,7 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="LibraryScreen")
 LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
+LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
 LIBRARY_SOURCE_PAGE_SIZES = {
     "notes": 100,
@@ -1569,6 +1571,12 @@ def _apply_library_row_toggle(
                 else LIBRARY_DELETE_SELECTED_TOOLTIP
             )
             _patch_library_disabled_marker_label(delete_button)
+        elif kind == "notes":
+            work_panes = screen.query("#library-note-work-pane")
+            if work_panes and screen._library_note_session.snapshot is not None:
+                work_panes.first(LibraryNoteWorkPane).apply_session_state(
+                    screen._library_note_presentation_state()
+                )
     except Exception:
         logger.debug(
             f"Library {kind} row toggle in-place update failed; falling back "
@@ -1671,7 +1679,22 @@ def _sync_library_canvas(
             sync_args = (new_state,)
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
-            sync_kwargs = screen._library_notes_canvas_kwargs()
+            sync_kwargs = screen._library_notes_list_canvas_kwargs()
+            shell = build_library_shell_state(
+                screen._build_library_shell_input(),
+                selected_row_id=screen._library_selected_row_id,
+            )
+            screen.query_one("#library-rail", LibraryRail).apply_selection(
+                shell,
+                lifecycle=screen._library_lifecycle,
+                onboarding_all_empty=screen._library_onboarding_all_empty,
+            )
+            work_panes = screen.query("#library-note-work-pane")
+            if work_panes:
+                work_panes.first(LibraryNoteWorkPane).sync_state(
+                    **screen._library_note_work_pane_kwargs()
+                )
+            screen._sync_library_notes_reader_layout_from_shell()
         elif kind == "prompts":
             canvas = screen.query_one(
                 "#library-prompts-canvas", LibraryPromptsListCanvas
@@ -2459,7 +2482,7 @@ class LibraryScreen(BaseAppScreen):
         border: none;
     }
 
-    #library-canvas.library-notes-compact {
+    #library-shell-grid.library-notes-compact #library-canvas {
         padding: 0;
         margin: 0;
         border: none;
@@ -2467,7 +2490,8 @@ class LibraryScreen(BaseAppScreen):
         overflow-y: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-notes-canvas {
+    #library-shell-grid.library-notes-compact #library-notes-canvas,
+    #library-shell-grid.library-notes-compact #library-note-work-pane {
         width: 100%;
         height: 100%;
         min-height: 0;
@@ -2476,7 +2500,8 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
         overflow-y: hidden;
     }
-    #library-canvas.library-notes-compact #library-notes-authority {
+    #library-shell-grid.library-notes-compact #library-notes-authority,
+    #library-shell-grid.library-notes-compact #library-note-work-authority {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -2485,7 +2510,7 @@ class LibraryScreen(BaseAppScreen):
         text-wrap: wrap;
         overflow: hidden hidden;
     }
-    #library-canvas.library-notes-compact #library-notes-header {
+    #library-shell-grid.library-notes-compact #library-notes-header {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2495,7 +2520,7 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-notes-filter-row {
+    #library-shell-grid.library-notes-compact #library-notes-filter-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2503,13 +2528,13 @@ class LibraryScreen(BaseAppScreen):
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-notes-filter-label {
+    #library-shell-grid.library-notes-compact #library-notes-filter-label {
         width: 8;
         height: 1;
         padding: 0 1;
     }
 
-    #library-canvas.library-notes-compact #library-notes-filter {
+    #library-shell-grid.library-notes-compact #library-notes-filter {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -2518,13 +2543,13 @@ class LibraryScreen(BaseAppScreen):
         border: none;
     }
 
-    #library-canvas.library-notes-compact #library-notes-browse-actions,
-    #library-canvas.library-notes-compact #library-notes-sort-choices,
-    #library-canvas.library-notes-compact #library-notes-transfer-actions,
-    #library-canvas.library-notes-compact #library-notes-selection-actions,
-    #library-canvas.library-notes-compact #library-note-primary-actions,
-    #library-canvas.library-notes-compact #library-note-conflict-actions,
-    #library-canvas.library-notes-compact #library-note-delete-actions {
+    #library-shell-grid.library-notes-compact #library-notes-browse-actions,
+    #library-shell-grid.library-notes-compact #library-notes-sort-choices,
+    #library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+    #library-shell-grid.library-notes-compact #library-notes-selection-actions,
+    #library-shell-grid.library-notes-compact #library-note-primary-actions,
+    #library-shell-grid.library-notes-compact #library-note-conflict-actions,
+    #library-shell-grid.library-notes-compact #library-note-delete-actions {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2532,7 +2557,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact .library-canvas-action {
+    #library-shell-grid.library-notes-compact .library-canvas-action {
         width: auto;
         min-width: 0;
         height: 1;
@@ -2543,7 +2568,7 @@ class LibraryScreen(BaseAppScreen):
         border: none;
     }
 
-    #library-canvas.library-notes-compact #library-notes-status-row {
+    #library-shell-grid.library-notes-compact #library-notes-status-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2552,7 +2577,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-notes-status {
+    #library-shell-grid.library-notes-compact #library-notes-status {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -2562,11 +2587,11 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-notes-filter-clear {
+    #library-shell-grid.library-notes-compact #library-notes-filter-clear {
         width: auto;
     }
 
-    #library-canvas.library-notes-compact #library-notes-selection-status {
+    #library-shell-grid.library-notes-compact #library-notes-selection-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2574,7 +2599,7 @@ class LibraryScreen(BaseAppScreen):
         padding: 0 1;
     }
 
-    #library-canvas.library-notes-compact #library-notes-list {
+    #library-shell-grid.library-notes-compact #library-notes-list {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -2583,7 +2608,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-notes-empty {
+    #library-shell-grid.library-notes-compact #library-notes-empty {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -2592,7 +2617,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-heading {
+    #library-shell-grid.library-notes-compact #library-note-heading {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2601,11 +2626,11 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-editor-title,
-    #library-canvas.library-notes-compact #library-note-preview-title,
-    #library-canvas.library-notes-compact #library-note-context-title,
-    #library-canvas.library-notes-compact #library-note-loading-title,
-    #library-canvas.library-notes-compact #library-notes-create-header {
+    #library-shell-grid.library-notes-compact #library-note-editor-title,
+    #library-shell-grid.library-notes-compact #library-note-preview-title,
+    #library-shell-grid.library-notes-compact #library-note-context-title,
+    #library-shell-grid.library-notes-compact #library-note-loading-title,
+    #library-shell-grid.library-notes-compact #library-notes-create-header {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -2616,7 +2641,7 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-note-editor-region {
+    #library-shell-grid.library-notes-compact #library-note-editor-region {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -2624,7 +2649,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-y: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-title-row {
+    #library-shell-grid.library-notes-compact #library-note-title-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2632,15 +2657,15 @@ class LibraryScreen(BaseAppScreen):
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-title-label,
-    #library-canvas.library-notes-compact #library-note-context-keywords-label {
+    #library-shell-grid.library-notes-compact #library-note-title-label,
+    #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
         padding: 0 1;
     }
 
-    #library-canvas.library-notes-compact #library-note-title,
-    #library-canvas.library-notes-compact #library-note-context-keywords {
+    #library-shell-grid.library-notes-compact #library-note-title,
+    #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -2649,7 +2674,7 @@ class LibraryScreen(BaseAppScreen):
         border: none;
     }
 
-    #library-canvas.library-notes-compact #library-note-body-label {
+    #library-shell-grid.library-notes-compact #library-note-body-label {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2657,7 +2682,7 @@ class LibraryScreen(BaseAppScreen):
         padding: 0 1;
     }
 
-    #library-canvas.library-notes-compact #library-note-body {
+    #library-shell-grid.library-notes-compact #library-note-body {
         height: 1fr;
         min-height: 0;
         max-height: 100%;
@@ -2665,7 +2690,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-preview-region {
+    #library-shell-grid.library-notes-compact #library-note-preview-region {
         height: 1fr;
         min-height: 0;
         max-height: 100%;
@@ -2674,7 +2699,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-preview-body {
+    #library-shell-grid.library-notes-compact #library-note-preview-body {
         height: auto;
         min-height: 0;
         margin: 0;
@@ -2684,7 +2709,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-context-status {
+    #library-shell-grid.library-notes-compact #library-note-context-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2694,7 +2719,7 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-note-context-region {
+    #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -2703,22 +2728,22 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-context-region .destination-section,
-    #library-canvas.library-notes-compact #library-note-context-meta,
-    #library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
+    #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+    #library-shell-grid.library-notes-compact #library-note-context-meta,
+    #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-context-keywords-row {
+    #library-shell-grid.library-notes-compact #library-note-context-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-status {
+    #library-shell-grid.library-notes-compact #library-note-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2728,7 +2753,7 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status {
+    #library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -2736,22 +2761,22 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: clip;
     }
 
-    #library-canvas.library-notes-compact #library-note-transfer-status,
-    #library-canvas.library-notes-compact #library-note-context-transfer-status {
+    #library-shell-grid.library-notes-compact #library-note-transfer-status,
+    #library-shell-grid.library-notes-compact #library-note-context-transfer-status {
         display: none;
         height: 0;
         min-height: 0;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-conflict-region {
+    #library-shell-grid.library-notes-compact #library-note-conflict-region {
         height: 3;
         min-height: 3;
         max-height: 3;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-conflict-copy {
+    #library-shell-grid.library-notes-compact #library-note-conflict-copy {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -2759,14 +2784,14 @@ class LibraryScreen(BaseAppScreen):
         padding: 0 1;
     }
 
-    #library-canvas.library-notes-compact #library-note-delete-confirmation {
+    #library-shell-grid.library-notes-compact #library-note-delete-confirmation {
         height: 2;
         min-height: 2;
         max-height: 2;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-delete-confirm-copy {
+    #library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2776,7 +2801,7 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-notes-create-heading {
+    #library-shell-grid.library-notes-compact #library-notes-create-heading {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -2784,7 +2809,7 @@ class LibraryScreen(BaseAppScreen):
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-notes-create-viewport {
+    #library-shell-grid.library-notes-compact #library-notes-create-viewport {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -2793,7 +2818,7 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-load-state {
+    #library-shell-grid.library-notes-compact #library-note-load-state {
         width: 100%;
         height: 1fr;
         min-height: 0;
@@ -2802,14 +2827,14 @@ class LibraryScreen(BaseAppScreen):
         overflow: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-note-load-heading {
+    #library-shell-grid.library-notes-compact #library-note-load-heading {
         height: 1;
         min-height: 1;
         max-height: 1;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-note-loading {
+    #library-shell-grid.library-notes-compact #library-note-loading {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -2819,7 +2844,7 @@ class LibraryScreen(BaseAppScreen):
         text-overflow: ellipsis;
     }
 
-    #library-canvas.library-notes-compact #library-note-loading-viewport {
+    #library-shell-grid.library-notes-compact #library-note-loading-viewport {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -2863,13 +2888,13 @@ class LibraryScreen(BaseAppScreen):
         display: none;
     }
 
-    #library-canvas.library-notes-compact #library-media-workbench {
+    #library-shell-grid.library-notes-compact #library-media-workbench {
         layout: vertical;
         height: 1fr;
         min-height: 0;
     }
 
-    #library-canvas.library-notes-compact #library-media-list {
+    #library-shell-grid.library-notes-compact #library-media-list {
         width: 100%;
         height: 100%;
         min-height: 0;
@@ -2878,22 +2903,22 @@ class LibraryScreen(BaseAppScreen):
         overflow-y: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-media-row-scroll {
+    #library-shell-grid.library-notes-compact #library-media-row-scroll {
         height: 1fr;
         min-height: 0;
     }
 
-    #library-canvas.library-notes-compact .library-media-row {
+    #library-shell-grid.library-notes-compact .library-media-row {
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    #library-canvas.library-notes-compact #library-media-preview {
+    #library-shell-grid.library-notes-compact #library-media-preview {
         display: none;
     }
 
-    #library-canvas.library-notes-compact #library-media-detail-empty {
+    #library-shell-grid.library-notes-compact #library-media-detail-empty {
         display: none;
     }
     """
@@ -3128,22 +3153,39 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_preferences = (
             self._load_library_conversation_reader_preferences()
         )
+        self._library_notes_reader_preferences = (
+            self._load_library_notes_reader_preferences()
+        )
+        self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
+            resolve_adaptive_reader_layout(
+                0,
+                self._library_notes_reader_preferences,
+                LIBRARY_NOTES_READER_PROFILE,
+            )
+        )
         library_pane_persistence_lock = asyncio.Lock()
         self._library_reader_persistence_generations = {
             "library": 0,
             "conversations_items": 0,
             "media_items": 0,
+            "notes_items": 0,
         }
         self._library_reader_durable_generations = {
             "library": 0,
             "conversations_items": 0,
             "media_items": 0,
+            "notes_items": 0,
         }
         self._library_reader_durable_preferences = {
             "library": self._library_conversation_reader_preferences.library_open,
             "conversations_items": self._library_conversation_reader_preferences.items_open,
+            "notes_items": self._library_notes_reader_preferences.items_open,
         }
         self._library_conversation_reader_persistence_locks = {
+            "library": library_pane_persistence_lock,
+            "items": asyncio.Lock(),
+        }
+        self._library_notes_reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -4249,6 +4291,10 @@ class LibraryScreen(BaseAppScreen):
             ),
             transfer_status=operation.status_line if operation is not None else "",
             transfer_running=bool(operation and operation.running),
+            bulk_read_only=self._library_notes_select_mode,
+            bulk_included=self._library_notes_row_selection.is_selected(
+                snapshot.note_id
+            ),
         )
 
     def _library_notes_active_region(
@@ -4306,11 +4352,11 @@ class LibraryScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         if self._library_notes_active_region() == "navigator":
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
             return
         if self._library_notes_active_region() in {"editor", "context"}:
             try:
-                canvas = self.query_one("#library-notes-canvas", LibraryNotesCanvas)
+                canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
             except (NoMatches, QueryError):
                 return
             if canvas.mode != "editor":
@@ -4398,7 +4444,7 @@ class LibraryScreen(BaseAppScreen):
         if not self.is_mounted or self._library_note_session.snapshot is None:
             return
         try:
-            canvas = self.query_one("#library-notes-canvas", LibraryNotesCanvas)
+            canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
         except (NoMatches, QueryError):
             return
         canvas.title_placeholder_only = bool(
@@ -4486,6 +4532,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_widget_is_within(focused, rail):
             return "rail"
         if self._library_notes_widget_is_within(focused, canvas):
+            return "notes"
+        work_panes = self.query("#library-note-work-pane")
+        if work_panes and self._library_notes_widget_is_within(
+            focused, work_panes.first(Widget)
+        ):
             return "notes"
         return self._library_notes_stage
 
@@ -5211,11 +5262,13 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             shell = self.query_one("#library-shell-grid", Widget)
-            rail_handle = self.query_one("#library-rail-handle", Widget)
             rail = self.query_one("#library-rail", Widget)
             canvas = self.query_one("#library-canvas", Widget)
         except (NoMatches, QueryError):
             return
+        rail_handles = self.query("#library-rail-handle")
+        rail_handle = rail_handles.first(Widget) if rail_handles else None
+        adaptive_notes = bool(self.query("#library-notes-reader-shell"))
         # Only the grid and canvas host participate in compact CSS selectors;
         # tagging the rail and inner Notes canvas forced two needless global
         # stylesheet matches on every breakpoint crossing.
@@ -5230,6 +5283,13 @@ class LibraryScreen(BaseAppScreen):
             if notes_canvas.compact != self._library_notes_compact:
                 notes_canvas.apply_compact_presentation(self._library_notes_compact)
         try:
+            notes_work = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            if notes_work.compact != self._library_notes_compact:
+                notes_work.apply_compact_presentation(self._library_notes_compact)
+        try:
             media_canvas = canvas.query_one("#library-media-canvas", LibraryMediaCanvas)
         except (NoMatches, QueryError):
             pass
@@ -5239,6 +5299,12 @@ class LibraryScreen(BaseAppScreen):
                 and media_canvas.compact != self._library_notes_compact
             ):
                 media_canvas.apply_compact_presentation(self._library_notes_compact)
+        if adaptive_notes:
+            # The adaptive shell owns pane visibility. The legacy compact
+            # stage toggles below predate the permanent Notes work pane and
+            # would hide its retained Items sibling or move focus to an
+            # unrelated legacy handle.
+            return
         compact_single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
@@ -5260,7 +5326,7 @@ class LibraryScreen(BaseAppScreen):
             else (not compact_single_stage or self._library_notes_stage == "notes")
         )
         handle_display = manually_collapsed
-        if rail_handle.display != handle_display:
+        if rail_handle is not None and rail_handle.display != handle_display:
             rail_handle.display = handle_display
         if rail.display != rail_display:
             rail.display = rail_display
@@ -5324,6 +5390,75 @@ class LibraryScreen(BaseAppScreen):
                             raw[key] = reader[key]
         return normalize_adaptive_reader_preferences(raw)
 
+    def _load_library_notes_reader_preferences(
+        self,
+    ) -> AdaptiveReaderLayoutPreferences:
+        """Read shared Library geometry plus Notes-list preferences."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        raw: dict[str, Any] = {}
+        if isinstance(app_config, Mapping):
+            library_config = app_config.get("library")
+            if isinstance(library_config, Mapping):
+                destination = library_config.get("notes_reader")
+                if isinstance(destination, Mapping):
+                    raw.update(destination)
+                reader = library_config.get("reader")
+                if isinstance(reader, Mapping):
+                    for key in (
+                        "library_open",
+                        "custom_widths_enabled",
+                        "library_width",
+                    ):
+                        if key in reader:
+                            raw[key] = reader[key]
+        return normalize_adaptive_reader_preferences(raw)
+
+    def _sync_library_notes_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+    ) -> None:
+        """Resolve the settled Notes shell and patch it in place."""
+        try:
+            shell = self.query_one(
+                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            )
+        except (NoMatches, QueryError):
+            return
+        width = shell.region.width
+        if width <= 0:
+            return
+        previous = self._library_notes_reader_layout
+        if (
+            previous.reader_width == 0
+            and previous.library_width == 0
+            and previous.items_width == 0
+        ):
+            previous = None
+        if priority is None:
+            if self._library_notes_stage == "rail":
+                priority = "library"
+            list_owns_workflow = (
+                priority is None
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_notes_view == "list"
+            )
+            if list_owns_workflow:
+                priority = "items"
+            elif previous is not None and previous.priority_pane == "items":
+                # Work is the protected region. Drop an automatic list
+                # priority inherited from Navigator when Edit/Create opens;
+                # an explicit grip activation still supplies priority above.
+                previous = dataclasses.replace(previous, priority_pane=None)
+        layout = resolve_adaptive_reader_layout(
+            width,
+            self._library_notes_reader_preferences,
+            LIBRARY_NOTES_READER_PROFILE,
+            previous=previous,
+            priority=priority,
+        )
+        shell.sync_layout(layout)
+        self._library_notes_reader_layout = layout
+
     def _sync_library_conversation_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
@@ -5376,40 +5511,63 @@ class LibraryScreen(BaseAppScreen):
             library_config[section_name] = section
         section[key] = value
 
+    def _mirror_library_notes_reader_preference(
+        self,
+        key: Literal["library_open", "items_open"],
+        value: bool,
+    ) -> None:
+        """Mirror one optimistic Notes pane choice into app config."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        library_config = app_config.setdefault("library", {})
+        if not isinstance(library_config, dict):
+            library_config = {}
+            app_config["library"] = library_config
+        section_name = "reader" if key == "library_open" else "notes_reader"
+        section = library_config.setdefault(section_name, {})
+        if not isinstance(section, dict):
+            section = {}
+            library_config[section_name] = section
+        section[key] = value
+
     def _replace_library_reader_preference(
         self,
-        destination: Literal["media", "conversations"],
+        destination: Literal["media", "conversations", "notes"],
         key: Literal["library_open", "items_open"],
         value: bool,
     ) -> None:
         """Replace one pane choice, sharing only the Library-pane preference."""
-        attribute = (
-            "_library_conversation_reader_preferences"
-            if destination == "conversations"
-            else "_library_media_reader_preferences"
-        )
+        attributes = {
+            "media": "_library_media_reader_preferences",
+            "conversations": "_library_conversation_reader_preferences",
+            "notes": "_library_notes_reader_preferences",
+        }
+        attribute = attributes[destination]
         preferences = getattr(self, attribute)
         setattr(self, attribute, dataclasses.replace(preferences, **{key: value}))
         if key != "library_open":
             return
-        other_attribute = (
-            "_library_media_reader_preferences"
-            if destination == "conversations"
-            else "_library_conversation_reader_preferences"
-        )
-        other = getattr(self, other_attribute)
-        setattr(self, other_attribute, dataclasses.replace(other, library_open=value))
+        for other_attribute in attributes.values():
+            if other_attribute == attribute:
+                continue
+            other = getattr(self, other_attribute)
+            setattr(
+                self,
+                other_attribute,
+                dataclasses.replace(other, library_open=value),
+            )
 
     @staticmethod
     def _library_reader_persistence_key(
-        destination: Literal["media", "conversations"],
+        destination: Literal["media", "conversations", "notes"],
         pane: Literal["library", "items"],
     ) -> str:
         return "library" if pane == "library" else f"{destination}_items"
 
     def _claim_library_reader_persistence(
         self,
-        destination: Literal["media", "conversations"],
+        destination: Literal["media", "conversations", "notes"],
         pane: Literal["library", "items"],
     ) -> int:
         """Claim the shared Library or destination-specific Items authority."""
@@ -5420,7 +5578,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_reader_persistence_is_current(
         self,
-        destination: Literal["media", "conversations"],
+        destination: Literal["media", "conversations", "notes"],
         pane: Literal["library", "items"],
         generation: int,
     ) -> bool:
@@ -5429,7 +5587,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_reader_preference_layout(
         self,
-        destination: Literal["media", "conversations"],
+        destination: Literal["media", "conversations", "notes"],
         key: Literal["library_open", "items_open"],
         priority: Literal["library", "items"] | None = None,
     ) -> None:
@@ -5438,6 +5596,8 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_media_reader_layout_from_shell(priority)
         if key == "library_open" or destination == "conversations":
             self._sync_library_conversation_reader_layout_from_shell(priority)
+        if key == "library_open" or destination == "notes":
+            self._sync_library_notes_reader_layout_from_shell(priority)
 
     async def _read_library_reader_persisted_preference(
         self,
@@ -5476,7 +5636,7 @@ class LibraryScreen(BaseAppScreen):
 
     async def _persist_library_reader_preference(
         self,
-        destination: Literal["media", "conversations"],
+        destination: Literal["media", "conversations", "notes"],
         pane: Literal["library", "items"],
         value: bool,
         generation: int,
@@ -5487,24 +5647,24 @@ class LibraryScreen(BaseAppScreen):
             "library_open" if pane == "library" else "items_open"
         )
         authority = self._library_reader_persistence_key(destination, pane)
-        preferences_attribute = (
-            "_library_conversation_reader_preferences"
-            if destination == "conversations"
-            else "_library_media_reader_preferences"
-        )
-        locks = (
-            self._library_conversation_reader_persistence_locks
-            if destination == "conversations"
-            else self._library_media_reader_persistence_locks
-        )
+        preferences_attribute = {
+            "media": "_library_media_reader_preferences",
+            "conversations": "_library_conversation_reader_preferences",
+            "notes": "_library_notes_reader_preferences",
+        }[destination]
+        locks = {
+            "media": self._library_media_reader_persistence_locks,
+            "conversations": self._library_conversation_reader_persistence_locks,
+            "notes": self._library_notes_reader_persistence_locks,
+        }[destination]
         section = (
             "library.reader" if pane == "library" else f"library.{destination}_reader"
         )
-        mirror = (
-            self._mirror_library_conversation_reader_preference
-            if destination == "conversations"
-            else self._mirror_library_media_reader_preference
-        )
+        mirror = {
+            "media": self._mirror_library_media_reader_preference,
+            "conversations": self._mirror_library_conversation_reader_preference,
+            "notes": self._mirror_library_notes_reader_preference,
+        }[destination]
         attempted_generation = generation
         attempted_value = value
         async with locks[pane]:
@@ -5722,8 +5882,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_preferences = (
             self._load_library_conversation_reader_preferences()
         )
+        self._library_notes_reader_preferences = (
+            self._load_library_notes_reader_preferences()
+        )
         self._sync_library_media_reader_layout_from_shell()
         self._sync_library_conversation_reader_layout_from_shell()
+        self._sync_library_notes_reader_layout_from_shell()
         for destination, pane, value in (
             (
                 "media",
@@ -5736,6 +5900,7 @@ class LibraryScreen(BaseAppScreen):
                 "items",
                 self._library_conversation_reader_preferences.items_open,
             ),
+            ("notes", "items", self._library_notes_reader_preferences.items_open),
         ):
             authority = self._library_reader_persistence_key(destination, pane)
             self.run_worker(
@@ -5796,6 +5961,29 @@ class LibraryScreen(BaseAppScreen):
                 group=f"library_conversation_reader_{event.pane}_persistence",
             )
             return
+        if (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            layout = self._library_notes_reader_layout
+            opening = not (
+                layout.library_open if event.pane == "library" else layout.items_open
+            )
+            key = "library_open" if event.pane == "library" else "items_open"
+            generation = self._claim_library_reader_persistence("notes", event.pane)
+            self._replace_library_reader_preference("notes", key, opening)
+            self._mirror_library_notes_reader_preference(key, opening)
+            self._sync_library_reader_preference_layout(
+                "notes", key, event.pane if opening else None
+            )
+            self.run_worker(
+                self._persist_library_reader_preference(
+                    "notes", event.pane, opening, generation
+                ),
+                group=f"library_notes_reader_{event.pane}_persistence",
+            )
+            return
         layout = self._library_media_reader_layout
         opening = not (
             layout.library_open if event.pane == "library" else layout.items_open
@@ -5825,6 +6013,12 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             self._sync_library_conversation_reader_layout_from_shell()
+        elif (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._sync_library_notes_reader_layout_from_shell()
         else:
             self._sync_library_media_reader_layout_from_shell()
 
@@ -6514,6 +6708,11 @@ class LibraryScreen(BaseAppScreen):
 
     async def action_library_notes_save(self) -> None:
         """Request an immediate save or explain the owning safety gate."""
+        if self._library_notes_select_mode:
+            self._show_library_note_shortcut_refusal(
+                "Save unavailable — finish bulk selection first."
+            )
+            return
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
             return
@@ -6576,6 +6775,17 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_note_presentation_state()
             self._focus_library_note_control("#library-note-context")
             return
+        if self._library_notes_select_mode:
+            self._library_notes_select_mode = False
+            self._library_notes_row_selection.clear()
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control(
+                    "#library-notes-select-toggle"
+                ),
+            )
+            return
         if self._library_notes_view == "editor":
             # P0 (found independently by task-3315 and at dev 4d0232358):
             # this called `_back_from_library_note_editor()`, a method that
@@ -6614,17 +6824,6 @@ class LibraryScreen(BaseAppScreen):
                 self, "notes", then=self._focus_library_notes_filter_input
             )
             return
-        if self._library_notes_select_mode:
-            self._library_notes_select_mode = False
-            self._library_notes_row_selection.clear()
-            _sync_library_canvas(
-                self,
-                "notes",
-                then=lambda: self._focus_library_note_control(
-                    "#library-notes-select-toggle"
-                ),
-            )
-            return
         if self._library_notes_sort_choices_visible:
             self._library_notes_sort_choices_visible = False
             _sync_library_canvas(
@@ -6636,6 +6835,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_stage = "rail"
         self._library_notes_explicit_stage_intent = False
         self._supersede_library_notes_navigation()
+        if self.query("#library-notes-reader-shell"):
+            # The adaptive shell keeps all three owners mounted, so Escape
+            # from Navigator moves toward Library by granting that pane one
+            # effective-layout priority. This is deliberately not persisted:
+            # the user's requested pane preferences remain authoritative and
+            # return on the next unconstrained layout. Resolve visibility
+            # before restoring focus so a narrow shell never strands focus in
+            # the auto-collapsed Library pane.
+            self._sync_library_notes_reader_layout_from_shell(priority="library")
         self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
         identity = LibraryNotesFocusIdentity(
@@ -8592,9 +8800,18 @@ class LibraryScreen(BaseAppScreen):
                 self.app_instance._library_source_snapshot_cache_stamp = (
                     time.monotonic()
                 )
-        self._apply_local_source_snapshot(
+        presentation_changed = self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
+        if (
+            not presentation_changed
+            and self._library_notes_pending_focus_waits_for_snapshot
+        ):
+            # A no-op snapshot has no reconciliation callback to finish the
+            # pending Notes Back receipt. Release it after the current frame
+            # just as a changed snapshot does from
+            # `_complete_library_entry_reconcile` below.
+            self.call_after_refresh(self._release_library_notes_focus_after_snapshot)
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
             # Task 5: this snapshot includes the skills entry the list view
             # reads (``_build_library_skills_state``) -- re-check the trust
@@ -8926,6 +9143,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_entry_reconcile_dirty = False
         self._library_entry_reconcile_pending = None
         self._library_entry_reconcile_retry_generation = None
+        if self._library_notes_pending_focus_waits_for_snapshot:
+            # Notes Back waits for the fresh list projection so its row and
+            # scroll receipt cannot be overwritten by the snapshot-driven
+            # list sync. The pending identity is Notes-owned and generation
+            # guarded; all other destinations are a no-op here.
+            self.call_after_refresh(self._release_library_notes_focus_after_snapshot)
 
     def _supersede_library_entry_reconcile(
         self, generation: int, route_key: tuple[object, ...]
@@ -8997,7 +9220,7 @@ class LibraryScreen(BaseAppScreen):
                     markup=False,
                 )
             return LibraryNotesCanvas(
-                **self._library_notes_canvas_kwargs(),
+                **self._library_notes_list_canvas_kwargs(),
                 id="library-notes-canvas",
             )
         if shell.canvas_kind == "prompts":
@@ -9673,7 +9896,7 @@ class LibraryScreen(BaseAppScreen):
             if self._library_lookup_error is None:
                 sync_kind = "notes"
                 replacement = LibraryNotesCanvas(
-                    **self._library_notes_canvas_kwargs(),
+                    **self._library_notes_list_canvas_kwargs(),
                     id="library-notes-canvas",
                 )
         elif shell.canvas_kind == "skills" and self._library_skills_view == "list":
@@ -10873,7 +11096,7 @@ class LibraryScreen(BaseAppScreen):
             show_explore=get_started and self._library_rail_collapsed,
             continue_action=(
                 self._library_landing_continue_action()
-                if not get_started and not self._library_notes_compact
+                if not get_started
                 else None
             ),
             attention_action=attention_action,
@@ -11629,8 +11852,14 @@ class LibraryScreen(BaseAppScreen):
         yield install_label
         yield install_progress
         if shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS:
+            adaptive_database_notes = (
+                shell.canvas_kind
+                in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
+                and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            )
             wide_focused_task = (
-                not self._library_notes_compact
+                not adaptive_database_notes
+                and not self._library_notes_compact
                 and self._library_notes_focused_task_active()
             )
             with Horizontal(id="library-notes-source-strip"):
@@ -11682,6 +11911,65 @@ class LibraryScreen(BaseAppScreen):
             not self._library_notes_compact
             and self._library_notes_focused_task_active()
         )
+        if (
+            shell.canvas_kind
+            in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            rail = LibraryRail(
+                shell,
+                preferences,
+                query=self._library_rag_query,
+                search_placeholder=self._library_rail_search_placeholder(),
+                workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
+                id="library-rail",
+                classes="destination-workbench-pane",
+            )
+            if not self._library_loaded and not self._library_lookup_error:
+                items_child: Widget = Static(
+                    "Loading local Library sources…",
+                    id="library-canvas-loading",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            elif self._library_lookup_error:
+                items_child = Static(
+                    self._library_lookup_error,
+                    id="library-canvas-error",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            else:
+                items_child = LibraryNotesCanvas(
+                    **self._library_notes_list_canvas_kwargs(),
+                    id="library-notes-canvas",
+                )
+            items_host = Vertical(
+                items_child,
+                id="library-canvas",
+                classes="destination-workbench-pane",
+            )
+            work = LibraryNoteWorkPane(
+                **self._library_note_work_pane_kwargs(),
+                id="library-note-work-pane",
+            )
+            with shell_grid:
+                yield LibraryAdaptiveReaderShell(
+                    library=rail,
+                    items=items_host,
+                    work=work,
+                    layout=self._library_notes_reader_layout,
+                    id_prefix="library-notes",
+                    library_label="Library",
+                    items_label="Notes",
+                    id="library-notes-reader-shell",
+                )
+            self.call_after_refresh(self._sync_library_notes_reader_layout_from_shell)
+            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
+            return
         if shell.canvas_kind == "conversations":
             conversations_state = self._build_library_conversations_state()
             self._adopt_library_conversation_state_selection(
@@ -14314,6 +14602,23 @@ class LibraryScreen(BaseAppScreen):
             values["list_state"] = self._build_library_notes_state()
         return values
 
+    def _library_notes_list_canvas_kwargs(self) -> dict[str, Any]:
+        """Return list-only inputs for the retained Notes Items pane."""
+        values = self._library_notes_canvas_kwargs()
+        values.update(
+            mode="list",
+            list_state=self._build_library_notes_state(),
+            presentation_state=None,
+            title_placeholder_only=False,
+        )
+        return values
+
+    def _library_note_work_pane_kwargs(self) -> dict[str, Any]:
+        """Return active non-list content for the retained Notes work pane."""
+        values = self._library_notes_canvas_kwargs()
+        values["list_state"] = None
+        return values
+
     def _library_prompt_basic_unavailable_reason(
         self,
         state: PromptEditorState,
@@ -15482,7 +15787,7 @@ class LibraryScreen(BaseAppScreen):
             route_key = self._library_entry_route_key()
             result = await self._replace_library_canvas_child(
                 LibraryNotesCanvas(
-                    **self._library_notes_canvas_kwargs(),
+                    **self._library_notes_list_canvas_kwargs(),
                     id="library-notes-canvas",
                 ),
                 generation=generation,
@@ -17910,7 +18215,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_note_missing_warning()
             self._refresh_local_source_snapshot()
             if self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return
         snapshot = self._library_note_session.snapshot
         validation_field = ""
@@ -19343,7 +19648,7 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     return False
                 canvas: Widget = LibraryNotesCanvas(
-                    **self._library_notes_canvas_kwargs(),
+                    **self._library_notes_list_canvas_kwargs(),
                     id="library-notes-canvas",
                 )
             elif shell.canvas_kind == "media":
@@ -19451,6 +19756,8 @@ class LibraryScreen(BaseAppScreen):
             return
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
+            return
+        if self._try_switch_retained_library_notes_route(row_id):
             return
         self._acknowledge_library_destination_change()
         self._cancel_library_media_selection_settlement()
@@ -19647,6 +19954,91 @@ class LibraryScreen(BaseAppScreen):
             # task-424: first action in a blank create editor is always
             # naming it -- put the caret there.
             self.call_after_refresh(self._focus_library_skill_name)
+
+    def _try_switch_retained_library_notes_route(self, row_id: str) -> bool:
+        """Switch between retained Notes list/Create routes in place.
+
+        Navigator New and Create Back are in-reader mode transitions, not
+        destination replacements. All leave guards have already admitted the
+        transition before this method runs. Return ``False`` when the retained
+        Notes owners are unavailable so the caller can use the legacy route
+        fallback.
+
+        Args:
+            row_id: Admitted Library destination row.
+
+        Returns:
+            ``True`` when the retained Notes shell accepted the transition.
+        """
+        entering_create = (
+            row_id == LIBRARY_ROW_CREATE_NOTE
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_view == "list"
+        )
+        leaving_create = (
+            row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        )
+        reentering_browse = (
+            row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        )
+        if not (
+            (entering_create or leaving_create or reentering_browse)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self.is_mounted
+        ):
+            return False
+        try:
+            self.query_one("#library-notes-reader-shell", LibraryAdaptiveReaderShell)
+            rail = self.query_one("#library-rail", LibraryRail)
+            header = self.query_one("#library-header-line", Static)
+        except (NoMatches, QueryError):
+            return False
+
+        self._acknowledge_library_destination_change()
+        self._library_navigation_context_generation += 1
+        self._pending_library_source_open = None
+        self._library_notes_operation = None
+        self._supersede_library_notes_navigation()
+        if not self._library_note_create_running:
+            self._library_note_create_status = ""
+        self._reset_library_note_editor_state()
+        self._set_library_destination_with_conversation_fence(row_id)
+        if reentering_browse:
+            self._library_notes_filter = ""
+            self._library_notes_filter_records = None
+            self._library_notes_tree_search_page = None
+            self._library_notes_browse_return_receipt = None
+            self._request_library_notes_tree_refresh(refresh_root=True)
+        self._library_notes_explicit_stage_intent = True
+        self._library_notes_stage = "notes"
+        self._invalidate_library_workspace_depth_state()
+        self._register_footer_shortcuts()
+
+        shell = build_library_shell_state(
+            self._build_library_shell_input(),
+            selected_row_id=self._library_selected_row_id,
+        )
+        self._library_selected_row_id = shell.selected_row_id
+        rail.apply_selection(
+            shell,
+            lifecycle=self._library_lifecycle,
+            onboarding_all_empty=self._library_onboarding_all_empty,
+        )
+        header.update(self._library_header_line(shell.header_line))
+        identity = LibraryNotesFocusIdentity(
+            stage="notes",
+            region="create" if entering_create else "navigator",
+            note_id=None,
+            semantic_role="create-template:blank" if entering_create else "filter",
+        )
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=lambda: self._restore_library_notes_focus_identity(identity),
+        )
+        return True
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -21179,13 +21571,11 @@ class LibraryScreen(BaseAppScreen):
     async def _reconcile_library_notes_list_canvas(self) -> None:
         """Publish a completed editor-to-list transition before returning."""
         self._request_library_notes_tree_refresh(refresh_root=True)
-        shell = build_library_shell_state(
-            self._build_library_shell_input(),
-            selected_row_id=self._library_selected_row_id,
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=self._focus_library_notes_filter_input,
         )
-        if not await self._replace_library_browse_canvas(shell):
-            await self.recompose()
-        self._focus_library_notes_filter_input()
 
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
@@ -23163,7 +23553,11 @@ class LibraryScreen(BaseAppScreen):
                     and not isinstance(self.focused, (Input, TextArea))
                 )
             if action == "library_notes_save":
-                return visible_notes and region in {"editor", "preview", "context"}
+                return (
+                    visible_notes
+                    and not self._library_notes_select_mode
+                    and region in {"editor", "preview", "context"}
+                )
             return visible_notes
         if action == "library_skill_save":
             return self._library_skill_save_available()
@@ -23186,7 +23580,10 @@ class LibraryScreen(BaseAppScreen):
                 and not self._library_media_bulk_delete_in_flight
             )
         if action == "library_note_editor_back":
-            return self._library_note_editor_active()
+            return (
+                self._library_note_editor_active()
+                and not self._library_notes_select_mode
+            )
         if action == "library_prompt_editor_back":
             return self._library_prompt_editor_active()
         if action == "library_ingest_back":
@@ -28624,9 +29021,16 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @on(Button.Pressed, "#library-notes-manage-sync-folders")
-    def handle_library_notes_manage_sync_folders(self, event: Button.Pressed) -> None:
+    async def handle_library_notes_manage_sync_folders(
+        self, event: Button.Pressed
+    ) -> None:
         """Open the path-free lasting root list."""
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
         self._library_notes_sync_controller.refresh_roots()
         self._library_notes_lasting_origin = None
         self._library_notes_view = "lasting_roots"
@@ -28906,9 +29310,16 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     @on(Button.Pressed, "#library-notes-import-receipt")
-    def handle_library_notes_import_receipt(self, event: Button.Pressed) -> None:
+    async def handle_library_notes_import_receipt(
+        self, event: Button.Pressed
+    ) -> None:
         """Reopen the latest import receipt retained in this app session."""
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
         self._library_note_import_controller.revisit_receipt()
         self._library_notes_view = "import"
         _sync_library_canvas(self, "notes")
@@ -32142,12 +32553,11 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_notes_mutation_fenced():
             return
-        self._library_notes_tree_selected_placement_id = str(
-            getattr(event.button, "placement_id", "") or ""
-        )
+        placement_id = str(getattr(event.button, "placement_id", "") or "")
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        self._library_notes_tree_selected_placement_id = placement_id
         note_id = str(getattr(event.button, "note_id", "") or "")
         if self._library_notes_select_mode:
             self._library_notes_row_selection.toggle(note_id)
@@ -32514,6 +32924,8 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
+        if self._library_notes_select_mode:
+            return False
         note_id = self._selected_note_id
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
@@ -32539,14 +32951,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_pending_focus_waits_for_snapshot = True
         self._library_notes_pending_focus_generation = navigation_generation
         self._reset_library_note_editor_state()
-        self._refresh_local_source_snapshot()
-        self.refresh(recompose=True)
         if receipt is None:
-            self.call_after_refresh(
+            restore_after_projection = partial(
                 self._restore_library_notes_focus_identity, identity
             )
         else:
-            self.call_after_refresh(
+            restore_after_projection = partial(
                 self._restore_library_notes_browse_return_receipt,
                 receipt,
                 _LibraryNotesRestoreGuard(
@@ -32554,6 +32964,12 @@ class LibraryScreen(BaseAppScreen):
                     focus_generation=self._library_notes_focus_intent_generation,
                 ),
             )
+
+        def finish_list_projection() -> None:
+            restore_after_projection()
+            self._refresh_local_source_snapshot()
+
+        _sync_library_canvas(self, "notes", then=finish_list_projection)
         return True
 
     async def action_library_note_editor_back(self) -> None:
@@ -32574,7 +32990,7 @@ class LibraryScreen(BaseAppScreen):
             exclusive=True,
             group="library_note_detail",
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-note-context-delete")
     @on(Button.Pressed, "#library-note-delete")
@@ -32767,7 +33183,7 @@ class LibraryScreen(BaseAppScreen):
                 and self._library_notes_view == "list"
                 and self._library_note_delete_receipt is not None
             ):
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
 
     async def _delete_library_note_claimed(
         self, admission: DestructiveAdmission
@@ -32855,7 +33271,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if not finished:
             if deleted and self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return
 
         # Discard a stale result: the user has since switched to a different
@@ -32884,7 +33300,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter_records = None
         self._library_notes_tree_search_page = None
         if self.is_mounted:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
 
     def _notify_library_note_delete_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed Library note delete.
@@ -32911,7 +33327,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_notes_mutation_in_flight = True
         if self.is_mounted:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
         self.run_worker(
             self._undo_library_note_delete(receipt),
             exclusive=True,
@@ -32930,8 +33346,11 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_note_delete_receipt = None
         if self.is_mounted:
-            self.refresh(recompose=True)
-            self._arm_library_list_entry_focus()
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=self._arm_library_list_entry_focus,
+            )
 
     async def _undo_library_note_delete(
         self, receipt: LibraryNoteDeleteReceipt
@@ -32980,7 +33399,6 @@ class LibraryScreen(BaseAppScreen):
         finally:
             self._library_notes_mutation_in_flight = False
             if self.is_mounted:
-                self.refresh(recompose=True)
                 if restored_record is not None:
                     identity = LibraryNotesFocusIdentity(
                         stage="notes",
@@ -32988,14 +33406,15 @@ class LibraryScreen(BaseAppScreen):
                         note_id=receipt.note_id,
                         semantic_role=f"note-row:{receipt.note_id}",
                     )
-                    self.call_after_refresh(
+                    finish = partial(
                         self._restore_library_notes_focus_identity, identity
                     )
                 else:
-                    self.call_after_refresh(
+                    finish = partial(
                         self._focus_library_note_control,
                         "#library-notes-delete-undo",
                     )
+                _sync_library_canvas(self, "notes", then=finish)
 
     def _notify_library_note_missing_warning(self) -> None:
         """Surface a quiet warning when an opened note is no longer available.
@@ -33084,7 +33503,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_mutation_in_flight = True
         self._library_note_create_status = "Create…"
         if self.is_mounted:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
         return token
 
     def _finish_library_note_create(
@@ -33214,7 +33633,7 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(payload, DatabaseNoteSavePayload):
             status = f"Create failed — {payload.message}"
             if self._finish_library_note_create(active_token, status=status):
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return LibraryNoteCreateOutcome("failed")
 
         service = getattr(self.app_instance, "notes_scope_service", None)
@@ -33225,7 +33644,7 @@ class LibraryScreen(BaseAppScreen):
                 active_token,
                 status="Create failed — creation is unavailable. Try again.",
             ):
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return LibraryNoteCreateOutcome("failed")
         try:
             result = await self._run_library_service_call(
@@ -33245,7 +33664,7 @@ class LibraryScreen(BaseAppScreen):
                 active_token,
                 status="Create failed — check the service and try again.",
             ):
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return LibraryNoteCreateOutcome("failed")
 
         if active_token != self._library_note_create_token:
@@ -33259,7 +33678,7 @@ class LibraryScreen(BaseAppScreen):
                 active_token,
                 status="Create failed — no note was returned. Try again.",
             ):
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return LibraryNoteCreateOutcome("failed")
 
         # The returned identity is the commit point. Patch the exact shared
@@ -33336,11 +33755,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_title_user_edited = False
         self._finish_library_note_create(active_token)
         if self.is_mounted:
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_note_editor)
-            self.call_after_refresh(
-                self._focus_library_note_control, "#library-note-title"
-            )
+
+            def finish_create_projection() -> None:
+                self._arm_library_note_editor()
+                self._focus_library_note_control("#library-note-title")
+
+            _sync_library_canvas(self, "notes", then=finish_create_projection)
         return LibraryNoteCreateOutcome("opened", created_id)
 
     @on(Button.Pressed, "#library-note-discard-new")
@@ -36475,7 +36895,7 @@ class LibraryScreen(BaseAppScreen):
                 route_key = self._library_entry_route_key()
                 result = await self._replace_library_canvas_child(
                     LibraryNotesCanvas(
-                        **self._library_notes_canvas_kwargs(),
+                        **self._library_notes_list_canvas_kwargs(),
                         id="library-notes-canvas",
                     ),
                     generation=generation,
@@ -36486,16 +36906,19 @@ class LibraryScreen(BaseAppScreen):
             self._begin_library_note_load(record_id, entry_origin=entry_origin)
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            # task-21116: per-click open routes through the same targeted
-            # canvas-child replacement the entry lifecycle uses
-            # (``_begin_library_note_load`` has already applied the full
-            # editor-loading state this builder composes from).
-            await self._apply_library_open_item_surface(
-                lambda: LibraryNotesCanvas(
-                    **self._library_notes_canvas_kwargs(),
-                    id="library-notes-canvas",
+            if self.query("#library-notes-reader-shell"):
+                _sync_library_canvas(self, "notes")
+            else:
+                # Crossing into Notes is structural because it installs the
+                # adaptive shell and source strip. Once mounted, its Items
+                # owner is always list-only; detail belongs to the permanent
+                # work pane beside it.
+                await self._apply_library_open_item_surface(
+                    lambda: LibraryNotesCanvas(
+                        **self._library_notes_list_canvas_kwargs(),
+                        id="library-notes-canvas",
+                    )
                 )
-            )
             return None
 
         locator_intent = ("conversations", record_id)

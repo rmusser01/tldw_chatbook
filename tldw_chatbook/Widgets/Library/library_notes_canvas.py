@@ -72,6 +72,8 @@ class LibraryNotePresentationState:
     discard_new_note: bool = False
     transfer_status: str = ""
     transfer_running: bool = False
+    bulk_read_only: bool = False
+    bulk_included: bool = False
 
 
 class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
@@ -134,6 +136,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         create_status: str = "",
         load_state: str = "loading",
         load_message: str = "",
+        authority_id: str = "library-notes-authority",
         **kwargs: Any,
     ) -> None:
         """Initialize one list, editor, create, sync, or import canvas.
@@ -176,6 +179,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.create_status = create_status
         self.load_state = load_state
         self.load_message = load_message
+        self.authority_id = authority_id
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -199,7 +203,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def compose(self) -> ComposeResult:
         yield Static(
             self._authority_copy(),
-            id="library-notes-authority",
+            id=self.authority_id,
             markup=False,
         )
         if self.mode == "loading":
@@ -378,7 +382,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and import_snapshot is not None
             and import_canvases
         ):
-            authority = self.query("#library-notes-authority")
+            authority = self.query(f"#{self.authority_id}")
             if authority:
                 authority.first(Static).update(self._authority_copy())
             child = import_canvases.first(LibraryNoteImportCanvas)
@@ -397,7 +401,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and lasting_sync_snapshot is not None
             and lasting_canvases
         ):
-            authority = self.query("#library-notes-authority")
+            authority = self.query(f"#{self.authority_id}")
             if authority:
                 authority.first(Static).update(self._authority_copy())
             lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
@@ -967,6 +971,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-context-title",
                 markup=False,
             )
+        yield Static(
+            "Included in bulk selection"
+            if presentation_state.bulk_included
+            else "Not included in bulk selection",
+            id="library-note-bulk-status",
+            classes="destination-purpose",
+            markup=False,
+        )
         with Vertical(id="library-note-editor-region"):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
@@ -1062,13 +1074,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             yield Button(
-                "Context",
+                "Info",
                 id="library-note-context",
                 classes="library-canvas-action",
                 compact=True,
             )
             discard_new = Button(
-                "Discard new note",
+                "Discard" if self.compact else "Discard new note",
                 id="library-note-discard-new",
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
@@ -1213,6 +1225,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""
         self.compact = compact
+        self.styles.min_width = 0 if compact else 40
         if not self.is_mounted:
             return
         if self.mode == "list" and self.list_state is not None:
@@ -1243,6 +1256,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     export_base, button.disabled
                 )
             return
+        discard_new = self.query("#library-note-discard-new")
+        if discard_new:
+            discard_new.first(Button).label = (
+                "Discard" if compact else "Discard new note"
+            )
 
     @staticmethod
     def _static_text(widget: Static) -> str:
@@ -1262,21 +1280,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
-        authority = self.query_one("#library-notes-authority", Static)
+        authority = self.query_one(f"#{self.authority_id}", Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)
         snapshot = state.snapshot
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict
+        bulk_read_only = state.bulk_read_only
         show_context = (
             state.region == "context" and not conflict and not confirming_delete
+            and not bulk_read_only
         )
         show_preview = (
-            not show_context
-            and not conflict
-            and not confirming_delete
-            and state.presentation == "preview"
+            bulk_read_only
+            or (
+                not show_context
+                and not conflict
+                and not confirming_delete
+                and state.presentation == "preview"
+            )
         )
         show_editor = not show_context and not show_preview
 
@@ -1337,13 +1360,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
-        self.query_one("#library-note-back").display = not show_context
+        self.query_one("#library-note-back").display = (
+            not show_context and not bulk_read_only
+        )
         self.query_one("#library-note-context-back").display = show_context
         self.query_one("#library-note-editor-title").display = (
             show_editor and state.compact
         )
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
+        bulk_status = self.query_one("#library-note-bulk-status", Static)
+        bulk_status.display = bulk_read_only
+        bulk_copy = (
+            "Read-only preview · Included in bulk selection"
+            if state.bulk_included
+            else "Read-only preview · Not included in bulk selection"
+        )
+        if self._static_text(bulk_status) != bulk_copy:
+            bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
         self.query_one("#library-note-context-status").display = show_context
@@ -1361,7 +1395,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-conflict-region").display = conflict
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
 
-        locked = confirming_delete or state.destructive_running
+        locked = confirming_delete or state.destructive_running or bulk_read_only
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
         wide_keywords.disabled = state.compact or show_context or locked
@@ -1390,7 +1424,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
             "#library-note-context-delete",
         ):
-            self.query_one(selector, Button).disabled = state.destructive_running
+            self.query_one(selector, Button).disabled = (
+                state.destructive_running or bulk_read_only
+            )
         for selector in (
             "#library-note-use-in-console",
             "#library-note-export-md",
@@ -1402,11 +1438,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.transfer_running
+                state.destructive_running or state.transfer_running or bulk_read_only
             )
         discard_new = self.query_one("#library-note-discard-new", Button)
         discard_new.display = state.discard_new_note
-        discard_new.disabled = state.destructive_running
+        discard_new.disabled = state.destructive_running or bulk_read_only
         for selector in (
             "#library-note-conflict-overwrite",
             "#library-note-conflict-reload",

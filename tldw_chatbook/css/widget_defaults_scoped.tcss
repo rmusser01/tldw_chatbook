@@ -1238,7 +1238,7 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-canvas {
         padding: 0;
         margin: 0;
         border: none;
@@ -1246,7 +1246,8 @@
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-canvas {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-canvas,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-pane {
         width: 100%;
         height: 100%;
         min-height: 0;
@@ -1255,7 +1256,8 @@
         overflow-x: hidden;
         overflow-y: hidden;
     }
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-authority {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-authority,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-authority {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -1264,7 +1266,7 @@
         text-wrap: wrap;
         overflow: hidden hidden;
     }
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-header {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-header {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1274,7 +1276,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1282,13 +1284,13 @@
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter-label {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-label {
         width: 8;
         height: 1;
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1297,13 +1299,13 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-browse-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sort-choices,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-transfer-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-selection-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-primary-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-delete-actions {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-browse-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-sort-choices,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-primary-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-actions {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1311,7 +1313,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact .library-canvas-action {
+    LibraryScreen #library-shell-grid.library-notes-compact .library-canvas-action {
         width: auto;
         min-width: 0;
         height: 1;
@@ -1322,7 +1324,7 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-status-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1331,7 +1333,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1341,11 +1343,11 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter-clear {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-clear {
         width: auto;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-selection-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1353,7 +1355,7 @@
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-list {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-list {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1362,7 +1364,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-empty {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-empty {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1371,7 +1373,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-heading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-heading {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1380,11 +1382,11 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-editor-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-loading-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-header {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-header {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1395,7 +1397,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-editor-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-region {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1403,7 +1405,7 @@
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-title-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1411,15 +1413,15 @@
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-title-label,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords-label {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-label,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1428,7 +1430,7 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-body-label {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-body-label {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1436,7 +1438,7 @@
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-body {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-body {
         height: 1fr;
         min-height: 0;
         max-height: 100%;
@@ -1444,7 +1446,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-region {
         height: 1fr;
         min-height: 0;
         max-height: 100%;
@@ -1453,7 +1455,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-body {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-body {
         height: auto;
         min-height: 0;
         margin: 0;
@@ -1463,7 +1465,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1473,7 +1475,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1482,22 +1484,22 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region .destination-section,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-meta,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-meta,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1507,7 +1509,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status {
+    LibraryScreen #library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -1515,22 +1517,22 @@
         text-overflow: clip;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-transfer-status,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-transfer-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-transfer-status,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-transfer-status {
         display: none;
         height: 0;
         min-height: 0;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-region {
         height: 3;
         min-height: 3;
         max-height: 3;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-copy {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-copy {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -1538,14 +1540,14 @@
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-delete-confirmation {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirmation {
         height: 2;
         min-height: 2;
         max-height: 2;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-delete-confirm-copy {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1555,7 +1557,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-heading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-heading {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1563,7 +1565,7 @@
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-viewport {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-viewport {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1572,7 +1574,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-load-state {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-state {
         width: 100%;
         height: 1fr;
         min-height: 0;
@@ -1581,14 +1583,14 @@
         overflow: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-load-heading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-heading {
         height: 1;
         min-height: 1;
         max-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-loading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1598,7 +1600,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-loading-viewport {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-viewport {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1642,13 +1644,13 @@
         display: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-workbench {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-workbench {
         layout: vertical;
         height: 1fr;
         min-height: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-list {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-list {
         width: 100%;
         height: 100%;
         min-height: 0;
@@ -1657,22 +1659,22 @@
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-row-scroll {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-row-scroll {
         height: 1fr;
         min-height: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact .library-media-row {
+    LibraryScreen #library-shell-grid.library-notes-compact .library-media-row {
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-preview {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-preview {
         display: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-detail-empty {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-detail-empty {
         display: none;
     }
 

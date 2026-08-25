@@ -19,212 +19,212 @@ _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 _LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 
 _LIBRARY_NOTES_COMPACT_GEOMETRY = {
+    "#library-shell-grid.library-notes-compact #library-canvas": {
+        "padding": "0",
+        "margin": "0",
+        "border": "none",
+    },
     "#library-shell-grid.library-notes-compact": {
         "padding": "0",
         "margin": "0",
         "border": "none",
     },
-    "#library-canvas.library-notes-compact": {
-        "padding": "0",
-        "margin": "0",
-        "border": "none",
-    },
-    "#library-canvas.library-notes-compact #library-notes-canvas": {
+    "#library-shell-grid.library-notes-compact #library-notes-canvas": {
         "height": "100%",
         "min-height": "0",
         "padding": "0",
         "margin": "0",
     },
-    "#library-canvas.library-notes-compact #library-notes-authority": {
+    "#library-shell-grid.library-notes-compact #library-notes-authority": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
         "text-wrap": "wrap",
         "overflow": "hidden hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-header": {
+    "#library-shell-grid.library-notes-compact #library-notes-header": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-notes-filter-row": {
+    "#library-shell-grid.library-notes-compact #library-notes-filter-row": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-browse-actions": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "overflow-x": "hidden",
-    },
-    "#library-canvas.library-notes-compact #library-notes-sort-choices": {
+    "#library-shell-grid.library-notes-compact #library-notes-browse-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-transfer-actions": {
+    "#library-shell-grid.library-notes-compact #library-notes-sort-choices": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-selection-actions": {
+    "#library-shell-grid.library-notes-compact #library-notes-transfer-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-notes-status-row": {
+    "#library-shell-grid.library-notes-compact #library-notes-selection-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-shell-grid.library-notes-compact #library-notes-status-row": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-selection-status": {
+    "#library-shell-grid.library-notes-compact #library-notes-selection-status": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-list": {
+    "#library-shell-grid.library-notes-compact #library-notes-list": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-heading": {
+    "#library-shell-grid.library-notes-compact #library-note-heading": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-note-title-row": {
+    "#library-shell-grid.library-notes-compact #library-note-title-row": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-note-editor-region": {
+    "#library-shell-grid.library-notes-compact #library-note-editor-region": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "hidden",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-body": {
+    "#library-shell-grid.library-notes-compact #library-note-body": {
         "height": "1fr",
         "min-height": "0",
         "max-height": "100%",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-preview-region": {
+    "#library-shell-grid.library-notes-compact #library-note-preview-region": {
         "height": "1fr",
         "min-height": "0",
         "max-height": "100%",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-preview-body": {
+    "#library-shell-grid.library-notes-compact #library-note-preview-body": {
         "height": "auto",
         "min-height": "0",
         "border": "none",
         "overflow-y": "hidden",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-status": {
+    "#library-shell-grid.library-notes-compact #library-note-status": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status": {
+    "#library-shell-grid.library-notes-compact .library-note-validation #library-note-status": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
         "text-wrap": "wrap",
     },
-    "#library-canvas.library-notes-compact #library-note-primary-actions": {
+    "#library-shell-grid.library-notes-compact #library-note-primary-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-conflict-region": {
+    "#library-shell-grid.library-notes-compact #library-note-conflict-region": {
         "height": "3",
         "min-height": "3",
         "max-height": "3",
     },
-    "#library-canvas.library-notes-compact #library-note-conflict-copy": {
+    "#library-shell-grid.library-notes-compact #library-note-conflict-copy": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
     },
-    "#library-canvas.library-notes-compact #library-note-conflict-actions": {
+    "#library-shell-grid.library-notes-compact #library-note-conflict-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-delete-confirmation": {
+    "#library-shell-grid.library-notes-compact #library-note-delete-confirmation": {
         "height": "2",
         "min-height": "2",
         "max-height": "2",
     },
-    "#library-canvas.library-notes-compact #library-note-delete-confirm-copy": {
+    "#library-shell-grid.library-notes-compact #library-note-delete-confirm-copy": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-note-delete-actions": {
+    "#library-shell-grid.library-notes-compact #library-note-delete-actions": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-context-region": {
+    "#library-shell-grid.library-notes-compact #library-note-context-region": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-context-status": {
+    "#library-shell-grid.library-notes-compact #library-note-context-status": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-notes-create-heading": {
+    "#library-shell-grid.library-notes-compact #library-notes-create-heading": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-notes-create-viewport": {
+    "#library-shell-grid.library-notes-compact #library-notes-create-viewport": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-load-heading": {
+    "#library-shell-grid.library-notes-compact #library-note-load-heading": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
     },
-    "#library-canvas.library-notes-compact #library-note-loading": {
+    "#library-shell-grid.library-notes-compact #library-note-loading": {
         "height": "1",
         "min-height": "1",
         "max-height": "1",
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
-    "#library-canvas.library-notes-compact #library-note-load-state": {
+    "#library-shell-grid.library-notes-compact #library-note-load-state": {
         "height": "1fr",
         "min-height": "0",
         "overflow": "hidden",
     },
-    "#library-canvas.library-notes-compact #library-note-loading-viewport": {
+    "#library-shell-grid.library-notes-compact #library-note-loading-viewport": {
         "height": "1fr",
         "min-height": "0",
         "overflow-y": "auto",
