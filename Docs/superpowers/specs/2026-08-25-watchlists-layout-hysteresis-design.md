@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25  
 **Task:** TASK-22211  
-**Status:** Spec review approved; awaiting final user approval
+**Status:** Approved for implementation planning
 **Related ADR:** [ADR-042: Watchlists reader-first information architecture](../../../backlog/decisions/042-watchlists-reader-first-ia.md)
 
 ## Problem
