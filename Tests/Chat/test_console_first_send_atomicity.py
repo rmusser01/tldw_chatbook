@@ -186,8 +186,11 @@ async def test_precommit_failure_keeps_input_and_never_calls_provider(
     db, store, controller, gateway = _controller(tmp_path)
     session = store.sessions()[0]
     session.draft = "first durable prompt"
+    # TASK-22205: a permanent (not TEMP) trigger — the durable commit now
+    # runs on a worker thread with its own thread-local connection, and a
+    # TEMP trigger is per-connection so it would never fire there.
     db.get_connection().execute(
-        "CREATE TEMP TRIGGER task14_fail_checkpoint "
+        "CREATE TRIGGER task14_fail_checkpoint "
         "BEFORE INSERT ON console_dispatch_checkpoints "
         "BEGIN SELECT RAISE(ABORT, 'task14 injected failure'); END"
     )
