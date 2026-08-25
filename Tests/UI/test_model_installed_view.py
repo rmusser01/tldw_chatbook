@@ -2137,8 +2137,11 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
             await _wait_until(pilot, lambda: service.inventory_reads >= 1)
             await _wait_until(
                 pilot,
-                lambda: (
-                    view.query_one("#installed-models-import-gguf", Button).has_focus
+                lambda: any(
+                    button.has_focus
+                    for button in view.query("#installed-models-import-gguf").results(
+                        Button
+                    )
                 ),
                 timeout_seconds=30.0,
             )
@@ -2156,6 +2159,39 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
 
     preference_callback.assert_not_called()
     assert str(source) not in "".join(logs)
+
+
+@pytest.mark.asyncio
+async def test_import_focus_recovery_retries_across_recompose_mount_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient child-mount gap does not discard terminal focus recovery."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view._loaded = True
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        import_button = view.query_one("#installed-models-import-gguf", Button)
+        original_query_one = view.query_one
+        missing_once = {
+            "#installed-gguf-import-retry",
+            "#installed-models-import-gguf",
+        }
+
+        def query_one_with_mount_gap(selector, expect_type=None):
+            if selector in missing_once:
+                missing_once.remove(selector)
+                raise NoMatches(f"Transient mount gap for {selector}")
+            return original_query_one(selector, expect_type)
+
+        monkeypatch.setattr(view, "query_one", query_one_with_mount_gap)
+        view._schedule_import_focus_recovery()
+
+        await _wait_until(pilot, lambda: import_button.has_focus)
+        assert view._import_focus_attempts == 0
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.

@@ -289,6 +289,7 @@ class InstalledView(Widget):
         self._revealed_reference: ArtifactRef | None = None
         self._reveal_status: str | None = None
         self._reveal_focus_attempts = 0
+        self._import_focus_attempts = 0
         self._observation_generation = 0
         self._observation_focus_locator: ModelLibraryFocusLocator | None = None
         # TASK-19563: monotonic inventory-read counter; see `_apply_inventory`.
@@ -770,7 +771,7 @@ class InstalledView(Widget):
             if error is None and self._observation_provider is not None:
                 self.refresh_observations()
             if self._import_status is not None:
-                self.call_after_refresh(self._focus_import_recovery)
+                self._schedule_import_focus_recovery()
             elif self._restore_header_focus_id is not None:
                 focus_id = self._restore_header_focus_id
                 self._restore_header_focus_id = None
@@ -959,7 +960,21 @@ class InstalledView(Widget):
             except NoMatches:
                 continue
 
-    def _focus_import_recovery(self) -> None:
+    def _schedule_import_focus_recovery(self) -> None:
+        """Focus after recompose, retrying across Textual's child-mount gap."""
+        self._import_focus_attempts = 3
+        self.call_after_refresh(self._focus_import_after_recompose)
+
+    def _focus_import_after_recompose(self) -> None:
+        """Resolve one bounded post-recompose import-focus attempt."""
+        if self._focus_import_recovery():
+            self._import_focus_attempts = 0
+            return
+        self._import_focus_attempts -= 1
+        if self._import_focus_attempts > 0 and self.is_attached:
+            self.set_timer(0.01, self._focus_import_after_recompose)
+
+    def _focus_import_recovery(self) -> bool:
         """Restore focus to one stable import control after recomposition."""
         for selector in (
             "#installed-gguf-import-retry",
@@ -971,7 +986,8 @@ class InstalledView(Widget):
                 continue
             if not control.disabled:
                 self.screen.set_focus(control)
-                return
+                return True
+        return False
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Keep keyboard-selected disclosures and actions inside the viewport."""
@@ -1338,7 +1354,7 @@ class InstalledView(Widget):
         self._set_import_lane_owned(False)
         self.notify(message, severity="warning")
         self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_import_recovery)
+        self._schedule_import_focus_recovery()
 
     @on(Button.Pressed, "#installed-gguf-import-cancel")
     def _cancel_import_pressed(self) -> None:
