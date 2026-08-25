@@ -1,0 +1,1201 @@
+{
+  "bulk": {
+    "bulk_active": true,
+    "bulk_selected_count": 0,
+    "info_disabled": false,
+    "message_epoch": "epoch-chat-a",
+    "open_console_disabled": true,
+    "preview_message_count": 1,
+    "read_disabled": false,
+    "status": "Bulk selection: 0 conversations. The retained transcript is not included and remains read-only.",
+    "svg": "conversations-bulk-readonly-preview.svg",
+    "transcript_preserved": true
+  },
+  "bulk_recovery_fence": {
+    "find": {
+      "during": {
+        "bulk_active": true,
+        "loaded_actions_eligible": false,
+        "loading": false,
+        "message_epoch": "epoch-chat-a",
+        "select_mode": true,
+        "service_calls_after": 2,
+        "service_calls_before": 2,
+        "status": "Bulk selection: 0 conversations. The retained transcript is not included and remains read-only. \u00b7 Searching complete transcript\u2026",
+        "svg": "conversations-select-find-fenced.svg",
+        "trigger": "find"
+      },
+      "settled_bulk_active": true,
+      "settled_loading": false,
+      "settled_message_epoch": "epoch-chat-a",
+      "settled_service_calls": 2
+    },
+    "retry": {
+      "during": {
+        "bulk_active": true,
+        "loaded_actions_eligible": false,
+        "loading": false,
+        "message_epoch": "epoch-chat-a",
+        "select_mode": true,
+        "service_calls_after": 2,
+        "service_calls_before": 2,
+        "status": "Bulk selection: 0 conversations. The retained transcript is not included and remains read-only.",
+        "svg": "conversations-select-retry-fenced.svg",
+        "trigger": "retry"
+      },
+      "settled_bulk_active": true,
+      "settled_loading": false,
+      "settled_message_epoch": "epoch-chat-a",
+      "settled_service_calls": 2
+    }
+  },
+  "collapse_and_focus": {
+    "before": {
+      "items_region": {
+        "height": 41,
+        "width": 36,
+        "x": 37,
+        "y": 6
+      },
+      "row_region": {
+        "height": 2,
+        "width": 35,
+        "x": 37,
+        "y": 13
+      },
+      "stored_items_width": 40,
+      "svg": "conversations-160x50-expanded.svg"
+    },
+    "both_collapsed": {
+      "items_open": false,
+      "library_open": false,
+      "restore_focusable": [
+        true,
+        true
+      ],
+      "restore_names": [
+        "Expand Library pane",
+        "Expand Items pane"
+      ],
+      "svg": "conversations-160x50-both-collapsed.svg",
+      "work_mounted": true,
+      "work_region": {
+        "height": 43,
+        "width": 146,
+        "x": 12,
+        "y": 5
+      }
+    },
+    "focus": {
+      "escape_target": "library-conversations-filter",
+      "f6_cycle": [
+        "library-conversations-filter",
+        "library-conversation-reader-find",
+        "library-search-input"
+      ],
+      "focused": "library-conversations-filter",
+      "shortcuts": [
+        [
+          "/",
+          "focus filter"
+        ],
+        [
+          "F6",
+          "next pane"
+        ],
+        [
+          "esc",
+          "focus Library"
+        ]
+      ],
+      "slash_target": "library-conversations-filter",
+      "svg": "conversations-160x50-focus-footer.svg"
+    },
+    "library_collapsed": {
+      "items_open": true,
+      "items_region": {
+        "height": 41,
+        "width": 52,
+        "x": 9,
+        "y": 6
+      },
+      "library_open": false,
+      "library_restore_name": "Expand Library pane",
+      "row_region": {
+        "height": 2,
+        "width": 51,
+        "x": 9,
+        "y": 13
+      },
+      "stored_items_width": 40,
+      "svg": "conversations-160x50-library-collapsed.svg"
+    }
+  },
+  "config_path": "/private/tmp/task22031-live-1a3ca.XGZpkQ/config.toml",
+  "conversations_geometry": [
+    {
+      "effective": {
+        "items_open": true,
+        "library_open": true,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-conversations-items-grip",
+        "paint_owner_id": "library-conversations-items-grip",
+        "region": {
+          "height": 43,
+          "width": 5,
+          "x": 75,
+          "y": 5
+        }
+      },
+      "grip_names": [
+        "Collapse Library pane",
+        "Collapse Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "message_epoch": "epoch-chat-a",
+      "reader_complete": true,
+      "regions": {
+        "first_row": {
+          "height": 2,
+          "width": 35,
+          "x": 37,
+          "y": 13
+        },
+        "items": {
+          "height": 43,
+          "width": 40,
+          "x": 35,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 43,
+          "width": 5,
+          "x": 75,
+          "y": 5
+        },
+        "library": {
+          "height": 43,
+          "width": 28,
+          "x": 2,
+          "y": 5
+        },
+        "library_grip": {
+          "height": 43,
+          "width": 5,
+          "x": 30,
+          "y": 5
+        },
+        "shell": {
+          "height": 43,
+          "width": 156,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 43,
+          "width": 78,
+          "x": 80,
+          "y": 5
+        }
+      },
+      "size": [
+        160,
+        50
+      ],
+      "svg": "conversations-160x50.svg",
+      "work_mounted": true
+    },
+    {
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-conversations-items-grip",
+        "paint_owner_id": "library-conversations-items-grip",
+        "region": {
+          "height": 28,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "message_epoch": "epoch-chat-a",
+      "reader_complete": true,
+      "regions": {
+        "first_row": {
+          "height": 2,
+          "width": 51,
+          "x": 9,
+          "y": 13
+        },
+        "items": {
+          "height": 28,
+          "width": 56,
+          "x": 7,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 28,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 28,
+          "width": 5,
+          "x": 2,
+          "y": 5
+        },
+        "shell": {
+          "height": 28,
+          "width": 116,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 28,
+          "width": 50,
+          "x": 68,
+          "y": 5
+        }
+      },
+      "size": [
+        120,
+        35
+      ],
+      "svg": "conversations-120x35.svg",
+      "work_mounted": true
+    },
+    {
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-conversations-items-grip",
+        "paint_owner_id": "library-conversations-items-grip",
+        "region": {
+          "height": 23,
+          "width": 5,
+          "x": 49,
+          "y": 5
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "message_epoch": "epoch-chat-a",
+      "reader_complete": true,
+      "regions": {
+        "first_row": {
+          "height": 2,
+          "width": 37,
+          "x": 9,
+          "y": 13
+        },
+        "items": {
+          "height": 23,
+          "width": 42,
+          "x": 7,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 23,
+          "width": 5,
+          "x": 49,
+          "y": 5
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 23,
+          "width": 5,
+          "x": 2,
+          "y": 5
+        },
+        "shell": {
+          "height": 23,
+          "width": 96,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 23,
+          "width": 44,
+          "x": 54,
+          "y": 5
+        }
+      },
+      "size": [
+        100,
+        30
+      ],
+      "svg": "conversations-100x30.svg",
+      "work_mounted": true
+    },
+    {
+      "effective": {
+        "items_open": false,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-conversations-items-grip",
+        "paint_owner_id": "library-conversations-items-grip",
+        "region": {
+          "height": 17,
+          "width": 5,
+          "x": 7,
+          "y": 5
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Expand Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "message_epoch": "epoch-chat-a",
+      "reader_complete": true,
+      "regions": {
+        "first_row": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "items": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "items_grip": {
+          "height": 17,
+          "width": 5,
+          "x": 7,
+          "y": 5
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 17,
+          "width": 5,
+          "x": 2,
+          "y": 5
+        },
+        "shell": {
+          "height": 17,
+          "width": 76,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 17,
+          "width": 66,
+          "x": 12,
+          "y": 5
+        }
+      },
+      "size": [
+        80,
+        24
+      ],
+      "svg": "conversations-80x24.svg",
+      "work_mounted": true
+    }
+  ],
+  "data_authority": "deterministic seeded scope services; no network",
+  "data_dir": "/private/tmp/task22031-live-1a3ca.XGZpkQ/data/verify_task22031",
+  "delayed_settings_callback_repair": [
+    {
+      "authority": "library",
+      "config_value": true,
+      "conversation_preference_value": true,
+      "destination": "media",
+      "disk_value": true,
+      "durable_value": true,
+      "media_preference_value": true,
+      "mounted_effective_value": true,
+      "pane": "library",
+      "preference_value": true,
+      "schedule": [
+        "settings_true_committed",
+        "stale_grip_false_exited",
+        "settings_refresh_callback"
+      ],
+      "svg": "delayed-settings-repair-media-library.svg",
+      "writes": [
+        [
+          "library.reader",
+          "library_open",
+          false
+        ],
+        [
+          "library.reader",
+          "library_open",
+          true
+        ]
+      ]
+    },
+    {
+      "authority": "library",
+      "config_value": true,
+      "conversation_preference_value": true,
+      "destination": "conversations",
+      "disk_value": true,
+      "durable_value": true,
+      "media_preference_value": true,
+      "mounted_effective_value": true,
+      "pane": "library",
+      "preference_value": true,
+      "schedule": [
+        "settings_true_committed",
+        "stale_grip_false_exited",
+        "settings_refresh_callback"
+      ],
+      "svg": "delayed-settings-repair-conversations-library.svg",
+      "writes": [
+        [
+          "library.reader",
+          "library_open",
+          false
+        ],
+        [
+          "library.reader",
+          "library_open",
+          true
+        ]
+      ]
+    },
+    {
+      "authority": "media_items",
+      "config_value": true,
+      "destination": "media",
+      "disk_value": true,
+      "durable_value": true,
+      "mounted_effective_value": true,
+      "pane": "items",
+      "preference_value": true,
+      "schedule": [
+        "settings_true_committed",
+        "stale_grip_false_exited",
+        "settings_refresh_callback"
+      ],
+      "svg": "delayed-settings-repair-media-items.svg",
+      "writes": [
+        [
+          "library.media_reader",
+          "items_open",
+          false
+        ],
+        [
+          "library.media_reader",
+          "items_open",
+          true
+        ]
+      ]
+    },
+    {
+      "authority": "conversations_items",
+      "config_value": true,
+      "destination": "conversations",
+      "disk_value": true,
+      "durable_value": true,
+      "mounted_effective_value": true,
+      "pane": "items",
+      "preference_value": true,
+      "schedule": [
+        "settings_true_committed",
+        "stale_grip_false_exited",
+        "settings_refresh_callback"
+      ],
+      "svg": "delayed-settings-repair-conversations-items.svg",
+      "writes": [
+        [
+          "library.conversations_reader",
+          "items_open",
+          false
+        ],
+        [
+          "library.conversations_reader",
+          "items_open",
+          true
+        ]
+      ]
+    }
+  ],
+  "delayed_settings_callback_repair_failure": {
+    "config_library_open": false,
+    "conversation_preference_open": false,
+    "disk_library_open": false,
+    "durable_library_open": false,
+    "last_notice_severity": "warning",
+    "media_preference_open": false,
+    "mounted_effective_open": false,
+    "physical_toml": "[library.reader]\nlibrary_open = false\n",
+    "svg": "delayed-settings-repair-failure-truth.svg",
+    "writes": [
+      [
+        "library.reader",
+        "library_open",
+        false
+      ],
+      [
+        "library.reader",
+        "library_open",
+        true
+      ]
+    ]
+  },
+  "media_geometry": [
+    {
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-media-items-grip",
+        "paint_owner_id": "library-media-items-grip",
+        "region": {
+          "height": 43,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "regions": {
+        "items": {
+          "height": 43,
+          "width": 56,
+          "x": 7,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 43,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 43,
+          "width": 5,
+          "x": 2,
+          "y": 5
+        },
+        "shell": {
+          "height": 43,
+          "width": 156,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 43,
+          "width": 90,
+          "x": 68,
+          "y": 5
+        }
+      },
+      "size": [
+        160,
+        50
+      ],
+      "svg": "media-160x50.svg",
+      "work_mounted": true
+    },
+    {
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-media-items-grip",
+        "paint_owner_id": "library-media-items-grip",
+        "region": {
+          "height": 28,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "regions": {
+        "items": {
+          "height": 28,
+          "width": 56,
+          "x": 7,
+          "y": 5
+        },
+        "items_grip": {
+          "height": 28,
+          "width": 5,
+          "x": 63,
+          "y": 5
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 28,
+          "width": 5,
+          "x": 2,
+          "y": 5
+        },
+        "shell": {
+          "height": 28,
+          "width": 116,
+          "x": 2,
+          "y": 5
+        },
+        "work": {
+          "height": 28,
+          "width": 50,
+          "x": 68,
+          "y": 5
+        }
+      },
+      "size": [
+        120,
+        35
+      ],
+      "svg": "media-120x35.svg",
+      "work_mounted": true
+    },
+    {
+      "effective": {
+        "items_open": true,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-media-items-grip",
+        "paint_owner_id": "library-media-items-grip",
+        "region": {
+          "height": 25,
+          "width": 5,
+          "x": 49,
+          "y": 4
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Collapse Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "regions": {
+        "items": {
+          "height": 25,
+          "width": 44,
+          "x": 5,
+          "y": 4
+        },
+        "items_grip": {
+          "height": 25,
+          "width": 5,
+          "x": 49,
+          "y": 4
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 25,
+          "width": 5,
+          "x": 0,
+          "y": 4
+        },
+        "shell": {
+          "height": 25,
+          "width": 100,
+          "x": 0,
+          "y": 4
+        },
+        "work": {
+          "height": 25,
+          "width": 46,
+          "x": 54,
+          "y": 4
+        }
+      },
+      "size": [
+        100,
+        30
+      ],
+      "svg": "media-100x30.svg",
+      "work_mounted": true
+    },
+    {
+      "effective": {
+        "items_open": false,
+        "library_open": false,
+        "priority_pane": null
+      },
+      "focused_control": {
+        "has_focus": true,
+        "id": "library-media-items-grip",
+        "paint_owner_id": "library-media-items-grip",
+        "region": {
+          "height": 19,
+          "width": 5,
+          "x": 5,
+          "y": 4
+        }
+      },
+      "grip_names": [
+        "Expand Library pane",
+        "Expand Items pane"
+      ],
+      "grip_widths": [
+        5,
+        5
+      ],
+      "regions": {
+        "items": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "items_grip": {
+          "height": 19,
+          "width": 5,
+          "x": 5,
+          "y": 4
+        },
+        "library": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "library_grip": {
+          "height": 19,
+          "width": 5,
+          "x": 0,
+          "y": 4
+        },
+        "shell": {
+          "height": 19,
+          "width": 80,
+          "x": 0,
+          "y": 4
+        },
+        "work": {
+          "height": 19,
+          "width": 70,
+          "x": 10,
+          "y": 4
+        }
+      },
+      "size": [
+        80,
+        24
+      ],
+      "svg": "media-80x24.svg",
+      "work_mounted": true
+    }
+  ],
+  "package_import": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-media-reader/tldw_chatbook/__init__.py",
+  "persisted_preference_exact_toml": [
+    {
+      "actual": true,
+      "expected": true,
+      "key": "library_open",
+      "name": "canonical_over_legacy",
+      "physical_toml": "[library.reader]\nlibrary_open = true\n[library.media_reader]\nlibrary_open = false\n",
+      "section": "library.reader"
+    },
+    {
+      "actual": false,
+      "expected": false,
+      "key": "library_open",
+      "name": "legacy_shared_library",
+      "physical_toml": "[library.media_reader]\nlibrary_open = false\n",
+      "section": "library.reader"
+    },
+    {
+      "actual": true,
+      "expected": true,
+      "key": "items_open",
+      "name": "absent_items_default",
+      "physical_toml": "[library.media_reader]\n",
+      "section": "library.media_reader"
+    }
+  ],
+  "progressive_find": {
+    "complete": {
+      "calls": [
+        {
+          "conversation_id": "chat-a",
+          "max_chars": 8000,
+          "message_limit": 20,
+          "message_offset": 0
+        },
+        {
+          "conversation_id": "chat-a",
+          "max_chars": 8000,
+          "message_limit": 20,
+          "message_offset": 20
+        }
+      ],
+      "complete": true,
+      "find_complete": true,
+      "find_count": 1,
+      "focused": "message-20",
+      "message_count": 21,
+      "message_epoch": "epoch-chat-a",
+      "message_total": 21,
+      "status": "Loaded chat-a \u00b7 21 of 21 messages \u00b7 complete. \u00b7 Find: 1 exact match.",
+      "svg": "conversations-progressive-find-complete.svg"
+    },
+    "first_page": {
+      "calls": [
+        {
+          "conversation_id": "chat-a",
+          "max_chars": 8000,
+          "message_limit": 20,
+          "message_offset": 0
+        },
+        {
+          "conversation_id": "chat-a",
+          "max_chars": 8000,
+          "message_limit": 20,
+          "message_offset": 20
+        }
+      ],
+      "complete": false,
+      "message_count": 20,
+      "message_epoch": "epoch-chat-a",
+      "status": "Loading local Library sources\u2026",
+      "svg": "conversations-progressive-first-page.svg"
+    }
+  },
+  "scratch_home": "/private/tmp/task22031-live-1a3ca.XGZpkQ",
+  "settings_refresh_repair": [
+    {
+      "authority": "library",
+      "config_value": true,
+      "conversation_preference_value": true,
+      "destination": "media",
+      "disk_value": true,
+      "durable_value": true,
+      "generation_after_repair": 2,
+      "generation_before_refresh": 1,
+      "media_preference_value": true,
+      "mounted_effective_value": true,
+      "pane": "library",
+      "preference_value": true,
+      "svg": "settings-repair-media-library.svg",
+      "writes": [
+        [
+          "library.reader",
+          "library_open",
+          false
+        ],
+        [
+          "library.reader",
+          "library_open",
+          true
+        ]
+      ]
+    },
+    {
+      "authority": "library",
+      "config_value": true,
+      "conversation_preference_value": true,
+      "destination": "conversations",
+      "disk_value": true,
+      "durable_value": true,
+      "generation_after_repair": 2,
+      "generation_before_refresh": 1,
+      "media_preference_value": true,
+      "mounted_effective_value": true,
+      "pane": "library",
+      "preference_value": true,
+      "svg": "settings-repair-conversations-library.svg",
+      "writes": [
+        [
+          "library.reader",
+          "library_open",
+          false
+        ],
+        [
+          "library.reader",
+          "library_open",
+          true
+        ]
+      ]
+    },
+    {
+      "authority": "media_items",
+      "config_value": true,
+      "destination": "media",
+      "disk_value": true,
+      "durable_value": true,
+      "generation_after_repair": 2,
+      "generation_before_refresh": 1,
+      "mounted_effective_value": true,
+      "pane": "items",
+      "preference_value": true,
+      "svg": "settings-repair-media-items.svg",
+      "writes": [
+        [
+          "library.media_reader",
+          "items_open",
+          false
+        ],
+        [
+          "library.media_reader",
+          "items_open",
+          true
+        ]
+      ]
+    },
+    {
+      "authority": "conversations_items",
+      "config_value": true,
+      "destination": "conversations",
+      "disk_value": true,
+      "durable_value": true,
+      "generation_after_repair": 2,
+      "generation_before_refresh": 1,
+      "mounted_effective_value": true,
+      "pane": "items",
+      "preference_value": true,
+      "svg": "settings-repair-conversations-items.svg",
+      "writes": [
+        [
+          "library.conversations_reader",
+          "items_open",
+          false
+        ],
+        [
+          "library.conversations_reader",
+          "items_open",
+          true
+        ]
+      ]
+    }
+  ],
+  "settings_refresh_repair_failure": {
+    "config_library_open": false,
+    "conversation_preference_open": false,
+    "disk_library_open": false,
+    "durable_library_open": false,
+    "last_notice_severity": "warning",
+    "media_preference_open": false,
+    "mounted_effective_open": false,
+    "svg": "settings-repair-failure-truth.svg",
+    "writes": [
+      [
+        "library.reader",
+        "library_open",
+        false
+      ],
+      [
+        "library.reader",
+        "library_open",
+        true
+      ]
+    ]
+  },
+  "shared_library_double_failure": {
+    "config_library_open": true,
+    "conversation_preference_open": true,
+    "durable_library_open": true,
+    "media_effective_open": true,
+    "media_preference_open": true,
+    "shared_generation": 2,
+    "svg": "shared-library-double-failure.svg",
+    "writes": [
+      [
+        "library.reader",
+        "library_open",
+        false
+      ],
+      [
+        "library.reader",
+        "library_open",
+        true
+      ]
+    ]
+  },
+  "shared_library_latest_intent": {
+    "conversation_preference_open": true,
+    "disk_library_open": true,
+    "media_effective_open": true,
+    "media_preference_open": true,
+    "shared_generation": 2,
+    "svg": "shared-library-latest-intent.svg",
+    "writes": [
+      [
+        "library.reader",
+        "library_open",
+        false
+      ],
+      [
+        "library.reader",
+        "library_open",
+        true
+      ]
+    ]
+  },
+  "shared_library_stale_skip_newer_failure": {
+    "config_library_open": true,
+    "conversation_preference_open": true,
+    "durable_library_open": true,
+    "media_effective_open": true,
+    "media_preference_open": true,
+    "shared_generation": 2,
+    "svg": "shared-library-stale-skip-newer-failure.svg",
+    "writes": [
+      [
+        "library.reader",
+        "library_open",
+        true
+      ]
+    ]
+  },
+  "sizes": [
+    [
+      160,
+      50
+    ],
+    [
+      120,
+      35
+    ],
+    [
+      100,
+      30
+    ],
+    [
+      80,
+      24
+    ]
+  ],
+  "surface": "real LibraryScreen + production Textual CSS + compositor",
+  "truthful_identity": {
+    "deleted": {
+      "error": "Conversation deleted.",
+      "loaded_id": null,
+      "loaded_version": null,
+      "locator_called_for_b": true,
+      "message_epoch": null,
+      "selected_id": "chat-b",
+      "selected_version": 7,
+      "status": "Conversation deleted. Selected Beta review (chat-b).",
+      "svg": "conversations-b-deleted.svg",
+      "unavailable": true
+    },
+    "error": {
+      "error": "Conversation detail was invalid. Try again.",
+      "loaded_id": "chat-a",
+      "loaded_version": 4,
+      "message_epoch": "epoch-chat-a",
+      "open_console_disabled": true,
+      "selected_id": "chat-b",
+      "selected_version": 7,
+      "status": "Conversation detail was invalid. Try again. Selected Beta review (chat-b). Showing Alpha planning (chat-a).",
+      "svg": "conversations-a-to-b-error.svg"
+    },
+    "loading": {
+      "loaded_id": "chat-a",
+      "loaded_version": 4,
+      "loading": true,
+      "message_epoch": "epoch-chat-a",
+      "selected_id": "chat-b",
+      "selected_version": 7,
+      "status": "Loading Beta review (chat-b); showing Alpha planning (chat-a) until ready.",
+      "svg": "conversations-a-to-b-loading.svg"
+    },
+    "recovered": {
+      "complete": true,
+      "error": null,
+      "loaded_id": "chat-b",
+      "loaded_version": 7,
+      "message_epoch": "epoch-chat-b",
+      "selected_id": "chat-b",
+      "selected_version": 7,
+      "status": "Loaded chat-b \u00b7 1 of 1 messages \u00b7 complete.",
+      "svg": "conversations-a-to-b-retry.svg"
+    }
+  },
+  "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-media-reader"
+}

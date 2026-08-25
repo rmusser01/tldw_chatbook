@@ -1,0 +1,24 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watc  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+          Select a media item to read it here.
+
+
+
+
+
+
+
+
+---> --->
+
+
+
+
+
+
+
+
+
+  / focus search | F6 next pane | esc focus rail | F1 · Ctrl+P · Ctrl+Q

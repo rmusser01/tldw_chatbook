@@ -31,6 +31,9 @@ Approved regions use the three structural roles from ADR-085:
 
 The structural shell owns geometry, grips, focus-region integration, and late-bound slots only.
 `LibraryScreen`, destination state, and the current services remain the capability authorities.
+The row-level **After / evidence** cells below are the preregistered proof obligations; the
+post-change verification ledger following both tables records the final result and evidence for
+those obligations without rewriting the baseline.
 
 ## Media baseline
 
@@ -91,6 +94,26 @@ The structural shell owns geometry, grips, focus-region integration, and late-bo
 | Conversation selected versus loaded identity, pending banner, rapid traversal, and late-result fence | Current list has `_selected_conversation_id` and list request generations, but no separate loaded conversation reader identity | Conversation list selection plus Conversations work pane load session | Existing list-race evidence: `Tests/UI/test_library_shell.py::test_stale_conversation_page_response_cannot_replace_newer_filter`; implementation must cover item id, revision/mutation epoch, destination, and generation | Approved addition for detail loading; absent as a work-pane contract today | Pending — add rapid traversal, Enter/immediate load, stale success/failure, deletion, destination switch, and unmount tests |
 | Conversation reader no-selection, initial detail loading, pending-with-previous, detail error, deletion, and fenced retry | No current Conversations work-pane selectors/handlers | Conversations work pane | Approved design; list recovery evidence above is not sufficient. Implementation must add distinct detail-state and retry tests | Approved addition; current canvas has only list operational states | Pending — prove each distinct state while the list remains usable and mounted |
 | Conversations Read/Info compact mode controls, Escape, and global focus-region behavior | No current work-pane mode control or work-pane Escape path | Conversations work pane and shared adaptive shell | Approved design; implementation must cover reachable selected state, compact selector behavior, grip/restore controls, Escape ordering, and 160x50 / 120x35 / 100x30 / 80x24 geometry | Approved addition; absent today | Pending — add Pilot and live TUI evidence at all representative sizes |
+
+## Post-change verification ledger
+
+Result: **Verified on commit `1a3ca3ad80e90f02fb39f09c27e8aced646d114d`.** The
+pre-registered Media and Conversations obligations above are satisfied. The independent final
+review found no Critical or Important issue.
+
+| Obligation group | Result | Evidence |
+| --- | --- | --- |
+| Shared shell boundary, permanent Work pane, independent Library/Items grips, requested-versus-effective geometry, comfort expansion, focus evacuation, and preference compatibility | Verified | `Tests/UI/test_library_media_reader_shell.py`; `Tests/Library/test_library_media_reader_state.py`; `Tests/Library/test_library_adaptive_reader_state.py`; `Tests/test_config_library_defaults.py`; live `conversations-160x50-{expanded,library-collapsed,both-collapsed,focus-footer}.svg` and the complete 160x50 / 120x35 / 100x30 / 80x24 matrix for both destinations |
+| Media list query, facets, paging, stale/error recovery, exports, Trash, select/bulk/delete/Undo, exact-page authority, and focus/scroll preservation | Preserved | Affected automated gate (192 passed before final review); final focused gate (906 passed with 14 documented baseline failures); `Tests/UI/test_library_media_reader_shell.py`; `Tests/UI/test_library_multiselect_media.py`; live Media geometry matrix |
+| Media Read, Rendered/Raw, image preview, Find, progress, Analysis, Highlights, Info/edit, Read Later, Console handoff, More, single delete, external detail, identity fencing, retry, and compact Back/Escape behavior | Preserved | `Tests/UI/test_library_media_reader_flow.py`; `Tests/UI/test_library_media_side_by_side.py`; `Tests/UI/test_library_media_image_preview.py`; `Tests/UI/test_library_shell.py`; final focused and architecture gates; live Media geometry matrix |
+| Conversations list query, paging, export, select/export-only bulk mode, empty recovery, stale/error recovery, service order, exact identity, and semantic focus | Preserved | `Tests/UI/test_library_multiselect_conversations.py`; `Tests/UI/test_library_conversation_reader.py`; `Tests/UI/test_library_shell.py`; `Tests/Library/test_library_conversations_state.py`; final narrow gate (101 passed) |
+| Complete progressively mounted transcript, complete-only Find, Read/Info, Open in Console, selected-versus-loaded identity, pending/error/retry/deletion states, revision/message-epoch fences, and bulk read-only preview | Added and verified | `Tests/UI/test_library_conversation_reader.py`; `Tests/Library/test_library_conversation_reader_state.py`; `Tests/Chat/test_chat_conversation_service.py`; live `conversations-progressive-{first-page,find-complete}.svg`, `conversations-a-to-b-{loading,error,retry}.svg`, `conversations-b-deleted.svg`, and `conversations-bulk-readonly-preview.svg` |
+| Concurrent/delayed preference writes, Settings refresh reconciliation, exact serialized TOML rollback truth, canonical/legacy/default precedence, and Select-mode Find/Retry fence | Verified after review hardening | Final narrow gate (101 passed); live `shared-library-*.svg`, `settings-repair-*.svg`, `delayed-settings-repair-*.svg`, `conversations-select-{find,retry}-fenced.svg`, and `summary.json` |
+
+The production-shaped evidence bundle and exact commands are documented in
+[`evidence/task-22031/README.md`](evidence/task-22031/README.md). It contains 105 artifacts,
+including compositor SVGs, plain-text frames, structured state, and the executable isolated rig.
+The real config and profile fingerprints were unchanged before and after the run.
 
 ## Scope guardrails for the after pass
 

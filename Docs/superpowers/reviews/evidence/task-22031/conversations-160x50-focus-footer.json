@@ -1,0 +1,25 @@
+{
+  "escape_target": "library-conversations-filter",
+  "f6_cycle": [
+    "library-conversations-filter",
+    "library-conversation-reader-find",
+    "library-search-input"
+  ],
+  "focused": "library-conversations-filter",
+  "shortcuts": [
+    [
+      "/",
+      "focus filter"
+    ],
+    [
+      "F6",
+      "next pane"
+    ],
+    [
+      "esc",
+      "focus Library"
+    ]
+  ],
+  "slash_target": "library-conversations-filter",
+  "svg": "conversations-160x50-focus-footer.svg"
+}

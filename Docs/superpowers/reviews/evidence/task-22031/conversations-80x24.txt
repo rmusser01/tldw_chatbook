@@ -1,0 +1,24 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watc  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────┐
+│            Conversation reader                                               │
+│               Read    Info                                                   │
+│                                                                              │
+│            Loading local Library sources…                                    │
+│                                                                              │
+│            ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│            ▊ Find in complete transcript…                                 ▎  │
+│            ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ ---> --->                                                                    │
+│            │ user · 2026-08-24T12:00:00Z                                     │
+│            │ A deterministic complete transcript proves the retained Work    │
+│            │ pane stays readable while Library and Items change around it.   │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                Open in Console                                               │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

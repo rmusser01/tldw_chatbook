@@ -1,0 +1,50 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs  F9 Settings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────────────────────┐     ┌──────────────────────────────────────┐      Conversation reader                                                           │
+│ │ Navigati    Collapse     │     │ Conversations (1)                    │         Read    Info                                                               │
+│ │     Import…              │     │       Done                           │                                                                                    │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     │  0 selected  Select all 1 shown      │      Bulk selection: 0 conversations. The retained transcript is not included and  │
+│ │ ▊ Search Library…      ▎ │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │      remains read-only. · Searching complete transcript…                           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │ ▊ Filter conversations… (Enter)    ▎ │                                                                                    │
+│ │                          │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │ ──────────────────────── │     │                                      │      ▊ needle                                                                   ▎  │
+│ │ Browse               ▾   │     │  ☐ Alpha planning                    │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │    Media (0)             │     │      1 messages - 1d                 │                                                                                    │
+│ │  ▸ Conversations (1)     │     │                                      │      │ user · 2026-08-24T12:00:00Z                                                 │
+│ │    Notes (0)             │     │                                      │      │ message 0                                                                   │
+│ │    Prompts — reuse       │     │                                      │                                                                                    │
+│ │    Skills (0)            │     │                                      │      │ assistant · 2026-08-24T12:01:00Z                                            │
+│ │    Collections           │     │                                      │      │ message 1                                                                   │
+│ │    Search / RAG          │     │                                      │                                                                                    │
+│ │ ──────────────────────── │     │                                      │      │ user · 2026-08-24T12:02:00Z                                                 │
+│ │ Create               ▾   │     │                                      │      │ message 2                                                                   │
+│ │    New note              │     │                                      │                                                                                    │
+│ │    New prompt            │     │                                      │      │ assistant · 2026-08-24T12:03:00Z                                            │
+│ │    New skill             │     │                                      │      │ message 3                                                                   │
+│ │ ──────────────────────── │<--- │                                      │<---                                                                                │
+│ │ Study                ▾   │     │                                      │      │ user · 2026-08-24T12:04:00Z                                                 │
+│ │    Study decks           │     │                                      │      │ message 4                                                                   │
+│ │                          │     │                                      │                                                                                    │
+│ │    Flashcards            │     │                                      │      │ assistant · 2026-08-24T12:05:00Z                                            │
+│ │                          │     │                                      │      │ message 5                                                                ▇  │
+│ │    Quizzes               │     │                                      │                                                                                    │
+│ │                          │     │                                      │      │ user · 2026-08-24T12:06:00Z                                                 │
+│ │ ──────────────────────── │     │                                      │      │ message 6                                                                   │
+│ │ Import / Export      ▾   │     │                                      │                                                                                    │
+│ │    Import…               │     │                                      │      │ assistant · 2026-08-24T12:07:00Z                                            │
+│ │    Export                │     │                                      │      │ message 7                                                                   │
+│ │ ──────────────────────── │     │                                      │                                                                                    │
+│ │ Details              ▸   │     │                                      │      │ user · 2026-08-24T12:08:00Z                                                 │
+│ │                          │     │                                      │      │ message 8                                                                   │
+│ │                          │     │                                      │                                                                                    │
+│ │                          │     │                                      │      │ assistant · 2026-08-24T12:09:00Z                                            │
+│ │                          │     │                                      │      │ message 9                                                                   │
+│ │                          │     │        1-1 of 1 · Page 1 of 1        │                                                                                    │
+│ │                          │     │ Already on the first page. · No mor… │      │ user · 2026-08-24T12:10:00Z                                                 │
+│ │                          │     │        ○ Previous     ○ Next         │         ○ Open in Console                                                          │
+│ └──────────────────────────┘     └──────────────────────────────────────┘                                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus filter | F6 next pane | esc focus Items | F1 help · Ctrl+P palette · Ctrl+Q quit

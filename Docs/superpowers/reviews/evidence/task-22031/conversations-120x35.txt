@@ -1,0 +1,35 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│      ┌──────────────────────────────────────────────────────┐      Conversation reader                               │
+│      │ Conversations (2)                                    │         Read    Info                                   │
+│      │     Export…                                          │                                                        │
+│      │      Select                                          │      Loading local Library sources…                    │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                        │
+│      │ ▊ Filter conversations… (Enter)                    ▎ │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │      ▊ Find in complete transcript…                 ▎  │
+│      │                                                      │      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│      │  ▸ Alpha planning — an intentionally long convers…   │                                                        │
+│      │      1 messages - 1d                                 │      │ user · 2026-08-24T12:00:00Z                     │
+│      │                                                      │      │ A deterministic complete transcript proves      │
+│      │    Beta review                                       │      │ the retained Work pane stays readable while     │
+│      │      1 messages - 19h                                │      │ Library and Items change around it.             │
+│ ---> │                                                      │<---                                                    │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                1-2 of 2 · Page 1 of 1                │                                                        │
+│      │    Already on the first page. · No more results.     │                                                        │
+│      │                ○ Previous     ○ Next                 │         Open in Console                                │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus filter | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit
