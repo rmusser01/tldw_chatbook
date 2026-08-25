@@ -5531,6 +5531,48 @@ class ConsoleChatController:
         )
         return result
 
+    def _durable_db_call_offloadable(self) -> bool:
+        """True when a durable persistence call may run on a worker thread.
+
+        TASK-22205: the per-send ``BEGIN IMMEDIATE`` durable-turn commit and
+        the pre-dispatch checkpoint CAS used to run synchronously on the
+        event loop — tens of ms steady-state, up to the 15 s busy timeout
+        under write-lock contention (e.g. the messages_fts backfill window).
+        Follows the ``_is_memory_backed`` precedent in
+        ``chat_conversation_scope_service``: thread-local file-backed sqlite
+        connections are safe on ``asyncio.to_thread``, but a ``:memory:``
+        CharactersRAGDB is per-connection — a worker thread would see an
+        empty, unmigrated database — so memory-backed persistence stays
+        inline. A persistence fake with no ``.db`` threads harmlessly.
+        """
+
+        db = getattr(self.store.persistence, "db", None)
+        return not bool(getattr(db, "is_memory_db", False))
+
+    async def _run_durable_db_call(
+        self, call: Callable[..., Any], /, *args: Any
+    ) -> Any:
+        """Run one durable DB transaction off the event loop when safe.
+
+        The ``await`` is the ordering barrier: the coroutine resumes only
+        after the transaction durably exists (or raised), so provider
+        dispatch can never precede the commit, and every state transition
+        after the call still sees its result. Per-session serialization is
+        upstream: ``begin_preparation`` holds a single live slot per
+        session, and the prompt-queue dispatcher refuses/queues while a
+        turn is preparing or accepted. Exceptions cross ``to_thread``
+        unchanged, so the off-loop failure path is byte-identical to the
+        inline one. Task cancellation during the await leaves the thread
+        running to completion (``to_thread`` survives cancellation): the
+        transaction still commits or rolls back atomically on the worker
+        thread, which is exactly the crash-window state the restore
+        reconcile already recovers.
+        """
+
+        if self._durable_db_call_offloadable():
+            return await asyncio.to_thread(call, *args)
+        return call(*args)
+
     async def _accept_durable_turn(
         self,
         *,
@@ -5632,7 +5674,11 @@ class ConsoleChatController:
             contributions=contributions,
         )
         try:
-            commit = self.store.commit_durable_turn(acceptance)
+            # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs
+            # off the event loop; the await is the dispatch-ordering barrier.
+            commit = await self._run_durable_db_call(
+                self.store.commit_durable_turn, acceptance
+            )
         except Exception:
             return ConsoleSubmitResult(
                 False,
@@ -5837,7 +5883,7 @@ class ConsoleChatController:
                     "Prepared turn changed before acceptance publication."
                 )
 
-        def transition_checkpoint() -> None:
+        async def transition_checkpoint() -> None:
             current_commit = self.store.durable_turn_commit_for(
                 preparation_id, fingerprint=fingerprint
             )
@@ -5848,7 +5894,16 @@ class ConsoleChatController:
             )
             if repository is None:
                 raise RuntimeError("Durable dispatch repository is unavailable.")
-            result = repository.cas_state(
+            # TASK-22205: the pre-dispatch checkpoint CAS is the second
+            # per-send BEGIN IMMEDIATE transaction; it runs off the event
+            # loop behind the same await barrier as the turn commit. The
+            # publication and preparation CAS below stay on the loop and
+            # re-validate their owners, so an interleaved discard/close
+            # during the await fails this effect exactly like a crash
+            # between CAS and provider entry (a state resume already
+            # recovers).
+            result = await self._run_durable_db_call(
+                repository.cas_state,
                 ConsoleDispatchTransition(
                     assistant_message_id=current_commit.assistant_message_id,
                     expected_state=ConsoleDispatchCheckpointState.ACCEPTED,
@@ -5861,7 +5916,7 @@ class ConsoleChatController:
                     ),
                     new_state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
                     new_attempt_id=current_commit.checkpoint.attempt_id,
-                )
+                ),
             )
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
                 raise RuntimeError("Durable dispatch checkpoint transition failed.")

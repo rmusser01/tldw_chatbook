@@ -94,6 +94,13 @@ _ACTIVE_OWNER_SELECT = """
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
 
 
+class _ReconcileWriteNeeded:
+    """Sentinel: the read-only reconcile pass found write-requiring work."""
+
+
+_RECONCILE_WRITE_NEEDED = _ReconcileWriteNeeded()
+
+
 class ConsoleDispatchRepository:
     """Own accepted insert, recovery validation, CAS, settlement, and handoff."""
 
@@ -334,27 +341,26 @@ class ConsoleDispatchRepository:
         if type(conversation_id) is not str or not conversation_id.strip():
             return None
         try:
-            with self.db.transaction(immediate=True) as cursor:
-                rows = cursor.execute(
-                    _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
-                    (conversation_id,),
-                ).fetchall()
-                if len(rows) > 1:
-                    return self._quarantined(
-                        conversation_id,
-                        "",
-                        "duplicate_active_path_owner",
-                    )
-                if rows:
-                    return self._reconcile_checkpoint_row(
-                        cursor,
-                        conversation_id,
-                        rows[0],
-                    )
-                return self._reconcile_checkpoint_free_owner(
-                    cursor,
-                    conversation_id,
+            # TASK-22205: most reconciles have nothing to write (no
+            # checkpoint at all, or a still-valid owner), so the first pass
+            # is a plain read transaction that never issues a write
+            # statement — it must not queue on the 15 s write-lock busy
+            # timeout just to read recovery state. Only when the read pass
+            # finds write-requiring work does a SECOND, fresh
+            # ``BEGIN IMMEDIATE`` transaction re-run the full logic from
+            # scratch (re-reading inside the write lock). The read pass
+            # never upgrades in place: a DEFERRED read-then-write hits
+            # SQLite's non-retryable snapshot-upgrade deadlock under
+            # concurrent writers (the recorded task-21100 wave-1 lesson).
+            outcome = self._reconcile_pass(conversation_id, allow_writes=False)
+            if not isinstance(outcome, _ReconcileWriteNeeded):
+                return outcome
+            outcome = self._reconcile_pass(conversation_id, allow_writes=True)
+            if isinstance(outcome, _ReconcileWriteNeeded):  # pragma: no cover
+                raise sqlite3.IntegrityError(
+                    "Reconcile write pass refused to write."
                 )
+            return outcome
         except sqlite3.Error:
             return self._quarantined(
                 conversation_id,
@@ -362,12 +368,45 @@ class ConsoleDispatchRepository:
                 "checkpoint_reconcile_error",
             )
 
+    def _reconcile_pass(
+        self,
+        conversation_id: str,
+        *,
+        allow_writes: bool,
+    ) -> "ConsoleDispatchRecoveryState | None | _ReconcileWriteNeeded":
+        """Run one reconcile pass; read passes may report write-needed."""
+
+        with self.db.transaction(immediate=allow_writes) as cursor:
+            rows = cursor.execute(
+                _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
+                (conversation_id,),
+            ).fetchall()
+            if len(rows) > 1:
+                return self._quarantined(
+                    conversation_id,
+                    "",
+                    "duplicate_active_path_owner",
+                )
+            if rows:
+                return self._reconcile_checkpoint_row(
+                    cursor,
+                    conversation_id,
+                    rows[0],
+                    allow_writes=allow_writes,
+                )
+            return self._reconcile_checkpoint_free_owner(
+                cursor,
+                conversation_id,
+            )
+
     def _reconcile_checkpoint_row(
         self,
         cursor: sqlite3.Cursor,
         conversation_id: str,
         row: sqlite3.Row,
-    ) -> ConsoleDispatchRecoveryState | None:
+        *,
+        allow_writes: bool = True,
+    ) -> "ConsoleDispatchRecoveryState | None | _ReconcileWriteNeeded":
         assistant_id = str(row["assistant_message_id"] or "")
         if not self._valid_reconcile_pair(row):
             return self._quarantined(
@@ -393,6 +432,8 @@ class ConsoleDispatchRepository:
                     assistant_id,
                     "invalid_continuation",
                 )
+            if not allow_writes:
+                return _RECONCILE_WRITE_NEEDED
             next_version = int(row["current_assistant_version"]) + 1
             now = self.db._get_current_utc_timestamp_iso()
             updated = cursor.execute(
@@ -430,6 +471,8 @@ class ConsoleDispatchRepository:
 
         assistant_state = row["assistant_state"]
         if assistant_state in {"complete", "stopped", "failed", "discarded"}:
+            if not allow_writes:
+                return _RECONCILE_WRITE_NEEDED
             self._delete_exact_checkpoint(cursor, row)
             return None
         if (
