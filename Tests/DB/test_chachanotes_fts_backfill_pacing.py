@@ -256,6 +256,51 @@ def test_locked_retries_are_bounded_then_wrapped_with_the_partial_count(
     assert recorded == list(_LOCKED_RETRY_BACKOFF_SECONDS)
 
 
+def test_abort_cuts_an_in_flight_backoff_sleep_at_the_poll_slice(upgraded_db):
+    """The backoff sleep must poll ``should_abort`` too, not just the
+    inter-chunk pause -- otherwise app quit during a contention backoff waits
+    out up to the full 2 s step, the exact shutdown-linger class this task
+    removes. Added in review: the mutation that passes ``None`` instead of
+    ``should_abort`` into the backoff's ``_interruptible_sleep`` survived the
+    original eight tests; this pins that call site (driver line
+    ``_interruptible_sleep(backoff, should_abort, sleep)`` in the retry
+    branch, and its clean-return-with-partial-count contract)."""
+    attempts = {"n": 0}
+    recorded: list[float] = []
+    aborted = {"flag": False}
+    original = CharactersRAGDB.backfill_messages_fts
+
+    def locked_second(self, *args, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] == 2:
+            raise sqlite3.OperationalError("database is locked")
+        return original(self, *args, **kwargs)
+
+    def sliced_sleep(seconds: float) -> None:
+        recorded.append(seconds)
+        if len(recorded) >= 3:
+            aborted["flag"] = True  # "shutdown" arrives mid-backoff
+
+    with patch.object(CharactersRAGDB, "backfill_messages_fts", locked_second):
+        total = backfill_chachanotes_messages_fts(
+            upgraded_db,
+            chunk_size=4,
+            pause_seconds=0.0,
+            should_abort=lambda: aborted["flag"],
+            sleep=sliced_sleep,
+        )
+
+    # One chunk committed, the next lost the lock, and the 0.5 s backoff was
+    # cut at the third abort-poll slice -- a clean partial return, never a
+    # single uninterruptible 0.5 s sleep (and never a retry after abort).
+    assert total == 4
+    assert attempts["n"] == 2
+    assert recorded == [_ABORT_POLL_SECONDS] * 3
+    assert _docsize_count(upgraded_db) == 4
+    # The frontier still resumes.
+    assert backfill_chachanotes_messages_fts(upgraded_db, chunk_size=4) == 6
+
+
 def test_a_non_lock_error_still_fails_fast(upgraded_db):
     """The backoff is for lock-queue timeouts only -- any other failure keeps
     task-21100's fail-fast-and-wrap contract, with zero sleeps."""
