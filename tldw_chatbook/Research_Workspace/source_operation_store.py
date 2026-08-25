@@ -92,12 +92,32 @@ class ResearchSourceOperationStore:
     """Persist source intents and monotonic stage transitions in WorkspaceDB."""
 
     def __init__(self, db: WorkspaceDB) -> None:
+        """Initialize the operation store.
+
+        Args:
+            db: Workspace database that owns the durable operation rows.
+
+        Raises:
+            TypeError: If ``db`` is not a ``WorkspaceDB`` instance.
+        """
         if not isinstance(db, WorkspaceDB):
             raise TypeError("db must be WorkspaceDB")
         self._db = db
 
     def create(self, operation: ResearchSourceOperation) -> ResearchSourceOperation:
-        """Insert one validated intent before catalog ingestion begins."""
+        """Insert one validated intent before catalog ingestion begins.
+
+        Args:
+            operation: Pristine revision-one operation to persist.
+
+        Returns:
+            The persisted operation.
+
+        Raises:
+            TypeError: If ``operation`` has the wrong type.
+            SourceOperationValidationError: If the intent is not pristine.
+            SourceOperationConflictError: If its ID or idempotency key exists.
+        """
 
         if not isinstance(operation, ResearchSourceOperation):
             raise TypeError("operation must be ResearchSourceOperation")
@@ -156,7 +176,14 @@ class ResearchSourceOperationStore:
         return operation
 
     def get(self, operation_id: str) -> ResearchSourceOperation | None:
-        """Return one receipt by bounded opaque ID."""
+        """Return one receipt by bounded opaque ID.
+
+        Args:
+            operation_id: Opaque operation identifier.
+
+        Returns:
+            The matching operation, or ``None`` when it does not exist.
+        """
 
         normalized_id = validate_source_operation_id(operation_id)
         with self._db.connection() as connection:
@@ -173,7 +200,17 @@ class ResearchSourceOperationStore:
     def get_by_idempotency_key(
         self, idempotency_key: str
     ) -> ResearchSourceOperation | None:
-        """Return the existing qualified intent for idempotent convergence."""
+        """Return the existing qualified intent for idempotent convergence.
+
+        Args:
+            idempotency_key: Qualified durable-intent key.
+
+        Returns:
+            The matching operation, or ``None`` when it does not exist.
+
+        Raises:
+            SourceOperationValidationError: If the key is blank or oversized.
+        """
 
         if not isinstance(idempotency_key, str) or not idempotency_key.strip():
             raise SourceOperationValidationError(
@@ -196,7 +233,18 @@ class ResearchSourceOperationStore:
     def list_incomplete(
         self, *, limit: int = 50, offset: int = 0
     ) -> tuple[ResearchSourceOperation, ...]:
-        """Return a bounded stable page of receipts not fully succeeded."""
+        """Return a bounded stable page of receipts not fully succeeded.
+
+        Args:
+            limit: Maximum number of operations to return.
+            offset: Stable page offset.
+
+        Returns:
+            A tuple of incomplete operations.
+
+        Raises:
+            SourceOperationValidationError: If either page bound is invalid.
+        """
 
         if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
             raise SourceOperationValidationError(
@@ -248,7 +296,21 @@ class ResearchSourceOperationStore:
         principal_id: str = "",
         limit: int = 20,
     ) -> tuple[ResearchSourceOperation, ...]:
-        """Return the selected qualified workspace's bounded recent receipts."""
+        """Return the selected qualified workspace's bounded recent receipts.
+
+        Args:
+            data_source: Workspace authority.
+            workspace_id: Canonical workspace identifier.
+            server_profile_id: Server profile identifier for Server workspaces.
+            principal_id: Server principal identifier for Server workspaces.
+            limit: Maximum number of operations to return.
+
+        Returns:
+            A tuple ordered from most recently updated to least recent.
+
+        Raises:
+            SourceOperationValidationError: If the owner or limit is invalid.
+        """
 
         if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
             raise SourceOperationValidationError(
@@ -288,7 +350,17 @@ class ResearchSourceOperationStore:
     def list_association_actionable(
         self, *, limit: int = 50
     ) -> tuple[ResearchSourceOperation, ...]:
-        """Return a bounded stable page actionable by catalog/association recovery."""
+        """Return operations actionable by catalog or association recovery.
+
+        Args:
+            limit: Maximum number of operations to return.
+
+        Returns:
+            A bounded tuple in stable creation order.
+
+        Raises:
+            SourceOperationValidationError: If ``limit`` is invalid.
+        """
 
         if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
             raise SourceOperationValidationError(
@@ -324,7 +396,17 @@ class ResearchSourceOperationStore:
     def list_readiness_actionable(
         self, *, limit: int = 50
     ) -> tuple[ResearchSourceOperation, ...]:
-        """Return a bounded page whose association is ready for status refresh."""
+        """Return operations whose association is ready for status refresh.
+
+        Args:
+            limit: Maximum number of operations to return.
+
+        Returns:
+            A bounded tuple in stable creation order.
+
+        Raises:
+            SourceOperationValidationError: If ``limit`` is invalid.
+        """
 
         if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
             raise SourceOperationValidationError(
@@ -370,6 +452,25 @@ class ResearchSourceOperationStore:
         ``in_progress`` may move only to ``succeeded`` or ``failed``. A
         succeeded or failed stage is terminal. Only :meth:`retry_failed_stage`
         can clear a failed stage back to ``pending``.
+
+        Args:
+            operation_id: Operation to transition.
+            stage: Stage being advanced.
+            status: New non-pending status.
+            expected_revision: Revision required for the compare-and-swap.
+            ingest_job_id: Optional catalog job identifier.
+            canonical_item_id: Optional canonical catalog identifier.
+            workspace_source_id: Optional association identifier.
+            error_code: Sanitized diagnostic code for a failed stage.
+            error_message: Sanitized diagnostic message for a failed stage.
+            timestamp: Optional transition timestamp.
+
+        Returns:
+            The transitioned operation.
+
+        Raises:
+            SourceOperationConflictError: If the expected revision is stale.
+            SourceOperationValidationError: If the transition is invalid.
         """
 
         normalized_stage = self._stage(stage)
@@ -450,7 +551,21 @@ class ResearchSourceOperationStore:
         expected_revision: int,
         timestamp: str | None = None,
     ) -> ResearchSourceOperation:
-        """Clear exactly the named failed stage to pending for explicit retry."""
+        """Clear exactly the named failed stage to pending for explicit retry.
+
+        Args:
+            operation_id: Operation to retry.
+            stage: Failed stage to reset.
+            expected_revision: Revision required for the compare-and-swap.
+            timestamp: Optional retry timestamp.
+
+        Returns:
+            The operation with the named stage reset to pending.
+
+        Raises:
+            SourceOperationConflictError: If the revision or failed stage changed.
+            SourceOperationValidationError: If an argument is invalid.
+        """
 
         normalized_stage = self._stage(stage)
         self._expected_revision(expected_revision)

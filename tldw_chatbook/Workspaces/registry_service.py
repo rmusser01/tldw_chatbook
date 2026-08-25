@@ -1289,8 +1289,8 @@ class LocalWorkspaceRegistryService:
         if not include_blocked:
             actionable_sql = """
               AND state <> 'blocked'
-              AND next_retry_at <= ?
-              AND lease_expires_at <= ?
+              AND julianday(next_retry_at) <= julianday(?)
+              AND julianday(lease_expires_at) <= julianday(?)
             """
             params += (now, now)
         try:
@@ -1314,7 +1314,10 @@ class LocalWorkspaceRegistryService:
                       AND (? IS NULL OR workspace_id = ?)
                       AND (? IS NULL OR operation_kind = ?)
                       {actionable_sql}
-                    ORDER BY next_retry_at ASC, updated_at ASC, receipt_id ASC
+                    ORDER BY
+                        julianday(next_retry_at) ASC,
+                        julianday(updated_at) ASC,
+                        receipt_id ASC
                     LIMIT ? OFFSET ?
                     """,
                     params + (limit, offset),
@@ -1351,8 +1354,9 @@ class LocalWorkspaceRegistryService:
                     SELECT * FROM research_quick_note_receipts
                     WHERE receipt_id = ? AND local_user_id = ?
                       AND revision = ? AND lease_token = ?
-                      AND state <> 'blocked' AND next_retry_at <= ?
-                      AND lease_expires_at <= ?
+                      AND state <> 'blocked'
+                      AND julianday(next_retry_at) <= julianday(?)
+                      AND julianday(lease_expires_at) <= julianday(?)
                     """,
                     (
                         safe_receipt_id,

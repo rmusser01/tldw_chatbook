@@ -425,8 +425,9 @@ class ServerResearchWorkspaceAdapter:
     ) -> bool:
         context = self._context_for_ref(ref)
         capability = self._note_capabilities(context)["delete_note"]
-        require_capability({"delete_note": capability}, "delete_note")
-        raise AssertionError("unreachable")
+        if capability.available:
+            capability = self._note_delete_capability(context)
+        raise CapabilityUnavailableError(capability)
 
     async def list_sources(
         self,
@@ -1196,14 +1197,7 @@ class ServerResearchWorkspaceAdapter:
                 result[operation] = unavailable
                 continue
             if operation == "delete_note":
-                result[operation] = ResearchCapability(
-                    False,
-                    "version_precondition_unavailable",
-                    "This server cannot safely delete a Quick Note with a version check.",
-                    "server_workspace_notes",
-                    recovery_action="Delete it in a server client that exposes versioned delete.",
-                    capability_revision=revision,
-                )
+                result[operation] = self._note_delete_capability(context)
                 continue
             method = (
                 "save_workspace_note"
@@ -1228,6 +1222,19 @@ class ServerResearchWorkspaceAdapter:
                 capability_revision=revision,
             )
         return result
+
+    @staticmethod
+    def _note_delete_capability(context: Any) -> ResearchCapability:
+        return ResearchCapability(
+            False,
+            "version_precondition_unavailable",
+            "This server cannot safely delete a Quick Note with a version check.",
+            "server_workspace_notes",
+            recovery_action="Delete it in a server client that exposes versioned delete.",
+            capability_revision=ServerResearchWorkspaceAdapter._capability_revision(
+                context
+            ),
+        )
 
     @staticmethod
     def _context_health_unavailable(

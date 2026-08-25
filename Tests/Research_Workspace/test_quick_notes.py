@@ -21,6 +21,7 @@ from tldw_chatbook.Research_Workspace import (
     CapabilityUnavailableError,
     BoundedPageResult,
     QualifiedWorkspaceRef,
+    ResearchCapability,
     ResearchNoteConflictError,
     ResearchNotePageRequest,
     ResearchNoteSaveRequest,
@@ -1285,6 +1286,26 @@ async def test_server_note_conflict_is_normalized_and_delete_fails_closed_before
 
 
 @pytest.mark.asyncio
+async def test_server_note_delete_stays_fail_closed_if_projection_changes() -> None:
+    service = RecordingWorkspaceNotesService()
+    adapter = ServerResearchWorkspaceAdapter(service, RecordingContextProvider())
+    adapter._note_capabilities = lambda _context: {
+        "delete_note": ResearchCapability(
+            available=True,
+            reason_code="available",
+            user_message="Delete is available.",
+            owner="server",
+        )
+    }
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.delete_note(SERVER_REF, "7", 4)
+
+    assert exc_info.value.capability.reason_code == "version_precondition_unavailable"
+    assert not any(call[0] == "delete_note" for call in service.calls)
+
+
+@pytest.mark.asyncio
 async def test_server_note_capabilities_survive_missing_source_projection() -> None:
     adapter = ServerResearchWorkspaceAdapter(
         RecordingWorkspaceNotesService(), RecordingContextProvider()
@@ -1802,6 +1823,47 @@ def test_receipt_listing_filters_before_bounds_and_transitions_monotonically(
         )
         with pytest.raises(ValueError, match="limit"):
             registry.list_quick_note_receipts("user-a", limit=101)
+    finally:
+        registry_db.close()
+
+
+def test_receipt_recovery_compares_timestamp_instants_not_text(tmp_path) -> None:
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
+    registry_db = WorkspaceDB(tmp_path / "receipt-offsets.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
+    registry.create_workspace(workspace_id="workspace-a", name="A")
+    receipt = registry.claim_quick_note_create(
+        "workspace-a",
+        local_user_id="user-a",
+        operation_token=VALID_OPERATION_TOKEN,
+    )
+    equivalent_instant = "2026-08-24T01:00:00+01:00"
+    with registry_db.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE research_quick_note_receipts
+            SET next_retry_at = ?, lease_expires_at = ?
+            WHERE receipt_id = ?
+            """,
+            (equivalent_instant, equivalent_instant, receipt.receipt_id),
+        )
+
+    try:
+        rows, total = registry.list_quick_note_receipts(
+            "user-a", workspace_id="workspace-a", limit=100
+        )
+        assert [row.receipt_id for row in rows] == [receipt.receipt_id]
+        assert rows[0].next_retry_at == equivalent_instant
+        assert rows[0].lease_expires_at == equivalent_instant
+        assert total == 1
+
+        claimed = registry.claim_quick_note_recovery(
+            receipt.receipt_id,
+            "user-a",
+            expected_revision=receipt.revision,
+            expected_lease_token=receipt.lease_token,
+        )
+        assert claimed.revision == receipt.revision + 1
     finally:
         registry_db.close()
 
