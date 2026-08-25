@@ -507,7 +507,7 @@ async def test_context_modal_none_preview_replaces_stale_loaded_state():
             str(item.renderable) for item in panel.query(Static)
         )
 
-        await pilot.click("#console-inspector-next-send-refresh")
+        modal.query_one("#console-inspector-next-send-refresh", Button).press()
         await pilot.pause()
 
         assert app.screen is modal
@@ -631,7 +631,7 @@ async def test_context_modal_copy_omits_automatic_project_instruction_body(
         app.push_screen(_inspector(factory))
         await pilot.pause()
         assert sentinel in app.screen._format_next_send_text()
-        await pilot.click("#console-inspector-next-send-copy")
+        app.screen.query_one("#console-inspector-next-send-copy", Button).press()
         await pilot.pause()
 
     exported = fake_copy.copy.call_args.args[0]

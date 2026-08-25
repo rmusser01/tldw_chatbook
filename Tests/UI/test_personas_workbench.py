@@ -22,7 +22,7 @@ from textual.app import App
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
-from Tests.UI.background_signals import wait_for_background_signal
+from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -12211,7 +12211,7 @@ async def test_buddy_action_fetch_aba_cannot_apply_or_reconcile(
                 action="close", source="local", persona_id="p-1", revision=2
             )
         )
-        await started.wait()
+        await wait_for_signal(started, what="Buddy action fetch start")
         await screen._select_profile("p-2", "Navigator")
         await screen._select_profile("p-1", "Archivist")
         release.set()

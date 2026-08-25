@@ -105,6 +105,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from tldw_chatbook.config import load_settings, save_settings_to_cli_config
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
@@ -152,10 +153,16 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     blocking setup modal dismissed; a ready llama.cpp provider satisfies the
     readiness single source that drives it.
     """
-    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": model}
-    app.app_config["api_settings"] = {
-        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": model}
-    }
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "llama_cpp", "model": model},
+            "api_settings.llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": model,
+            },
+        }
+    )
+    app.app_config = load_settings()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = model
 

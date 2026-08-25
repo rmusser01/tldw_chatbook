@@ -125,6 +125,8 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-edit")
 
         plain_viewer_shortcuts = screen._footer_shortcut_registration
@@ -269,19 +271,13 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
 
 @pytest.mark.asyncio
 async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() -> None:
-    """A generation-only supersede must still run the projection's follow-up.
+    """A routine snapshot cannot suppress the permanent Reader's return focus.
 
-    ``_library_entry_reconcile_is_current`` compares BOTH the route key and
-    ``_library_snapshot_state_generation``, and the ordinary local-source
-    snapshot bumps that generation -- which ``_exit_library_media_viewer``
-    kicks one line before scheduling the swap. So a routine snapshot landing
-    mid-await returned SUPERSEDED, and the open-surface seam skipped
-    ``then()``: the task-2856 AC1 first-row focus AND the media_return
-    scroll restore were both dropped, where the pre-conversion code armed
-    them unconditionally.
-
-    The route did NOT change here -- only the snapshot generation moved --
-    so the destination is still ours and the follow-up is still meaningful.
+    Media Items and Reader now remain mounted together, so returning from the
+    viewer no longer has an await window in which to intercept a canvas-child
+    swap. Preserve the original regression's user-visible contract by bumping
+    the snapshot generation immediately before Back and verifying that the
+    already-mounted list still receives its focus/scroll follow-up.
     """
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -298,33 +294,13 @@ async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() ->
 
         screen._arm_library_list_entry_focus = spy_arm
 
-        canvas_host = screen.query_one("#library-canvas")
-        original_remove = canvas_host.remove_children
-        route_before: list[tuple] = []
+        screen._library_snapshot_state_generation += 1
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        for _ in range(15):
+            await pilot.pause(0.02)
 
-        async def bumping_remove(*args, **kwargs):
-            result = await original_remove(*args, **kwargs)
-            # A routine snapshot lands mid-window: generation moves, route
-            # key does NOT.
-            route_before.append(screen._library_entry_route_key())
-            screen._library_snapshot_state_generation += 1
-            return result
-
-        canvas_host.remove_children = bumping_remove
-        try:
-            screen.query_one("#library-media-back", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-row-0")
-            for _ in range(15):
-                await pilot.pause(0.02)
-        finally:
-            canvas_host.remove_children = original_remove
-
-        assert route_before, "the mid-swap snapshot bump never ran"
-        assert screen._library_entry_route_key() == route_before[0], (
-            "the route changed too -- this test must exercise a "
-            "GENERATION-only supersede"
-        )
         assert armed, (
-            "the projection's follow-up was dropped on a generation-only "
-            "supersede: task-2856 AC1 focus and the scroll restore never ran"
+            "the Reader return follow-up was dropped after a snapshot "
+            "generation change: task-2856 AC1 focus and scroll restore never ran"
         )

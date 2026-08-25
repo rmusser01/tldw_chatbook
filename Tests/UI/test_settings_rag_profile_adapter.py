@@ -465,12 +465,9 @@ def test_rerank_toggle_reaches_the_real_service_enable_reranking_flag(
     ok, reason = save_rag_defaults_to_active_profile(d)
     assert ok and reason == ""
 
+    import tldw_chatbook.RAG_Search.config_profiles as config_profiles
     import tldw_chatbook.RAG_Search.simplified.rag_factory as rag_factory
-    # Same seam as the `wired` fixture (module-level `get_profile_manager`
-    # lookup) but bound in rag_factory's own namespace -- it imports the
-    # symbol directly (`from ..config_profiles import get_profile_manager`),
-    # so patching `config_profiles.get_profile_manager` would not be seen here.
-    monkeypatch.setattr(rag_factory, "get_profile_manager", lambda: mgr)
+    monkeypatch.setattr(config_profiles, "get_profile_manager", lambda: mgr)
 
     from tldw_chatbook.RAG_Search.simplified.config import create_config_for_testing
 
@@ -498,8 +495,9 @@ def test_rerank_toggle_off_reaches_the_real_service_enable_reranking_flag(
     ok, reason = save_rag_defaults_to_active_profile(d)
     assert ok and reason == ""
 
+    import tldw_chatbook.RAG_Search.config_profiles as config_profiles
     import tldw_chatbook.RAG_Search.simplified.rag_factory as rag_factory
-    monkeypatch.setattr(rag_factory, "get_profile_manager", lambda: mgr)
+    monkeypatch.setattr(config_profiles, "get_profile_manager", lambda: mgr)
 
     from tldw_chatbook.RAG_Search.simplified.config import create_config_for_testing
 

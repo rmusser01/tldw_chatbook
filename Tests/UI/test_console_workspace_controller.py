@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
+    wait_for_signal,
 )
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -457,9 +458,9 @@ async def test_workspace_search_settles_current_key_without_clearing_newer_attem
 
     controller._load_workspace_tree_search_rows = load
     old_task = asyncio.create_task(controller.refresh_workspace_tree_search("old"))
-    await old_started.wait()
+    await wait_for_signal(old_started, what="old workspace search start")
     new_task = asyncio.create_task(controller.refresh_workspace_tree_search("new"))
-    await new_started.wait()
+    await wait_for_signal(new_started, what="replacement workspace search start")
     newer_key = controller._workspace_tree_search.request_key
 
     release_old.set()
@@ -512,7 +513,7 @@ async def test_workspace_and_flat_search_completions_are_independent() -> None:
     controller._load_flat_conversation_search_rows = load_flat
 
     workspace_task = asyncio.create_task(controller.refresh_workspace_tree_search("A"))
-    await workspace_started.wait()
+    await wait_for_signal(workspace_started, what="workspace search start")
     await controller.refresh_flat_conversation_search("B")
     flat_rows = controller._flat_conversation_search.rows
     release_workspace.set()
@@ -551,8 +552,8 @@ async def test_replacing_workspace_owner_invalidates_only_workspace_search() -> 
     controller._load_flat_conversation_search_rows = load_flat
     workspace = asyncio.create_task(controller.refresh_workspace_tree_search("needle"))
     flat = asyncio.create_task(controller.refresh_flat_conversation_search("needle"))
-    await workspace_started.wait()
-    await flat_started.wait()
+    await wait_for_signal(workspace_started, what="workspace owner search start")
+    await wait_for_signal(flat_started, what="flat owner search start")
     owners["workspace"] = object()
     release.set()
     await asyncio.gather(workspace, flat)
@@ -591,8 +592,8 @@ async def test_replacing_flat_owner_invalidates_only_flat_search() -> None:
     controller._load_flat_conversation_search_rows = load_flat
     workspace = asyncio.create_task(controller.refresh_workspace_tree_search("needle"))
     flat = asyncio.create_task(controller.refresh_flat_conversation_search("needle"))
-    await workspace_started.wait()
-    await flat_started.wait()
+    await wait_for_signal(workspace_started, what="workspace owner search start")
+    await wait_for_signal(flat_started, what="flat owner search start")
     owners["flat"] = object()
     release.set()
     await asyncio.gather(workspace, flat)
@@ -635,8 +636,8 @@ async def test_remount_lifecycle_invalidates_old_requests_for_both_search_lanes(
     controller._load_flat_conversation_search_rows = load_flat
     workspace = asyncio.create_task(controller.refresh_workspace_tree_search("needle"))
     flat = asyncio.create_task(controller.refresh_flat_conversation_search("needle"))
-    await workspace_started.wait()
-    await flat_started.wait()
+    await wait_for_signal(workspace_started, what="workspace lifecycle search start")
+    await wait_for_signal(flat_started, what="flat lifecycle search start")
     running = False
     owners["lifecycle"] = object()
     running = True
@@ -845,7 +846,7 @@ async def test_collapsing_workspace_fences_late_page_commit_without_dropping_row
 
     controller._fetch_workspace_tree_page = fetch
     page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started.wait()
+    await wait_for_signal(started, what="workspace page collapse request start")
 
     controller.transition_workspace_tree_expansion("workspace-7", expanded=False)
     release.set()
@@ -917,7 +918,7 @@ async def test_page_completion_with_unknown_membership_preserves_settled_retry()
 
     controller._fetch_workspace_tree_page = fetch
     page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started.wait()
+    await wait_for_signal(started, what="unknown-membership page request start")
     membership_unavailable = True
     release.set()
     await page
@@ -971,7 +972,7 @@ async def test_page_completion_from_prior_screen_lifecycle_is_discarded_and_sett
 
     controller._fetch_workspace_tree_page = fetch
     page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started.wait()
+    await wait_for_signal(started, what="prior-lifecycle page request start")
     loading_sync_count = len(syncs)
     identities["lifecycle"] = object()
     release.set()
@@ -1016,7 +1017,7 @@ async def test_page_terminal_paths_settle_loading_and_allow_retry(
 
     controller._fetch_workspace_tree_page = blocked_fetch
     page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started.wait()
+    await wait_for_signal(started, what="workspace terminal page request start")
     loading_sync_count = len(syncs)
     if terminal == "owner":
         identities["owner"] = object()
@@ -1252,7 +1253,7 @@ async def test_membership_move_discards_inflight_page_and_projects_new_owner_onc
 
     controller._fetch_workspace_tree_page = fetch
     task = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started.wait()
+    await wait_for_signal(started, what="workspace membership move start")
     memberships["workspace-7"] = []
     memberships["workspace-8"] = [
         SimpleNamespace(item_id="moving", title="Moved", role="workspace-thread")
@@ -1876,7 +1877,7 @@ async def test_workspace_search_completion_before_complete_owner_move_is_stale()
 
     controller._load_workspace_tree_search_rows = stale_search
     task = asyncio.create_task(controller.refresh_workspace_tree_search("owner"))
-    await started.wait()
+    await wait_for_signal(started, what="workspace owner move search start")
 
     controller.apply_workspace_membership_snapshot(
         {"workspace-7": (), "workspace-8": ("moving",)},
@@ -1946,7 +1947,7 @@ async def test_flat_search_completion_before_complete_owner_move_is_stale() -> N
 
     controller._load_flat_conversation_search_rows = stale_search
     task = asyncio.create_task(controller.refresh_flat_conversation_search("owner"))
-    await started.wait()
+    await wait_for_signal(started, what="flat owner move search start")
 
     controller.apply_workspace_membership_snapshot(
         {DEFAULT_WORKSPACE_ID: (), "workspace-8": ("moving",)},
@@ -2288,7 +2289,7 @@ async def test_persisted_cache_refresh_before_complete_owner_move_is_stale() -> 
     task = asyncio.create_task(
         controller._refresh_console_persisted_rows_cache(refresh_key=refresh_key)
     )
-    await started.wait()
+    await wait_for_signal(started, what="persisted cache refresh start")
 
     controller.apply_workspace_membership_snapshot(
         {DEFAULT_WORKSPACE_ID: (), "workspace-8": ("moving",)},

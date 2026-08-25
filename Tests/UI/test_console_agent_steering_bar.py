@@ -29,6 +29,7 @@ from textual.widgets import Input, Static
 
 from Tests.UI.test_console_fleet_panel import (
     _SECTION_ID,
+    _ready_test_app as _build_test_app,
     _scroll_into_view,
     _setup_console,
     _static_text,
@@ -37,7 +38,6 @@ from Tests.UI.test_console_parallel_runs import (
     _assert_painted_at_own_region,
     _assert_widget_and_ancestors_displayed,
 )
-from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )

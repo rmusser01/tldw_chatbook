@@ -4421,7 +4421,10 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
 
-        if self._disposed or self._shutdown_requested.is_set():
+        if self._disposed or (
+            self._shutdown_requested.is_set()
+            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+        ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         active_task = asyncio.current_task()
         owner_key = session_id or self.store.active_session_id
@@ -5278,7 +5281,10 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
-        if self._disposed or self._shutdown_requested.is_set():
+        if self._disposed or (
+            self._shutdown_requested.is_set()
+            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+        ):
             if echoed_user is not None:
                 try:
                     self._mark_transient_echo_blocked(echoed_user.id)
@@ -14400,7 +14406,10 @@ class ConsoleChatController:
                 status="started",
             )
         try:
-            if self._disposed or self._shutdown_requested.is_set():
+            if self._disposed or (
+                self._shutdown_requested.is_set()
+                and owner_id not in self._agent_wake_turn_sessions
+            ):
                 return self._accepted_shutdown_before_dispatch(
                     assistant_message_id, owner_id
                 )
@@ -15319,7 +15328,10 @@ class ConsoleChatController:
         # (agent_models.py) is what bounds a run overall, but only once
         # control returns to a checkpoint the loop actually polls -- it is
         # not a hard timeout on an in-flight, zero-chunk provider call.
-        if self._disposed or self._shutdown_requested.is_set():
+        if self._disposed or (
+            self._shutdown_requested.is_set()
+            and session_id not in self._agent_wake_turn_sessions
+        ):
             return self._accepted_shutdown_before_dispatch(
                 assistant_message_id, session_id
             )

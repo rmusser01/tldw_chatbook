@@ -19,6 +19,7 @@ from textual.widgets import Button, Static
 from Tests.UI.test_console_native_chat_flow import (
     RestoredConsoleHarness,
     StaticConversationTreeService,
+    _configure_native_ready_console,
     _static_plain_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -1123,6 +1124,7 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
     None``), names the workspace in the title, and seeds nothing when no
     workspace scope exists yet."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.media_reading_scope_service = _SpyMediaReadingScopeService()
     app.notes_scope_service = _SpyNotesScopeService()
     host = ConsoleHarness(app)
@@ -1144,6 +1146,11 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
             f"RAG Scope button region {button.region} extends past the "
             f"rail body's clipped width {rail_body.region} -- it would be "
             "unreachable by a real click"
+        )
+        hit, _ = console.get_widget_at(*button.region.center)
+        assert hit is button, (
+            f"RAG Scope button center is intercepted by {hit!r}; the control "
+            "would be unreachable by a real click"
         )
 
         await pilot.click(f"#{WORKSPACE_SCOPE_BTN_ID}")

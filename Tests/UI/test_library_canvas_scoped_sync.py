@@ -232,7 +232,9 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
     )
     prompt_screen = SimpleNamespace(
         _library_prompts_mutation_in_flight=False,
+        _library_prompt_browse_controller=SimpleNamespace(freshness="fresh"),
         _flush_library_prompt_save=permitted,
+        _acknowledge_library_destination_change=Mock(),
         _invalidate_library_prompts_browse=Mock(),
         _clear_library_prompt_selection=Mock(),
         _reset_library_prompt_editor_state=Mock(),

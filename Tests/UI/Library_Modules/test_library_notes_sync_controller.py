@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
 )
@@ -1134,13 +1135,13 @@ async def test_delayed_comparison_cannot_publish_after_controller_remount_invali
     pending = asyncio.create_task(
         controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     )
-    await first_started.wait()
+    await wait_for_signal(first_started, what="first notes comparison start")
     controller.invalidate_for_remount()
     await controller.check_root("root-1")
     current = asyncio.create_task(
         controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     )
-    await second_started.wait()
+    await wait_for_signal(second_started, what="second notes comparison start")
     release_second.set()
     await current
     assert controller.snapshot.comparison is not None
@@ -1666,7 +1667,7 @@ async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> N
             "root-1", TOKEN, "operation-1", history_page=1
         )
     )
-    await refresh_started.wait()
+    await wait_for_signal(refresh_started, what="notes receipt refresh start")
     await controller.show_resolution_history("root-1", page=2)
     assert controller.snapshot.receipts[0].operation_id == "operation-1"
     statuses.clear()
@@ -1739,7 +1740,7 @@ async def test_out_of_order_root_checks_and_remounted_error_publish_nothing_stal
 
     runtime.check_root = delayed_error
     pending = asyncio.create_task(controller.check_root("root-2"))
-    await error_started.wait()
+    await wait_for_signal(error_started, what="notes root error check start")
     controller.invalidate_for_remount()
     count = len(published)
     release_error.set()
@@ -1774,7 +1775,7 @@ async def test_superseded_review_labels_cannot_clobber_new_root_projection() -> 
     )
 
     old = asyncio.create_task(controller.check_root("root-1"))
-    await facts_started.wait()
+    await wait_for_signal(facts_started, what="notes review facts start")
     await controller.check_root("root-2")
     expected = controller.snapshot
     expected_plan = controller._review_plan
@@ -1815,7 +1816,7 @@ async def test_superseded_same_root_review_facts_keep_newer_token() -> None:
     )
 
     old = asyncio.create_task(controller.check_root("root-1"))
-    await labels_started.wait()
+    await wait_for_signal(labels_started, what="notes review labels start")
     await controller.check_root("root-1")
     expected = controller.snapshot
     release_labels.set()
@@ -1848,7 +1849,7 @@ async def test_remount_fences_delayed_review_facts_without_publication() -> None
         publish_snapshot=published.append,
     )
     pending = asyncio.create_task(controller.check_root("root-1"))
-    await labels_started.wait()
+    await wait_for_signal(labels_started, what="remounted notes review labels start")
     controller.invalidate_for_remount()
     expected = controller.snapshot
     count = len(published)
@@ -1890,7 +1891,7 @@ async def test_failed_superseded_review_facts_publish_nothing() -> None:
         publish_snapshot=published.append,
     )
     old = asyncio.create_task(controller.check_root("root-1"))
-    await labels_started.wait()
+    await wait_for_signal(labels_started, what="failed notes review labels start")
     await controller.check_root("root-2")
     expected = controller.snapshot
     count = len(published)
@@ -1924,7 +1925,7 @@ async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() ->
 
     runtime.apply_reviewed = delayed_apply
     pending_apply = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
-    await apply_started.wait()
+    await wait_for_signal(apply_started, what="notes sync apply start")
     await controller.refresh_conflict_receipts("root-1")
     release_apply.set()
     await pending_apply
@@ -1949,7 +1950,7 @@ async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() ->
     pending_undo = asyncio.create_task(
         controller.undo_conflict_resolution("root-1", TOKEN_2, "operation-1")
     )
-    await undo_started.wait()
+    await wait_for_signal(undo_started, what="notes sync undo start")
     await controller.refresh_conflict_receipts("root-1")
     release_undo.set()
     await pending_undo
@@ -1977,7 +1978,7 @@ async def test_new_same_root_check_supersedes_older_apply_view() -> None:
 
     runtime.apply_reviewed = delayed_apply
     pending = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
-    await started.wait()
+    await wait_for_signal(started, what="older notes apply start")
     runtime.check_plan = _conflict_plan(token=TOKEN_2)
     await controller.check_root("root-1")
     release.set()
@@ -2072,7 +2073,9 @@ async def test_root_activation_clears_choices_and_fences_comparison_on_receipt_s
     pending = asyncio.create_task(
         controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     )
-    await runtime.comparison_started.wait()
+    await wait_for_signal(
+        runtime.comparison_started, what="notes runtime comparison start"
+    )
 
     await controller.refresh_conflict_receipts("root-2")
     assert controller._selections == {}  # noqa: SLF001 - lifecycle contract
@@ -2164,7 +2167,7 @@ async def test_new_check_supersedes_pending_activate_and_control_publication() -
 
     runtime.activate_root = delayed_activate
     pending_activate = asyncio.create_task(controller.activate_root("root-1", TOKEN))
-    await activate_started.wait()
+    await wait_for_signal(activate_started, what="notes activation start")
     runtime.check_plan = _conflict_plan(token=TOKEN_2)
     await controller.check_root("root-1")
     release_activate.set()
@@ -2182,7 +2185,7 @@ async def test_new_check_supersedes_pending_activate_and_control_publication() -
 
     runtime.pause_root = delayed_pause
     pending_control = asyncio.create_task(controller.pause_root("root-1"))
-    await control_started.wait()
+    await wait_for_signal(control_started, what="notes control start")
     runtime.check_plan = _conflict_plan(token=TOKEN)
     await controller.check_root("root-1")
     release_control.set()
@@ -2322,7 +2325,7 @@ async def test_same_root_control_supersedes_pending_review_work(
         runtime.check_root = delayed_check
         pending = asyncio.create_task(controller.check_root("root-1"))
 
-    await started.wait()
+    await wait_for_signal(started, what="pending notes review start")
     await _invoke_root_control(controller, operation)
     control_snapshot = controller.snapshot
     release.set()
@@ -2353,7 +2356,7 @@ async def test_unavailable_activation_does_not_supersede_pending_same_root_check
 
     runtime.check_root = delayed_check
     pending = asyncio.create_task(controller.check_root("root-1"))
-    await started.wait()
+    await wait_for_signal(started, what="unavailable notes activation start")
     assert await controller.activate_root("root-1", TOKEN) is False
     release.set()
     await pending
@@ -2382,7 +2385,7 @@ async def test_same_root_controls_publish_only_the_newest_completion() -> None:
     pending = asyncio.create_task(
         controller.retarget_root("root-1", "/private/new-root")
     )
-    await started.wait()
+    await wait_for_signal(started, what="same-root notes control start")
     await controller.resume_root("root-1")
     newest_snapshot = controller.snapshot
     release.set()
@@ -2455,7 +2458,7 @@ async def test_undo_supersedes_pending_same_root_review_work(
         runtime.check_root = delayed_check
         pending = asyncio.create_task(controller.check_root("root-1"))
 
-    await started.wait()
+    await wait_for_signal(started, what="pending notes undo start")
     await controller.undo_conflict_resolution("root-1", TOKEN, "operation-1")
     undo_snapshot = controller.snapshot
     release.set()
@@ -2524,7 +2527,7 @@ async def test_duplicate_in_flight_apply_provenance_invokes_runtime_once() -> No
 
     runtime.apply_reviewed = delayed_apply
     first = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
-    await started.wait()
+    await wait_for_signal(started, what="duplicate notes apply start")
     second = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
     await asyncio.sleep(0)
     assert invocations == 1
@@ -2556,7 +2559,7 @@ async def test_duplicate_apply_stays_fenced_until_fresh_projection_finishes() ->
 
     runtime.active_conflict_receipts = delayed_receipts
     first = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
-    await receipts_started.wait()
+    await wait_for_signal(receipts_started, what="fresh notes receipt projection start")
     second = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
     await asyncio.sleep(0)
 
@@ -2670,7 +2673,7 @@ async def test_stale_history_sentinel_cannot_overwrite_newer_page() -> None:
     )
 
     old = asyncio.create_task(controller.show_resolution_history("root-1", page=1))
-    await sentinel_started.wait()
+    await wait_for_signal(sentinel_started, what="notes history sentinel start")
     await controller.show_resolution_history("root-1", page=2)
     current = controller.snapshot
     release_sentinel.set()
@@ -2720,7 +2723,7 @@ async def test_duplicate_in_flight_activate_invokes_runtime_once() -> None:
 
     runtime.activate_root = delayed_activate
     first = asyncio.create_task(controller.activate_root("root-1", TOKEN))
-    await started.wait()
+    await wait_for_signal(started, what="duplicate notes activation start")
     await controller.check_migration("root-1")
     second = asyncio.create_task(controller.activate_root("root-1", TOKEN))
     await asyncio.sleep(0)
@@ -2950,7 +2953,7 @@ async def test_apply_claim_survives_same_token_review_lifecycle(
 
     runtime.apply_reviewed = delayed_apply
     first = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
-    await started.wait()
+    await wait_for_signal(started, what="notes apply claim start")
     if lifecycle == "remount":
         controller.invalidate_for_remount()
     await controller.check_root("root-1")

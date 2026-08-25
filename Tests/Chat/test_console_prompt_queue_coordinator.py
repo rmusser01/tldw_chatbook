@@ -555,6 +555,19 @@ async def test_queued_origin_requires_coordinator_authority():
         )
 
 
+def test_agent_wake_acceptance_does_not_require_a_prompt_queue_chain():
+    gateway = SequencedGateway()
+    controller, _store, session_id = _arm_controller(gateway)
+
+    controller.prompt_queue_coordinator.turn_accepted(
+        session_id,
+        origin=ConsoleSubmissionOrigin.AGENT_WAKE,
+        context_epoch=0,
+    )
+
+    assert controller.prompt_queue_registry.snapshot(session_id).entries == ()
+
+
 @pytest.mark.asyncio
 async def test_stop_pauses_immediately_and_resume_next_dispatches_once():
     gateway = SequencedGateway()

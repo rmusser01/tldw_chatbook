@@ -2721,6 +2721,11 @@
        over-wide row would clip instead). */
 
 
+    /* The smallest supported terminal has no spare vertical chrome once
+       both action bars stack.  Collapse the search field's stock three-row
+       border to one row so the final Tag action remains inside the pane. */
+
+
 
 
 

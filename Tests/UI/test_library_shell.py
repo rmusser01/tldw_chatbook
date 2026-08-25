@@ -40,6 +40,7 @@ from tldw_chatbook.app import (
     _IngestParsePoolResources,
 )
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
@@ -1104,7 +1105,7 @@ async def test_library_full_lifecycle_landing_preserves_counts_search_and_recent
 
             assert screen.query_one("#library-hub-counts", Static)
             assert screen.query_one("#library-hub-action-search", Button)
-            assert screen.query_one("#library-hub-recents")
+            assert not screen.query("#library-hub-recents")
             assert not screen.query("#library-hub-orientation")
     finally:
         gates.release_all()
@@ -3175,7 +3176,7 @@ async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
         controller.set_setup("display_name", "Research")
         controller.set_setup("folder", str(tmp_path))
         task = asyncio.create_task(controller.check_setup())
-        await started.wait()
+        await wait_for_signal(started, what="lasting setup check start")
 
         await screen.action_library_notes_escape()
 
@@ -3732,7 +3733,7 @@ async def test_hub_recents_rows_absent_on_an_empty_library():
         await _wait_for_library_shell(screen, pilot)
 
         assert not screen.query(".library-hub-recent")
-        assert screen.query_one("#library-hub-recents")
+        assert not screen.query("#library-hub-recents")
 
 
 def test_hub_recents_one_line_helpers_are_removed():
@@ -6969,15 +6970,21 @@ async def test_library_shell_media_viewer_shows_loading_before_detail_loads(
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
 
         screen.query_one("#library-media-row-1").press()
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: "Loading media"
+            in str(
+                screen.query_one("#library-media-reader-empty", Static).renderable
+            ),
+            message="Media Reader never projected the pending detail request.",
+        )
 
         assert screen._library_media_detail is None
-        assert screen.query_one("#library-media-viewer-loading")
+        assert screen.query_one("#library-media-reader-empty")
         assert not screen.query("#library-media-viewer-title")
 
 
-async def _media_detail_never_loads(self, media_id: str) -> None:
+async def _media_detail_never_loads(self, media_id: str, **_kwargs) -> None:
     """Stand in for ``_refresh_library_media_detail`` that never resolves.
 
     Used to freeze the viewer in its loading state deterministically,
@@ -7471,6 +7478,8 @@ async def test_library_shell_media_delete_shows_inline_confirm_without_deleting(
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        screen.query_one("#library-media-reader-more").press()
         await _wait_for_selector(screen, pilot, "#library-media-delete")
 
         screen.query_one("#library-media-delete").press()
@@ -7647,6 +7656,10 @@ async def test_library_shell_media_highlight_non_rich_color_does_not_crash_rende
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-highlights"
+        )
+        screen.query_one("#library-media-reader-select-highlights").press()
         # Reaching this selector means the viewer rendered without raising.
         await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
 

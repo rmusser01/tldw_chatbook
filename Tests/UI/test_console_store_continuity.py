@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,8 @@ from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -88,12 +91,16 @@ class _StallingWakeGateway:
         if self.stall:
             self.entered_stall.set()
             await self.release.wait()
-        return SimpleNamespace(
+        resolution = ConsoleProviderResolution(
             ready=self.ready,
             provider="llama_cpp",
             model="test-model",
-            base_url=None,
+            base_url="",
             visible_copy="" if self.ready else "WIP: provider warming up",
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):

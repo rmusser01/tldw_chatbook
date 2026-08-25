@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -117,7 +119,7 @@ class _Gateway:
         self.child_calls = 0
 
     async def resolve_for_send(self, selection):
-        return ConsoleProviderResolution(
+        resolution = ConsoleProviderResolution(
             provider="llama_cpp",
             base_url="",
             model="test-model",
@@ -125,6 +127,10 @@ class _Gateway:
             readiness_key="llama_cpp",
             execution_key="llama_cpp",
             max_tokens=128,
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):
@@ -166,7 +172,7 @@ class _SignalGateway:
         self.calls = []
         self.parent_calls = 0
         self.child_calls = 0
-        self.resolution = ConsoleProviderResolution(
+        resolution = ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
             model="repair-model",
@@ -188,6 +194,10 @@ class _SignalGateway:
             thinking_effort=None,
             thinking_budget_tokens=None,
             streaming=True,
+        )
+        self.resolution = replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def resolve_for_send(self, _selection):
@@ -240,6 +250,7 @@ async def _real_agent_citation_controller(
         mark_fallback_calls=mark_fallback_calls,
     )
     store = ConsoleChatStore()
+    store.create_session(ephemeral=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
@@ -301,9 +312,16 @@ def _mcp_tests_keep_a_small_catalog(monkeypatch):
     monkeypatch.setattr(controller_module, "get_cli_setting", _small_catalog)
 
 
-def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
+def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True, durable=False):
     gateway = _Gateway(scripts, child_scripts)
-    store = ConsoleChatStore()
+    if durable:
+        from Tests.Chat.test_console_chat_controller import FakePersistence
+
+        store = ConsoleChatStore(persistence=FakePersistence())
+        store.create_session()
+    else:
+        store = ConsoleChatStore()
+        store.create_session(ephemeral=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -380,6 +398,7 @@ async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_e
         mark_fallback_calls=frozenset({fallback_call}),
     )
 
+    assert result.accepted, result
     assistant = next(
         message
         for message in store.messages_for_session(store.active_session_id)
@@ -470,11 +489,11 @@ async def test_agent_send_no_tools_streams_like_today(tmp_path):
 async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     """The load-bearing write: after a full agent reply completes on a
     persisted store, the primary run's ``assistant_message_id`` is the
-    reply's PERSISTED id (durable ChaChaNotes id), NOT the native in-memory
-    id -- so a later resume can anchor markers by ``persisted_message_id``.
-    The native id create_run recorded is corrected to the persisted id here.
+    reply's PERSISTED id (durable ChaChaNotes id), so a later resume can
+    anchor markers by ``persisted_message_id``. Durable acceptance now
+    preallocates that same ID for the in-memory message.
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
+    from Tests.Chat.test_console_chat_controller import FakePersistence
 
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -504,17 +523,15 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
 
     primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    # The native id create_run stored was corrected to the persisted id.
-    assert primary["assistant_message_id"] != assistant.id
+    assert assistant.persisted_message_id == assistant.id
 
 
 @pytest.mark.asyncio
 async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     """Critical regression (Phase C Task 2 review): a run STOPPED mid-flight
     must end with the run's ``assistant_message_id`` == the stopped message's
-    PERSISTED id -- never the stale native create-time id (which can never
-    match any ``persisted_message_id`` on resume, so Task 3 would drop its
-    markers as off-path).
+    PERSISTED id, which durable acceptance now preallocates as the native
+    in-memory ID too.
 
     Reproduces the reviewer's scenario on a persistence-backed store + real
     ``AgentRunsDB``: a real run is created (``create_run`` -- native id was
@@ -527,7 +544,7 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     never recorded anything). GREEN with both halves: NULL at create, persisted
     id recorded on the stopped path.
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
+    from Tests.Chat.test_console_chat_controller import FakePersistence
 
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -569,7 +586,7 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
 
     primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    assert primary["assistant_message_id"] != assistant.id
+    assert assistant.persisted_message_id == assistant.id
 
 
 @pytest.mark.asyncio
@@ -579,7 +596,7 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     regression, exercising ``_finalize_agent_failure`` instead of the
     ``stopped_now`` branch. RED on HEAD (only the success path recorded).
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
+    from Tests.Chat.test_console_chat_controller import FakePersistence
 
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -708,12 +725,16 @@ class _ParkingGateway:
         self.release = threading.Event()
 
     async def resolve_for_send(self, _selection):
-        return ConsoleProviderResolution(
+        resolution = ConsoleProviderResolution(
             provider="llama_cpp",
             base_url="",
             model="test-model",
             ready=True,
             execution_key="llama_cpp",
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
@@ -752,6 +773,7 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     """
     gateway = _ParkingGateway()
     store = ConsoleChatStore()
+    store.create_session(ephemeral=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -1071,7 +1093,7 @@ async def test_bridge_exception_fails_message_and_unwedges_controller(tmp_path):
 
     # A brand-new session's send must succeed -- the controller must not stay
     # permanently wedged in STREAMING from the earlier uncaught exception.
-    controller.new_session()
+    controller.new_session(ephemeral=True)
     assert store.active_session_id != first_session_id
     controller._agent_bridge.run_reply = original_run_reply
     second = await controller.submit_draft("second session hello")
@@ -1367,7 +1389,17 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     class _FakeGateway:
         async def resolve_for_send(self, _selection):
-            return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+            resolution = ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url="http://127.0.0.1:9099",
+                model="test-model",
+                ready=True,
+                execution_key="llama_cpp",
+            )
+            return replace(
+                resolution,
+                resolved_destination=resolve_console_destination(resolution),
+            )
 
         async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:
@@ -1378,6 +1410,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     controller = screen._ensure_console_chat_controller()
     assert controller._agent_bridge is fake_bridge
     assert controller._agent_runtime_enabled is True
+    screen._ensure_console_chat_store().create_session(ephemeral=True)
 
     # Flip the kill-switch AFTER construction -- no screen teardown.
     app.app_config["console"]["agent_runtime"] = False
@@ -1624,7 +1657,7 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],
         ["done with mcp."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts)
+    controller, store, _db = _controller(tmp_path, scripts, durable=True)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
         default_state=EffectiveToolState(state="allow", origin="tool_override"),
@@ -1652,7 +1685,7 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
         [_fence("mcp__srv__run", {"x": 1})],
         ["approved and done."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts)
+    controller, store, _db = _controller(tmp_path, scripts, durable=True)
     received: list[dict | None] = []
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -1698,7 +1731,7 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
         [_fence("mcp__srv__run", {"x": 2})],
         ["turn two done."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts)
+    controller, store, _db = _controller(tmp_path, scripts, durable=True)
     received: list[dict | None] = []
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -1739,7 +1772,7 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     # vocabulary fix half of Finding I1).
     assert service.execute_calls == [
         ("local:srv", "run", {"x": 1}, "agent", "approved"),
-        ("local:srv", "run", {"x": 2}, "agent", "approved"),
+        ("local:srv", "run", {"x": 2}, "agent", "approved-session"),
     ]
 
 
@@ -1751,7 +1784,7 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],
         ["it was refused."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts)
+    controller, store, _db = _controller(tmp_path, scripts, durable=True)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -1891,7 +1924,9 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
         ["child refused."],  # child: final answer
     ]
-    controller, store, db = _controller(tmp_path, scripts, child_scripts=child_scripts)
+    controller, store, db = _controller(
+        tmp_path, scripts, child_scripts=child_scripts, durable=True
+    )
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -1937,7 +1972,7 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
         [_fence("mcp__srv__run", {"x": 1})],
         ["it was refused too."],
     ]
-    controller, store, _db = _controller(tmp_path, scripts)
+    controller, store, _db = _controller(tmp_path, scripts, durable=True)
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -1970,7 +2005,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     ``run_reply``, which made this gap invisible. RED pre-fix: the run row
     stays NULL and falls to the ordinal fallback on resume.
     """
-    from Tests.Chat.test_console_chat_store import FakePersistence
+    from Tests.Chat.test_console_chat_controller import FakePersistence
 
     class _YieldThenParkGateway(_ParkingGateway):
         """Streams ONE chunk before parking: a zero-chunk stop never persists
@@ -2031,7 +2066,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
 
     assert primary is not None, "primary run never settled"
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    assert primary["assistant_message_id"] != assistant.id
+    assert assistant.persisted_message_id == assistant.id
 
 
 @pytest.mark.asyncio
@@ -2041,6 +2076,7 @@ async def test_stopped_via_cancel_without_persistence_stays_null(tmp_path):
     must stay NULL (ordinal fallback) -- never a stale/native id."""
     gateway = _ParkingGateway()
     store = ConsoleChatStore()
+    store.create_session(ephemeral=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(

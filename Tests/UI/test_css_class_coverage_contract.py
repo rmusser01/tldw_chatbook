@@ -99,6 +99,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "DEFAULT_CSS and paints itself via render_line(); the class token "
         "has no selector anywhere."
     ),
+    "console-activity-detail-placeholder": (
+        "structural empty-state placeholder inside the already styled activity "
+        "detail stack; it is replaced in place and needs no distinct styling."
+    ),
     "console-composer-menu-button": (
         "per-button identifier stacked on the styled `destination-action-"
         "button` base class; width/tooltip come from _bounded_button, not "
@@ -122,6 +126,18 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "duplicates the widget's own id (#console-fleet-coachmark); shown/"
         "hidden entirely via query_one(#id) + styles.display/height, never "
         "selected via the class."
+    ),
+    "console-inspector-outer-scroll-hint": (
+        "behavioral marker duplicating #console-inspector-outer-scroll-hint; "
+        "copy and visibility are driven directly by the rail controller."
+    ),
+    "console-left-rail-outer-hint": (
+        "behavioral marker duplicating #console-left-rail-outer-hint; copy and "
+        "visibility are driven directly by the rail controller."
+    ),
+    "console-live-work-status-badge": (
+        "semantic marker stacked on the styled ds-status-badge base class; "
+        "the status badge base owns its visual treatment."
     ),
     "console-markdown-footer": (
         "query-selector handle: ConsoleMarkdownMessage.sync_message reads "

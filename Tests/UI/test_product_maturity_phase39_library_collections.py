@@ -268,6 +268,13 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
     app = _build_test_app()
     _activate_server_sync_scope(app)
     _seed_library_sources(app)
+    # Keep this mounted UI contract hermetic.  ``None`` would trigger the
+    # app's production services and, under the server-active policy below,
+    # their live count/context calls.
+    app.study_scope_service = SimpleNamespace()
+    app.study_quiz_scope_service = SimpleNamespace()
+    app.prompt_scope_service = SimpleNamespace()
+    app.skills_scope_service = SimpleNamespace()
     app.library_collections_service = FakeLibraryCollectionsService(
         (
             LibraryCollectionRecord(

@@ -1274,7 +1274,7 @@ async def test_skills_rail_without_trust_service_clears_mounted_header() -> None
         await active_screen._select_library_rail_row(
             LIBRARY_ROW_BROWSE_CONVERSATIONS
         )
-        app.local_skill_trust_service = None
+        app.local_skill_trust_service = SimpleNamespace()
 
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
         await _wait_for_selector(active_screen, pilot, "#library-skills-canvas")

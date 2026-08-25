@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -65,6 +66,8 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_fleet_attention import register_fleet_attention
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_fleet_wake import (
     WAKE_NOTICE_DISCLAIMER,
     WAKE_NOTICE_HEADER,
@@ -122,12 +125,16 @@ class _RecordingWakeGateway:
         self.on_stream: object | None = None
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
+        resolution = ConsoleProviderResolution(
             ready=self.ready,
-            provider="llama_cpp",
-            model="test-model",
-            base_url=None,
+            provider=selection.provider,
+            model=selection.explicit_model or selection.configured_model or "",
+            base_url=selection.base_url or "",
             visible_copy="" if self.ready else "WIP: provider warming up",
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):

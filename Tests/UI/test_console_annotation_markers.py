@@ -34,12 +34,24 @@ def _message(message_id: str, role=ConsoleMessageRole.ASSISTANT) -> ConsoleChatM
     return ConsoleChatMessage(role=role, content="body", id=message_id)
 
 
+def _annotation_rows(transcript: ConsoleTranscript):
+    """Return annotation rows whether top-level or owned by an Assistant turn."""
+    rows = []
+    for row in transcript._transcript_rows():
+        rows.extend(
+            nested for nested in row.nested_rows if nested.kind == "annotations"
+        )
+        if row.kind == "annotations":
+            rows.append(row)
+    return rows
+
+
 def test_annotated_message_gains_a_marker_row() -> None:
     transcript = ConsoleTranscript()
     transcript.set_messages([_message("m1"), _message("m2")])
     transcript.set_annotation_previews({"m1": ("tighten error paths",)})
 
-    rows = [row for row in transcript._transcript_rows() if row.kind == "annotations"]
+    rows = _annotation_rows(transcript)
     assert [row.message.id for row in rows] == ["m1"]
     rendered = str(rows[0].renderable)
     assert "tighten error paths" in rendered
@@ -50,7 +62,7 @@ def test_marker_row_lists_every_note_in_order() -> None:
     transcript.set_messages([_message("m1")])
     transcript.set_annotation_previews({"m1": ("first pass", "second pass")})
 
-    (row,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (row,) = _annotation_rows(transcript)
     rendered = str(row.renderable)
     assert rendered.index("first pass") < rendered.index("second pass")
 
@@ -59,7 +71,7 @@ def test_no_previews_means_no_marker_rows() -> None:
     transcript = ConsoleTranscript()
     transcript.set_messages([_message("m1")])
 
-    assert [r for r in transcript._transcript_rows() if r.kind == "annotations"] == []
+    assert _annotation_rows(transcript) == []
 
 
 def test_setter_drops_invalid_entries() -> None:
@@ -76,9 +88,9 @@ def test_marker_signature_changes_when_notes_change() -> None:
     transcript = ConsoleTranscript()
     transcript.set_messages([_message("m1")])
     transcript.set_annotation_previews({"m1": ("v1",)})
-    (before,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (before,) = _annotation_rows(transcript)
     transcript.set_annotation_previews({"m1": ("v1", "v2")})
-    (after,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (after,) = _annotation_rows(transcript)
     assert before.signature != after.signature
 
 
@@ -87,7 +99,7 @@ def test_marker_widget_is_a_static_keyed_to_the_message() -> None:
     transcript.set_messages([_message("m1")])
     transcript.set_annotation_previews({"m1": ("note",)})
 
-    (row,) = [r for r in transcript._transcript_rows() if r.kind == "annotations"]
+    (row,) = _annotation_rows(transcript)
     widget = transcript._build_row_widget(row, track=False)
     assert widget.id == "console-annotations-m1"
     assert widget.has_class("console-transcript-annotations")

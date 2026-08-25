@@ -14,6 +14,7 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -274,7 +275,7 @@ async def test_double_import_handler_activation_admits_only_one_worker() -> None
 
     LibraryScreen.handle_library_note_import_execute(screen, first)
     LibraryScreen.handle_library_note_import_execute(screen, second)
-    await started.wait()
+    await wait_for_signal(started, what="Library note import start")
 
     assert controller.admit_execution.call_count == 2
     assert len(tasks) == 1

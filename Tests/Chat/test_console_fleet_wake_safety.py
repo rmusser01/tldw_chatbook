@@ -42,6 +42,7 @@ from Tests.Chat.test_console_fleet_wake import (
     _survivor,
     _terminal_subagent_run,
 )
+from Tests.Chat.test_console_chat_controller import FakePersistence
 from Tests.Chat.test_fleet_attention import _AppStub
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -106,7 +107,7 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
             [_fence("mcp__srv__run", {"x": 1})],
             ["acted on the wake."],
         ]
-        controller, store, runs_db = _controller(tmp_path, scripts)
+        controller, store, runs_db = _controller(tmp_path, scripts, durable=True)
         received: list[dict | None] = []
         service = FakeMCPService(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -197,7 +198,7 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             ["manual turn done."],
             ["woke after approval."],
         ]
-        controller, store, runs_db = _controller(tmp_path, scripts)
+        controller, store, runs_db = _controller(tmp_path, scripts, durable=True)
         received: list[dict | None] = []
         service = FakeMCPService(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -278,6 +279,7 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     try:
         controller, store, runs_db = _controller(tmp_path, [["m."], ["w."]])
+        store.persistence = FakePersistence()
         controller.app = _fake_app()
         captured: list[dict] = []
         real_run_reply = controller._agent_bridge.run_reply

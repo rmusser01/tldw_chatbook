@@ -200,12 +200,12 @@ async def test_browse_row_selection_routes_through_canvas_sync_state(monkeypatch
         monkeypatch.setattr(LibraryConversationsCanvas, "sync_state", spy_sync)
         recompose_calls = _spy_screen_recomposes(monkeypatch)
 
-        # Rows sort newest-first: chat-2 (06-02) is row 0, chat-1 (06-01) is
-        # row 1 -- entering the canvas auto-previews row 0 (chat-2).
+        # The service owns row order: entering the canvas auto-previews the
+        # first returned row (chat-1).
         preview_before = str(
             screen.query_one("#library-conversation-preview-lines").renderable
         )
-        assert "Design review notes" in preview_before
+        assert "Quarterly planning sync" in preview_before
 
         screen.query_one("#library-conversation-row-1", Button).press()
         await pilot.pause()
@@ -215,7 +215,7 @@ async def test_browse_row_selection_routes_through_canvas_sync_state(monkeypatch
         preview_after = str(
             screen.query_one("#library-conversation-preview-lines").renderable
         )
-        assert "Quarterly planning sync" in preview_after
+        assert "Design review notes" in preview_after
 
 
 @pytest.mark.asyncio

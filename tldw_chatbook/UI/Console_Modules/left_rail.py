@@ -2062,11 +2062,15 @@ class ConsoleLeftRail(Vertical):
             )
         except (NoMatches, QueryError):
             return
-        body.styles.display = "block" if section_open else "none"
         # Hide the same bounded owner along with its body. Its reconcile path
         # deliberately preserves scroll state while hidden, so reopening can
         # clamp the prior local offset against the newly measured geometry.
-        bounded.styles.display = "block" if section_open else "none"
+        if section_open:
+            body.styles.display = "block"
+            bounded.set_presented(True)
+        else:
+            bounded.set_presented(False)
+            body.styles.display = "none"
         header.sync_open(section_open)
         if not section_open and self._active_section_id == section_id:
             self.recover_section_focus(section_id)

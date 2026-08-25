@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
@@ -88,6 +89,7 @@ def _start_fake_run(screen) -> None:
 def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
     """The real controller callbacks publish and settle exact Buddy owners."""
     app, screen = _build_screen()
+    app.ensure_persona_buddy_controller()
     controller = screen._ensure_console_chat_controller()
     buddy = app.persona_buddy_controller
 
@@ -164,7 +166,7 @@ async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
 
     old_task = asyncio.create_task(old_run())
     new_task = asyncio.create_task(new_run())
-    await new_validating.wait()
+    await wait_for_signal(new_validating, what="replacement Buddy validation start")
     release_old.set()
     await old_task
 

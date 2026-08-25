@@ -26,10 +26,12 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.test_destination_shells import (
-    _build_test_app,
     _visible_text,
     _wait_for_selector,
     _wait_for_visible_text,
+)
+from Tests.UI.test_console_native_chat_flow import (
+    _build_console_send_test_app as _build_test_app,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -42,10 +44,13 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
+from tldw_chatbook.config import load_settings, save_settings_to_cli_config
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
@@ -75,10 +80,13 @@ def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") ->
     ``build_console_settings_readiness`` sees a configured key and doesn't
     gate the send behind the first-run setup modal).
     """
-    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": model}
-    app.app_config["api_settings"] = {
-        "anthropic": {"api_key": "test-anthropic-key"}
-    }
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "anthropic", "model": model},
+            "api_settings.anthropic": {"api_key": "test-anthropic-key"},
+        }
+    )
+    app.app_config = load_settings()
     app.chat_api_provider_value = "anthropic"
     app.chat_api_model_value = model
 
@@ -96,13 +104,17 @@ class _AnthropicCostGateway:
         self.sent_messages: list[list[dict]] = []
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
+        resolution = ConsoleProviderResolution(
             provider="anthropic",
             base_url=selection.base_url or "",
             model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
             ready=True,
             visible_copy="",
             prompt_caching=True,
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):
@@ -123,13 +135,17 @@ class _AnthropicWaitingGateway:
         self.release = asyncio.Event()
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
+        resolution = ConsoleProviderResolution(
             provider="anthropic",
             base_url=selection.base_url or "",
             model=selection.explicit_model or selection.configured_model or "claude-sonnet-4-6",
             ready=True,
             visible_copy="",
             prompt_caching=True,
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):

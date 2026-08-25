@@ -15,6 +15,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.background_signals import wait_for_signal
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_agent_bridge import (
     AgentLiveSnapshot,
@@ -1153,6 +1154,7 @@ async def test_fleet_summary_line_intersects_the_visible_viewport_default_sectio
     the round-1 commit.
     """
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 44)) as pilot:

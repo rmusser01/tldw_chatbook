@@ -3204,11 +3204,10 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
     )
     app.prompt_scope_service = service
 
-    async with app.run_test(size=size) as pilot:
-        assert type(app) is TldwCli
-        assert app.CSS_PATH == TldwCli.CSS_PATH
-        screen = LibraryScreen(app)
-        await app.push_screen(screen)
+    screen = LibraryScreen(app)
+    host = LibraryProductionCSSHarness(app, screen=screen)
+    async with host.run_test(size=size) as pilot:
+        assert host.CSS_PATH == TldwCli.CSS_PATH
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts", Button).press()
         await _wait_for_condition(
@@ -3241,7 +3240,7 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         ):
             widget = screen.query_one(selector)
             assert pane.region.contains_region(widget.region), selector
-            assert widget in app.screen._compositor.visible_widgets, selector
+            assert widget in host.screen._compositor.visible_widgets, selector
         for selector in (
             "#library-prompts-page-previous",
             "#library-prompts-page-next",
@@ -3297,7 +3296,7 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         ):
             widget = screen.query_one(selector)
             assert pane.region.contains_region(widget.region), selector
-            assert widget in app.screen._compositor.visible_widgets, selector
+            assert widget in host.screen._compositor.visible_widgets, selector
 
 
 @pytest.mark.asyncio
