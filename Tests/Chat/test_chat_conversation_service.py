@@ -31,6 +31,10 @@ class FakeDB:
     child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = (
         field(default_factory=dict)
     )
+    tree_rows: dict[tuple[str, str], list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    images_by_message_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     latest_message: dict[str, dict[str, Any] | None] = field(default_factory=dict)
     messages_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     messages_by_conversation: dict[tuple[str, int, int, str], list[dict[str, Any]]] = (
@@ -210,6 +214,32 @@ class FakeDB:
         return self.child_messages.get(
             (conversation_id, tuple(parent_ids), order_by_timestamp), []
         )
+
+    def get_message_tree_rows_for_conversation(
+        self,
+        conversation_id,
+        order_by_timestamp="ASC",
+        include_deleted_conversation=False,
+    ):
+        self.calls.append(
+            (
+                "get_message_tree_rows_for_conversation",
+                (conversation_id,),
+                {
+                    "order_by_timestamp": order_by_timestamp,
+                    "include_deleted_conversation": include_deleted_conversation,
+                },
+            )
+        )
+        return self.tree_rows.get((conversation_id, order_by_timestamp), [])
+
+    def get_message_images_by_ids(self, message_ids):
+        self.calls.append(("get_message_images_by_ids", (tuple(message_ids),), {}))
+        return {
+            message_id: dict(self.images_by_message_id[message_id])
+            for message_id in message_ids
+            if message_id in self.images_by_message_id
+        }
 
     def get_message_by_id(self, message_id):
         self.calls.append(("get_message_by_id", (message_id,), {}))
@@ -1018,9 +1048,11 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
                 "version": 1,
             }
         },
-        root_counts={"conv-1": 2},
-        root_messages={
-            ("conv-1", 50, 0, "ASC"): [
+        # TASK-22206: the tree is assembled from ONE conversation-scoped
+        # fetch (timestamp order, roots and children interleaved) instead of
+        # the old per-parent query fan-out.
+        tree_rows={
+            ("conv-1", "ASC"): [
                 {
                     "id": "msg-root-1",
                     "conversation_id": "conv-1",
@@ -1047,14 +1079,6 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
                     "is_selected_variant": None,
                     "total_variants": None,
                 },
-            ]
-        },
-        child_messages={
-            (
-                "conv-1",
-                ("msg-root-1",),
-                "ASC",
-            ): [
                 {
                     "id": "msg-child-1",
                     "conversation_id": "conv-1",
@@ -1067,7 +1091,7 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
                     "variant_number": 2,
                     "is_selected_variant": 1,
                     "total_variants": 2,
-                }
+                },
             ]
         },
     )

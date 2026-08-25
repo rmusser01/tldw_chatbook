@@ -169,9 +169,22 @@ def console_messages_from_conversation_tree(
     """
     messages: list[ConsoleChatMessage] = []
 
-    def _walk(node: Any, parent_persisted_id: str | None) -> None:
-        if not isinstance(node, dict):
-            return
+    # TASK-22206: an explicit stack, not recursion -- a linear conversation's
+    # tree is as deep as it is long, and the old per-node recursion raised
+    # RecursionError on resume at ~1000 messages. Children are pushed in
+    # reverse so pop order preserves the original pre-order. The visited
+    # guard turns a (malformed) self-referential mapping into a skip instead
+    # of a hang; a well-formed tree never revisits a node.
+    stack: list[tuple[Any, str | None]] = []
+    root_threads = tree.get("root_threads")
+    if isinstance(root_threads, list):
+        stack = [(root, None) for root in reversed(root_threads)]
+    visited_node_ids: set[int] = set()
+    while stack:
+        node, parent_persisted_id = stack.pop()
+        if not isinstance(node, dict) or id(node) in visited_node_ids:
+            continue
+        visited_node_ids.add(id(node))
         content = str(node.get("content") or "")
         raw_image = node.get("image_data")
         image_data = (
@@ -243,13 +256,9 @@ def console_messages_from_conversation_tree(
         child_parent_id = node_persisted_id if kept else parent_persisted_id
         children = node.get("children")
         if isinstance(children, list):
-            for child in children:
-                _walk(child, child_parent_id)
+            for child in reversed(children):
+                stack.append((child, child_parent_id))
 
-    root_threads = tree.get("root_threads")
-    if isinstance(root_threads, list):
-        for root in root_threads:
-            _walk(root, None)
     _batch_fetch_resume_attachments(db, messages)
     return messages
 
