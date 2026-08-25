@@ -160,3 +160,11 @@ abort), `tldw_chatbook/app.py` (`_backfill_chachanotes_messages_fts` passes
 `Tests/DB/test_chachanotes_fts_backfill_pacing.py` (new),
 `Docs/security/production-diagnostic-inventory.json` (reviewed regen),
 `backlog/tasks/task-22280 - ...md` (dev-red finding).
+
+**Review correction (controller-recorded):** the description's sentence "Every UI write is
+also BEGIN IMMEDIATE" is refuted — `add_conversation` (`ChaChaNotes_DB.py:8886`) is a plain
+DEFERRED writer and dies un-retried with the snapshot-upgrade `database is locked` the
+instant a backfill chunk commits (review-reproduced 3/3; `add_message` IMMEDIATE survived
+10/10). Pacing shrinks that collision window ~10× but cannot close it; the residual fix
+(`immediate=True` in `add_conversation` + a sweep for sibling deferred writers) is filed as
+a follow-up from this burn-down.
