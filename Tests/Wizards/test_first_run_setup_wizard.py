@@ -8721,12 +8721,12 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
                 ),
             ),
             "#setup-model-connection-failed",
-            "Connection failed (request failed). Retry or enter a model ID below.",
+            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
         ),
         (
             RuntimeError("transport detail must not reach the UI"),
             "#setup-model-connection-failed",
-            "Connection failed (request failed). Retry or enter a model ID below.",
+            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
         ),
     ],
 )
@@ -8844,13 +8844,13 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
             "500",
             "request_failed",
             "#setup-model-connection-failed",
-            "Connection failed (request failed). Retry or enter a model ID below.",
+            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
         ),
         (
             "malformed",
             "invalid_response",
             "#setup-model-connection-failed",
-            "Connection failed (invalid response). Retry or enter a model ID below.",
+            "Couldn't reach the server (invalid response). Check it's running, then Retry — or enter a model ID below.",
         ),
     ],
 )
@@ -9232,7 +9232,7 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
             pytest.fail("Model owner timeout did not render bounded failure")
         status = model_step.query_one("#setup-model-connection-failed", RadioButton)
         assert str(status.label) == (
-            "Connection failed (timeout). Retry or enter a model ID below."
+            "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below."
         )
         assert status.disabled
         assert cancelled.is_set()
@@ -12500,3 +12500,159 @@ async def test_nav_text_total_syncs_when_protect_keys_joins_on_key_entry():
         assert nav.total_steps == 6
         progress_text = str(wizard.query_one("#wizard-progress", Static).render())
         assert "Step 1 of 6" in progress_text
+
+
+# ---------------------------------------------------------------------------
+# TASK-21143 (UAT S-1/M-2/M-1/N-7/P-5): the provider trust chain. A failed
+# discovery probe must reach every surface that previously said "✓":
+# the model step's failure row (auth points Back, Retry hidden), the
+# Next gate (explicit "Continue anyway"), the tracker (attention state),
+# the Provider step on return (pinned notice), and the Summary
+# (row overlay + review_provider primary).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"custom": ["curated-model-must-not-appear"]},
+    )
+    auth_failed = ModelDiscoveryResult(
+        provider="custom",
+        provider_list_key="custom",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="401 unauthorized",
+            recovery_hint="fix the key",
+        ),
+    )
+    scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=auth_failed)
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://outcome.example.test/v1/chat/completions"}
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        provider_step = container.steps[provider_index]
+        model_step = container.steps[model_index]
+        container.show_step(provider_index)
+        provider_step.select_provider("custom")
+        await pilot.pause(0.1)
+        await container._advance()
+        for _ in range(40):
+            await pilot.pause(0.1)
+            if model_step.query("#setup-model-connection-failed"):
+                break
+
+        # M-1/M-4: auth copy points Back; Retry is hidden (it cannot fix a
+        # rejected key).
+        row = model_step.query_one("#setup-model-connection-failed")
+        row_text = str(row.label)
+        assert "Authentication failed" in row_text and "Back" in row_text
+        assert model_step.query_one("#setup-model-retry", Button).has_class(
+            "hidden"
+        )
+        assert container.provider_probe_failure() == "authentication"
+
+        # M-2: Next gates behind an explicit confirmation; cancel keeps
+        # editing, confirm advances exactly once.
+        advanced = []
+
+        async def fake_advance():
+            advanced.append(True)
+
+        monkeypatch.setattr(container, "_advance", fake_advance)
+        container.can_proceed = True
+        container.advance_programmatically()
+        await pilot.pause(0.2)
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            _SettlingGuardedConfirmationDialog,
+        )
+
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert not advanced
+        app.screen.query_one("#cancel-button", Button).press()
+        await pilot.pause(0.2)
+        assert not advanced, "cancel must not advance"
+        container.advance_programmatically()
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        app.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause(0.3)
+        assert advanced == [True], "confirm advances exactly once"
+
+        # N-7: the tracker downgrades the visited provider step to
+        # "attention" while the failure stands.
+        container._rebuild_progress()
+        await pilot.pause(0.1)
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            SetupWizardProgress,
+        )
+
+        items = container.query_one(
+            ".wizard-progress", SetupWizardProgress
+        ).items
+        states = {item.step_id: item.state for item in items}
+        assert states[STEP_PROVIDER] == "attention"
+
+        # P-5: returning to Provider surfaces the failure where the fix is.
+        container.show_step(provider_index)
+        await pilot.pause(0.1)
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert "rejected" in str(strip.renderable)
+        assert not strip.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_summary_overlays_probe_failure_and_flips_primary():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+        provider_probe_failure=lambda: "authentication",
+    )
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        rendered = str(step.query_one("#setup-summary-rows", Static).render())
+        assert "key failed an authentication check" in rendered
+        assert "✓ Provider" not in rendered
+        primary = step.query_one("#setup-exit-chat", Button)
+        assert str(primary.label) == "Review provider setup"

@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-08 (TASK-21142: keyboard model — Enter advances, arrows select, Next-first footer).
+> Verified against: first-run wizard implementation, 2026-08 (TASK-21143: probe outcomes reach tracker, gate, and summary).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 every step can be skipped (Next moves on without configuring it), Escape asks
@@ -42,7 +42,10 @@ navigation buttons — fix it and press Next again, or go Back.
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
-saved. Local servers (Ollama, llama.cpp) are auto-detected on localhost; no
+saved — and if the connection check failed while you were setting up (a
+rejected API key, an unreachable local server), the summary says so instead
+of showing a ✓, the progress tracker marks those steps with !, and moving
+past the model step asks for an explicit "Continue anyway". Local servers (Ollama, llama.cpp) are auto-detected on localhost; no
 probe traffic leaves your machine without your action.
 
 ## Running it again

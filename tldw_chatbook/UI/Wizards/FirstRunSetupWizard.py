@@ -280,8 +280,14 @@ class SetupWizardProgress(WizardProgress):
                 classes=f"step-indicator-container setup-progress-item {state_class}",
             ):
                 number_classes = f"step-number {item.state}"
+                # TASK-21143 (UAT N-7): "attention" = visited, but its probe
+                # failed — "!" instead of the ✓ users read as "OK".
                 yield Static(
-                    "✓" if item.state == "complete" else str(index + 1),
+                    "✓"
+                    if item.state == "complete"
+                    else "!"
+                    if item.state == "attention"
+                    else str(index + 1),
                     classes=number_classes,
                 )
                 title = Label(
@@ -292,7 +298,7 @@ class SetupWizardProgress(WizardProgress):
                 yield title
                 if index < len(self.items) - 1:
                     connector_classes = "step-connector"
-                    if item.state == "complete":
+                    if item.state in ("complete", "attention"):
                         connector_classes += " complete"
                     connector = Static("", classes=connector_classes)
                     connector.display = not compact
@@ -514,6 +520,16 @@ class SetupStep(WizardStep):
             affordance ahead of their primary control (ProviderStep's pinned
             discovery button) override this so re-entry cannot land focus on
             the secondary control.
+        """
+        return None
+
+    def confirm_before_advance(self) -> Optional[str]:
+        """A question the user must answer before Next commits this step.
+
+        TASK-21143 (UAT M-2): steps that KNOW their state is broken (a
+        failed credential probe) return the question here; the container
+        shows it as a confirmation dialog and only advances on an explicit
+        "Continue anyway". None (the default) advances normally.
         """
         return None
 
@@ -3051,6 +3067,46 @@ class ModelStep(SetupStep):
         # instead of leaving a stale custom value in place.
         self._model_id_from_custom_input: bool = False
         self._model_load_generation = 0
+        # TASK-21143 (UAT S-1/M-2): the classified outcome of the discovery
+        # probe rendered for _rendered_discovery_key ("", "authentication",
+        # "connection"). Read via current_probe_failure(), which returns ""
+        # whenever the rendered key no longer matches the live identity —
+        # the same staleness discipline the rest of this step uses.
+        self._rendered_probe_failure: str = ""
+
+    def current_probe_failure(self) -> str:
+        """The failed-probe classification for the CURRENT provider identity.
+
+        Returns:
+            "" when the probe succeeded, never ran, or belongs to a
+            superseded identity; otherwise "authentication" or
+            "connection" (wizard_state.PROVIDER_PROBE_*).
+        """
+        if self._rendered_discovery_key is None:
+            return ""
+        try:
+            current_key = self._current_discovery_key()
+        except Exception:
+            return ""
+        if current_key != self._rendered_discovery_key:
+            return ""
+        return self._rendered_probe_failure
+
+    def confirm_before_advance(self) -> Optional[str]:
+        """UAT M-2: a known-failed probe must not be Next-ed past silently."""
+
+        failure = self.current_probe_failure()
+        if failure == wizard_state.PROVIDER_PROBE_AUTH:
+            return (
+                "The API key failed an authentication check, so this model "
+                "setup is unverified. Continue anyway?"
+            )
+        if failure == wizard_state.PROVIDER_PROBE_CONNECTION:
+            return (
+                "The server couldn't be reached, so this model setup is "
+                "unverified. Continue anyway?"
+            )
+        return None
 
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
@@ -3064,6 +3120,7 @@ class ModelStep(SetupStep):
         self._shown_for_discovery_key = None
         self._selection_discovery_key = None
         self._rendered_discovery_key = None
+        self._rendered_probe_failure = ""
         self._selection_config_precondition = None
         self._manual_decision_active = False
         self.selected_model_id = ""
@@ -3481,9 +3538,43 @@ class ModelStep(SetupStep):
             )
         elif discovery_state == "connection_failed":
             category = failure_category or "connection error"
+            # TASK-21143 (UAT M-1/M-4): auth failures point at the fix (the
+            # key lives one step Back — Retry cannot succeed there);
+            # connection failures name the server the user has to start.
+            probe_failure = wizard_state.classify_discovery_failure(
+                discovery_state, category
+            )
+            if probe_failure == wizard_state.PROVIDER_PROBE_AUTH:
+                failed_text = (
+                    "Authentication failed — this API key was rejected. Go "
+                    "Back to fix it, or enter a model ID below."
+                )
+            else:
+                provider_key = getattr(discovery_key, "provider_key", "")
+                endpoint = ""
+                identity = getattr(discovery_key, "connection_identity", ())
+                if len(identity) > 1 and identity[1]:
+                    endpoint = str(identity[1])
+                at_endpoint = f" at {endpoint}" if endpoint else ""
+                if provider_key in ("ollama", "local_ollama"):
+                    failed_text = (
+                        f"Ollama isn't running{at_endpoint}. Start it "
+                        "(ollama serve), then Retry — or enter a model ID "
+                        "below."
+                    )
+                elif provider_key in ("llama_cpp", "local_llamacpp"):
+                    failed_text = (
+                        f"The llama.cpp server isn't reachable{at_endpoint}. "
+                        "Start it, then Retry — or enter a model ID below."
+                    )
+                else:
+                    failed_text = (
+                        f"Couldn't reach the server ({category}). Check it's "
+                        "running, then Retry — or enter a model ID below."
+                    )
             await radio_set.mount(
                 SetupRadioButton(
-                    f"Connection failed ({category}). Retry or enter a model ID below.",
+                    failed_text,
                     id="setup-model-connection-failed",
                     disabled=True,
                 )
@@ -3514,9 +3605,23 @@ class ModelStep(SetupStep):
             )
         if not self.is_attached:
             return
+        # TASK-21143: record the classified outcome for the trust chain
+        # (tracker "!", Model-step confirm gate, Summary override) before
+        # the retry-button lookup's early return can skip it.
+        self._rendered_probe_failure = wizard_state.classify_discovery_failure(
+            discovery_state, failure_category or "connection error"
+        )
         try:
             retry = self.query_one("#setup-model-retry", Button)
-            retry.set_class(discovery_state != "connection_failed", "hidden")
+            # Retry stays for connection failures (start the server, retry);
+            # it is hidden for auth failures — retrying cannot fix a
+            # rejected key, the fix lives one step Back (UAT M-1).
+            retry.set_class(
+                discovery_state != "connection_failed"
+                or self._rendered_probe_failure
+                == wizard_state.PROVIDER_PROBE_AUTH,
+                "hidden",
+            )
         except NoMatches:
             return
         self._rendered_discovery_key = discovery_key
@@ -6802,12 +6907,28 @@ class SummaryStep(SetupStep):
         row_states = {row.label: row.state for row in rows}
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_CONFIGURED,
+            apply_probe_failure_to_summary_rows,
             build_first_run_summary_actions,
         )
+
+        # TASK-21143 (UAT S-1): build_summary_rows reads the config file,
+        # where a saved-but-rejected key is indistinguishable from a working
+        # one — the exact incident where the summary said "✓ Provider"
+        # minutes after the probe got a 401. Overlay what the wizard's own
+        # probe learned, and let it flip the primary action to
+        # review_provider (the affordance that already existed for the
+        # never-saved case).
+        probe_failure = ""
+        try:
+            probe_failure = self.wizard.provider_probe_failure()
+        except Exception:
+            logger.debug("Summary probe-failure lookup skipped", exc_info=True)
+        rows = apply_probe_failure_to_summary_rows(rows, probe_failure)
 
         primary, _, _ = build_first_run_summary_actions(
             provider_configured=row_states.get("Provider") == ROW_CONFIGURED,
             model_configured=row_states.get("Default model") == ROW_CONFIGURED,
+            provider_probe_failed=bool(probe_failure),
         )
         self.provider_model_complete = primary == "start_chatting"
         primary_button = self.query_one("#setup-exit-chat", Button)
@@ -7045,6 +7166,7 @@ class SetupWizardContainer(WizardContainer):
         )
         self.skipped_step_reasons: dict[str, str] = {}
         self._advancing = False
+        self._advance_confirmed = False
         self._failure_action_running = False
         self._failure_action: _SetupFailureAction | None = None
         # F3 hardening: guards _dismiss_screen/_finalize against ever
@@ -8188,6 +8310,25 @@ class SetupWizardContainer(WizardContainer):
         step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
         self._clear_pinned_step_error()
+        # TASK-21143 (UAT P-5): the step that owns the fix must show the
+        # failure — returning to Provider after a failed probe explains
+        # what went wrong right where the key/endpoint is edited.
+        try:
+            shown = self.steps[self.current_step]
+        except IndexError:
+            shown = None
+        if isinstance(shown, ProviderStep):
+            failure = self.provider_probe_failure()
+            if failure == wizard_state.PROVIDER_PROBE_AUTH:
+                shown.show_step_error(
+                    "The last connection check failed: this API key was "
+                    "rejected. Update it, then continue."
+                )
+            elif failure == wizard_state.PROVIDER_PROBE_CONNECTION:
+                shown.show_step_error(
+                    "The last connection check couldn't reach the server. "
+                    "Check it's running, then continue."
+                )
         self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]
@@ -8243,9 +8384,17 @@ class SetupWizardContainer(WizardContainer):
     def _rebuild_progress(self) -> None:
         """Refresh the setup-specific tracker from the active-track projection."""
         try:
+            # TASK-21143 (UAT N-7): a visited Provider/Model pair whose
+            # probe failed shows "!" instead of the ✓ users read as "OK".
+            attention: frozenset[str] = frozenset()
+            if self.provider_probe_failure():
+                attention = frozenset(
+                    {wizard_state.STEP_PROVIDER, wizard_state.STEP_MODEL}
+                )
             items = wizard_state.build_setup_progress(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
+                attention_ids=attention,
             )
             self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:
@@ -8640,11 +8789,64 @@ class SetupWizardContainer(WizardContainer):
         method's docstring for why). This is the extracted guard + worker
         dispatch body shared by both callers; the real Next button's dispatch
         semantics (the prevent_default() suppression) are unchanged.
+
+        TASK-21143 (UAT M-2): a step that knows its state is broken can gate
+        the advance behind an explicit confirmation (confirm_before_advance).
+        The one-shot ``_advance_confirmed`` flag lets the dialog's "Continue
+        anyway" re-enter this method exactly once without re-asking.
         """
         if self._advancing or self._failure_action_running or not self.can_proceed:
             return
+        if not self._advance_confirmed:
+            try:
+                step = self.steps[self.current_step]
+            except IndexError:
+                step = None
+            if isinstance(step, SetupStep):
+                prompt = step.confirm_before_advance()
+                if prompt:
+                    self._push_advance_confirmation(prompt)
+                    return
+        self._advance_confirmed = False
         self._set_advancing(True)
         self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
+
+    def _push_advance_confirmation(self, prompt: str) -> None:
+        """Ask before committing a step that reports itself broken."""
+
+        dialog = _SettlingGuardedConfirmationDialog(
+            title="Continue anyway?",
+            message=prompt,
+            confirm_label="Continue anyway",
+            cancel_label="Keep editing",
+        )
+
+        def _resolve(confirmed: bool | None) -> None:
+            if confirmed:
+                self._advance_confirmed = True
+                self.advance_programmatically()
+
+        self.app.push_screen(dialog, _resolve)
+
+    def provider_probe_failure(self) -> str:
+        """The Model step's classified probe failure for the live identity.
+
+        TASK-21143: single source for the trust chain — the tracker's "!"
+        state, the Provider step's returned-to notice, and the Summary's
+        row/action override all read this. Returns "" whenever the Model
+        step can't vouch for a CURRENT failure (never probed, superseded
+        identity, step missing).
+        """
+        index = self._step_index_for_id(wizard_state.STEP_MODEL)
+        if index is None:
+            return ""
+        step = self.steps[index]
+        if not isinstance(step, ModelStep):
+            return ""
+        try:
+            return step.current_probe_failure()
+        except Exception:
+            return ""
 
     def _clear_pinned_step_error(self) -> None:
         """Empty and hide the pinned error strip (on every step change)."""

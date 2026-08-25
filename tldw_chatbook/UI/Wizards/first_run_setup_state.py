@@ -522,16 +522,96 @@ def build_first_run_provider_commit(
     return mutation
 
 
+#: TASK-21143 (UAT S-1/M-2/N-7): how the last model-discovery probe for the
+#: CURRENT provider identity ended. "" means no failure is known — either
+#: the probe succeeded, never ran, or its identity was superseded (the
+#: wizard's existing per-discovery-key invalidation guarantees staleness
+#: never reaches these values).
+PROVIDER_PROBE_NONE = ""
+PROVIDER_PROBE_AUTH = "authentication"
+PROVIDER_PROBE_CONNECTION = "connection"
+
+
+def classify_discovery_failure(
+    discovery_state: str, failure_category: str
+) -> str:
+    """Collapse a discovery UI outcome into the trust-chain's three states.
+
+    Args:
+        discovery_state: The model step's discovery state string
+            ("available", "connection_failed", "listing_unavailable", ...).
+        failure_category: The human category rendered with a failure
+            ("authentication", "connection error", "request failed", ...).
+
+    Returns:
+        PROVIDER_PROBE_AUTH for credential rejections,
+        PROVIDER_PROBE_CONNECTION for any other failed probe, and
+        PROVIDER_PROBE_NONE when discovery did not fail (including
+        "listing_unavailable", which is a provider capability, not an
+        error in the user's setup).
+    """
+    if discovery_state != "connection_failed":
+        return PROVIDER_PROBE_NONE
+    if failure_category == "authentication":
+        return PROVIDER_PROBE_AUTH
+    return PROVIDER_PROBE_CONNECTION
+
+
+def probe_failure_summary_detail(probe_failure: str) -> str:
+    """The summary row's honest wording for a failed probe."""
+
+    if probe_failure == PROVIDER_PROBE_AUTH:
+        return "saved, but the key failed an authentication check"
+    if probe_failure == PROVIDER_PROBE_CONNECTION:
+        return "saved, but the server couldn't be reached when models were checked"
+    return ""
+
+
+def apply_probe_failure_to_summary_rows(
+    rows: tuple["SummaryRow", ...], probe_failure: str
+) -> tuple["SummaryRow", ...]:
+    """Overlay a known probe failure onto the config-derived summary rows.
+
+    ``build_summary_rows`` reads the config file, and a saved-but-broken
+    key is indistinguishable from a working one there — exactly the UAT
+    S-1 incident where the summary said "✓ Provider" minutes after the
+    probe got a 401. The overlay downgrades the Provider row to
+    ROW_ATTENTION with the failure spelled out; rows the config already
+    marks unconfigured are left alone (their message is more specific).
+    """
+    if not probe_failure:
+        return rows
+    detail = probe_failure_summary_detail(probe_failure)
+    return tuple(
+        replace(row, state=ROW_ATTENTION, detail=detail)
+        if row.label == "Provider" and row.state == ROW_CONFIGURED
+        else row
+        for row in rows
+    )
+
+
 def build_first_run_summary_actions(
-    *, provider_configured: bool, model_configured: bool
+    *,
+    provider_configured: bool,
+    model_configured: bool,
+    provider_probe_failed: bool = False,
 ) -> tuple[FirstRunSummaryAction, FirstRunSummaryAction, FirstRunSummaryAction]:
-    """Return the exact primary, secondary, and tertiary summary hierarchy."""
+    """Return the exact primary, secondary, and tertiary summary hierarchy.
+
+    TASK-21143: ``provider_probe_failed`` covers the saved-but-broken case
+    (UAT S-1) — "configured" means written to disk, never "working", so a
+    key that failed its authentication probe still counted as configured
+    and the ``review_provider`` primary this function already had was
+    unreachable exactly when it mattered most.
+    """
 
     if type(provider_configured) is not bool or type(model_configured) is not bool:
         raise ValueError("Summary readiness must use booleans.")
+    if type(provider_probe_failed) is not bool:
+        raise ValueError("Summary probe state must use booleans.")
     primary: FirstRunSummaryAction = (
         "start_chatting"
-        if provider_configured and model_configured
+        if provider_configured and model_configured and not provider_probe_failed
         else "review_provider"
     )
     return primary, "explore_home", "review_settings"
@@ -786,7 +866,7 @@ class SetupProgressItem:
 
     step_id: str
     title: str
-    state: Literal["active", "complete", "upcoming"]
+    state: Literal["active", "complete", "upcoming", "attention"]
 
 
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
@@ -1103,9 +1183,18 @@ def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
 
 
 def build_setup_progress(
-    active_ids: tuple[str, ...], current_index: int
+    active_ids: tuple[str, ...],
+    current_index: int,
+    attention_ids: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[SetupProgressItem, ...]:
-    """Project a resolved setup path into display-ready progress rows."""
+    """Project a resolved setup path into display-ready progress rows.
+
+    TASK-21143 (UAT N-7): a visited step whose probe demonstrably failed
+    must not wear the ✓ users read as "this part is OK" — ``attention_ids``
+    downgrades those completed steps to the "attention" state (rendered as
+    an amber "!"). Only completed steps downgrade: the active step keeps
+    its position marker, upcoming steps have nothing to report on yet.
+    """
 
     unknown_ids = tuple(step_id for step_id in active_ids if step_id not in STEP_TITLES)
     if unknown_ids:
@@ -1113,17 +1202,17 @@ def build_setup_progress(
     if not active_ids:
         return ()
     active_index = min(max(current_index, 0), len(active_ids) - 1)
+
+    def state_for(index: int, step_id: str) -> str:
+        if index < active_index:
+            return "attention" if step_id in attention_ids else "complete"
+        return "active" if index == active_index else "upcoming"
+
     return tuple(
         SetupProgressItem(
             step_id=step_id,
             title=STEP_TITLES[step_id],
-            state=(
-                "complete"
-                if index < active_index
-                else "active"
-                if index == active_index
-                else "upcoming"
-            ),
+            state=state_for(index, step_id),
         )
         for index, step_id in enumerate(active_ids)
     )

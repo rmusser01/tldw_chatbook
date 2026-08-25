@@ -1408,6 +1408,19 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
     text-style: bold;
 }
 
+/* TASK-21143 (UAT N-7): visited step whose probe failed — amber "!", never
+   the ✓ users read as "this part is OK". */
+.setup-progress-item.-attention .step-number {
+    background: $ds-surface-raised;
+    color: $warning;
+    border: solid $warning;
+    text-style: bold;
+}
+.setup-progress-item.-attention .step-title {
+    color: $warning;
+    text-style: bold;
+}
+
 .setup-progress-item.-upcoming .step-number {
     background: $panel;
     color: $text-muted;
