@@ -103,6 +103,7 @@ from ..Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
     ConsolePromptQueueRegion,
 )
+from ..Console_Modules.realtime import ConsoleRealtimeSession
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
@@ -1211,134 +1212,6 @@ CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE = "Hands-free ended: connection lo
 CONSOLE_REALTIME_EXIT_IDLE_TEMPLATE = "Hands-free ended: idle for {minutes:g} minutes"
 
 
-@dataclass
-class ConsoleRealtimeSession:
-    """Everything the realtime (V4) hands-free loop needs while it runs.
-
-    Constructed once per loop entry (`ChatScreen._enter_console_realtime_
-    loop`) and dropped on `ExitLoop` (`ChatScreen._release_console_realtime_
-    state`) -- never reused across entries, exactly like its V3 sibling
-    `ConsoleHandsFreeSession`, so every entry gets a clean FSM.
-
-    Attributes:
-        controller: The headless FSM driving the loop.
-        console_session_id: The Console chat session this loop is bound to,
-            captured at entry. Every continuity row is written to THIS
-            session, never to `store.active_session_id` re-read later --
-            a tab switch mid-conversation must not scatter half a spoken
-            exchange across two transcripts (the same discipline V3's
-            `pending_session_id` enforces for its own send).
-        buddy_generation: Monotonic app-owned loop generation used only
-            to fence trusted Buddy lifecycle state from replaced loops.
-        idle_timeout_seconds: The configured idle ceiling, kept here so the
-            exit toast can name it without re-reading config at exit time.
-        tap: The `RealtimeMicTap` streaming microphone PCM into the session.
-        session: The live `RealtimeSession`, or None before the first
-            connect completes and between a drop and its reconnect.
-        sink: The `StreamingPcmSink` playing the CURRENT reply's audio, or
-            None between replies.
-        audio_queue: The `asyncio.Queue` feeding this reply's `pump` task;
-            a `None` item is the end-of-reply sentinel that closes the
-            async iterator.
-        pump_worker: The worker running `pump(sink, aiter)` for this reply.
-        tick_timer: The `set_interval(0.1, ...)` handle driving
-            `controller.tick(now)` (the idle ceiling) and the chip repaint.
-        connect_attempt: Monotonic per-loop counter, incremented for every
-            connect (first and each reconnect). Callbacks are bound to the
-            attempt that created them, so a superseded session's late
-            events are dropped instead of driving the FSM (see
-            `_console_realtime_marshal`).
-        ready: True once the provider acknowledged the handshake and the
-            tap was flushed; an adopted transcript arriving before that is
-            held in `pending_text_turn` rather than enqueued into a session
-            that cannot send it yet. Also the discriminator for what a
-            close/error MEANS (see `_on_console_realtime_closed`): before
-            it, a refused connect; after it, a transport drop.
-        connect_returned_at: Monotonic stamp of the moment `connect()`
-            returned for the outstanding attempt, or None when no attempt
-            is waiting on `on_ready`. Drives the ready deadline in
-            `_tick_console_realtime` -- the backstop for a no-ready path
-            that arrives as nothing at all.
-        mic_gated: The gate value last synced to `tap.set_gated(...)` --
-            the wiring's record of rule 7, and what tests assert against
-            (the tap's own flag is private).
-        fed_bytes: Bytes of reply audio handed to the sink queue for the
-            CURRENT reply. Drives `played_ms`; reset per reply.
-        audio_failed_for_reply: True once this reply's audio sink failed to
-            open -- every later delta of the SAME reply is then dropped
-            without another attempt. Reset at the next reply start.
-        audio_unavailable_notified: True once the user has been told, in
-            THIS loop entry, that reply audio is unavailable. One toast per
-            loop, not one per reply.
-        reply_token: Monotonic per-reply counter. A reply's playback
-            completion carries the token it started with, so a completion
-            that lands after the next reply began is dropped instead of
-            reporting that one finished.
-        generation_done: True once `response.done` arrived for the current
-            reply. Half of the rendezvous below.
-        playback_pending: True while this reply's audio is still being fed
-            or played. The other half: whichever of these two finishes
-            LAST is what tells the FSM the reply is over -- see
-            `_on_console_realtime_reply_done`.
-        barged: True once the user cut this reply short. Mirrors Task 2's
-            "a cancelled response fires no reply-done": the aborted pump's
-            completion must report nothing.
-        barge_trigger: Which input drove the barge-in currently being
-            handled -- `"keypress"` or `"speech"`. Recorded here because
-            the `SilenceSpeech` intent is shared by both and carries no
-            trigger of its own, and "which one fired" is the first
-            question any barge-in report raises.
-        user_row_id: The transcript row created at turn-commit, waiting for
-            its input transcript to land.
-        assistant_row_id: The current reply's transcript row, or None
-            between replies (closed by `_finish_console_realtime_reply_row`).
-        last_reply_row_id: The most recent reply's row, NOT cleared when
-            that reply closes -- usage arrives from the same provider event
-            that ended the reply, so it always needs the row that just
-            stopped being current.
-        pending_text_turn: An adopted pipeline capture's transcript waiting
-            for `on_ready` (see `ready`).
-        adopt_capture: True while a live pipeline capture is being stopped
-            so its transcript can become this loop's first turn.
-        failure_text: Why the last connect attempt failed, in user-facing
-            words -- consumed by the fallback toast.
-        transcript_dirty: Set by every continuity write; consumed by the
-            0.1 s tick, which is what actually repaints the transcript (a
-            per-delta resync would be one full UI rebuild per audio
-            transcript chunk).
-    """
-
-    controller: RealtimeLoopController
-    console_session_id: str
-    idle_timeout_seconds: float
-    buddy_generation: int = 0
-    tap: Any = None
-    session: Any = None
-    sink: Any = None
-    audio_queue: Any = None
-    pump_worker: Any = None
-    tick_timer: Any = None
-    connect_attempt: int = 0
-    ready: bool = False
-    connect_returned_at: float | None = None
-    reply_token: int = 0
-    generation_done: bool = False
-    playback_pending: bool = False
-    barged: bool = False
-    barge_trigger: str = "unknown"
-    mic_gated: bool = False
-    fed_bytes: int = 0
-    user_row_id: str | None = None
-    assistant_row_id: str | None = None
-    last_reply_row_id: str | None = None
-    audio_failed_for_reply: bool = False
-    audio_unavailable_notified: bool = False
-    pending_text_turn: str | None = None
-    adopt_capture: bool = False
-    failure_text: str = ""
-    transcript_dirty: bool = False
-
-
 CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
     ("Shift+F6", "previous pane"),
@@ -2136,6 +2009,8 @@ class ChatScreen(BaseAppScreen):
     _pending_video_deferred_closes = _ControllerState(
         "_video", "_pending_video_deferred_closes"
     )
+    _console_realtime = _ControllerState("_realtime", "session")
+    _console_realtime_close_worker = _ControllerState("_realtime", "close_worker")
     _console_persisted_rows_cache = _ControllerState(
         "_workspace", "_console_persisted_rows_cache"
     )
@@ -4230,18 +4105,6 @@ class ChatScreen(BaseAppScreen):
             rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
         )
-        #: The realtime (V4) hands-free loop's live session, or None when
-        #: that loop is not running. Mutually exclusive with
-        #: `_console_hands_free` by construction: the engine fork in
-        #: `_enter_console_hands_free_loop` picks exactly one engine per
-        #: loop entry, and neither entry point runs while the other's
-        #: session is set. See `ConsoleRealtimeSession` and
-        #: `_enter_console_realtime_loop`/`_release_console_realtime_state`.
-        self._console_realtime: ConsoleRealtimeSession | None = None
-        #: The worker releasing a just-exited realtime loop's tap/session/
-        #: sink, or None. Retained only so `on_unmount` can wait for it --
-        #: see `_teardown_console_realtime_loop`.
-        self._console_realtime_close_worker: Any | None = None
         # `_console_provider_gateway`/`_console_chat_controller`: properties
         # over the app-owned runtime, no `__init__` slot -- see the note at
         # `_console_chat_store`'s old slot.
@@ -15138,9 +15001,7 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_console_native_session_tabs()
                 self._dispatch_active_console_roleplay_refresh()
                 self._sync_console_workspace_context()
-                project_instruction_ui.sync_project_instruction_status_for_screen(
-                    self
-                )
+                project_instruction_ui.sync_project_instruction_status_for_screen(self)
                 await self._sync_native_console_transcript()
                 self._sync_console_rail_visibility_if_changed(
                     self._current_console_rail_state()
