@@ -135,6 +135,20 @@ results. Loading the bundled stylesheet in the mounted shape matrix made the
 failure deterministic; sharing the mosaic grid calculation made graphics and
 mosaic settle to the same exact cell box.
 
+**Recurred, TASK-21595, 2026-08-25 — and this time the app bundle itself was
+not enough.** A geometry A/B for `PersonaBuddyWidget` used a plain `App` with
+`CSS_PATH = css/tldw_cli_modular.tcss`, i.e. the whole app bundle. The test
+passed, and so did the mutation that made the widget content-sized. The
+bundle contains **zero** `#persona-buddy-frame` rules: consolidated widget CSS
+(TASK-15450) lives in the generated `widget_defaults_{self,scoped}.tcss`, which
+the app registers via `_get_default_css` and only
+`Tests.UI.consolidated_css.ConsolidatedCSSApp` reproduces. The widget was
+mounting unstyled, so the probe was measuring nothing at all. **"I loaded the
+app bundle" is not the same as "I loaded what production loads"** — for any
+widget whose CSS was consolidated, inherit `ConsolidatedCSSApp`. The tell was
+the surviving mutant, not the failing test: a green geometry assertion under a
+harness that cannot see the rule looks identical to a correct one.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test

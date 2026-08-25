@@ -142,6 +142,35 @@ note that `content` is also the cheapest way to read back what was last painted,
 which is how that repaint skips a no-op write without a shadow copy that every
 other writer would have to remember to invalidate.
 
+**Recurred twice more, so it is now a guarded census — TASK-21595, 2026-08-25.**
+After TASK-21692 (the composer blink: 396 `Widget.arrange` per 6 ticks on an
+*idle* composer) and TASK-21134 item 7 (media-viewer match-nav), a package-wide
+AST census of every repeating-clock root found two more: `SplashScreen.
+_update_animation`, repainting a full-viewport `Static` at the shipped cards'
+0.01–0.1 s `animation_speed` — **10–100 whole-screen reflows per second during
+startup** — and `PersonaBuddyWidget._paint_frame` at the pet's own frame rate.
+Both measured 20 → 0 `_refresh_layout` / `reflow` / `arrange` per 20 ticks.
+`Tests/Architecture/test_timer_path_static_update_inventory.py` now rebuilds
+that census on every run and fails any clock-reachable `.update(` that neither
+passes `layout=` nor carries a stated exemption. Two things that census taught:
+
+1. **Grepping `set_interval` is not a census.** One of the two clocks is a
+   `set_timer` callback that re-arms *itself* — an interval spelled as a chain
+   of one-shots. Enumerate roots structurally (including the self-rearming
+   one-shot), then walk the call graph; the repaint is usually four to six hops
+   from the timer, in a different module.
+2. **`layout=False` is only sound where the box cannot be content-sized, and the
+   pin may not be in the stylesheet.** The Persona Buddy frame's real pin is
+   `frame.styles.width/height = "100%"` assigned *inline* by `_apply_geometry`,
+   which beats every sheet — so mutating its CSS to `auto` (even rebuilding the
+   generated bundle) left the geometry test green, a surviving mutant that was a
+   finding about the test. Prove the claim with an A/B against the layout engine
+   instead of reading CSS: paint the content with `layout=True` and record the
+   geometry, *scrub* with a deliberately different shape (without the scrub the
+   second arm inherits the first arm's geometry and passes vacuously), then
+   paint the same content with `layout=False` and compare — carrying sibling
+   regions and painted per-row cell widths, not just `outer_size`.
+
 ---
 
 ## `set_timer(0.0)` never fires — silently
