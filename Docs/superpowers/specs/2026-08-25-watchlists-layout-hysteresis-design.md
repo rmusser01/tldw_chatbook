@@ -1,7 +1,7 @@
 # Watchlists Responsive Layout Hysteresis Design
 
-**Date:** 2026-08-25  
-**Task:** TASK-22211  
+**Date:** 2026-08-25
+**Task:** TASK-22211
 **Status:** Approved for implementation planning
 **Related ADR:** [ADR-042: Watchlists reader-first information architecture](../../../backlog/decisions/042-watchlists-reader-first-ia.md)
 
@@ -231,8 +231,8 @@ thresholds, and matches the established Library reader behavior.
 
 ## ADR assessment
 
-**ADR required:** no  
-**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`  
+**ADR required:** no
+**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`
 **Reason:** This is a bounded stabilization of ADR-042's existing responsive pane
 policy and follows an existing Library implementation precedent. It introduces no
 new storage, ownership, cross-module interface, dependency, or long-lived UX

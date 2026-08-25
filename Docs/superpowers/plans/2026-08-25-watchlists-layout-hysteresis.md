@@ -24,8 +24,8 @@ No new module or shared split-pane abstraction is introduced. Watchlists duplica
 
 ## ADR assessment
 
-**ADR required:** no  
-**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`  
+**ADR required:** no
+**ADR path:** `backlog/decisions/042-watchlists-reader-first-ia.md`
 **Reason:** The change stabilizes ADR-042's existing preferred-versus-effective responsive policy and follows the accepted Library precedent. It does not change storage, ownership, dependencies, cross-module contracts, or the long-lived pane structure.
 
 ### Task 1: Add pure four-column hysteresis policy

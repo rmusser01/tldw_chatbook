@@ -2,7 +2,7 @@
 target: Watchlists layout hysteresis design spec
 total_score: 32
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 0
 p1_count: 4
 timestamp: 2026-08-25T16-39-02Z
