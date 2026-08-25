@@ -407,7 +407,22 @@ class SplashScreen(Container):
         return 80, 24
 
     def _update_animation(self) -> None:
-        """Update animation frame."""
+        """Update animation frame.
+
+        TASK-21595: the repaint passes ``layout=False``. ``Static.update``
+        defaults to ``layout=True``, so every animation frame used to arm a
+        full ``Screen._refresh_layout`` / ``Compositor.reflow``; at the
+        ``animation_speed`` values the shipped cards use (0.01-0.1 s, i.e.
+        10-100 fps) that is 10-100 whole-screen layout passes per second
+        during startup, the one moment the app is already contended.
+
+        Skipping layout is sound because ``#splash-display`` cannot be sized
+        by its content: both stylesheets that select it pin it to
+        ``width: 100%; height: 100%`` (``css/features/_splash.tcss`` and
+        ``css/components/_settings_splash_theme.tcss``), so its box is
+        entirely container-driven. ``Tests/UI/test_timer_path_layout_cost.py``
+        pins that as a geometry-equivalence A/B rather than by inspection.
+        """
         # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
         if not self.is_attached or not self.screen.is_active:
             return
@@ -419,7 +434,7 @@ class SplashScreen(Container):
                 if frame_content:
                     # Update display
                     display = self.query_one("#splash-display", Static)
-                    display.update(frame_content)
+                    display.update(frame_content, layout=False)
 
                 self.current_frame += 1
             except Exception as e:
