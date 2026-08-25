@@ -35,6 +35,17 @@ def test_reader_state_is_a_frozen_empty_read_model() -> None:
         state.mode = "info"  # type: ignore[misc]
 
 
+def test_request_default_uses_the_shared_conversation_page_size() -> None:
+    request = ConversationReaderRequest(
+        destination="conversations",
+        conversation_id="conversation-a",
+        version=1,
+        generation=1,
+    )
+
+    assert request.message_limit == reader_state.LIBRARY_CONVERSATION_PAGE_SIZE
+
+
 def _loaded_state(*, mode: str = "read") -> ConversationReaderState:
     return ConversationReaderState(
         selected_id="conversation-a",

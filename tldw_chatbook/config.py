@@ -1814,7 +1814,10 @@ def _load_settings_uncached(
         else {}
     )
     shared_raw = {
-        key: raw_reader.get(key, legacy_media_reader.get(key))
+        key: os.getenv(
+            f"TLDW_LIBRARY_READER_{key.upper()}",
+            raw_reader.get(key, legacy_media_reader.get(key)),
+        )
         for key in ("library_open", "custom_widths_enabled", "library_width")
     }
     shared_preferences = normalize_adaptive_reader_preferences(shared_raw)
@@ -1843,8 +1846,14 @@ def _load_settings_uncached(
         destination_preferences = normalize_adaptive_reader_preferences(
             {
                 "custom_widths_enabled": True,
-                "items_open": raw_destination.get("items_open"),
-                "items_width": raw_destination.get("items_width"),
+                "items_open": os.getenv(
+                    f"TLDW_LIBRARY_{section_name.upper()}_ITEMS_OPEN",
+                    raw_destination.get("items_open"),
+                ),
+                "items_width": os.getenv(
+                    f"TLDW_LIBRARY_{section_name.upper()}_ITEMS_WIDTH",
+                    raw_destination.get("items_width"),
+                ),
             }
         )
         normalized_destination_readers[section_name] = {
@@ -3236,10 +3245,12 @@ ingest_url_preflight_probe = false
 # Shared Library-pane visibility and width are written here by Settings and
 # Library pane toggles. Older configs may omit these keys; each missing key
 # independently falls back to its legacy value under [library.media_reader].
+# Environment overrides use TLDW_LIBRARY_READER_<KEY>.
 
 [library.media_reader]
 # Destination Items-pane preferences. The three shared keys below remain as
 # read-only compatibility fallbacks for older config files.
+# Items environment overrides use TLDW_LIBRARY_MEDIA_READER_<KEY>.
 library_open = true
 items_open = true
 custom_widths_enabled = false
@@ -3247,18 +3258,22 @@ library_width = 28
 items_width = 40
 
 [library.conversations_reader]
+# Environment overrides use TLDW_LIBRARY_CONVERSATIONS_READER_<KEY>.
 items_open = true
 items_width = 40
 
 [library.notes_reader]
+# Environment overrides use TLDW_LIBRARY_NOTES_READER_<KEY>.
 items_open = true
 items_width = 40
 
 [library.prompts_reader]
+# Environment overrides use TLDW_LIBRARY_PROMPTS_READER_<KEY>.
 items_open = true
 items_width = 40
 
 [library.skills_reader]
+# Environment overrides use TLDW_LIBRARY_SKILLS_READER_<KEY>.
 items_open = true
 items_width = 40
 

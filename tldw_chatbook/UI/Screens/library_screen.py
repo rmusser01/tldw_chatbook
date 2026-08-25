@@ -105,6 +105,7 @@ from ...Library.library_adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from ...Library.library_conversation_reader_state import (
+    LIBRARY_CONVERSATION_PAGE_SIZE,
     ConversationReaderRequest,
     ConversationReaderState,
     confirm_conversation_deleted,
@@ -567,7 +568,6 @@ if TYPE_CHECKING:
 
 
 logger = logger.bind(module="LibraryScreen")
-LIBRARY_CONVERSATION_PAGE_SIZE = 20
 LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
 LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
 LIBRARY_SOURCE_PAGE_SIZES = {

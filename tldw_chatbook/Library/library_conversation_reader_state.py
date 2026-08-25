@@ -7,6 +7,7 @@ from typing import Any, Literal, Mapping
 from unicodedata import normalize
 
 
+LIBRARY_CONVERSATION_PAGE_SIZE = 20
 ConversationReaderMode = Literal["read", "info"]
 
 
@@ -19,7 +20,7 @@ class ConversationReaderRequest:
     version: int
     generation: int
     message_offset: int = 0
-    message_limit: int = 20
+    message_limit: int = LIBRARY_CONVERSATION_PAGE_SIZE
 
 
 @dataclass(frozen=True)
