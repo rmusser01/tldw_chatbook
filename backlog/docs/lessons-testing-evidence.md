@@ -8472,3 +8472,23 @@ the calls converge on one function from many sites, **share at the converged
 function (here: an opt-in, asyncio-task-scoped cache consulted inside the
 build itself), not by threading state through each caller** — the callers you
 did not know about are exactly the ones a threading fix misses.
+
+## Interleaved A/B pairs carry a positional bias — run the A/A control and the reversed order before believing the delta (TASK-22213, 2026-08-25)
+
+Ten interleaved boot-to-`_ui_ready` pairs (base first, branch second, the
+obvious loop shape) showed the branch faster in 8/10 with a median of about
+−250 ms — a suspiciously large win for a ~30-module import diet. An A/A
+control (base vs base, same loop shape) exposed the mechanism: the
+SECOND-position run in a pair is systematically faster (warmer FS cache, load
+settling), and the A/A spread alone was ±400 ms on that loaded machine. Five
+pairs with the ORDER REVERSED (branch first) collapsed the "win" to a wash
+(median −19 ms, mean +85 ms).
+
+Interleaving controls for load DRIFT between pairs; it does not control for
+position WITHIN a pair. Before reporting any interleaved delta: (1) run an
+A/A control with the identical loop shape to measure the noise floor and the
+positional offset; (2) run at least a few pairs in reversed order; (3) if the
+effect survives neither, report the wash and lean on the deterministic axes
+instead — module censuses and closure diffs don't have a noise floor (here:
+−32 modules on the bare chat_screen leg, −5 at warm `_ui_ready`, both exactly
+reproducible while the wall-clock delta evaporated).

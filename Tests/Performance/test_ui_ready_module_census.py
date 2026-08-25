@@ -1,0 +1,266 @@
+"""`sys.modules` census at `_ui_ready` (TASK-22213).
+
+The import-weight guard (`test_app_import_weight.py`) and the closure guards
+(`Tests/Packaging/test_*_closure.py`) all measure the IMPORT phase -- and the
+2026-08-24 holistic perf review (finding 22213) showed warm boot-to-ready
+regressing ~11% while every one of them stayed green, because the growth was
+on the legs they cannot see: modules imported while the initial Chat screen
+MOUNTS. A deferral that merely moves an import from module scope into a
+mount-path function keeps every import guard green and the user waiting
+exactly as long. This guard closes that class: it boots the real app
+headless (Textual Pilot) against a scratch profile, waits for
+``TldwCli._ui_ready`` -- the same flag the review's TTI probes measure to --
+and censuses this repo's modules at that moment.
+
+What it pins:
+
+* ``MAX_TLDW_MODULES_AT_UI_READY`` -- the drift budget for the WARM boot:
+  the profile is created by a throwaway first boot inside the test, and the
+  census measures the second boot -- the recurring user experience, the
+  same condition as the review's TTI metric. Measured 938-939 across
+  consecutive warm boots, 2026-08-25, this branch (run-to-run wobble
+  observed: +/-1). Budget 970: ~30 modules of headroom, mirroring the
+  import-weight guard's just-above-reality philosophy. Do NOT re-baseline
+  against a fresh-profile boot: that measures ~975 and includes the
+  first-boot residents below.
+* The heavy deferred families stay off the whole first-paint window, not
+  just off the import phase: ``Chunking``, ``RAG_Search.simplified``
+  (TASK-21731's packages), and the trajectory family TASK-22213 deferred.
+
+Known resident, deliberately NOT asserted absent: ``Internal_Prompts``
+(10 modules). It is off the Chat IMPORT leg (see
+``test_rag_boot_import_closure.py``), but the mount path still resolves it:
+``chat_screen._ensure_console_agent_bridge`` imports
+``Chat/console_agent_bridge.py``, whose module-scope catalog constants
+(``CONSOLE_AGENT_OPERATING_PROMPT``, ``_KNOWN_SUBAGENT_PREFIXES``) need the
+catalog. Measured marginal cost of the package with the app already
+imported: **1.0-2.4 ms warm** -- not worth touching the security-relevant
+``_is_subagent`` prefix-seeding mechanism for (the stability-over-quick-wins
+ruling). If the bridge edge is ever made lazy, ADD the prefix to
+``ABSENT_AT_READY_PREFIXES`` in the same commit.
+
+Raising the budget: re-run this test's probe three times (it prints one
+``MOD:<name>`` line per resident module -- diff runs against this
+docstring's numbers with ``LC_ALL=C sort`` + ``comm``), name the modules
+that moved the count and the feature that added them, then update
+``MAX_TLDW_MODULES_AT_UI_READY`` and this docstring with the new measured
+number and the cause, in the same commit. A raise without a named cause is
+the failure mode this guard exists to catch.
+
+First-boot residents (found by this guard's own first RED run, traced with
+an ``__import__``-stack wrapper, 2026-08-25): a FRESH profile's very first
+boot has the entire ``Chunking`` engine (34 modules) resident at ready,
+via ``app.py _init_media_db -> Client_Media_DB_v2._initialize_schema ->
+_apply_migration_v6_to_v7 -> Chunking._template_conversion``. That is
+legitimate one-time migration work, so this guard warms the profile first
+and censuses the SECOND boot -- which means first-boot/post-upgrade
+residency is a documented blind spot of this census, not a covered case
+(it is the 22200 post-upgrade-window family; a fix there should not need
+this guard's permission).
+
+Documented blind spots (be honest about what a census cannot see):
+
+* It measures RESIDENCY, not time. Work moved into a function of an
+  already-resident module still slows the mount invisibly; only a TTI probe
+  (the review's interleaved method) sees that.
+* The whole-registry screen pre-importer is pinned OFF here
+  (``TLDW_SCREEN_PREIMPORT=0``): its payload lands seconds after ready on a
+  daemon thread and would otherwise race the census nondeterministically.
+  Pre-importer payload growth is finding 22214's territory, not this
+  guard's.
+* Deferred-startup timers (footer status, audio services, media cleanup;
+  0.1-0.2 s) fire after the census moment: this is a first-paint snapshot,
+  not a steady-state one. A module they import is invisible here.
+* Only ``tldw_chatbook.*`` is budgeted. Third-party residency varies with
+  installed extras, exactly as ``test_app_import_weight.py`` documents.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: Drift budget for this repo's own modules resident at `_ui_ready` on a
+#: WARM (second) boot. Measured 938-939 on 2026-08-25; see the module
+#: docstring's raise procedure before touching this number.
+MAX_TLDW_MODULES_AT_UI_READY = 970
+
+#: Families that must not be resident anywhere in the first-paint window.
+#: The two package prefixes are TASK-21731's; the exact module names are the
+#: trajectory family TASK-22213 took off the Chat leg.
+ABSENT_AT_READY_PREFIXES = (
+    "tldw_chatbook.Chunking",
+    "tldw_chatbook.RAG_Search.simplified",
+)
+ABSENT_AT_READY_MODULES = (
+    "tldw_chatbook.UI.Screens.trajectory_screen",
+    "tldw_chatbook.Chat.trajectory_import",
+    "tldw_chatbook.Chat.trajectory_export",
+    "tldw_chatbook.UI.Widgets.trajectory_timeline",
+    "tldw_chatbook.UI.Widgets.trace_filter_bar",
+)
+
+#: Anti-vacuity: if these are not resident, the boot did not actually mount
+#: the Chat screen and the census is measuring nothing.
+EXPECTED_AT_READY = (
+    "tldw_chatbook.UI.Screens.chat_screen",
+    "tldw_chatbook.Chat.console_chat_controller",
+    "tldw_chatbook.app",
+)
+
+#: Scratch profile mirroring the 2026-08-24 review's probe recipe: first-run
+#: wizard completed, splash disabled (boot is serial under the splash), and a
+#: valid-SHAPED key so the Console boots configured rather than into the
+#: setup modal. The key is a nonsense literal -- nothing dials out.
+_PROBE_CONFIG_TOML = """\
+[first_run]
+setup_completed = true
+
+[splash_screen]
+enabled = false
+
+[api_settings.openai]
+api_key = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL"
+"""
+
+_CENSUS_SCRIPT = """
+import asyncio
+import json
+import sys
+
+
+async def main() -> None:
+    import tldw_chatbook.app
+
+    app = tldw_chatbook.app.TldwCli()
+    async with app.run_test(size=(120, 40)):
+        while not getattr(app, "_ui_ready", False):
+            await asyncio.sleep(0.005)
+        mods = sorted(
+            m
+            for m in sys.modules
+            if m.startswith("tldw_chatbook") and sys.modules[m] is not None
+        )
+        for m in mods:
+            print("MOD:" + m, flush=True)
+        print("CENSUS_JSON:" + json.dumps({"count": len(mods)}), flush=True)
+
+
+asyncio.run(main())
+"""
+
+
+def _boot_and_census(tmp_path: Path) -> list[str]:
+    """Boot to `_ui_ready` twice in subprocesses; return the WARM census.
+
+    The first boot only exists to create the profile (DB files, migrations,
+    seeding) so the second boot is the recurring warm case the budget is
+    pinned against -- see the module docstring for the fresh-boot residents
+    this deliberately excludes.
+    """
+    home = tmp_path / "home"
+    data = tmp_path / "data"
+    config_dir = tmp_path / "config"
+    for directory in (home, data, config_dir):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    (config_dir / "config.toml").write_text(_PROBE_CONFIG_TOML)
+
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "XDG_DATA_HOME": str(data),
+        "XDG_CONFIG_HOME": str(config_dir),
+        "TLDW_CONFIG_PATH": str(config_dir / "config.toml"),
+        "TLDW_TEST_MODE": "1",
+        # Pin the whole-registry pre-importer OFF: its daemon thread would
+        # race the census nondeterministically (see module docstring).
+        "TLDW_SCREEN_PREIMPORT": "0",
+        "PYTHONPATH": str(REPO_ROOT),
+    }
+    env.pop("PYTEST_CURRENT_TEST", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", _CENSUS_SCRIPT],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    assert result.returncode == 0, (
+        f"profile-warming first boot failed (rc={result.returncode}):\n"
+        f"stdout={result.stdout[-2000:]}\nstderr={result.stderr[-4000:]}"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", _CENSUS_SCRIPT],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    assert result.returncode == 0, (
+        f"warm headless boot to _ui_ready failed (rc={result.returncode}):\n"
+        f"stdout={result.stdout[-2000:]}\nstderr={result.stderr[-4000:]}"
+    )
+    mods = [
+        line[len("MOD:") :]
+        for line in result.stdout.splitlines()
+        if line.startswith("MOD:")
+    ]
+    payloads = [
+        line[len("CENSUS_JSON:") :]
+        for line in result.stdout.splitlines()
+        if line.startswith("CENSUS_JSON:")
+    ]
+    assert payloads, f"census sentinel missing from stdout:\n{result.stdout[-2000:]}"
+    assert json.loads(payloads[-1])["count"] == len(mods)
+    return mods
+
+
+@pytest.mark.integration
+def test_ui_ready_module_census_stays_at_the_pinned_size(tmp_path: Path) -> None:
+    """Boot to `_ui_ready`; this repo's resident modules stay within budget.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's profile.
+    """
+    mods = _boot_and_census(tmp_path)
+
+    missing = [m for m in EXPECTED_AT_READY if m not in mods]
+    assert not missing, (
+        f"census looks degenerate -- expected mount-leg members missing: {missing}"
+    )
+
+    assert len(mods) <= MAX_TLDW_MODULES_AT_UI_READY, (
+        f"{len(mods)} tldw_chatbook modules resident at _ui_ready "
+        f"(budget {MAX_TLDW_MODULES_AT_UI_READY}). Mount-leg growth is "
+        "invisible to the import guards -- diff this test's MOD: output "
+        "against a clean checkout, name what grew, and either defer it or "
+        "raise the budget per the module docstring's procedure."
+    )
+
+    on_leg = [
+        m
+        for m in mods
+        if any(
+            m == p or m.startswith(p + ".") for p in ABSENT_AT_READY_PREFIXES
+        )
+        or m in ABSENT_AT_READY_MODULES
+    ]
+    assert not on_leg, (
+        f"deferred families resident at _ui_ready (the first-paint window): "
+        f"{on_leg}. Something re-eagered them on the import OR mount leg -- "
+        "the closure guards in Tests/Packaging name the intended seams."
+    )
