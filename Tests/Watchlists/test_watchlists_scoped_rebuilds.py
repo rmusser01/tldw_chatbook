@@ -1121,7 +1121,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         assert not screen._responsive_region_layout.is_collapsed(
             Region.RIGHT_RAIL
         )
-        assert screen.query("#wl-region-right_rail")
+        right_rail_body = screen.query_one("#wl-region-right_rail")
         assert screen.query_one(
             "#wl-grip-right_rail", WatchlistsPaneGrip
         ) is grip
@@ -1133,6 +1133,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         assert not screen._responsive_region_layout.is_collapsed(
             Region.RIGHT_RAIL
         )
+        assert screen.query_one("#wl-region-right_rail") is right_rail_body
         assert screen.focused is focused
 
         await pilot.resize_terminal(144, 50)
@@ -1703,6 +1704,54 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         await _settle(pilot, host)
 
         assert screen._manual_layout_rollback is None
+
+
+async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
+    monkeypatch,
+) -> None:
+    """A no-DOM preference change must not belong to an older request."""
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: persisted.append(layout) or True,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        if not screen.region_layout.is_collapsed(Region.RIGHT_RAIL):
+            screen.action_toggle_right_rail()
+            await _settle(pilot, host)
+        assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
+
+        await pilot.resize_terminal(60, 50)
+        await _settle(pilot, host)
+        workbench = screen.query_one(WatchlistsWorkbench)
+        stale_token = screen._current_layout_request_token
+        effective_before = screen._effective_region_layout
+        assert stale_token > 0
+        assert effective_before.is_collapsed(Region.RIGHT_RAIL)
+        persisted.clear()
+
+        screen.query_one("#wl-grip-right_rail", Button).press()
+        await _settle(pilot, host)
+
+        preferred = screen.region_layout
+        assert not preferred.is_collapsed(Region.RIGHT_RAIL)
+        assert screen._effective_region_layout == effective_before
+        assert screen._current_layout_request_token == stale_token
+        assert screen._manual_layout_rollback is None
+        assert persisted == [preferred]
+
+        workbench.post_message(
+            RegionLayoutApplyFailed(
+                token=stale_token,
+                attempted=effective_before,
+                fallback=effective_before,
+            )
+        )
+        await _settle(pilot, host)
+
+        assert screen.region_layout == preferred
+        assert persisted == [preferred]
 
 
 async def test_failed_expansion_rolls_back_screen_and_persisted_preference(

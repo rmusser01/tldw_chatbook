@@ -3470,15 +3470,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._responsive_priority_target = None
         self.region_layout = preferred
         token = self._recompute_effective_layout(cause="explicit")
-        request_token = token or self._current_layout_request_token
-        self._manual_layout_rollback = ManualLayoutRollback(
-            token=request_token,
-            attempted_layout=self._effective_region_layout,
-            attempted_preferred=preferred,
-            preferred_before=before[0],
-            article_focus_before=before[2],
-            priority_before=before[3],
-        )
+        if token is not None:
+            self._manual_layout_rollback = ManualLayoutRollback(
+                token=token,
+                attempted_layout=self._effective_region_layout,
+                attempted_preferred=preferred,
+                preferred_before=before[0],
+                article_focus_before=before[2],
+                priority_before=before[3],
+            )
         self._schedule_layout_persist(preferred)
 
     @on(RegionToggled)
