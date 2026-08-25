@@ -390,12 +390,17 @@ async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
 ):
     app = _build_media_test_app()
     app.app_config["library"] = {
-        "media_reader": {
+        "reader": {
             "library_open": False,
-            "items_open": True,
             "custom_widths_enabled": False,
             "library_width": 28,
+            "future_shared": "keep",
+        },
+        "media_reader": {
+            "library_open": "legacy-keep",
+            "items_open": True,
             "items_width": 40,
+            "future_media": "keep",
         }
     }
     writes = []
@@ -419,12 +424,29 @@ async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
             lambda: bool(writes),
             message="Manual pane preference was not persisted.",
         )
-        assert writes == [("library.media_reader", "library_open", True)]
-        assert app.app_config["library"]["media_reader"]["library_open"] is True
+        assert writes == [("library.reader", "library_open", True)]
+        assert app.app_config["library"]["reader"] == {
+            "library_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 28,
+            "future_shared": "keep",
+        }
+        assert app.app_config["library"]["media_reader"]["library_open"] == (
+            "legacy-keep"
+        )
+
+        shell.items_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(writes) == 2,
+            message="Media Items preference was not persisted.",
+        )
+        assert writes[-1] == ("library.media_reader", "items_open", False)
+        assert app.app_config["library"]["media_reader"]["items_open"] is False
 
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
-        assert len(writes) == 1
+        assert len(writes) == 2
 
     next_screen = LibraryScreen(app)
     assert next_screen._library_media_reader_preferences.library_open is True
@@ -436,7 +458,8 @@ async def test_failed_manual_grip_persistence_restores_previous_preference(
 ):
     app = _build_media_test_app()
     app.app_config["library"] = {
-        "media_reader": {"library_open": False, "items_open": True}
+        "reader": {"library_open": False},
+        "media_reader": {"library_open": "legacy-keep", "items_open": True},
     }
     notices = []
     monkeypatch.setattr(
@@ -461,7 +484,11 @@ async def test_failed_manual_grip_persistence_restores_previous_preference(
         )
 
         assert screen._library_media_reader_preferences.library_open is False
-        assert app.app_config["library"]["media_reader"]["library_open"] is False
+        assert app.app_config["library"]["reader"]["library_open"] is False
+        assert (
+            app.app_config["library"]["media_reader"]["library_open"]
+            == "legacy-keep"
+        )
         assert shell.effective_layout.library_open is False
         assert notices[-1][1]["severity"] == "warning"
 
@@ -470,7 +497,8 @@ async def test_failed_manual_grip_persistence_restores_previous_preference(
 async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
     app = _build_media_test_app()
     app.app_config["library"] = {
-        "media_reader": {"library_open": False, "items_open": True}
+        "reader": {"library_open": False},
+        "media_reader": {"library_open": "legacy-keep", "items_open": True},
     }
     writes = []
     first_started = threading.Event()
@@ -505,30 +533,46 @@ async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
         )
 
         assert writes == [
-            ("library.media_reader", "library_open", True),
-            ("library.media_reader", "library_open", False),
+            ("library.reader", "library_open", True),
+            ("library.reader", "library_open", False),
         ]
-        assert app.app_config["library"]["media_reader"]["library_open"] is False
+        assert app.app_config["library"]["reader"]["library_open"] is False
+        assert (
+            app.app_config["library"]["media_reader"]["library_open"]
+            == "legacy-keep"
+        )
 
 
 @pytest.mark.asyncio
-async def test_settings_refresh_re_resolves_mounted_shell_without_media_reads():
+async def test_settings_refresh_re_resolves_mounted_shell_without_media_reads_or_writes(
+    monkeypatch,
+):
     app = _build_media_test_app()
     host = LibraryProductionCSSHarness(app)
+    writes = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args: writes.append(args),
+    )
 
     async with host.run_test(size=(170, 48)) as pilot:
         screen, shell = await _open_media_shell(host, pilot)
         service = app.media_reading_scope_service
         reads = (len(service.search_calls), len(service.detail_calls))
-        app.app_config.setdefault("library", {})["media_reader"] = {
-            "library_open": False,
-            "items_open": False,
-            "custom_widths_enabled": True,
-            "library_width": 36,
-            "items_width": 56,
+        app.app_config["library"] = {
+            "reader": {
+                "library_open": False,
+                "custom_widths_enabled": True,
+                "library_width": 36,
+            },
+            "media_reader": {
+                "items_open": False,
+                "items_width": 56,
+            },
         }
 
-        screen.request_library_media_layout_refresh(1)
+        screen.request_library_reader_layout_refresh(1)
         await pilot.pause()
 
         assert screen.query_one("#library-media-reader-shell") is shell
@@ -542,3 +586,11 @@ async def test_settings_refresh_re_resolves_mounted_shell_without_media_reads():
         assert not shell.effective_layout.library_open
         assert not shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
+        assert writes == []
+
+        app.app_config["library"]["media_reader"]["items_open"] = True
+        screen.request_library_media_layout_refresh(2)
+        await pilot.pause()
+        assert shell.effective_layout.items_open
+        assert (len(service.search_calls), len(service.detail_calls)) == reads
+        assert writes == []

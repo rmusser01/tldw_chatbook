@@ -20,7 +20,7 @@ PaneName = Literal["library", "items"]
 
 @dataclass(frozen=True)
 class AdaptiveReaderLayoutProfile:
-    """Destination width profile reserved for the shared policy rollout."""
+    """Destination-specific list and work-pane width policy."""
 
     list_min_width: int = 32
     list_target_width: int = 40
@@ -124,21 +124,17 @@ def resolve_adaptive_reader_layout(
     previous: AdaptiveReaderEffectiveLayout | None = None,
     priority: PaneName | None = None,
 ) -> AdaptiveReaderEffectiveLayout:
-    """Resolve preferred panes into the current Media effective layout.
-
-    The profile establishes the shared public shape but does not yet alter the
-    shipped Media geometry. Comfort expansion and destination-specific profile
-    behavior belong to the later adaptive-policy rollout.
+    """Resolve saved pane preferences into one responsive effective layout.
 
     Args:
         width: Available shell width in terminal cells.
         preferences: Persisted manual pane preferences.
-        profile: Destination layout profile reserved for the later rollout.
+        profile: Destination list and work-pane width policy.
         previous: Previously resolved layout used for hysteresis.
         priority: Pane explicitly requested by the user, if any.
 
     Returns:
-        Current Media-compatible effective pane geometry.
+        Current effective pane geometry.
 
     Raises:
         TypeError: If ``preferences`` or ``profile`` has the wrong type.
@@ -164,6 +160,7 @@ def resolve_adaptive_reader_layout(
             priority = inherited
 
     grip_width = 2 * PANE_GRIP_WIDTH
+    work_min_width = max(profile.work_min_width, 0)
     library_open = preferences.library_open
     items_open = preferences.items_open
     if priority is not None:
@@ -176,7 +173,7 @@ def resolve_adaptive_reader_layout(
             grip_width
             + (preferences.library_width if library_open else 0)
             + (preferences.items_width if items_open else 0)
-            + READER_COMFORT_WIDTH
+            + work_min_width
         )
         if width < full_width:
             if priority == "library":
@@ -184,8 +181,8 @@ def resolve_adaptive_reader_layout(
                 library_width = (
                     preferences.library_width
                     if width
-                    >= grip_width + preferences.library_width + READER_COMFORT_WIDTH
-                    else LIBRARY_MIN_WIDTH
+                    >= grip_width + preferences.library_width + work_min_width
+                    else min(LIBRARY_MIN_WIDTH, max(width - grip_width, 0))
                 )
                 items_width = 0
             else:
@@ -194,8 +191,18 @@ def resolve_adaptive_reader_layout(
                 items_width = (
                     preferences.items_width
                     if width
-                    >= grip_width + preferences.items_width + READER_COMFORT_WIDTH
-                    else ITEMS_MIN_WIDTH
+                    >= grip_width + preferences.items_width + work_min_width
+                    else min(
+                        max(profile.list_min_width, 0),
+                        max(width - grip_width, 0),
+                    )
+                )
+                items_width = min(
+                    max(
+                        items_width,
+                        min(profile.list_comfort_width, profile.list_max_width),
+                    ),
+                    max(width - grip_width - work_min_width, items_width),
                 )
             return AdaptiveReaderEffectiveLayout(
                 library_open=library_open,
@@ -212,7 +219,7 @@ def resolve_adaptive_reader_layout(
             grip_width
             + (preferences.library_width if open_library else 0)
             + (preferences.items_width if open_items else 0)
-            + READER_COMFORT_WIDTH
+            + work_min_width
         )
 
     if width < required_width(library_open, items_open):
@@ -238,6 +245,15 @@ def resolve_adaptive_reader_layout(
 
     library_width = preferences.library_width if library_open else 0
     items_width = preferences.items_width if items_open else 0
+    if items_open and not library_open:
+        comfort_width = max(
+            items_width,
+            min(profile.list_comfort_width, profile.list_max_width),
+        )
+        items_width = min(
+            comfort_width,
+            max(width - grip_width - work_min_width, items_width),
+        )
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,
         items_open=items_open,

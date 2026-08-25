@@ -3160,8 +3160,16 @@ class LibraryScreen(BaseAppScreen):
             "library": asyncio.Lock(),
             "items": asyncio.Lock(),
         }
-        self._library_media_layout_refresh_generation = int(
-            getattr(app_instance, "_library_media_layout_refresh_generation", 0) or 0
+        self._library_reader_layout_refresh_generation = int(
+            getattr(
+                app_instance,
+                "_library_reader_layout_refresh_generation",
+                getattr(app_instance, "_library_media_layout_refresh_generation", 0),
+            )
+            or 0
+        )
+        self._library_media_layout_refresh_generation = (
+            self._library_reader_layout_refresh_generation
         )
         self._library_media_reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._library_media_reader_preferences)
@@ -5280,15 +5288,24 @@ class LibraryScreen(BaseAppScreen):
     def _load_library_media_reader_preferences(
         self,
     ) -> MediaReaderLayoutPreferences:
-        """Read normalized persisted Media reader layout preferences."""
+        """Read shared Library geometry plus Media Items preferences."""
         app_config = getattr(self.app_instance, "app_config", None)
-        raw: Mapping[str, Any] = {}
+        raw: dict[str, Any] = {}
         if isinstance(app_config, Mapping):
             library_config = app_config.get("library")
             if isinstance(library_config, Mapping):
-                candidate = library_config.get("media_reader")
-                if isinstance(candidate, Mapping):
-                    raw = candidate
+                media_reader = library_config.get("media_reader")
+                if isinstance(media_reader, Mapping):
+                    raw.update(media_reader)
+                reader = library_config.get("reader")
+                if isinstance(reader, Mapping):
+                    for key in (
+                        "library_open",
+                        "custom_widths_enabled",
+                        "library_width",
+                    ):
+                        if key in reader:
+                            raw[key] = reader[key]
         return normalize_media_reader_preferences(raw)
 
     def _mirror_library_media_reader_preference(
@@ -5304,11 +5321,12 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(library_config, dict):
             library_config = {}
             app_config["library"] = library_config
-        media_reader = library_config.get("media_reader")
-        if not isinstance(media_reader, dict):
-            media_reader = {}
-            library_config["media_reader"] = media_reader
-        media_reader[key] = value
+        section_name = "reader" if key == "library_open" else "media_reader"
+        section = library_config.get(section_name)
+        if not isinstance(section, dict):
+            section = {}
+            library_config[section_name] = section
+        section[key] = value
 
     async def _persist_library_media_reader_preference(
         self,
@@ -5328,7 +5346,7 @@ class LibraryScreen(BaseAppScreen):
             try:
                 persisted = await asyncio.to_thread(
                     save_setting_to_cli_config,
-                    "library.media_reader",
+                    "library.reader" if pane == "library" else "library.media_reader",
                     key,
                     value,
                 )
@@ -5350,19 +5368,24 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(
-                "Library Media layout could not be saved; the previous pane choice was restored.",
+                "Library reader layout could not be saved; the previous pane choice was restored.",
                 severity="warning",
             )
 
-    def request_library_media_layout_refresh(self, generation: int) -> None:
-        """Apply a newer Settings save to the mounted shell without reloading data."""
-        if generation <= self._library_media_layout_refresh_generation:
+    def request_library_reader_layout_refresh(self, generation: int) -> None:
+        """Apply newer Library reader settings without reloading destination data."""
+        if generation <= self._library_reader_layout_refresh_generation:
             return
+        self._library_reader_layout_refresh_generation = generation
         self._library_media_layout_refresh_generation = generation
         self._library_media_reader_preferences = (
             self._load_library_media_reader_preferences()
         )
         self._sync_library_media_reader_layout_from_shell()
+
+    def request_library_media_layout_refresh(self, generation: int) -> None:
+        """Compatibility alias for callers using the former Media-specific name."""
+        self.request_library_reader_layout_refresh(generation)
 
     def _focus_library_media_grip_if_current(
         self,

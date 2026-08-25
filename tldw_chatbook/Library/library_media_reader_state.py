@@ -30,7 +30,7 @@ BackingMediaId = int | str
 
 MediaReaderLayoutPreferences = AdaptiveReaderLayoutPreferences
 MediaReaderEffectiveLayout = AdaptiveReaderEffectiveLayout
-MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile()
+MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=46)
 normalize_media_reader_preferences = normalize_adaptive_reader_preferences
 
 
