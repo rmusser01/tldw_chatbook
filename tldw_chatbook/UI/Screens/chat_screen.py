@@ -10931,7 +10931,12 @@ class ChatScreen(BaseAppScreen):
         available_columns: int | None = None,
         inspector_state: ConsoleInspectorState | None = None,
     ) -> ConsoleRailState:
-        """Build the current effective rail state from mounted Console context."""
+        """Build the current effective rail state from mounted Console context.
+
+        Inside a run tick's `tick_workspace_build_scope` (TASK-22201) the
+        workspace-context build below is served from the tick's shared,
+        fingerprint-validated build; every other caller builds live.
+        """
         resolved_available_columns = (
             available_columns
             if available_columns is not None
@@ -15203,18 +15208,32 @@ class ChatScreen(BaseAppScreen):
             # fresh post-await state (PR #660 review caught the reuse as a
             # staleness regression — the one-tuple-per-tick dedupe is
             # withdrawn for the visibility half).
-            rail_state = self._current_console_rail_state()
-            self._sync_console_control_bar(rail_state)
-            self._sync_console_settings_summary()
-            self._sync_console_mode_bar()
-            await self._sync_console_native_session_tabs()
-            self._dispatch_active_console_roleplay_refresh()
-            self._sync_console_workspace_context()
-            project_instruction_ui.sync_project_instruction_status_for_screen(self)
-            await self._sync_native_console_transcript()
-            self._sync_console_rail_visibility_if_changed(
-                self._current_console_rail_state()
-            )
+            #
+            # TASK-22201: the workspace-context builds of one tick (the rail
+            # states here, the workspace-context push, the control bar's and
+            # agent section's inspector legs — six per tick, measured) share
+            # ONE fingerprint-validated build through this scope. The PR
+            # #660 ruling is kept by MECHANISM rather than by always
+            # rebuilding: a session created/activated across the awaits
+            # changes the store fingerprint and the later reads rebuild,
+            # while a settled tick pays for one build. Task-scoped: only
+            # THIS coroutine's task reads the cache — workers and handlers
+            # interleaving during the awaits keep building live.
+            with self._workspace.tick_workspace_build_scope():
+                rail_state = self._current_console_rail_state()
+                self._sync_console_control_bar(rail_state)
+                self._sync_console_settings_summary()
+                self._sync_console_mode_bar()
+                await self._sync_console_native_session_tabs()
+                self._dispatch_active_console_roleplay_refresh()
+                self._sync_console_workspace_context()
+                project_instruction_ui.sync_project_instruction_status_for_screen(
+                    self
+                )
+                await self._sync_native_console_transcript()
+                self._sync_console_rail_visibility_if_changed(
+                    self._current_console_rail_state()
+                )
             self._dispatch_console_rail_preference_prune()
         except Exception:
             # Teardown-scoped ONLY. A tick that was mid-flight when the
