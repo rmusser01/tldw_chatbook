@@ -530,7 +530,7 @@ def fd_leak_sentinel() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Close the other half of the offline latch (TASK-21562).
 
     The bootstrap above sets ``HF_HUB_OFFLINE`` before anything imports
@@ -548,13 +548,35 @@ def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     ``monkeypatch.setattr`` rather than assignment, so a session that opted out
     per-test is restored -- the same reasoning as
     ``Tests/RAG_Eval/conftest.py``'s fixture, which does this for its own scope.
+
+    TASK-21592: the latch is also re-asserted at teardown. It is the single
+    condition standing between the suite and the failure class this fixture was
+    written for -- a real hub fetch, five blocked retries on a worker thread,
+    and teardown errors landing on unrelated passing tests. A test that turns
+    the latch back off (directly, or by reloading ``huggingface_hub.constants``)
+    would otherwise re-arm that class silently for everything that follows it in
+    the process.
+
+    Yields:
+        None. The offline latch is re-asserted at teardown.
     """
     if _hf_downloads_allowed():
+        yield
         return
     constants = sys.modules.get("huggingface_hub.constants")
-    if constants is None:
-        return
-    monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True, raising=False)
+    if constants is not None:
+        monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True, raising=False)
+    yield
+    # Looked up again rather than reusing `constants`: a test that imports the
+    # hub for the first time is exactly the case where setup found nothing and
+    # teardown is the only place the latch can be checked at all.
+    still_loaded = sys.modules.get("huggingface_hub.constants")
+    assert still_loaded is None or getattr(still_loaded, "HF_HUB_OFFLINE", False), (
+        "huggingface_hub's offline latch was turned off during this test; the "
+        "next test to reach the hub will make a real request, retry it five "
+        "times on a worker thread, and fail an unrelated later test at teardown "
+        "(TASK-21592). Set TLDW_TEST_ALLOW_HF_DOWNLOADS=1 to opt the session out."
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -625,18 +647,19 @@ def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
         )
     except ValueError as exc:
         pytest.fail(f"conflicting network markers: {exc}", pytrace=False)
-    network_guard.drain_blocked_attempts()
+    network_guard.drain_blocked_attempts()  # also clears the thread record
     network_guard.set_mode(mode)
     try:
         yield
     finally:
         network_guard.set_mode(network_guard.NetworkMode.BLOCKED)
+        # Threads first: draining the attempts clears both records.
+        threads = network_guard.drain_blocked_attempt_threads()
         attempts = network_guard.drain_blocked_attempts()
     if attempts:
-        detail = ", ".join(f"{call} -> {address}" for call, address in attempts)
         raise AssertionError(
             "test attempted network egress (blocked): "
-            + detail
+            + network_guard.describe_blocked_attempts(attempts, threads)
             + " — stub the client seam, use @pytest.mark.loopback_network for "
             "an owned numeric loopback listener, or use "
             "@pytest.mark.allow_network for unrestricted sockets."

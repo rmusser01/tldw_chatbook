@@ -29,6 +29,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError,
     MediaDatabase as Database,
 )
+from Tests.DB.historical_bootstrap_v6 import media_db_at_version
 #
 #######################################################################################################################
 #
@@ -581,23 +582,53 @@ class TestDatabaseCRUDAndSync:
         )
 
     def test_reading_progress_reopens_through_versioned_migration(self, temp_db_path):
-        first_db = Database(db_path=temp_db_path, client_id="schema_client")
-        media_id, _, _ = first_db.add_media_with_keywords(
-            title="Reading Progress Migration",
-            media_type="article",
-            content="Migration content for reading progress.",
-            keywords=["reading", "migration"],
-        )
-        first_db.close_connection()
+        # A genuinely historical v2 database, built by the real migration chain
+        # (base v1 + v1->v2), NOT by stamping "2" onto a current one. The old
+        # hand-degraded fixture had to be taught about every artifact each new
+        # migration added, and broke on the first one it had not been told about
+        # (v5->v6's chunk_engine_version). See TASK-21594.
+        with media_db_at_version(temp_db_path, 2, client_id="schema_client") as old_db:
+            assert get_schema_version(old_db) == 2
+            # The historical preconditions the migration under test depends on:
+            # neither local-only store exists yet at v2.
+            for absent_table in ("ReadingProgress", "MediaReadItLaterState"):
+                assert (
+                    old_db.execute_query(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = ?",
+                        (absent_table,),
+                    ).fetchone()
+                    is None
+                ), f"{absent_table} already exists at v2"
 
-        conn = sqlite3.connect(temp_db_path)
-        try:
-            conn.execute("DROP TABLE IF EXISTS ReadingProgress")
-            conn.execute("ALTER TABLE Media DROP COLUMN transcription_provenance_json")
-            conn.execute("UPDATE schema_version SET version = 2")
-            conn.commit()
-        finally:
-            conn.close()
+            # Seeded with the historical v1/v2 Media column set. The shipped
+            # writer cannot be used here: add_media_with_keywords() targets the
+            # current schema and fails with "no such column:
+            # transcription_provenance_json" (added at v4->v5) against a real
+            # v2 database -- the same reason this fixture needs a bootstrap
+            # module rather than production code.
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with old_db.transaction():
+                cursor = old_db.execute_query(
+                    """
+                    INSERT INTO Media (
+                        title, type, content, content_hash, uuid,
+                        ingestion_date, last_modified, client_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Reading Progress Migration",
+                        "article",
+                        "Migration content for reading progress.",
+                        "hash-reading-progress-migration",
+                        "11111111-2222-3333-4444-555555555555",
+                        now,
+                        now,
+                        "schema_client",
+                    ),
+                )
+                media_id = cursor.lastrowid
+            assert media_id is not None
 
         reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
         try:
