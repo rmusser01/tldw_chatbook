@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25  
 **Task:** TASK-22211  
-**Status:** Approved for implementation planning  
+**Status:** Spec review approved; awaiting final user approval
 **Related ADR:** [ADR-042: Watchlists reader-first information architecture](../../../backlog/decisions/042-watchlists-reader-first-ia.md)
 
 ## Problem
@@ -56,6 +56,17 @@ This rule applies at the Inspector, Navigation, and Feed Items boundaries on Rea
 and at the mounted side-pane boundaries on management tabs. The established
 responsive collapse priority remains Inspector, Navigation, then Feed Items.
 
+With every Read side pane preferred open and all three previously responsive-
+collapsed, reopening proceeds one pane at a time in reverse collapse order:
+
+- Feed Items reopens at 95 columns;
+- Navigation reopens at 119 columns;
+- Inspector reopens at 149 columns.
+
+On management tabs, Navigation reopens at 82 columns and Inspector at 112. A jump
+across several buffered boundaries may reopen several panes in one resolution, but
+only panes whose own boundary has been crossed may reopen.
+
 ## State model
 
 `resolve_effective_layout` accepts an optional previous effective layout. Resolution
@@ -67,17 +78,36 @@ The resolver first derives the nominal result using the existing minimum-width a
 priority rules. For each pane that is nominally open but was collapsed in the
 previous effective layout, reopening requires the nominal boundary plus
 `LAYOUT_HYSTERESIS_WIDTH`, set to `4` to match Library. Previously open panes retain
-today's collapse threshold, producing an asymmetric dead band rather than shifting
+today’s collapse threshold, producing an asymmetric dead band rather than shifting
 the breakpoint in both directions.
 
-The first settled layout has no previous responsive state and therefore resolves
-without hysteresis. This avoids treating the wide pre-mount fallback or an
-unmeasured initial geometry as user-visible history.
+Nominal collapse is applied before hysteresis: the initial accepted-open set is the
+intersection of panes open in the nominal result and panes open in the previous
+effective layout. A pane the nominal result collapses therefore closes immediately
+below its ordinary threshold, regardless of its previous state.
+
+The remaining nominally open, previously collapsed reopen candidates are evaluated
+deterministically in reverse collapse order. When a priority lease is active, this
+means the reverse of the effective candidate order after moving the protected target
+to collapse last. For each reopen candidate, calculate the required width with every
+pane already accepted open plus that candidate. Accept the reopen only when the
+available width is at least that required width plus four; otherwise leave the
+candidate collapsed before evaluating the next one. Preferred-collapsed and
+unmounted panes are never reopen candidates. This makes a multi-pane result
+independent of set iteration order and prevents two panes from borrowing the same
+width budget.
+
+Responsive history begins at the first positive `self.size.width`. That first
+positive allocation resolves without hysteresis and becomes the previous responsive
+layout for later passive resize events. Pre-layout persisted state, the wide compose
+fallback, and zero-width measurements are not responsive history.
 
 ## Intent boundaries
 
-Hysteresis is used for passive resize recomputation only. The following explicit
-transitions resolve without a previous layout and remain immediate:
+Every controller recomputation must explicitly state whether it is a passive resize;
+there is no default value. Only a passive resize may supply the previous responsive
+layout to the resolver. The following explicit transitions resolve without a
+previous layout and remain immediate:
 
 - a manual grip or keyboard pane toggle;
 - entering or leaving Article Focus;
@@ -89,17 +119,38 @@ collapsed, from delaying restoration when Article Focus exits. It also ensures t
 an explicit request to open a pane is honored immediately and continues to receive
 the existing temporary priority treatment.
 
-When a manually prioritized pane can be released because all preferred panes fit,
-the passive resize path uses the hysteresis-stabilized unprioritized result. The
-priority target is therefore not cleared by a sub-hysteresis width fluctuation.
+An explicit manual open creates a mode-local priority lease containing the target
+pane and the originating mode (Read or management). Another manual open in that mode
+replaces the target. Manually closing the target clears the lease. Article Focus
+suspends the lease without clearing it, and leaving its originating mode parks it;
+exiting Article Focus or returning to the originating mode resumes it. A lease from
+Read therefore cannot be cleared merely because a management tab has fewer mounted
+panes, and vice versa.
+
+The lease clears only during a passive resize in its originating mode after the
+hysteresis-stabilized unprioritized result proves that every preferred pane mounted
+in that mode fits. A sub-hysteresis fluctuation cannot clear it. A failed manual
+layout request restores the entire previous lease (target and originating mode), and
+a failed section swap leaves a parked lease unchanged. This makes tab round-trips
+and Article Focus entry/exit produce the same pane arrangement at the same width.
+
+An explicit open inside a reopening dead band takes effect immediately. That pane is
+then part of the previous open layout, so later passive events at the same width keep
+it open; it collapses only when width falls below its ordinary unbuffered threshold.
 
 ## Width authority
 
-Responsive resolution uses the Watchlists screen's own settled allocation width as
-the invariant authority. Child workbench content and container widths are excluded
-because they may reflect descendant scrollbar allocation. Before the screen has a
-positive settled size, resolution keeps the existing wide fallback so composition
-does not collapse panes based on zero-width geometry.
+Responsive resolution uses a positive `self.size.width` as the invariant authority.
+Child workbench content and container widths are excluded because they may reflect
+descendant scrollbar allocation. Before the screen has a positive width, composition
+may keep the existing wide preferred-layout fallback, but controller recomputation
+does not change effective responsive state, seed history, allocate a request token,
+or contact the workbench.
+
+If `self.size.width` transiently returns to zero after responsive history exists, the
+controller retains the last positive responsive state and performs no recomputation.
+The next positive measurement resolves against that retained history. A zero width
+never reintroduces the compose fallback or becomes a collapse/expand boundary.
 
 The resolver's four-column dead band remains a second code-level defense. A future
 one-column measurement fluctuation therefore cannot reintroduce pane churn even if
@@ -107,11 +158,18 @@ the width authority changes later.
 
 ## Workbench synchronization
 
-After resolution, the controller compares the new effective layout with the current
-effective layout. If they are equal, it does not allocate a new request token and
-does not update the workbench's effective-layout request reactive. This prevents a
-stable resize sequence from entering the asynchronous layout application path at
-all.
+After resolution, the controller compares the new effective layout with its current
+desired effective layout, including while an earlier asynchronous request is still
+in flight. If they are equal, it does not allocate a new request token and does not
+update the workbench's effective-layout request reactive. This prevents a stable
+resize sequence from entering the asynchronous layout application path at all.
+
+An apply rollback record is created only when an explicit action produced a real
+workbench request token. An explicit preference change that does not change desired
+DOM layout may still persist the changed preference, but it cannot attach rollback
+state to the previous request's stale token. Failed real requests keep the existing
+token fencing and restore preferred layout, Article Focus state, and the full
+priority lease captured before the attempt.
 
 When a real collapse or expansion occurs, the existing token fencing, focus
 handoff, pane factory, mount/remove, rollback, and persistence behavior remains
@@ -129,6 +187,12 @@ Pure resolver tests will cover both directions at every representative boundary:
 - repeat one-column oscillations without changing the effective layout;
 - reopen multiple previously collapsed panes in reverse collapse order without
   reopening them together before each pane's own buffered boundary;
+- verify that an active priority lease reverses the priority-adjusted candidate order
+  rather than the default collapse order;
+- cover the Read reopening points 95, 119, and 149 and management reopening points
+  82 and 112;
+- ignore zero width before and after the first positive screen allocation without
+  seeding history or issuing a request;
 - preserve manual collapse preferences, priority behavior, Article Focus, and
   management-tab mounted-pane rules.
 
@@ -136,9 +200,12 @@ A focused screen/controller test will feed passive resize widths around a bounda
 after explicitly establishing the first settled layout, then assert that
 sub-hysteresis changes do not allocate new workbench requests. This separates
 initialization behavior from passive resize behavior. The test will also verify that
-explicit manual and Article Focus transitions bypass hysteresis. Existing workbench
-tests continue to prove that only actual effective layout changes mount or remove
-region bodies.
+explicit manual and Article Focus transitions bypass hysteresis; a manual open inside
+the dead band survives the next same-width passive event; a priority lease parks and
+resumes across Article Focus and mode changes; rollback restores the full lease; and
+zero-width events are no-ops. Existing workbench tests continue to prove that only
+actual effective layout changes mount or remove region bodies and will assert that
+no-op widths do not move keyboard focus.
 
 Verification is limited to tests covering the changed Watchlists layout resolver,
 screen recomputation path, and affected workbench contract, per the user's requested
