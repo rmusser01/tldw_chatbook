@@ -17756,9 +17756,27 @@ class ChatScreen(BaseAppScreen):
                     active_id,
                     composer_collapsed=composer.collapsed,
                 )
+                # TASK-22000 (owner decision, 2026-08-24): for a session with
+                # a live queue projection the PRESENTATION is the authority on
+                # whether Send accepts a draft -- not the raw run state. That
+                # was ADR-046's original shape (an assignment here, not an
+                # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
+                # alongside the new recovery predicate, and since
+                # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
+                # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
+                # presentation` already reads as `occupies_slot`, the only
+                # thing that `or` could still change was the one state ADR-046
+                # exists for: an ACCEPTED live turn, which must read "Queue"
+                # and admit a FIFO follow-up. It rendered as a greyed-out
+                # button labelled "Queue" for the whole duration of every run.
+                #
+                # Nothing is lost by deferring: before acceptance the same
+                # projection returns "Preparing..." with `send_enabled=False`,
+                # so an unaccepted live run still refuses. The recovery
+                # predicate stays in the `or` and still refuses for a genuinely
+                # unresolved owner (see `dispatch_recovery_blocks_submission`).
                 send_blocked = (
-                    send_blocked
-                    or not queue_presentation.send_enabled
+                    not queue_presentation.send_enabled
                     or controller.store.dispatch_recovery_blocks_submission(active_id)
                 )
                 try:

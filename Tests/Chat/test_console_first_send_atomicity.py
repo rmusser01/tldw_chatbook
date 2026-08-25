@@ -9,7 +9,10 @@ import pytest
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
@@ -117,7 +120,17 @@ async def test_real_durable_adapter_without_atomic_method_fails_closed(
     )
 
     assert result.accepted is False
-    assert "durable turn acceptance is unavailable" in result.visible_copy.lower()
+    # TASK-22030: the refusal is right; its old shape (a bare result, no run
+    # state, no row, no toast) was not. Assert the user-visible surface, not
+    # just the return value.
+    assert "not sent" in result.visible_copy.lower()
+    assert result.should_clear_draft is False
+    run_state = controller.run_state_for("session-1")
+    assert run_state.status is ConsoleRunStatus.BLOCKED
+    assert run_state.visible_copy == result.visible_copy
+    rows = store.messages_for_session("session-1")
+    assert [row.role for row in rows] == [ConsoleMessageRole.SYSTEM]
+    assert rows[0].content == result.visible_copy
     assert gateway.calls == 0
     assert store.sessions()[0].persisted_conversation_id is None
     assert (

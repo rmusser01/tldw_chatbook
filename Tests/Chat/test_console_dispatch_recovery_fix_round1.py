@@ -212,6 +212,25 @@ async def test_healthy_durable_owner_is_not_recovery_before_checkpoint_transitio
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The pre-transition owner is live truth, never a user-visible recovery.
+
+    TASK-22000 (owner decision, 2026-08-24): this test originally also pinned
+    ``dispatch_recovery_blocks_submission(...) is True`` for this exact
+    healthy window. That half is now wrong -- it disabled Send for the whole
+    duration of every live turn, which contradicts ADR-046 / TASK-14808 /
+    TASK-15121 (an accepted live turn re-labels Send to "Queue" and admits the
+    draft as a FIFO follow-up). What this test is *named* for is unchanged and
+    still pinned below: the owner published before the checkpoint transition
+    is runtime truth (``runtime_active=True, recovery_needed=False``) and must
+    never surface as a recovery card. The genuine blocking contract this file
+    protects lives in
+    ``test_restored_source_owner_refuses_fresh_submit_before_echo_or_acceptance``
+    and ``_assert_original_owner_rolled_back`` -- both unhealthy owners, both
+    still refused -- plus
+    ``test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_turn``
+    in ``Tests/Chat/test_console_send_gate_queue_race.py``.
+    """
+
     _db, store, controller, _gateway = _controller(tmp_path)
     observed: list[tuple[object, bool, bool, bool]] = []
     publish = store.publish_durable_turn_owners
@@ -235,7 +254,7 @@ async def test_healthy_durable_owner_is_not_recovery_before_checkpoint_transitio
     result = await controller.submit_draft("healthy durable", session_id="session-1")
 
     assert result.accepted is True
-    assert observed == [(None, True, True, False)]
+    assert observed == [(None, False, True, False)]
 
 
 @pytest.mark.asyncio
