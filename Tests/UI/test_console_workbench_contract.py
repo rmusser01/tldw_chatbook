@@ -10,7 +10,10 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_console_native_chat_flow import ConsoleNavigationHarness
+from Tests.UI.test_console_native_chat_flow import (
+    ConsoleNavigationHarness,
+    _ReadyResolutionGateway,
+)
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
@@ -49,6 +52,20 @@ class ConsoleHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         await self.push_screen(ChatScreen(self.app_instance))
+
+
+class _CountingReadyResolutionGateway(_ReadyResolutionGateway):
+    def __init__(self) -> None:
+        self.resolve_calls = 0
+
+    async def resolve_for_send(self, selection):
+        self.resolve_calls += 1
+        return await super().resolve_for_send(selection)
+
+
+class _UnavailableResolutionGateway:
+    async def resolve_for_send(self, _selection):
+        raise RuntimeError("provider unavailable")
 
 
 class ConsoleFooterHarness(ConsolidatedCSSApp):
@@ -188,7 +205,7 @@ def _control_state() -> ConsoleControlState:
     )
 
 
-def test_prompt_improvement_has_no_top_bar_or_composer_row_button() -> None:
+def test_prompt_improvement_has_no_top_bar_or_always_visible_composer_entry() -> None:
     import inspect
 
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
@@ -197,8 +214,9 @@ def test_prompt_improvement_has_no_top_bar_or_composer_row_button() -> None:
     control_source = inspect.getsource(ConsoleControlBar.compose)
     composer_source = inspect.getsource(ConsoleComposerBar.compose)
     assert "Prompt" not in control_source
-    assert "console-prompt" not in composer_source
-    assert "Undo prompt improvement" not in composer_source
+    assert "Improve current draft" not in composer_source
+    assert "console-prompts-improve" not in composer_source
+    assert "console-prompt-improvement-recovery" in composer_source
 
 
 def test_console_control_summary_contains_one_persona_assistant_identity() -> None:
@@ -574,6 +592,109 @@ def test_prompts_does_not_add_a_standalone_composer_or_top_action() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 40), (100, 30), (80, 24)])
+async def test_composer_menu_opens_current_draft_directly_in_recommended_review(
+    size: tuple[int, int],
+) -> None:
+    """A draft reaches Improve without crossing the Prompt Library first.
+
+    This catches a regression that collapses the two destinations back into
+    one generic Prompts row, reintroduces Browse as the initial modal mode, or
+    leaves keyboard users on an equally weighted Auto action.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _CountingReadyResolutionGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        composer = console.query_one("#console-native-composer")
+        composer.load_draft("Explain the trade-off clearly.")
+
+        await console._open_console_composer_menu()
+        await pilot.pause()
+        menu = host.screen_stack[-1]
+        direct = list(menu.query("#console-composer-menu-improve-current-draft"))
+        browse = list(menu.query("#console-composer-menu-prompts"))
+
+        assert len(direct) == 1
+        assert str(direct[0].label) == "Improve current draft…"
+        assert len(browse) == 1
+        assert str(browse[0].label) == "Browse Prompt Library…"
+
+        direct[0].press()
+        await pilot.pause()
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        assert modal.state.mode == "improve"
+        assert (
+            modal.query_one("#console-prompts-current-user").text
+            == "Explain the trade-off clearly."
+        )
+        review = modal.query_one("#console-prompts-review-improve")
+        assert str(review.label) == "Analyze and user review (Recommended)"
+        assert review.disabled is False
+        assert host.focused is review
+        assert gateway.resolve_calls == 0
+        scroll = modal.query_one("#console-prompts-improve-scroll")
+        assert scroll.region.contains_region(review.region)
+        auto = modal.query_one("#console-prompts-auto-improve")
+        structured = modal.query_one("#console-prompts-structured-recipe")
+        for action in (auto, review, structured):
+            assert action.region.width > 0 and action.region.height > 0
+            assert scroll.region.contains_region(action.region)
+        assert auto.region.bottom <= review.region.y
+        assert review.region.bottom <= structured.region.y
+
+
+@pytest.mark.asyncio
+async def test_direct_improve_keeps_provider_recovery_when_review_is_unavailable() -> None:
+    """Direct entry must not strand users beside disabled model actions."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = _UnavailableResolutionGateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        console.query_one("#console-native-composer").load_draft("Improve me.")
+        recovery = AsyncMock()
+        console._open_console_provider_recovery = recovery
+
+        await console._open_console_composer_menu()
+        await pilot.pause()
+        host.screen_stack[-1].query_one(
+            "#console-composer-menu-improve-current-draft"
+        ).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        review = modal.query_one("#console-prompts-review-improve")
+        assert review.disabled is False
+        review.press()
+        for _ in range(10):
+            await pilot.pause()
+            if list(modal.query("#console-prompts-configure-provider")):
+                break
+        review = modal.query_one("#console-prompts-review-improve")
+        assert review.disabled is True
+        configure = list(modal.query("#console-prompts-configure-provider"))
+        assert len(configure) == 1
+        assert configure[0].disabled is False
+        assert host.focused is configure[0]
+
+        configure[0].press()
+        await pilot.pause()
+        recovery.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -> None:
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -600,6 +721,49 @@ async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -
         await pilot.pause()
 
         recovery.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_open_library_uses_existing_prompt_deep_link() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        opened = console._prompts._open_saved_console_recipe_in_library("local", "77")
+        await pilot.pause()
+
+    assert opened is True
+    assert len(host.navigation_messages) == 1
+    navigation = host.navigation_messages[0]
+    assert navigation.screen_name == "library"
+    assert navigation.screen_context == {
+        "mode": "prompts",
+        "open_source_type": "prompt",
+        "open_source_id": "77",
+    }
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_open_library_rejects_unsupported_identity() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        opened = console._prompts._open_saved_console_recipe_in_library(
+            "server", "recipe-server-77"
+        )
+        await pilot.pause()
+
+    assert opened is False
+    assert host.navigation_messages == []
 
 
 @pytest.mark.asyncio
@@ -633,14 +797,22 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert not list(rail.query("#console-staged-context-tray"))
 
         # Project-instruction status is the one-line Inspector preamble;
-        # staged context follows it and remains above Source Readiness.
+        # staged context starts the scroll body below pinned authority.
         tray = console.query_one("#console-staged-context-tray")
         project_status = console.query_one("#console-project-instruction-status")
+        inspector_rail = console.query_one("#console-right-rail")
         rail_body = console.query_one("#console-inspector-rail-body")
+        assert tuple(child.id for child in inspector_rail.children) == (
+            "console-inspector-rail-header",
+            "console-project-instruction-status",
+            "console-send-authority-summary",
+            "console-inspector-rail-body",
+            "console-inspector-outer-scroll-hint",
+        )
+        assert project_status.parent is inspector_rail
         assert tray.parent is rail_body
         children = list(rail_body.children)
-        assert children.index(project_status) == 0
-        assert children.index(tray) == children.index(project_status) + 1
+        assert children[0] is tray
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work_section = console.query_one("#console-live-work-section")
         assert live_work_section in readiness.ancestors
@@ -663,20 +835,21 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
         inspector = console.query_one("#console-run-inspector-state")
         ordered_ids = _children_in_display_order(inspector)
 
-        status_index = ordered_ids.index("console-inspector-run-status-summary")
+        run_recipe_index = ordered_ids.index("console-inspector-run-recipe")
         approval_action_index = ordered_ids.index("console-inspector-review-approval")
         save_action_index = ordered_ids.index("console-inspector-save-chatbook")
         first_secondary_heading_index = ordered_ids.index(
             "console-inspector-selected-conversation-heading"
         )
 
-        assert status_index < approval_action_index < first_secondary_heading_index
+        assert run_recipe_index < approval_action_index < first_secondary_heading_index
         # TASK-1843 removed `console-inspector-review-tool-call`: it gated on
         # a counter nothing ever assigned, so it was permanently disabled
         # while permanently claiming a reason, and its handler was a notify()
         # stub. It must stay gone rather than be re-added as a stub.
         assert "console-inspector-review-tool-call" not in ordered_ids
-        assert status_index < save_action_index < first_secondary_heading_index
+        assert run_recipe_index < save_action_index < first_secondary_heading_index
+        assert "console-inspector-run-status-summary" not in ordered_ids
         assert console.query_one("#console-inspector-review-approval").disabled is False
         assert console.query_one("#console-inspector-save-chatbook").disabled is False
 
@@ -727,6 +900,24 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
         )
         assert "Run recipe" in text
         assert "Sources" in text
+        assert "More" in text
+        assert "Tools" not in text
+        assert "Approvals" not in text
+        assert "Artifacts" not in text
+
+        more_body = inspector.query_one("#console-inspector-more-body")
+        for owner in ("tools", "approvals", "artifacts"):
+            heading = inspector.query_one(f"#console-inspector-{owner}-heading")
+            assert more_body in heading.ancestors
+
+        more_toggle = inspector.query_one("#console-inspector-more-toggle")
+        more_toggle.focus()
+        await pilot.press("enter")
+        text = " ".join(
+            _widget_text(child)
+            for child in inspector.walk_children()
+            if _is_displayed(child)
+        )
         assert "Tools" in text
         assert "Approvals" in text
         assert "Artifacts" in text

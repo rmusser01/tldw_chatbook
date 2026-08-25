@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Mapping
 
 
@@ -14,6 +15,8 @@ class ShellDestination:
     purpose: str
     tooltip: str
     legacy_routes: tuple[str, ...] = ()
+    related_routes: tuple[str, ...] = ()
+    palette_aliases: tuple[str, ...] = ()
     full_label: str | None = None
     navigation_priority: int = 50
 
@@ -64,9 +67,24 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
             "prompts",
             "skills",
             "writing",
-            "research",
         ),
         navigation_priority=30,
+    ),
+    ShellDestination(
+        "research",
+        "Research",
+        "research_workspace",
+        "Grounded workspaces and durable research-run observation.",
+        "Open Research Workspace for grounded research and research runs.",
+        related_routes=("research",),
+        palette_aliases=(
+            "research workspace",
+            "research runs",
+            "research sessions",
+            "deep research",
+            "notebook",
+        ),
+        navigation_priority=35,
     ),
     ShellDestination(
         "artifacts",
@@ -159,6 +177,28 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
     destination.destination_id: destination for destination in SHELL_DESTINATION_ORDER
 }
 
+# Shortcut ownership is a destination contract, not a position in the
+# navigation strip. New destinations therefore cannot silently reassign an
+# established shortcut by changing ``SHELL_DESTINATION_ORDER``.
+SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
+    {
+        "home": "ctrl+1",
+        "console": "ctrl+2",
+        "library": "ctrl+3",
+        "artifacts": "ctrl+4",
+        "personas": "ctrl+5",
+        "watchlists_collections": "ctrl+6",
+        "schedules": "ctrl+7",
+        "workflows": "ctrl+8",
+        "mcp": "ctrl+9",
+        "acp": "ctrl+0",
+        "lab": "f7",
+        "logs": "f8",
+        "settings": "f9",
+        "research": "f10",
+    }
+)
+
 _ROUTABLE_LEGACY_ROUTES = {
     "chat",
     "notes",
@@ -168,7 +208,6 @@ _ROUTABLE_LEGACY_ROUTES = {
     "conversation",
     "study",
     "writing",
-    "research",
     "chatbooks",
     "subscriptions",
     "tools_settings",
@@ -197,11 +236,18 @@ for destination in SHELL_DESTINATION_ORDER:
         destination.primary_route,
         destination.primary_route,
     )
-    _ROUTE_MAP[destination.destination_id] = ResolvedShellRoute(
-        destination.destination_id,
-        destination.primary_route,
-        destination.destination_id,
-    )
+    if destination.destination_id not in destination.related_routes:
+        _ROUTE_MAP[destination.destination_id] = ResolvedShellRoute(
+            destination.destination_id,
+            destination.primary_route,
+            destination.destination_id,
+        )
+    for related_route in destination.related_routes:
+        _ROUTE_MAP[related_route] = ResolvedShellRoute(
+            destination.destination_id,
+            related_route,
+            related_route,
+        )
     for legacy_route in destination.legacy_routes:
         canonical_route = _CANONICAL_ROUTE_OVERRIDES.get(
             legacy_route,

@@ -82,8 +82,9 @@ def test_console_assistant_library_access_default_is_false():
 
     assert template["console"]["assistant_library_access_default"] is False
     assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["console"]
-        ["assistant_library_access_default"]
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
+            "assistant_library_access_default"
+        ]
         is False
     )
 
@@ -148,10 +149,16 @@ def test_migration_seed_rejects_string_boolean_from_an_already_loaded_config():
 def test_console_rail_labels_ship_horizontal_by_default():
     """The generated config keeps the established horizontal rail handles."""
     assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
-            "stack_collapsed_rail_labels"
-        ]
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["stack_collapsed_rail_labels"]
         is False
+    )
+
+
+def test_console_rail_layout_scope_ships_global_by_default():
+    """One shared arrangement is the continuity-first generated default."""
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["rail_layout_scope"]
+        == "global"
     )
 
 
@@ -175,6 +182,7 @@ def test_load_settings_exposes_console_defaults(tmp_path, monkeypatch):
     assert settings["console"]["collapse_large_pastes"] is True
     assert settings["console"]["paste_collapse_threshold"] == 50
     assert settings["console"]["stack_collapsed_rail_labels"] is False
+    assert settings["console"]["rail_layout_scope"] == "global"
     assert settings["console"]["conversation_budget_mode"] == "automatic"
     assert settings["console"]["compaction_mode"] == "ask"
 
@@ -205,6 +213,32 @@ def test_load_settings_normalizes_console_rail_label_style(
     assert settings["console"]["stack_collapsed_rail_labels"] is expected
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ('"workspace"', "workspace"),
+        ('"  WoRkSpAcE  "', "workspace"),
+        ('"global"', "global"),
+        ('"session"', "global"),
+        ("123", "global"),
+        ("true", "global"),
+    ],
+)
+def test_load_settings_normalizes_console_rail_layout_scope(
+    tmp_path, monkeypatch, raw_value, expected
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[console]\nrail_layout_scope = {raw_value}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["rail_layout_scope"] == expected
+
+
 def test_console_sidechat_model_default_is_empty_string():
     from tldw_chatbook.config import get_cli_setting
 
@@ -216,9 +250,7 @@ def test_console_sidechat_prompt_template_default():
     from tldw_chatbook.config import get_cli_setting
 
     assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
-            "sidechat_prompt_template"
-        ]
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["sidechat_prompt_template"]
         == "Give me more details about: {selection}"
     )
     assert (
@@ -379,10 +411,7 @@ def test_config_template_exposes_conversation_memory_defaults():
     assert console["compaction_target_ratio"] == 0.55
     assert console["compaction_summary_max_tokens"] == 1024
     assert console["compaction_failure_behavior"] == "stop_and_ask"
-    assert (
-        console["compaction_carry_forward_mode"]
-        == "memory_with_recent_turns"
-    )
+    assert console["compaction_carry_forward_mode"] == "memory_with_recent_turns"
 
 
 def test_console_project_instruction_byte_limits_default_to_32_kib(
@@ -593,9 +622,7 @@ def test_blank_chat_display_name_falls_back_to_user(monkeypatch, tmp_path):
     assert config_module.get_chat_defaults_user_display_name() == "User"
 
 
-def test_invalid_chat_display_name_warns_without_echoing_value(
-    monkeypatch, tmp_path
-):
+def test_invalid_chat_display_name_warns_without_echoing_value(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     invalid_value = "unsafe-secret\u202e"
     config_path.write_text(

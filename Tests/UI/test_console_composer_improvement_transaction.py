@@ -476,6 +476,24 @@ def test_improvement_undo_restores_exact_state_and_preserves_attachment():
     assert composer.undo_improvement() is False
 
 
+def test_improvement_comparison_masks_inline_file_bytes_but_keeps_labels():
+    composer = _mixed_composer()
+    before = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(before, request_nonce="review-1")
+
+    composer.apply_improvement(before, projection.text.replace("Draft", "Better"))
+
+    comparison = composer.improvement_comparison()
+    assert comparison is not None
+    original, improved = comparison
+    assert INLINE_BODY not in original
+    assert INLINE_BODY not in improved
+    assert INLINE_LABEL in original
+    assert INLINE_LABEL in improved
+    assert "Draft" in original
+    assert "Better" in improved
+
+
 @pytest.mark.parametrize("event", ["manual_edit", "send", "load"])
 def test_improvement_undo_expires_on_documented_draft_scope_events(event):
     composer = _mixed_composer()

@@ -101,17 +101,27 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Literal, Optional, TYPE_CHECKING
 import asyncio
 import uuid
 
 from loguru import logger
 
+from ...Constants import (
+    LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    TAB_LIBRARY,
+)
 from ..Navigation.pending_handoff_store import HandoffChannel
+from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from ...Chat.console_command_grammar import CommandParse
 from ...Utils.fts5_match_forms import quote_fts5_prefix
-from ...Chat.console_provider_endpoints import safe_endpoint_display
+from ...Chat.console_provider_endpoints import (
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
 from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
 from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
@@ -349,6 +359,7 @@ class _ConsolePromptImprovementFlow:
         current_system_fingerprint: str,
         gateway: Any,
         improvement_context: Any,
+        opening_provider_selection: Any,
         app_instance: Any,
         active_session_settings: Callable[[], Any],
         build_provider_selection: Callable[[], Any],
@@ -371,6 +382,8 @@ class _ConsolePromptImprovementFlow:
             gateway: The Console provider gateway that resolves targets.
             improvement_context: The opening disclosure the activation
                 returns a `replace`d copy of.
+            opening_provider_selection: The provider, model, and endpoint
+                identity shown before the user chooses a model-backed path.
             app_instance: Held (not snapshotted into a bound `notify`) so a
                 later `app.notify` replacement is still observed.
             active_session_settings: Returns the LIVE session settings --
@@ -390,6 +403,17 @@ class _ConsolePromptImprovementFlow:
         self._current_system_fingerprint = current_system_fingerprint
         self._gateway = gateway
         self._improvement_context = improvement_context
+        self._opening_target_identity = (
+            str(getattr(opening_provider_selection, "provider", "") or ""),
+            str(
+                getattr(opening_provider_selection, "explicit_model", "")
+                or getattr(opening_provider_selection, "configured_model", "")
+                or ""
+            ),
+            normalize_generic_endpoint_for_compare(
+                getattr(opening_provider_selection, "base_url", "")
+            ),
+        )
         self._app_instance = app_instance
         self._active_session_settings = active_session_settings
         self._build_provider_selection = build_provider_selection
@@ -458,6 +482,40 @@ class _ConsolePromptImprovementFlow:
                     or "Prompt improvement could not resolve the current provider "
                     "target. Review Console provider settings and reopen Improve."
                 ),
+                unavailable_recovery=(
+                    "draft" if projection_blocker else "provider"
+                ),
+            )
+        resolved_target = (
+            str(getattr(resolution, "provider", "") or ""),
+            str(getattr(resolution, "model", "") or ""),
+            normalize_generic_endpoint_for_compare(
+                getattr(resolution, "base_url", "")
+            ),
+        )
+        if any(
+            expected and expected != actual
+            for expected, actual in zip(
+                self._opening_target_identity,
+                resolved_target,
+                strict=True,
+            )
+        ):
+            self._pinned_resolution = None
+            return replace(
+                self._improvement_context,
+                current_user_projection=projection,
+                provider_label=resolved_target[0] or "Not configured",
+                model_label=resolved_target[1] or "Not configured",
+                endpoint_label=(
+                    safe_endpoint_display(getattr(resolution, "base_url", ""))
+                    or "Provider default"
+                ),
+                model_unavailable_reason=(
+                    "The current Console provider, model, or endpoint changed after "
+                    "this workbench opened. Reopen Improve to review the new target."
+                ),
+                unavailable_recovery="reopen",
             )
         self._pinned_resolution = resolution
         blocker = projection_blocker
@@ -477,6 +535,7 @@ class _ConsolePromptImprovementFlow:
                 safe_endpoint_display(resolution.base_url) or "Provider default"
             ),
             model_unavailable_reason=blocker,
+            unavailable_recovery=("draft" if projection_blocker else "provider"),
             pinned_resolution=resolution,
         )
 
@@ -954,6 +1013,12 @@ class ConsolePromptsController:
         """
         return self._screen.app.push_screen
 
+    @property
+    def post_message(self) -> Any:
+        """`Screen.post_message`, live-read for app-level navigation requests."""
+
+        return self._screen.post_message
+
     # -- Named constructor dependencies -------------------------------------
     #
     # Each property below is a thin wrapper around a stored callable, kept
@@ -1074,8 +1139,10 @@ class ConsolePromptsController:
         """
         self._focus_console_composer_if_needed(force=True)
 
-    def _open_console_prompts_modal(self) -> None:
-        """Open the source-aware Prompt Library without changing the draft.
+    def _open_console_prompts_modal(
+        self, *, initial_mode: Literal["browse", "improve"] = "browse"
+    ) -> None:
+        """Open Prompt Browse or direct improvement without changing the draft.
 
         Builds the modal's two collaborators for this one open -- a
         `_ConsolePromptSource` over the app's prompt scope service, and a
@@ -1105,10 +1172,25 @@ class ConsolePromptsController:
         opening_selection = self._build_console_provider_selection()
         gateway = self._ensure_console_provider_gateway()
         improvement_service = PromptImprovementService(gateway=gateway)
+        opening_projection = None
+        projection_blocker = ""
+        try:
+            opening_projection = composer.project_snapshot_for_model(
+                composer_snapshot,
+                request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
+            )
+        except ValueError:
+            projection_blocker = (
+                "Model improvement is unavailable because the draft contains "
+                "reserved protected-placeholder text. Remove or rename that "
+                "literal token, then reopen Improve."
+            )
+        provider_blocker = self._console_provider_blocker_copy()
+        unavailable_reason = projection_blocker or provider_blocker
         improvement_context = ConsolePromptImprovementContext(
             session_id=session_id,
             composer_snapshot=composer_snapshot,
-            current_user_projection=None,
+            current_user_projection=opening_projection,
             current_system_prompt=current_system,
             current_system_fingerprint=current_system_fingerprint,
             provider_label=str(provider_display or "Not configured"),
@@ -1117,7 +1199,10 @@ class ConsolePromptsController:
                 safe_endpoint_display(opening_selection.base_url)
                 or "Resolve on Improve"
             ),
-            model_unavailable_reason=self._console_provider_blocker_copy(),
+            model_unavailable_reason=unavailable_reason,
+            unavailable_recovery=(
+                "draft" if projection_blocker else "provider"
+            ),
         )
 
         flow = _ConsolePromptImprovementFlow(
@@ -1130,6 +1215,7 @@ class ConsolePromptsController:
             current_system_fingerprint=current_system_fingerprint,
             gateway=gateway,
             improvement_context=improvement_context,
+            opening_provider_selection=opening_selection,
             app_instance=self.app_instance,
             active_session_settings=self._ensure_active_console_session_settings,
             build_provider_selection=self._build_console_provider_selection,
@@ -1143,7 +1229,7 @@ class ConsolePromptsController:
                 search=source.search,
                 detail=source.detail,
                 save=source.save,
-                improve_unavailable_reason=self._console_provider_blocker_copy(),
+                improve_unavailable_reason=unavailable_reason,
                 configure_provider=self._open_console_provider_recovery,
                 improvement_context=improvement_context,
                 activate_improvement_context=flow.activate_improvement_context,
@@ -1153,9 +1239,44 @@ class ConsolePromptsController:
                 validate_improvement=flow.validate_improvement,
                 apply_improvement_result=flow.apply_improvement_result,
                 retry_improvement_persistence=flow.retry_improvement_persistence,
+                open_library_prompt=self._open_saved_console_recipe_in_library,
+                initial_mode=initial_mode,
             ),
             callback=self._restore_console_composer_focus,
         )
+
+    def _open_saved_console_recipe_in_library(
+        self,
+        source: Literal["local", "server"],
+        identifier: str,
+    ) -> bool:
+        """Open a newly saved local Recipe in Library > Prompts by identity.
+
+        Args:
+            source: Saved Recipe source.
+            identifier: Source-owned Recipe identity.
+
+        Returns:
+            bool: ``True`` when navigation was posted; otherwise ``False``.
+        """
+
+        if source != "local" or not identifier.isdecimal():
+            self.app_instance.notify(
+                "Recipe saved. Open Library > Prompts and select its source to find it.",
+                severity="warning",
+            )
+            return False
+        self.post_message(
+            NavigateToScreen(
+                TAB_LIBRARY,
+                {
+                    LIBRARY_NAV_CONTEXT_MODE: "prompts",
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "prompt",
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: identifier,
+                },
+            )
+        )
+        return True
 
     @staticmethod
     def _is_recipe_prompt_record(record: Mapping[str, Any]) -> bool:

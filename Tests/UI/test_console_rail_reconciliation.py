@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.events import MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
+from textual.events import Click, MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -461,7 +461,13 @@ async def test_workspace_context_change_survives_transient_relabel_controls() ->
         tray.refresh(recompose=True)
         await _settle(pilot)
 
-        assert tray._workspace_tree_context_data is None
+        assert tray._workspace_tree_context_data is workspace.data
+        selection_context = tray.query_one(
+            "#console-workspace-tree-selection-context", Static
+        )
+        assert str(selection_context.renderable) == (
+            "Selected: Workspace One · Enter open"
+        )
         assert app.query_one("#console-workspace-context-action-row").display is False
         star = app.query_one("#console-workspace-tree-star", Button)
         assert star.disabled is True
@@ -925,6 +931,219 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
             await _settle(pilot, passes=2)
     await _settle(pilot, passes=8)
     return rail
+
+
+@pytest.mark.asyncio
+async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A complete-stylesheet pointer gesture cannot retarget after rail reveal."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+    workspaces = tuple(
+        WorkspaceTreeWorkspace(
+            workspace_id=f"workspace-{index}",
+            label=f"Workspace {index}",
+            conversations=tuple(
+                WorkspaceTreeConversation(
+                    conversation_id=f"conversation-{index}-{child}",
+                    title=f"Conversation {index}-{child}",
+                    starred=False,
+                    updated_sort=f"{child}",
+                    selected=False,
+                    run_marker="",
+                )
+                for child in range(4)
+            ),
+            next_cursor=None,
+        )
+        for index in range(8)
+    )
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        rail = await _open_all_production_context_sections(host, pilot)
+        console = host.screen_stack[-1]
+        rail.sync_workspace_context(
+            replace(
+                _workspace_state(),
+                workspace_tree=workspaces,
+                workspace_marks_available=True,
+            )
+        )
+        await _settle(pilot, passes=8)
+        tree = rail.query_one(ConsoleWorkspaceTree)
+        bounded = rail.query_one(
+            "#console-bounded-section-workspace", ConsoleBoundedSection
+        )
+        workspace = tree.workspace_nodes["workspace-1"]
+        workspace_requests: list[str] = []
+        conversation_requests: list[str] = []
+        monkeypatch.setattr(
+            console._workspace,
+            "activate_workspace_id",
+            workspace_requests.append,
+        )
+
+        async def record_conversation(conversation_id: str, **_kwargs) -> None:
+            conversation_requests.append(conversation_id)
+
+        monkeypatch.setattr(
+            console._workspace,
+            "open_console_workspace_conversation",
+            record_conversation,
+        )
+
+        assert bounded.max_content_lines == 20
+        assert bounded.native_scroll_owner is tree
+        assert tree.max_scroll_y > 0
+        rail.activate_section("session", deliberate_reveal=False)
+        workspace_line = int(workspace._line)
+        tree.scroll_to(y=max(0, workspace_line - 1), animate=False, immediate=True)
+        workspace_header_y = rail.query_one(
+            "#console-rail-section-header-workspace"
+        ).virtual_region.y
+        outer = rail.query_one("#console-left-rail-body", VerticalScroll)
+        outer.scroll_to(
+            y=max(0, workspace_header_y - 3),
+            animate=False,
+            immediate=True,
+        )
+        await _settle(pilot, passes=4)
+        assert rail._active_section_id == "session"
+        click_y = workspace_line - int(tree.scroll_y)
+        assert 0 <= click_y < tree.content_region.height
+        pressed_key = "workspace:workspace-1"
+        old_tree_y = tree.content_region.y
+        old_outer_scroll_y = outer.scroll_y
+        pressed_coordinate = (
+            tree.content_region.x + 4,
+            tree.content_region.y + click_y,
+        )
+
+        assert await pilot.mouse_down(offset=pressed_coordinate)
+        await _settle(pilot, passes=8)
+
+        assert tree._pressed_node_key == pressed_key
+        assert rail._active_section_id == "workspace"
+        assert outer.scroll_y != old_outer_scroll_y
+        assert tree.content_region.y != old_tree_y
+        await pilot._post_mouse_events(
+            [MouseUp, Click],
+            offset=pressed_coordinate,
+            button=1,
+        )
+        await _settle(pilot, passes=4)
+
+        assert tree.cursor_node is not None
+        assert tree.cursor_node.data.key == pressed_key
+        assert workspace_requests == []
+        assert conversation_requests == []
+
+        new_click_y = int(workspace._line) - int(tree.scroll_y)
+        assert await pilot.click(tree, offset=(4, new_click_y), times=2)
+        await _settle(pilot, passes=4)
+        assert workspace_requests == ["workspace-1"]
+        replacement_coordinate = (
+            tree.content_region.x + 4,
+            tree.content_region.y + new_click_y,
+        )
+        assert await pilot.mouse_down(offset=replacement_coordinate)
+        await _settle(pilot, passes=2)
+        assert tree._pressed_node_key == pressed_key
+
+        replacement = WorkspaceTreeWorkspace(
+            workspace_id="replacement",
+            label="Replacement",
+            conversations=tuple(
+                WorkspaceTreeConversation(
+                    conversation_id=f"replacement-{index}",
+                    title=f"Replacement conversation {index}",
+                    starred=False,
+                    updated_sort=f"{index}",
+                    selected=False,
+                    run_marker="",
+                )
+                for index in range(30)
+            ),
+            next_cursor=None,
+        )
+        tree.sync_projection(
+            (replacement,),
+            expanded_workspace_ids={"replacement"},
+        )
+        await _settle(pilot, passes=6)
+        assert tree._pressed_node_key is None
+        assert tree._last_pointer_click_key is None
+        assert tree.conversation_nodes, tree.workspace_nodes["replacement"].data
+        replacement_node = tree.conversation_nodes["replacement-15"]
+        replacement_local_y = replacement_coordinate[1] - tree.content_region.y
+        tree.scroll_to(
+            y=max(0, int(replacement_node._line) - replacement_local_y),
+            animate=False,
+            immediate=True,
+        )
+        await _settle(pilot, passes=2)
+        replacement_line = int(tree.scroll_y) + replacement_local_y
+        replacement_node = tree.get_node_at_line(replacement_line)
+        assert replacement_node is not None
+        assert replacement_node.data is not None
+        assert replacement_node.data.kind == "conversation"
+
+        await pilot._post_mouse_events(
+            [MouseUp, Click],
+            offset=replacement_coordinate,
+            button=1,
+        )
+        await _settle(pilot, passes=4)
+        assert tree.cursor_node is not replacement_node
+        assert conversation_requests == []
+
+
+@pytest.mark.asyncio
+async def test_empty_workspace_tree_press_does_not_request_early_reveal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a row-backed stable key authorizes press-time rail reflow."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        rail = await _open_all_production_context_sections(host, pilot)
+        rail.sync_workspace_context(
+            replace(
+                _workspace_state(),
+                workspace_tree=(
+                    WorkspaceTreeWorkspace(
+                        workspace_id="workspace-1",
+                        label="Workspace 1",
+                        conversations=(),
+                        next_cursor=None,
+                    ),
+                ),
+            )
+        )
+        await _settle(pilot, passes=4)
+        tree = rail.query_one(ConsoleWorkspaceTree)
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def record_activation(section_id: str, **kwargs: object) -> None:
+            calls.append((section_id, kwargs))
+
+        monkeypatch.setattr(rail, "activate_section", record_activation)
+        tree._pressed_node_key = None
+        rail.on_mouse_down(SimpleNamespace(widget=tree))
+
+        assert tree._pressed_node_key is None
+        assert calls
+        assert all(
+            call[1].get("request_reconcile") is False
+            and call[1].get("deliberate_reveal") is False
+            for call in calls
+        )
 
 
 async def _open_production_inspector(host, pilot) -> ConsoleInspectorRail:
@@ -2767,7 +2986,7 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         assert observed == burst, (
             f"a coalesced {notches}-notch wheel burst forced "
             f"{len(observed) - len(burst)} whole-rail layout refreshes: "
-            f"{observed[len(burst):]}"
+            f"{observed[len(burst) :]}"
         )
 
         assert inspector._outer_owner_reconcile_count == owner_passes
@@ -2864,7 +3083,9 @@ def _assert_outer_fold_contract(
     assert outer.scroll_y <= max(0, outer.max_scroll_y)
     expected_copy = (
         OUTER_HINT
-        if hint.display and outer.max_scroll_y > 0 and outer.scroll_y < outer.max_scroll_y
+        if hint.display
+        and outer.max_scroll_y > 0
+        and outer.scroll_y < outer.max_scroll_y
         else ""
     )
     assert str(hint.renderable) == expected_copy

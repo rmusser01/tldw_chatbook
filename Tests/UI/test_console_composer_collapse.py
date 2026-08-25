@@ -49,6 +49,56 @@ class _BundledConsoleGeometryHarness(ConsoleHarness):
     CSS_PATH = str(_BUNDLED_STYLESHEET)
 
 
+@pytest.mark.asyncio
+async def test_improvement_recovery_row_tracks_exact_composer_lifecycle() -> None:
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+
+        def apply_replacement() -> None:
+            composer.load_draft("Draft answer")
+            snapshot = composer.capture_draft_snapshot()
+            assert composer.replace_snapshot_as_paste(snapshot, "Improved answer")
+
+        def assert_recovery(visible: bool) -> None:
+            row = composer.query_one("#console-prompt-improvement-recovery")
+            assert row.display is visible
+            assert composer.query_one(
+                "#console-prompt-improvement-undo", Button
+            ).disabled is not visible
+            assert composer.query_one(
+                "#console-prompt-improvement-review", Button
+            ).disabled is not visible
+
+        apply_replacement()
+        await pilot.pause()
+        assert_recovery(True)
+
+        composer.set_collapsed(True)
+        await pilot.pause()
+        assert_recovery(False)
+        assert composer.improvement_undo_available
+        composer.set_collapsed(False)
+        await pilot.pause()
+        assert_recovery(True)
+
+        composer.insert_text("!")
+        await pilot.pause()
+        assert_recovery(False)
+        assert composer.improvement_comparison() is None
+
+        apply_replacement()
+        assert composer.stash_draft_for_send() is not None
+        await pilot.pause()
+        assert_recovery(False)
+
+        apply_replacement()
+        composer.load_draft(composer.draft_text())
+        await pilot.pause()
+        assert_recovery(False)
+
+
 def _ready_console_host() -> ConsoleHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)

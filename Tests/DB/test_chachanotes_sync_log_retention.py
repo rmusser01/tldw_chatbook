@@ -54,6 +54,22 @@ def _needle() -> str:
     return "zqx" + uuid.uuid4().hex[:12]
 
 
+def _chat_envelope_payload_hash(content: str, role: str) -> str:
+    """Hash of the chat envelope payload for a message with no private parts.
+
+    The chat envelope's clear payload is exactly three keys, and
+    `assistant_generation_state` is present even when it is None -- the one
+    optional key (`provider_continuation_json`) is the one production omits.
+    """
+    return canonical_payload_hash(
+        {
+            "assistant_generation_state": None,
+            "content": content,
+            "role": role,
+        }
+    )
+
+
 def _sync_log_hits(db: CharactersRAGDB, needle: str) -> list[dict]:
     """Every sync_log row whose payload still carries `needle`, whatever entity."""
     return [
@@ -255,6 +271,15 @@ def test_retention_does_not_break_the_committed_intent_readers(db: CharactersRAG
     `read_committed_chat_sync_intent` returns None, so a retention rule that
     pruned the frontier would turn every continuation checkpoint into a hard
     error while silently disabling Sync v2.
+
+    The envelope payload is built through `_chat_envelope_payload` rather than
+    inline: this test hand-rolled `{"content": ..., "role": ...}` and went red
+    the moment v48 added `assistant_generation_state` to the envelope contract,
+    reporting a retention defect that did not exist (task-21441). The helper
+    states the contract once, in the same shape production states it -- see
+    `Sync_Interop/envelope_builder.build_chat_message_upsert` and
+    `envelope_applier`'s `allowed_keys` -- so the next envelope key breaks it
+    in one place with a readable diff.
     """
     conversation_id = db.add_conversation({"title": "intents", "character_id": 1})
     message_id = db.add_message(
@@ -270,15 +295,15 @@ def test_retention_does_not_break_the_committed_intent_readers(db: CharactersRAG
     record = db.read_committed_chat_sync_intent(
         message_id=message_id,
         message_version=3,
-        payload_hash=canonical_payload_hash({"content": "third", "role": row["role"]}),
+        payload_hash=_chat_envelope_payload_hash("third", row["role"]),
     )
 
     assert record is not None
     assert record.content == "third"
     # The base hash comes from the version below the frontier; that row is
     # exactly what the retention rule keeps for live messages.
-    assert record.base_payload_hash == canonical_payload_hash(
-        {"content": "second", "role": row["role"]}
+    assert record.base_payload_hash == _chat_envelope_payload_hash(
+        "second", row["role"]
     )
 
     # And a restore-time reconcile still sees the conversation's intents.

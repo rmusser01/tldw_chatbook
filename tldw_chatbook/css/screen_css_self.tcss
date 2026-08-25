@@ -45,6 +45,25 @@
 
 
 
+/* ===== WIDGET: ConsolePromptComparisonModal (Widgets/Console/console_prompt_comparison_modal.py) ===== */
+
+    ConsolePromptComparisonModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: TraceExportDialog (Widgets/Console/trace_export_dialog.py) ===== */
 
     TraceExportDialog {

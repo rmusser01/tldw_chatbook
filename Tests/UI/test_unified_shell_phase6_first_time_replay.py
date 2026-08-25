@@ -36,7 +36,7 @@ PHASE_6_FIRST_TIME_TASK = Path(
 EXPECTED_NAV = [
     (
         f"nav-{destination.destination_id}",
-        nav_button_label(index, destination.label),
+        nav_button_label(destination.destination_id, destination.label),
     )
     for index, destination in enumerate(SHELL_DESTINATION_ORDER)
 ]

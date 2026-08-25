@@ -1567,6 +1567,13 @@ def _load_settings_uncached(
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
     )
+    _rail_layout_scope = final_console_settings_cli.get("rail_layout_scope")
+    final_console_settings_cli["rail_layout_scope"] = (
+        _rail_layout_scope.strip().lower()
+        if isinstance(_rail_layout_scope, str)
+        and _rail_layout_scope.strip().lower() in {"global", "workspace"}
+        else "global"
+    )
     # task-17652: status-row placement relative to the composer. Validation
     # lives in UI/Console_Modules/status_row.resolve_status_chips_position;
     # normalizing here keeps a typo from ever reaching compose order.
@@ -3088,6 +3095,7 @@ shutdown_grace_seconds = 120.0
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
+rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
 assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions

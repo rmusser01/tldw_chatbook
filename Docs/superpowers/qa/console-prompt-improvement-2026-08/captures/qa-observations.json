@@ -61,7 +61,9 @@
       "transcript_unchanged": true,
       "user_default_on": true,
       "visible_footer": {
-        "action_buttons_do_not_overlap_or_clip": true,
+        "action_controls_do_not_overlap_or_clip": true,
+        "apply_precedes_save_menu": true,
+        "editor_actions_do_not_overlap_outer_footer": true,
         "lane_and_action_rows_do_not_overlap": true,
         "stacked_footer": true,
         "system_checkbox_full_label_visible": true,
@@ -131,10 +133,23 @@
     "normal_send_calls": 0,
     "resolution_calls": 1
   },
+  "recipe_library_round_trip": {
+    "applied_user_lane": true,
+    "filled_review_required": true,
+    "library_edit_version": 2,
+    "library_lossless_reopen": true,
+    "normal_send_calls": 0,
+    "save_confirmation_named_library_prompts": true,
+    "saved_recipe_identity": 14,
+    "system_lane_unchanged": true
+  },
   "seeded_rows": 13,
   "sizes": [
     {
+      "auto_recovery_visible": true,
+      "before_after_review_visible": true,
       "browse_page": "Page 1 of 2",
+      "direct_improve_recommended_focus": true,
       "entry_point": "composer_hamburger",
       "filled_prompt_review": true,
       "idle_composer_controls": [
@@ -143,35 +158,45 @@
         "console-send-message",
         "console-dictation"
       ],
+      "improve_first_normal_menu_item": true,
       "mapped_context_duplicate_disabled": true,
       "mapped_context_recipe_save_disabled": true,
       "menu_order": [
+        "improve-current-draft",
         "prompts",
         "attach-context",
         "save-chatbook",
         "generate-image",
         "generate-caption",
-        "narrate-conversation",
         "impersonate"
       ],
-      "prompts_first_normal_menu_item": true,
+      "prompt_library_second_normal_menu_item": true,
       "recipe_blocks": 10,
+      "recipe_chooser_guidance": true,
+      "recipe_optional_blocks_keyboard_revealed": true,
       "recipe_save_recovered_after_mapped_context_delete": true,
       "server_retry": true,
       "size": "140x40",
+      "system_analysis_choice_painted": true,
       "top_control_prompts_absent": true,
       "visible_apply_footer": {
-        "action_buttons_do_not_overlap_or_clip": true,
+        "action_controls_do_not_overlap_or_clip": true,
+        "apply_precedes_save_menu": true,
+        "editor_actions_do_not_overlap_outer_footer": true,
         "lane_and_action_rows_do_not_overlap": true,
         "stacked_footer": true,
         "system_checkbox_full_label_visible": true,
         "system_checkbox_glyph_visible": true,
         "user_checkbox_full_label_visible": true,
         "user_checkbox_glyph_visible": true
-      }
+      },
+      "visible_undo_exact": true
     },
     {
+      "auto_recovery_visible": true,
+      "before_after_review_visible": true,
       "browse_page": "Page 1 of 2",
+      "direct_improve_recommended_focus": true,
       "entry_point": "composer_hamburger",
       "filled_prompt_review": true,
       "idle_composer_controls": [
@@ -180,34 +205,44 @@
         "console-send-message",
         "console-dictation"
       ],
+      "improve_first_normal_menu_item": true,
       "mapped_context_duplicate_disabled": true,
       "mapped_context_recipe_save_disabled": true,
       "menu_order": [
+        "improve-current-draft",
         "prompts",
         "attach-context",
         "save-chatbook",
         "generate-image",
         "generate-caption",
-        "narrate-conversation",
         "impersonate"
       ],
-      "prompts_first_normal_menu_item": true,
+      "prompt_library_second_normal_menu_item": true,
       "recipe_blocks": 10,
+      "recipe_chooser_guidance": true,
+      "recipe_optional_blocks_keyboard_revealed": true,
       "recipe_save_recovered_after_mapped_context_delete": true,
       "size": "100x30",
+      "system_analysis_choice_painted": true,
       "top_control_prompts_absent": true,
       "visible_apply_footer": {
-        "action_buttons_do_not_overlap_or_clip": true,
+        "action_controls_do_not_overlap_or_clip": true,
+        "apply_precedes_save_menu": true,
+        "editor_actions_do_not_overlap_outer_footer": true,
         "lane_and_action_rows_do_not_overlap": true,
         "stacked_footer": true,
         "system_checkbox_full_label_visible": true,
         "system_checkbox_glyph_visible": true,
         "user_checkbox_full_label_visible": true,
         "user_checkbox_glyph_visible": true
-      }
+      },
+      "visible_undo_exact": true
     },
     {
+      "auto_recovery_visible": true,
+      "before_after_review_visible": true,
       "browse_page": "Page 1 of 2",
+      "direct_improve_recommended_focus": true,
       "entry_point": "composer_hamburger",
       "filled_prompt_review": true,
       "idle_composer_controls": [
@@ -216,31 +251,38 @@
         "console-send-message",
         "console-dictation"
       ],
+      "improve_first_normal_menu_item": true,
       "mapped_context_duplicate_disabled": true,
       "mapped_context_recipe_save_disabled": true,
       "menu_order": [
+        "improve-current-draft",
         "prompts",
         "attach-context",
         "save-chatbook",
         "generate-image",
         "generate-caption",
-        "narrate-conversation",
         "impersonate"
       ],
-      "prompts_first_normal_menu_item": true,
+      "prompt_library_second_normal_menu_item": true,
       "recipe_blocks": 10,
+      "recipe_chooser_guidance": true,
+      "recipe_optional_blocks_keyboard_revealed": true,
       "recipe_save_recovered_after_mapped_context_delete": true,
       "size": "80x24",
+      "system_analysis_choice_painted": true,
       "top_control_prompts_absent": true,
       "visible_apply_footer": {
-        "action_buttons_do_not_overlap_or_clip": true,
+        "action_controls_do_not_overlap_or_clip": true,
+        "apply_precedes_save_menu": true,
+        "editor_actions_do_not_overlap_outer_footer": true,
         "lane_and_action_rows_do_not_overlap": true,
         "stacked_footer": true,
         "system_checkbox_full_label_visible": true,
         "system_checkbox_glyph_visible": true,
         "user_checkbox_full_label_visible": true,
         "user_checkbox_glyph_visible": true
-      }
+      },
+      "visible_undo_exact": true
     }
   ]
 }

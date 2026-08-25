@@ -44,10 +44,12 @@ can sync with a tldw server you configure).
 | F7 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
 | F8 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
 | F9 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
+| F10 | [Research](research_workspace.md) | Authority-explicit research workspaces, plus navigation to durable Research Runs. |
 
-Lab, Logs, and Settings sit past the ten digits, so they get function keys
-instead: **F7**, **F8**, **F9** — the nav labels say so ("F7 Lab", "F8 Logs",
-"F9 Settings"). The nav bar and the command palette (**Ctrl+P**) reach them
+Lab, Logs, Settings, and Research sit past the ten digits, so they get function
+keys instead: **F7**, **F8**, **F9**, **F10** — the nav labels say so ("F7 Lab",
+"F8 Logs", "F9 Settings", "F10 Research"). The nav bar and the command palette
+(**Ctrl+P**) reach them
 too.
 
 Two more screens exist with **no nav label and no "Tab Navigation" palette
@@ -142,7 +144,7 @@ Full detail on runs, approvals, and tools:
 | Conversations | [Library ▸ Media & conversations](library/media-and-conversations.md) |
 | CCP (Conversations, Characters & Prompts) | [Roleplay](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
-| Research | [Library](library.md) |
+| Research | [Research Workspace](research_workspace.md) for the workbench; its **Runs** mode preserves the durable run operator. |
 | Ingest | [Library ▸ Import & export](library/import-and-export.md) |
 | Writing | [Library](library.md) |
 | Chatbooks | [Artifacts](artifacts.md) 🚧 |

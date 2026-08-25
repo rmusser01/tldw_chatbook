@@ -76,14 +76,30 @@ def test_narrate_stays_out_of_the_menu_until_implemented():
 
 @pytest.mark.unit
 def test_prompts_entry_is_stable_visible_and_descriptive():
-    """Prompt discovery is a stable first-class composer-menu action."""
+    """Library discovery remains explicit when no draft can be improved."""
     entries = build_composer_menu_entries()
 
     prompts = entries[0]
     assert prompts.action_id == "prompts"
-    assert prompts.label == "Prompts"
+    assert prompts.label == "Browse Prompt Library…"
     assert prompts.enabled is True
-    assert prompts.description == "Browse, improve, or build reusable prompts"
+    assert prompts.description == "Browse saved Prompts and Recipes"
+
+
+@pytest.mark.unit
+def test_nonblank_draft_adds_a_direct_improve_destination_before_library():
+    """Draft improvement and Library browsing remain separate destinations."""
+    empty = build_composer_menu_entries(draft_available=False)
+    drafted = build_composer_menu_entries(draft_available=True)
+
+    assert "improve-current-draft" not in {entry.action_id for entry in empty}
+    assert [entry.action_id for entry in drafted[:2]] == [
+        "improve-current-draft",
+        "prompts",
+    ]
+    assert drafted[0].label == "Improve current draft…"
+    assert drafted[0].enabled is True
+    assert drafted[1].label == "Browse Prompt Library…"
 
 
 @pytest.mark.unit

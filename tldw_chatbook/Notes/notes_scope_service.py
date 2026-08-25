@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from enum import Enum
 from functools import partial
 from typing import Any, NoReturn, Optional
@@ -80,7 +81,6 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
         "Database Note folder operations are not supported for this note scope."
     ),
 }
-
 
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
@@ -740,12 +740,12 @@ class NotesScopeService:
         for keyword_key, keyword_text in requested_keyword_map.items():
             if keyword_key in existing_keyword_map:
                 continue
-            keyword_row = service.get_keyword_by_text(user_id, keyword_key)
+            keyword_row = service.get_keyword_by_text(user_id, keyword_text)
             keyword_id = (
                 keyword_row.get("id") if isinstance(keyword_row, dict) else None
             )
             if keyword_id is None:
-                keyword_id = service.add_keyword(user_id, keyword_key)
+                keyword_id = service.add_keyword(user_id, keyword_text)
             if keyword_id is not None:
                 service.link_note_to_keyword(user_id, note_id, keyword_id)
 
@@ -984,8 +984,26 @@ class NotesScopeService:
         workspace_id: Optional[str] = None,
         keywords: Optional[Sequence[str]] = None,
         sync_v2_profile: Optional[Mapping[str, Any]] = None,
+        create_note_id: Optional[str] = None,
+        internal_research_owner_proof: Optional[str] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        if create_note_id is not None:
+            if normalized_scope != ScopeType.LOCAL_NOTE or note_id is not None:
+                raise ValueError(
+                    "create_note_id is only valid for new Local Notes records"
+                )
+            if not isinstance(create_note_id, str) or not create_note_id.strip():
+                raise ValueError("create_note_id must be non-blank text")
+            create_note_id = create_note_id.strip()
+        if internal_research_owner_proof is not None and (
+            normalized_scope != ScopeType.LOCAL_NOTE
+            or note_id is not None
+            or create_note_id is None
+        ):
+            raise ValueError(
+                "Internal Research ownership is only valid for an explicit Local Note create."
+            )
         self._enforce_policy(
             self._note_action_id(
                 normalized_scope,
@@ -994,13 +1012,29 @@ class NotesScopeService:
         )
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(user_id)
+            transaction_factory = getattr(
+                self.local_notes_service, "note_transaction", None
+            )
+            owner_transaction = (
+                transaction_factory(local_user_id)
+                if callable(transaction_factory)
+                else nullcontext()
+            )
             if note_id:
-                updated = self.local_notes_service.update_note(
-                    local_user_id,
-                    note_id,
-                    {"title": title, "content": content},
-                    version,
-                )
+                keyword_result: list[str] | None = None
+                with owner_transaction:
+                    updated = self.local_notes_service.update_note(
+                        local_user_id,
+                        note_id,
+                        {"title": title, "content": content},
+                        version,
+                    )
+                    if updated and keywords is not None:
+                        keyword_result = self._sync_local_note_keywords(
+                            user_id=local_user_id,
+                            note_id=note_id,
+                            keywords=keywords,
+                        )
                 if updated:
                     self._enqueue_local_note_upsert(
                         sync_v2_profile=sync_v2_profile,
@@ -1021,18 +1055,40 @@ class NotesScopeService:
                     "version": (version + 1) if version is not None else None,
                     "title": title,
                     "content": content,
-                    "keywords": self._sync_local_note_keywords(
-                        user_id=local_user_id,
-                        note_id=note_id,
-                        keywords=keywords,
-                    ),
+                    "keywords": keyword_result or [],
                 }
-            created_note_id = self.local_notes_service.add_note(
-                local_user_id,
-                title,
-                content,
-                note_id=note_id,
-            )
+            keyword_result = None
+            with owner_transaction:
+                created_note_id = self.local_notes_service.add_note(
+                    local_user_id,
+                    title,
+                    content,
+                    note_id=create_note_id,
+                )
+                if created_note_id and keywords is not None:
+                    keyword_result = self._sync_local_note_keywords(
+                        user_id=local_user_id,
+                        note_id=created_note_id,
+                        keywords=keywords,
+                    )
+                if created_note_id and internal_research_owner_proof is not None:
+                    add_private_proof = getattr(
+                        self.local_notes_service,
+                        "add_internal_research_quick_note_owner_proof",
+                        None,
+                    )
+                    if not callable(add_private_proof):
+                        raise ValueError(
+                            "Local Notes private Research ownership is unavailable."
+                        )
+                    if not add_private_proof(
+                        local_user_id,
+                        str(created_note_id),
+                        internal_research_owner_proof,
+                    ):
+                        raise ValueError(
+                            "Local Notes private Research ownership did not settle."
+                        )
             if not created_note_id:
                 return created_note_id
             self._enqueue_local_note_upsert(
@@ -1052,11 +1108,7 @@ class NotesScopeService:
                 "version": 1,
                 "title": title,
                 "content": content,
-                "keywords": self._sync_local_note_keywords(
-                    user_id=local_user_id,
-                    note_id=created_note_id,
-                    keywords=keywords,
-                ),
+                "keywords": keyword_result or [],
             }
 
         if normalized_scope == ScopeType.SERVER_NOTE:
@@ -1730,6 +1782,89 @@ class NotesScopeService:
             if str(note.get("id")) == str(note_id):
                 return note
         return None
+
+    async def get_note_keywords(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        user_id: Optional[str] = None,
+        include_internal: bool = False,
+    ) -> list[str]:
+        """Return canonical Local Note keywords; recovery proofs are not keywords."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Direct note keyword reads are Local Notes only.")
+        if type(include_internal) is not bool:
+            raise TypeError("include_internal must be a bool")
+        service = self.local_notes_service
+        local_user_id = self._require_user_id(user_id)
+        rows = service.get_keywords_for_note(local_user_id, str(note_id))
+        if not isinstance(rows, list):
+            raise ValueError("Local Notes returned invalid keywords.")
+        keywords = [
+            str(row.get("keyword") or "").strip()
+            for row in rows
+            if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
+        ]
+        return keywords
+
+    async def has_internal_research_quick_note_owner_proof(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        owner_proof: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Verify exact private Local Note recovery ownership."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Private Research ownership is Local Notes only.")
+        verify = getattr(
+            self.local_notes_service,
+            "has_internal_research_quick_note_owner_proof",
+            None,
+        )
+        if not callable(verify):
+            raise ValueError("Local Notes private Research ownership is unavailable.")
+        return bool(
+            verify(
+                self._require_user_id(user_id),
+                str(note_id),
+                owner_proof,
+            )
+        )
+
+    async def remove_internal_research_quick_note_owner_proof(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        owner_proof: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Remove exact private Local Note recovery ownership."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Private Research ownership is Local Notes only.")
+        remove = getattr(
+            self.local_notes_service,
+            "remove_internal_research_quick_note_owner_proof",
+            None,
+        )
+        if not callable(remove):
+            raise ValueError("Local Notes private Research ownership is unavailable.")
+        return bool(
+            remove(
+                self._require_user_id(user_id),
+                str(note_id),
+                owner_proof,
+            )
+        )
 
     async def load_workspace_context(
         self,

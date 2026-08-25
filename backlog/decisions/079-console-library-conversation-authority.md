@@ -38,7 +38,8 @@ Every production opener supplies the v44→v45 migration one sanitized effective
 legacy automatic-retrieval boolean. The database module does not read config.
 The migration-capable initializer acquires `BEGIN IMMEDIATE` before its first
 schema-version read rather than trying to upgrade a deferred outer transaction;
-inside that transaction it requires the seed, creates the policy table plus a
+inside that transaction it applies the seed (defaulting it when absent, per the
+amendment in the trade-offs below), creates the policy table plus a
 dedicated `console_dispatch_checkpoints` table/index, inserts final policy rows
 for active and soft-deleted conversations present in the migration transaction,
 adds nullable `messages.assistant_generation_state`, and advances the version.
@@ -57,8 +58,9 @@ data. The automatic-send task consumes this compatibility seam rather than
 introducing it later.
 Those policy rows use the seeded automatic value and
 assistant Allowed to preserve the previously always-advertised built-in Library
-provider. Missing seed or failure rolls the whole migration back rather than
-guessing. Conversations inserted later cannot be swept into a backfill because
+provider. A malformed seed or a failure rolls the whole migration back rather
+than guessing; an ABSENT seed defaults to automatic retrieval off (amended by
+TASK-21441 -- see the trade-offs below). Conversations inserted later cannot be swept into a backfill because
 there is no later initializer.
 
 An app/store-owned coordinator publishes every committed CAS result to all
@@ -341,8 +343,19 @@ accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
 
 ### Accepted trade-offs
 
-- The main conversation database gains a device-local policy table and a required
-  sanitized migration seed for v44→v45; production database openers must pass it.
+- The main conversation database gains a device-local policy table and a
+  sanitized migration seed for the policy step; production database openers
+  must pass it. **Amended by TASK-21441:** the seed is no longer *required*.
+  Making it mandatory meant `CharactersRAGDB` could not upgrade a pre-existing
+  database at all unless the caller could read the user's configuration, which
+  is a property only the TUI has -- an installed distribution's non-TUI
+  consumer could not open the database, and the packaging migration test caught
+  it. An absent seed now defaults to automatic retrieval off, which is both
+  `config.load_console_library_migration_seed`'s own fallback for a missing key
+  and what a fresh database has always received, so the trade-off's intent
+  (deterministic, config-read-free migration; no guessing) is preserved while
+  the database stays self-migrating. A wrong-typed seed still rolls the whole
+  migration back rather than guessing.
 - Existing conversations are intentionally backfilled to Allowed and their
   current automatic default, so privacy-tight defaults apply prospectively
   rather than silently changing established behavior.

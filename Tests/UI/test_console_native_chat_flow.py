@@ -615,6 +615,22 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
 
         assert composer.draft_text() == "Improved PRIVATE INLINE BYTES answer"
         assert composer.improvement_undo_available
+        recovery = composer.query_one("#console-prompt-improvement-recovery")
+        assert recovery.display is True
+        assert (
+            str(
+                composer.query_one(
+                    "#console-prompt-improvement-status", Static
+                ).renderable
+            )
+            == "Draft improved"
+        )
+        assert composer.query_one(
+            "#console-prompt-improvement-undo", Button
+        ).disabled is False
+        assert composer.query_one(
+            "#console-prompt-improvement-review", Button
+        ).disabled is False
         assert gateway.auxiliary_calls == 1
         assert gateway.stream_calls == 0
         assert (
@@ -629,9 +645,78 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
         assert composer.capture_draft_snapshot().segments == before.segments
         assert composer.draft_text() == "Draft PRIVATE INLINE BYTES answer"
         assert not composer.improvement_undo_available
+        assert recovery.display is False
         assert store.pending_attachment(store.active_session_id) is attachment
         assert vars(attachment) == attachment_state
         assert composer._pending_attachment_label == attachment.label
+
+
+@pytest.mark.asyncio
+async def test_prompt_improvement_review_compares_and_can_keep_or_restore() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _PromptImprovementGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("Draft answer")
+        before = composer.capture_draft_snapshot()
+        store = console._ensure_console_chat_store()
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        workbench = host.screen_stack[-1]
+        workbench.query_one("#console-prompts-improve", Button).press()
+        await pilot.pause()
+        workbench.query_one("#console-prompts-auto-improve", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if host.screen_stack[-1] is console:
+                break
+
+        assert composer.draft_text() == "Improved answer"
+        composer.query_one("#console-prompt-improvement-review", Button).press()
+        await pilot.pause()
+        comparison = host.screen_stack[-1]
+        assert comparison.query_one("#console-prompt-comparison-modal")
+        assert (
+            comparison.query_one("#console-prompt-comparison-before", TextArea).text
+            == "Draft answer"
+        )
+        assert (
+            comparison.query_one("#console-prompt-comparison-after", TextArea).text
+            == "Improved answer"
+        )
+        assert host.focused is comparison.query_one(
+            "#console-prompt-comparison-keep", Button
+        )
+
+        comparison.query_one("#console-prompt-comparison-keep", Button).press()
+        await pilot.pause()
+        assert host.screen_stack[-1] is console
+        assert composer.draft_text() == "Improved answer"
+        assert composer.improvement_undo_available is True
+
+        composer.query_one("#console-prompt-improvement-review", Button).press()
+        await pilot.pause()
+        comparison = host.screen_stack[-1]
+        comparison.query_one("#console-prompt-comparison-restore", Button).press()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert composer.capture_draft_snapshot().segments == before.segments
+        assert composer.draft_text() == "Draft answer"
+        assert composer.improvement_undo_available is False
+        assert (
+            store.session_draft(store.active_session_id) == "Draft answer"
+        )
+        assert composer.query_one(
+            "#console-prompt-improvement-recovery"
+        ).display is False
 
 
 @pytest.mark.asyncio
@@ -666,6 +751,9 @@ async def test_prompt_library_projection_collision_keeps_manual_recipe_available
         assert not modal.query_one(
             "#console-prompts-structured-recipe", Button
         ).disabled
+        structured = modal.query_one("#console-prompts-structured-recipe", Button)
+        assert not modal.query("#console-prompts-configure-provider")
+        assert host.focused is structured
         recovery = str(
             modal.query_one("#console-prompts-improvement-status", Static).renderable
         ) or str(modal.query_one("#console-prompts-auto-improve", Button).tooltip)
@@ -680,6 +768,46 @@ async def test_prompt_library_projection_collision_keeps_manual_recipe_available
         await pilot.pause()
         assert modal.query_one(PromptBlockEditor)
         assert gateway.auxiliary_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_direct_recipe_defers_resolution_and_preserves_system_opt_out() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    gateway = _MutableResolutionPromptGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console.query_one("#console-native-composer").load_draft("Draft answer")
+        store = console._ensure_console_chat_store()
+        store.set_session_system_prompt(store.active_session_id, "Be accurate.")
+
+        console._open_console_prompts_modal(initial_mode="improve")
+        await pilot.pause()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+
+        assert gateway.resolve_calls == []
+        include_system = modal.query_one(
+            "#console-prompts-include-system", Checkbox
+        )
+        include_system.value = False
+        await pilot.pause()
+        modal.query_one("#console-prompts-structured-recipe", Button).press()
+        await pilot.pause()
+        assert modal.state.mode == "recipe"
+        assert gateway.resolve_calls == []
+
+        modal.query_one("#console-prompts-recipe-blank", Button).press()
+        await pilot.pause()
+        assert (
+            modal.query_one("#console-prompts-include-system", Checkbox).value
+            is False
+        )
+        assert gateway.resolve_calls == []
 
 
 @pytest.mark.asyncio
@@ -714,7 +842,7 @@ async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocke
         assert "llama_cpp" in summary
         assert "local-model" in summary
         assert "http://127.0.0.1:9099" in summary
-        assert len(gateway.resolve_calls) == 1
+        assert len(gateway.resolve_calls) == 0
 
         if drift == "selection":
             settings = store.switch_session(session_id).settings
@@ -731,6 +859,7 @@ async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocke
         await pilot.pause()
 
         assert gateway.auxiliary_calls == 0
+        assert len(gateway.resolve_calls) == 1
         assert host.screen_stack[-1] is modal
         assert (
             "changed"
@@ -1224,8 +1353,18 @@ async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_v
         assert modal.query_one("#console-prompts-current-system", TextArea).read_only
         assert modal.query_one("#console-prompts-current-user", TextArea).read_only
         include_system = modal.query_one("#console-prompts-include-system", Checkbox)
-        assert str(include_system.label) == "Include system prompt as analysis context"
+        assert str(include_system.label) == (
+            "Let the improver read the current System prompt"
+        )
         assert include_system.value is True
+        assert (
+            str(
+                modal.query_one(
+                    "#console-prompts-analysis-context-disclosure", Static
+                ).renderable
+            )
+            == "Used only to improve the draft. It does not change this session."
+        )
         assert [
             str(modal.query_one(selector, Button).label)
             for selector in (
@@ -1234,9 +1373,9 @@ async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_v
                 "#console-prompts-structured-recipe",
             )
         ] == [
-            "Analyze and auto-improve",
-            "Analyze and user review",
-            "Create or follow a structured recipe",
+            "Replace draft automatically",
+            "Analyze and user review (Recommended)",
+            "Build a reusable prompt",
         ]
         assert not console.query("#console-control-prompts")
 

@@ -1335,6 +1335,8 @@ class IngestQueueRow:
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
+    #: True when the job is governed by a durable Research source receipt.
+    research_owned: bool = False
     #: (task-2043) Inline error-detail expansion (replaces the old details
     #: toast): whether this row's details are open, and the lines to show.
     details_expanded: bool = False
@@ -1937,6 +1939,7 @@ def _build_queue_row(
             origin=job.origin,
             can_cancel=can_cancel,
             can_force_stop=can_force_stop,
+            research_owned=bool(job.research_source_operation_id),
         )
     else:
         can_cancel = (
@@ -1947,6 +1950,7 @@ def _build_queue_row(
             origin=job.origin,
             can_cancel=can_cancel,
             line=f"{row.line}{_SERVER_ROW_SUFFIX}",
+            research_owned=bool(job.research_source_operation_id),
         )
     if details_expanded and job.error_detail:
         # (task-2043) Inline expansion replaces the old auto-expiring

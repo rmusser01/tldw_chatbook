@@ -23,6 +23,7 @@ from textual.css.query import NoMatches
 from textual.pilot import OutOfBounds
 from textual.widgets import Button
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -35,7 +36,7 @@ from tldw_chatbook.Widgets.destination_rail import DestinationRailSectionHeader
 
 
 @asynccontextmanager
-async def make_console_pilot(*, size=(160, 45)):
+async def make_console_pilot(*, size=(160, 45), production_styles: bool = False):
     """Mount a fresh, send-ready Console (ChatScreen) via the production harness.
 
     Mirrors ``test_console_shell_regions.py``'s ``make_console_pilot``, plus
@@ -52,12 +53,68 @@ async def make_console_pilot(*, size=(160, 45)):
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    if production_styles:
+
+        class ProductionStyledConsoleHarness(ConsoleHarness):
+            CSS_PATH = str(BUNDLED_STYLESHEET)
+
+        host = ProductionStyledConsoleHarness(app)
+    else:
+        host = ConsoleHarness(app)
     async with host.run_test(size=size) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.pause(0.2)
         yield pilot
+
+
+@pytest.mark.asyncio
+async def test_context_section_headers_match_inspector_title_band() -> None:
+    async with make_console_pilot(size=(160, 45), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        inspector_heading = screen.query_one("#console-inspector-run-heading")
+        section_ids = (
+            "session",
+            "workspace",
+            "conversations",
+            "model",
+            "agent",
+            "details",
+            "character",
+        )
+        for section_id in section_ids:
+            header = screen.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+            title = screen.query_one(f"#console-rail-section-title-{section_id}")
+            toggle = screen.query_one(
+                f"#console-rail-section-toggle-{section_id}", Button
+            )
+
+            assert header.styles.background == inspector_heading.styles.background
+            assert header.styles.color == inspector_heading.styles.color
+            assert header.styles.padding == inspector_heading.styles.padding
+            assert title.styles.text_style.bold
+            assert title.styles.color == inspector_heading.styles.color
+            assert toggle.parent is header
+            assert header.region.height == 2
+            assert header.region.width == header.parent.scrollable_content_region.width
+            assert header.content_region.contains_region(toggle.region)
+
+        sections = list(screen.query("#console-left-rail-body ConsoleBoundedSection"))
+        assert [section.max_content_lines for section in sections] == [
+            15,
+            20,
+            20,
+            15,
+            15,
+            15,
+            35,
+        ]
 
 
 def _section_body_visible(pilot, section_id: str) -> bool:

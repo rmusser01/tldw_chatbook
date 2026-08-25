@@ -3629,6 +3629,35 @@ class LibraryScreen(BaseAppScreen):
         # deep link / full editor reset) -- deliberately NOT cleared by a
         # save, so the distinction survives a save round-trip.
         self._library_note_title_user_edited: bool = False
+        # Notes sync panel state. Seeded from config lazily on first entry
+        # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
+        # here in __init__, so tests/screens that never open the sync panel
+        # never pay for a config read.
+        self._library_notes_sync_config_loaded: bool = False
+        self._library_notes_sync_direction: str = "bidirectional"
+        self._library_notes_sync_conflict: str = "newer_wins"
+        self._library_notes_sync_auto: bool = False
+        self._library_notes_sync_status: str = "idle"
+        self._library_notes_sync_activity: tuple[str, ...] = ()
+        self._library_notes_sync_counter: int = 0
+        self._library_notes_sync_active_token: int | None = None
+        self._library_notes_sync_running: bool = False
+        self._library_notes_auto_sync_timer: Timer | None = None
+        # The folder box's live (possibly uncommitted) text. Typing updates
+        # only this field -- persisting to the TOML config on every
+        # Input.Changed meant a full config rewrite + cache reload per
+        # keystroke. It commits to config on Enter, Browse…, or a validated
+        # Sync now run. None = not edited this panel visit; fall back to the
+        # persisted config value.
+        self._library_notes_sync_folder_text: str | None = None
+        # A backend choice remains pending while its config write runs in a
+        # thread. The canvas keeps rendering the persisted app resolver until
+        # completion; this target sequences rapid clicks. An older completion
+        # can neither remain the final persisted value nor repaint a newer
+        # choice.
+        self._library_ingest_backend_target: str | None = None
+        self._library_ingest_backend_generation: int = 0
+        self._library_ingest_backend_save_lock = threading.Lock()
         # Ingest canvas form echo -- a single bundled mutable dataclass
         # (rather than a scatter of scalar fields like the sync panel
         # above) since every field here is reset together on rail
@@ -15593,11 +15622,11 @@ class LibraryScreen(BaseAppScreen):
         ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
         ``mark_failed``/``requeue`` -- from two different call shapes:
 
-        - **Synchronously inside a message handler.** The "Start import"
-          and "Retry" button handlers call ``submit_library_ingest_job``/
-          ``retry_library_ingest_job`` directly, which mutate the registry
-          (firing this listener) *before* the handler's own trailing
-          ``self.refresh(recompose=True)`` runs.
+        - **Synchronously inside a message handler.** "Start import" and
+          ordinary Library "Retry" actions mutate the registry (firing this
+          listener) before their handler's trailing dynamic-region update.
+          A Research-owned retry is scheduled through its durable operation
+          owner and fires the listener when that owner persists its replacement.
         - **Marshaled from a background thread**, via ``call_from_thread``
           for ``mark_parsing``/``mark_writing`` (the F3 parse-pool
           coordinator, itself invoked from a pool callback thread) and
@@ -27987,18 +28016,59 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_external_submission()
         self._disarm_library_ingest_start_confirm()
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
-        current = resolve_backend() if callable(resolve_backend) else "local"
+        pending_backend = getattr(self, "_library_ingest_backend_target", None)
+        current = (
+            pending_backend
+            if pending_backend in {"local", "server"}
+            else (resolve_backend() if callable(resolve_backend) else "local")
+        )
         target = "local" if current == "server" else "server"
-        self._save_library_ingest_backend(target)
+        generation = getattr(self, "_library_ingest_backend_generation", 0) + 1
+        self._library_ingest_backend_generation = generation
+        self._library_ingest_backend_target = target
+        self._save_library_ingest_backend(target, generation)
         _sync_library_canvas(self, "ingest")
 
     @work(thread=True)
-    def _save_library_ingest_backend(self, target: str) -> None:
-        """Persist the ingest backend choice without blocking the UI thread."""
+    def _save_library_ingest_backend(self, target: str, generation: int) -> None:
+        """Persist one current backend choice and marshal its UI completion."""
+
         try:
-            save_setting_to_cli_config("library.ingest", "backend", target)
+            with self._library_ingest_backend_save_lock:
+                if generation != self._library_ingest_backend_generation:
+                    return
+                save_setting_to_cli_config("library.ingest", "backend", target)
         except Exception:
             logger.error("Failed to persist the Library ingest backend")
+        try:
+            self.app.call_from_thread(
+                self._apply_library_ingest_backend_save,
+                target,
+                generation,
+            )
+        except Exception:
+            # A detached screen or app shutdown must not turn a preference
+            # write into an unhandled worker error.
+            pass
+
+    def _apply_library_ingest_backend_save(
+        self,
+        target: str,
+        generation: int,
+    ) -> None:
+        """Reconcile one current preference completion on the UI thread."""
+
+        if (
+            generation != self._library_ingest_backend_generation
+            or target != self._library_ingest_backend_target
+        ):
+            return
+        self._library_ingest_backend_target = None
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        ):
+            _sync_library_canvas(self, "ingest")
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -30232,10 +30302,9 @@ class LibraryScreen(BaseAppScreen):
             return
         retry = getattr(self.app_instance, "retry_library_ingest_job", None)
         if callable(retry):
-            # ``retry_library_ingest_job``/``LibraryIngestJobRegistry.requeue``
-            # are already id-based and validate state themselves (FAILED,
-            # not already superseded/dismissed) -- a stale or now-wrong-state
-            # job id is a safe no-op, not a mis-targeted retry.
+            # The shared app seam validates the exact job and chooses either
+            # ordinary registry requeueing or the Research operation owner.
+            # A stale or now-wrong-state id is a safe no-op.
             retry(job_id)
         # (task-2100) In place: the registry listener already updated the
         # queue; a trailing full recompose yanked the scroll off the queue.

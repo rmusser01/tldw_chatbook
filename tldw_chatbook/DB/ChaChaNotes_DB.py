@@ -898,6 +898,19 @@ AFTER DELETE ON notes BEGIN
   VALUES('delete',old.rowid,old.title,old.content);
 END;
 
+/* Private, local-only Research Quick Note recovery ownership.
+   Deliberately has no sync/FTS/export trigger or ordinary Notes metadata seam. */
+CREATE TABLE IF NOT EXISTS research_quick_note_owner_proofs(
+  note_id     TEXT PRIMARY KEY NOT NULL
+              REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  owner_proof TEXT NOT NULL CHECK (
+      length(owner_proof) = 64
+      AND owner_proof = lower(owner_proof)
+      AND owner_proof NOT GLOB '*[^0-9a-f]*'
+  ),
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 /*----------------------------------------------------------------
   7. Linking tables (no FTS)
 ----------------------------------------------------------------*/
@@ -2928,6 +2941,84 @@ ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql.
+    # This table is private local recovery state: no trigger may project it to
+    # sync_log, FTS, keyword/tag surfaces, exports, graph, or RAG.
+    _MIGRATE_V42_TO_V43_CREATE_SQL = """CREATE TABLE research_quick_note_owner_proofs(
+  note_id     TEXT PRIMARY KEY NOT NULL
+              REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  owner_proof TEXT NOT NULL CHECK (
+      length(owner_proof) = 64
+      AND owner_proof = lower(owner_proof)
+      AND owner_proof NOT GLOB '*[^0-9a-f]*'
+  ),
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+    _MIGRATE_V42_TO_V43_BACKFILL_SQL = """
+INSERT OR IGNORE INTO research_quick_note_owner_proofs (note_id, owner_proof)
+SELECT nk.note_id,
+       substr(k.keyword, length('research-receipt-proof:') + 1)
+  FROM note_keywords AS nk
+  JOIN keywords AS k ON k.id = nk.keyword_id
+ WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+   AND substr(k.keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(k.keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
+"""
+    _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL = """
+DELETE FROM sync_log
+ WHERE entity = 'note_keywords'
+   AND EXISTS (
+       SELECT 1
+         FROM keywords AS k
+        WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+          AND substr(k.keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(k.keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
+          AND CAST(json_extract(sync_log.payload, '$.keyword_id') AS INTEGER) = k.id
+   );
+"""
+    _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL = """
+DELETE FROM sync_log
+ WHERE entity = 'keywords'
+   AND entity_id IN (
+       SELECT CAST(id AS TEXT)
+         FROM keywords
+        WHERE length(keyword) = length('research-receipt-proof:') + 64
+          AND substr(keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
+   );
+"""
+    _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL = """
+DELETE FROM keywords
+ WHERE length(keyword) = length('research-receipt-proof:') + 64
+   AND substr(keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
+"""
+    _MIGRATE_V42_TO_V43_SQL = (
+        _MIGRATE_V42_TO_V43_CREATE_SQL
+        + _MIGRATE_V42_TO_V43_BACKFILL_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
+    )
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -3009,8 +3100,16 @@ UPDATE db_schema_version
             client_id: A unique identifier for this client instance. Used for
                        tracking changes in the sync log and records. Must not be empty.
             check_integrity_on_startup: Whether to run integrity check on startup.
-            console_library_migration_seed: Sanitized legacy library policy needed
-                only when migrating a pre-existing v44 database.
+            console_library_migration_seed: Sanitized legacy Console Library
+                automatic-retrieval value carried into the v47->v48 policy
+                seed. OPTIONAL: an absent seed defaults to automatic retrieval
+                OFF for every pre-existing conversation, which is both the
+                config layer's own default and the fresh-database behaviour, so
+                any caller can migrate a database without it (task-21441). Pass
+                it when the caller can read the user's configuration -- the
+                boot path does -- so a user who had automatic retrieval on keeps
+                it. A value that is not a ``ConsoleLibraryMigrationSeed``
+                raises rather than defaulting.
 
         Raises:
             ValueError: If `client_id` is empty or None.
@@ -3033,6 +3132,8 @@ UPDATE db_schema_version
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
         self.console_library_migration_seed = console_library_migration_seed
+        #: Lazily-read `messages` column set (see `_messages_table_columns`).
+        self._messages_columns_cache: frozenset[str] | None = None
 
         logger.info(
             f"Initializing CharactersRAGDB for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -5813,10 +5914,11 @@ UPDATE db_schema_version
             ) from exc
 
     def _migrate_from_v42_to_v43(self, conn: sqlite3.Connection) -> None:
-        """Add the local-only ``message_exchanges`` table (task-18300, Console
-        Conversation Inspector): per-message provider-exchange capture rows.
-        No sync triggers, no FTS -- local-only precedent (v29->v30
-        usage_json)."""
+        """Add local message exchanges and private Quick Note owner proofs.
+
+        Both features first shipped from schema version 42, so they share one
+        atomic migration and one guarded version transition to 43.
+        """
         if self._get_db_version(conn) != 42:
             raise SchemaError(
                 f"[{self._SCHEMA_NAME} V42→V43] Migration requires schema version 42"
@@ -5845,10 +5947,103 @@ UPDATE db_schema_version
                         "Message exchanges migration contains incomplete SQL"
                     )
 
-                # The migration file is DDL-only (see its header); the
-                # version bump is a separate, rowcount-guarded UPDATE here
-                # -- matching the v29->v30 usage_json shape -- rather than
-                # embedded in the script like the v32-v39 migrations do.
+                table_row = cursor.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    ("research_quick_note_owner_proofs",),
+                ).fetchone()
+                if table_row is None:
+                    cursor.execute(self._MIGRATE_V42_TO_V43_CREATE_SQL)
+                else:
+                    columns = cursor.execute(
+                        "PRAGMA table_info(research_quick_note_owner_proofs)"
+                    ).fetchall()
+                    column_shape = [
+                        (
+                            str(row[1]),
+                            str(row[2]).upper(),
+                            int(row[3]),
+                            row[4],
+                            int(row[5]),
+                        )
+                        for row in columns
+                    ]
+                    expected_shape = [
+                        ("note_id", "TEXT", 1, None, 1),
+                        ("owner_proof", "TEXT", 1, None, 0),
+                        ("created_at", "DATETIME", 1, "CURRENT_TIMESTAMP", 0),
+                    ]
+                    foreign_keys = cursor.execute(
+                        "PRAGMA foreign_key_list(research_quick_note_owner_proofs)"
+                    ).fetchall()
+                    has_exact_foreign_key = len(foreign_keys) == 1 and (
+                        str(foreign_keys[0][2]),
+                        str(foreign_keys[0][3]),
+                        str(foreign_keys[0][4]),
+                        str(foreign_keys[0][5]).upper(),
+                        str(foreign_keys[0][6]).upper(),
+                    ) == ("notes", "note_id", "id", "CASCADE", "CASCADE")
+                    normalized_sql = " ".join(
+                        str(table_row[0] or "").lower().split()
+                    )
+                    has_canonical_check = all(
+                        fragment in normalized_sql
+                        for fragment in (
+                            "length(owner_proof) = 64",
+                            "owner_proof = lower(owner_proof)",
+                            "owner_proof not glob '*[^0-9a-f]*'",
+                        )
+                    )
+                    trigger_count = int(
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM sqlite_master "
+                            "WHERE type = 'trigger' AND tbl_name = ?",
+                            ("research_quick_note_owner_proofs",),
+                        ).fetchone()[0]
+                    )
+                    if (
+                        column_shape != expected_shape
+                        or not has_exact_foreign_key
+                        or not has_canonical_check
+                        or trigger_count != 0
+                    ):
+                        raise SchemaError(
+                            f"[{self._SCHEMA_NAME} V42→V43] Existing private proof table has an incompatible shape"
+                        )
+
+                conflicting_legacy_proof = cursor.execute(
+                    """
+                    SELECT 1
+                      FROM research_quick_note_owner_proofs AS p
+                      JOIN note_keywords AS nk ON nk.note_id = p.note_id
+                      JOIN keywords AS k ON k.id = nk.keyword_id
+                     WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+                       AND substr(k.keyword, 1, length('research-receipt-proof:'))
+                           = 'research-receipt-proof:' COLLATE BINARY
+                       AND trim(
+                           substr(k.keyword, length('research-receipt-proof:') + 1),
+                           '0123456789abcdef'
+                       ) = ''
+                       AND p.owner_proof <> substr(
+                           k.keyword, length('research-receipt-proof:') + 1
+                       )
+                     LIMIT 1
+                    """
+                ).fetchone()
+                if conflicting_legacy_proof is not None:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V42→V43] Conflicting private proof ownership"
+                    )
+                for remediation_sql in (
+                    self._MIGRATE_V42_TO_V43_BACKFILL_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL,
+                ):
+                    cursor.execute(remediation_sql)
+
+                # Both v42 feature additions commit behind one guarded schema
+                # transition so a partial failure cannot stamp either one as
+                # complete independently.
                 version_cursor = cursor.execute(
                     """
                     UPDATE db_schema_version
@@ -6211,16 +6406,38 @@ UPDATE db_schema_version
 
         Existing conversations, including soft-deleted rows, receive the one
         sanitized legacy automatic-retrieval value supplied by the config
-        layer and assistant Library access Allowed. A fresh database may enter
-        this step without a seed because it has no legacy conversations.
+        layer and assistant Library access Allowed.
+
+        The seed is OPTIONAL (task-21441). As shipped, this step raised unless
+        the constructor was handed a ``ConsoleLibraryMigrationSeed``, with a
+        fresh database exempted -- so it bit exactly the upgrade case and the
+        class could no longer migrate itself. Every production construction
+        site threads the seed, so the TUI was insulated; nothing else was, and
+        ``Tests/Packaging/test_installed_distribution.py``'s bare open of a v35
+        database inside an installed wheel is the canary that caught it. A
+        migration that requires caller-supplied data makes "open the database"
+        mean "only from inside one application".
+
+        The default is not invented here: the seed's whole content is one
+        boolean, and ``config.load_console_library_migration_seed`` already
+        yields ``False`` for a missing or non-boolean
+        ``chat_defaults.rag_auto_retrieve_on_send``, which is also what the
+        fresh-database path has always written. Defaulting is fail-safe in the
+        direction ``console_library_policy`` itself defines -- absent authority
+        is Never/Blocked, never permission -- so the worst case for an unseeded
+        upgrade is that a user who had automatic retrieval on re-enables it,
+        against a current worst case of the database refusing to open at all.
+        A seed of the WRONG TYPE is still a hard error: that is a caller
+        defect, not an absent value.
 
         Args:
             conn: The active connection, inside ``_initialize_schema``'s
                 outer immediate transaction.
 
         Raises:
-            SchemaError: If the entry version or seed is invalid, the migration
-                file cannot be applied, or the guarded version update fails.
+            SchemaError: If the entry version is wrong, a supplied seed is not
+                a ``ConsoleLibraryMigrationSeed``, the migration file cannot be
+                applied, or the guarded version update fails.
         """
         self._require_migration_entry_version(conn, 47, "V47→V48")
         from tldw_chatbook.Chat.console_library_policy import (
@@ -6228,12 +6445,16 @@ UPDATE db_schema_version
         )
 
         seed = self.console_library_migration_seed
-        fresh_without_seed = (
-            seed is None and getattr(self, "_schema_initial_version", None) == 0
-        )
-        if not isinstance(seed, ConsoleLibraryMigrationSeed) and not fresh_without_seed:
+        if seed is not None and not isinstance(seed, ConsoleLibraryMigrationSeed):
             raise SchemaError(
-                "Console library migration seed is required for v47 upgrade."
+                "Console library migration seed must be a "
+                "ConsoleLibraryMigrationSeed for the v47 upgrade."
+            )
+        if seed is None and getattr(self, "_schema_initial_version", None) != 0:
+            logger.warning(
+                f"[{self._SCHEMA_NAME} V47→V48] No Console Library migration seed "
+                "supplied for an existing database; seeding every conversation "
+                "with automatic retrieval OFF (the config-layer default)."
             )
         auto_retrieve_on_send = (
             int(seed.auto_retrieve_on_send)
@@ -6494,18 +6715,14 @@ UPDATE db_schema_version
                     f"Checking DB schema '{self._SCHEMA_NAME}'. Current version: {current_db_version}. Code supports: {target_version}"
                 )
 
-                if current_db_version == 47 and target_version > 47:
-                    from tldw_chatbook.Chat.console_library_policy import (
-                        ConsoleLibraryMigrationSeed,
-                    )
-
-                    if not isinstance(
-                        self.console_library_migration_seed,
-                        ConsoleLibraryMigrationSeed,
-                    ):
-                        raise SchemaError(
-                            "Console library migration seed is required for v47 upgrade."
-                        )
+                # (task-21441) A pre-flight seed check lived here. It duplicated
+                # `_migrate_from_v47_to_v48`'s own requirement and, being keyed
+                # on `current_db_version == 47`, only fired for a database that
+                # entered at exactly v47 -- a v35 database walked the whole
+                # chain and died at the step itself. Both are gone: the step now
+                # defaults an absent seed. Any FUTURE step that wants
+                # caller-supplied data belongs in the step, not here, and should
+                # read this method's docstring first.
 
                 if current_db_version == target_version:
                     self._ensure_notes_fts_update_trigger_handles_undelete(conn)
@@ -9715,6 +9932,102 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, tuple([conversation_id, *parent_ids]))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_message_tree_rows_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        order_by_timestamp: str = "ASC",
+        include_deleted_conversation: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Fetch every live message row of one conversation, without BLOBs.
+
+        TASK-22206: the single conversation-scoped read backing
+        ``ChatConversationService.get_conversation_tree``'s in-memory tree
+        assembly (which replaced a one-query-per-node recursive walk).
+        Selects the same columns as
+        ``get_messages_for_conversation_by_parent_ids`` EXCEPT the
+        ``image_data`` BLOB, which is replaced by a ``has_image`` flag so
+        callers can batch-hydrate images lazily via
+        ``get_message_images_by_ids``. Ordered by ``m.timestamp`` so the
+        query is driven by ``idx_msgs_conv_ts (conversation_id, timestamp)``
+        with no post-sort (plan verified with ``sqlite_stat1`` absent, the
+        production shape) and a stable partition of the result reproduces
+        each parent's child order.
+
+        Args:
+            conversation_id: The conversation UUID.
+            order_by_timestamp: 'ASC' or 'DESC'.
+            include_deleted_conversation: Include rows whose parent
+                conversation is soft-deleted.
+
+        Returns:
+            All non-deleted message rows of the conversation, in timestamp
+            order, each with ``has_image`` (0/1) instead of ``image_data``.
+
+        Raises:
+            InputError: If ``order_by_timestamp`` is not 'ASC'/'DESC'.
+        """
+        if order_by_timestamp.upper() not in ["ASC", "DESC"]:
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   (m.image_data IS NOT NULL) AS has_image, m.image_mime_type,
+                   m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
+                   m.usage_json, m.metadata_json, m.provider_continuation_json,
+                   m.assistant_generation_state
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.deleted = 0
+            ORDER BY m.timestamp {order_by_timestamp}
+        """
+        if not include_deleted_conversation:
+            query = query.replace(
+                "ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1
+            )
+        cursor = self.execute_query(query, (conversation_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_message_images_by_ids(
+        self, message_ids: Sequence[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Batch-fetch the legacy position-0 image columns for messages.
+
+        TASK-22206 companion to ``get_message_tree_rows_for_conversation``:
+        the tree read carries only a ``has_image`` flag; callers hydrate the
+        actual BLOBs here, once, for exactly the ids that need them. Chunked
+        at 500 ids per statement (mirrors ``get_attachments_for_messages``).
+
+        Args:
+            message_ids: Message UUIDs to fetch image columns for.
+
+        Returns:
+            Mapping of message id to ``{"image_data", "image_mime_type"}``;
+            ids with no stored image are absent.
+        """
+        ids = [str(m) for m in message_ids if m]
+        if not ids:
+            return {}
+        result: Dict[str, Dict[str, Any]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT id, image_data, image_mime_type FROM messages"
+                    f" WHERE id IN ({placeholders})"
+                    " AND image_data IS NOT NULL",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result[row["id"]] = {
+                        "image_data": row["image_data"],
+                        "image_mime_type": row["image_mime_type"],
+                    }
+        return result
+
     def update_conversation(
         self, conversation_id: str, update_data: Dict[str, Any], expected_version: int
     ) -> Optional[bool]:
@@ -10527,6 +10840,80 @@ UPDATE db_schema_version
             raise
 
     # --- Message Methods ---
+    def _messages_table_columns(self) -> frozenset[str]:
+        """Return the column names the OPEN ``messages`` table actually has.
+
+        Read once per instance with ``PRAGMA table_info``. A database's column
+        set cannot change under an open instance: ``_initialize_schema`` runs
+        to completion in ``__init__`` before any writer, and the historical
+        fixture bootstrap builds each version behind its own instance.
+        """
+        cached = getattr(self, "_messages_columns_cache", None)
+        if cached is None:
+            cached = frozenset(
+                row["name"]
+                for row in self.get_connection().execute("PRAGMA table_info(messages)")
+            )
+            self._messages_columns_cache = cached
+        return cached
+
+    def _messages_insert_statement(
+        self,
+        fields: tuple[tuple[str, Any], ...],
+    ) -> tuple[str, tuple[Any, ...]]:
+        """Build the ``messages`` INSERT for the schema this database has.
+
+        The general-purpose message writer names the column set of the NEWEST
+        schema. That is an assertion about a schema it never checks, and it
+        broke the repo's fixture doctrine when v48 added
+        ``assistant_generation_state``: ``Tests/ChaChaNotesDB/
+        historical_bootstrap.py`` builds a genuinely historical database by
+        replaying the real migration chain to an older version, and the
+        production writer could no longer populate it -- pushing migration
+        fixtures back to the hand-rolled SQL that task-16840 retired for being
+        silently wrong (task-21441). This recurs on EVERY future ``messages``
+        column, so the repair is per-schema rather than per-column: no version
+        ledger, no per-bump maintenance.
+
+        A column absent from the table is dropped only when its value is
+        ``None`` -- exactly the ``NULL`` the column would have received, so the
+        omission is provably lossless. Anything else raises, which is what
+        keeps this from masking an incompletely-migrated or corrupt database:
+        the newest columns are all nullable, so a genuine defect surfaces as a
+        non-``None`` value with nowhere to go.
+
+        Args:
+            fields: Ordered ``(column, value)`` pairs for one message row.
+
+        Returns:
+            The parameterized INSERT and its bound parameters.
+
+        Raises:
+            SchemaError: If a column carrying data is absent from the table.
+        """
+        available = self._messages_table_columns()
+        dropped_with_data = [
+            column
+            for column, value in fields
+            if column not in available and value is not None
+        ]
+        if dropped_with_data:
+            raise SchemaError(
+                f"Cannot write messages column(s) {sorted(dropped_with_data)}: "
+                f"absent from the '{self._SCHEMA_NAME}' messages table."
+            )
+        # Interpolating the column list is safe by construction, not by
+        # escaping: `written` is a SUBSET of `fields`, whose names are a fixed
+        # literal in the calling writer. No caller-supplied string reaches the
+        # SQL text; every VALUE stays bound.
+        written = [(column, value) for column, value in fields if column in available]
+        columns = ", ".join(column for column, _ in written)
+        placeholders = ", ".join("?" for _ in written)
+        return (
+            f"INSERT INTO messages ({columns}) VALUES ({placeholders})",
+            tuple(value for _, value in written),
+        )
+
     def add_message(self, msg_data: Dict[str, Any]) -> Optional[str]:
         """
         Adds a new message to a conversation, optionally with image data.
@@ -10634,33 +11021,33 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         timestamp = msg_data.get("timestamp") or now
 
-        query = """
-                INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
-                                      image_data, image_mime_type,
-                                      timestamp, ranking, last_modified, client_id, version, deleted, role,
-                                      usage_json, metadata_json, provider_continuation_json,
-                                      assistant_generation_state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
-                """
-        params = (
-            msg_id,
-            msg_data["conversation_id"],
-            msg_data.get("parent_message_id"),
-            msg_data["sender"],
-            msg_data.get("content", ""),  # Default to empty string if no text content
-            msg_data.get("image_data"),
-            msg_data.get("image_mime_type"),
-            timestamp,
-            msg_data.get("ranking"),
-            now,
-            client_id,
-            role,
-            msg_data.get("usage_json"),
-            msg_data.get("metadata_json"),
-            provider_continuation_json,
-            normalized_generation_state.value
-            if normalized_generation_state is not None
-            else None,
+        query, params = self._messages_insert_statement(
+            (
+                ("id", msg_id),
+                ("conversation_id", msg_data["conversation_id"]),
+                ("parent_message_id", msg_data.get("parent_message_id")),
+                ("sender", msg_data["sender"]),
+                # Default to empty string if no text content
+                ("content", msg_data.get("content", "")),
+                ("image_data", msg_data.get("image_data")),
+                ("image_mime_type", msg_data.get("image_mime_type")),
+                ("timestamp", timestamp),
+                ("ranking", msg_data.get("ranking")),
+                ("last_modified", now),
+                ("client_id", client_id),
+                ("version", 1),
+                ("deleted", 0),
+                ("role", role),
+                ("usage_json", msg_data.get("usage_json")),
+                ("metadata_json", msg_data.get("metadata_json")),
+                ("provider_continuation_json", provider_continuation_json),
+                (
+                    "assistant_generation_state",
+                    normalized_generation_state.value
+                    if normalized_generation_state is not None
+                    else None,
+                ),
+            )
         )
         try:
             # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
@@ -12799,6 +13186,9 @@ UPDATE db_schema_version
         """
         now = self._get_current_utc_timestamp_iso()
         client_id_to_use = item_data.get("client_id", self.client_id)
+        value_is_sensitive = table_name == "keywords"
+        logged_value = "<redacted>" if value_is_sensitive else main_col_value
+        conflict_entity_id = "redacted-keyword" if value_is_sensitive else main_col_value
 
         other_cols = list(other_fields_map.keys())
         other_placeholders_list = ["?"] * len(other_cols)
@@ -12875,12 +13265,12 @@ UPDATE db_schema_version
                     ).rowcount
                     if row_count_undelete == 0:
                         raise ConflictError(
-                            f"Failed to undelete {table_name} '{main_col_value}' due to version mismatch or it became active/disappeared.",
+                            f"Failed to undelete {table_name} '{logged_value}' due to version mismatch or it became active/disappeared.",
                             entity=table_name,
-                            entity_id=main_col_value,
+                            entity_id=conflict_entity_id,
                         )
                     logger.info(
-                        f"Undeleted and updated {table_name} '{main_col_value}' with ID: {item_id}, new version {next_version}."
+                        f"Undeleted and updated {table_name} '{logged_value}' with ID: {item_id}, new version {next_version}."
                     )
                     return item_id
 
@@ -12888,7 +13278,7 @@ UPDATE db_schema_version
                 cursor_insert = conn.execute(query, params_tuple_insert)
                 item_id_insert = cursor_insert.lastrowid
                 logger.info(
-                    f"Added {table_name} '{main_col_value}' with ID: {item_id_insert}."
+                    f"Added {table_name} '{logged_value}' with ID: {item_id_insert}."
                 )
                 return item_id_insert
         except sqlite3.IntegrityError as e:
@@ -12897,12 +13287,12 @@ UPDATE db_schema_version
                 in str(e).lower()
             ):  # Use lower for robustness
                 logger.warning(
-                    f"{table_name} with {unique_col_name} '{main_col_value}' already exists and is active."
+                    f"{table_name} with {unique_col_name} '{logged_value}' already exists and is active."
                 )
                 raise ConflictError(
-                    f"{table_name} '{main_col_value}' already exists and is active.",
+                    f"{table_name} '{logged_value}' already exists and is active.",
                     entity=table_name,
-                    entity_id=main_col_value,
+                    entity_id=conflict_entity_id,
                 ) from e
             raise CharactersRAGDBError(
                 f"Database integrity error adding {table_name}: {e}"
@@ -12910,7 +13300,7 @@ UPDATE db_schema_version
         except ConflictError:  # From undelete path
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error adding {table_name} '{main_col_value}': {e}")
+            logger.error(f"Database error adding {table_name} '{logged_value}': {e}")
             raise
         return None  # Should not be reached if exceptions are raised properly
 
@@ -12961,12 +13351,15 @@ UPDATE db_schema_version
             f"SELECT * FROM {table_name} WHERE {unique_col_name} = ? AND deleted = 0"
         )
         try:
-            cursor = self.execute_query(query, (value,))
+            cursor = self.execute_query(
+                query, (value,), redact_params=table_name == "keywords"
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
         except CharactersRAGDBError as e:
+            logged_value = "<redacted>" if table_name == "keywords" else value
             logger.error(
-                f"Database error fetching {table_name} by {unique_col_name} '{value}': {e}"
+                f"Database error fetching {table_name} by {unique_col_name} '{logged_value}': {e}"
             )
             raise
 
@@ -13328,10 +13721,19 @@ UPDATE db_schema_version
             LIMIT ?
         """
         try:
-            cursor = self.execute_query(query, (search_term, limit))
+            cursor = self.execute_query(
+                query,
+                (search_term, limit),
+                redact_params=main_table_name == "keywords",
+            )
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching {main_table_name} for '{search_term}': {e}")
+            logged_term = (
+                "<redacted>" if main_table_name == "keywords" else search_term
+            )
+            logger.error(
+                f"Error searching {main_table_name} for '{logged_term}': {e}"
+            )
             raise
 
     # Keywords
@@ -13398,9 +13800,17 @@ UPDATE db_schema_version
         Returns:
             A list of keyword dictionaries.
         """
-        return self._list_generic_items(
-            "keywords", "keyword COLLATE NOCASE", limit, offset
+        cursor = self.execute_query(
+            """
+            SELECT * FROM keywords
+            WHERE deleted = 0
+            ORDER BY keyword COLLATE NOCASE
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+            redact_params=True,
         )
+        return [dict(row) for row in cursor.fetchall()]
 
     def soft_delete_keyword(self, keyword_id: int, expected_version: int) -> bool:
         """
@@ -13450,9 +13860,19 @@ UPDATE db_schema_version
         match_expression = build_phrase_match_query(search_term)
         if not match_expression:
             return []
-        return self._search_generic_items_fts(
-            "keywords_fts", "keywords", "keyword", match_expression, limit
+        cursor = self.execute_query(
+            """
+            SELECT main.*
+            FROM keywords_fts fts
+            JOIN keywords main ON fts.rowid = main.id
+            WHERE fts.keyword MATCH ? AND main.deleted = 0
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (match_expression, limit),
+            redact_params=True,
         )
+        return [dict(row) for row in cursor.fetchall()]
 
     # Keyword Collections
     def add_keyword_collection(
@@ -13670,6 +14090,71 @@ UPDATE db_schema_version
             logger.error(f"Database error adding note '{title.strip()}': {e}")
             raise
 
+    @staticmethod
+    def _validate_research_quick_note_owner_proof(owner_proof: str) -> str:
+        """Validate one hashed private recovery proof without echoing it."""
+
+        if not isinstance(owner_proof, str) or re.fullmatch(
+            r"[0-9a-f]{64}", owner_proof
+        ) is None:
+            raise ValueError("Research Quick Note owner proof is invalid.")
+        return owner_proof
+
+    def add_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Store private recovery ownership; never project it to sync or metadata."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        with self.transaction() as cursor:
+            result = cursor.execute(
+                """
+                INSERT INTO research_quick_note_owner_proofs (note_id, owner_proof)
+                VALUES (?, ?)
+                """,
+                (note_id.strip(), safe_proof),
+            )
+        return result.rowcount == 1
+
+    def has_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Verify exact private recovery ownership without exposing the proof row."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        row = self.get_connection().execute(
+            """
+            SELECT 1
+              FROM research_quick_note_owner_proofs
+             WHERE note_id = ? AND owner_proof = ?
+             LIMIT 1
+            """,
+            (note_id.strip(), safe_proof),
+        ).fetchone()
+        return row is not None
+
+    def remove_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Remove only the exact private proof held by a recovery receipt."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        with self.transaction() as cursor:
+            result = cursor.execute(
+                """
+                DELETE FROM research_quick_note_owner_proofs
+                 WHERE note_id = ? AND owner_proof = ?
+                """,
+                (note_id.strip(), safe_proof),
+            )
+        return result.rowcount == 1
+
     def get_note_by_id(self, note_id: str) -> Optional[Dict[str, Any]]:
         query = "SELECT * FROM notes WHERE id = ? AND deleted = 0"
         cursor = self.execute_query(query, (note_id,))
@@ -13857,7 +14342,8 @@ UPDATE db_schema_version
         keyword_branch = (
             "id IN (SELECT nk.note_id FROM note_keywords nk "
             "JOIN keywords k ON nk.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            "WHERE k.deleted = 0 "
+            "AND k.keyword LIKE ? ESCAPE '\\')"
         )
 
         branches = [
@@ -15117,7 +15603,11 @@ UPDATE db_schema_version
                 ORDER BY nk.note_id, k.keyword COLLATE NOCASE
                 """
         try:
-            cursor = self.execute_query(query, tuple(note_ids))
+            cursor = self.execute_query(
+                query,
+                tuple(note_ids),
+                redact_params=True,
+            )
             results = cursor.fetchall()
 
             keywords_by_note: Dict[str, List[str]] = {}

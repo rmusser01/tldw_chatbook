@@ -65,6 +65,7 @@ from ...Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     normalize_chat_display_name,
 )
+from ...Chat.console_rail_state import normalize_console_rail_layout_scope
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -318,6 +319,7 @@ from ...RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
     semantic_indexing_available,
 )
+
 # task-13 (spec §10.3): the backfill's in-flight state lives in the SHARED
 # bulk-RAG slot guard so the Library re-chunk control and this trigger can
 # refuse each other with a notice (mutual exclusion WITHOUT Textual worker
@@ -668,6 +670,8 @@ INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
 MODEL_CATALOG_FIELD_IDS = frozenset(
     MODEL_CATALOG_CHECKBOX_IDS | {"settings-model-catalog-stale-hours"}
 )
+
+
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
 # rather than five copies of the per-setting boilerplate every other
 # numeric Console field uses. Five near-identical settings is where that
@@ -800,6 +804,7 @@ AGENT_BUDGET_INPUT_CLASS = "settings-agent-budget-input"
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
+        "rail_layout_scope",
         "stack_collapsed_rail_labels",
         "paste_collapse_threshold",
         "max_parallel_runs",
@@ -872,6 +877,7 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
+    "rail_layout_scope",
     "stack_collapsed_rail_labels",
     "paste_collapse_threshold",
     "max_parallel_runs",
@@ -1348,6 +1354,14 @@ def _build_field_search_index() -> None:
     FIELD_SEARCH_INDEX.update(
         {
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                (
+                    "settings-console-rail-layout-scope",
+                    "Rail layout scope",
+                ),
+                (
+                    "settings-console-rail-layout-scope",
+                    "Global per workspace layout scope",
+                ),
                 (
                     "settings-console-stack-collapsed-rail-labels",
                     "Stack collapsed rail labels",
@@ -2535,6 +2549,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_tool_result_display_chars = False
         self._syncing_console_sidechat = False
         self._syncing_console_paste_toggle = False
+        self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
         self._syncing_console_context_memory = False
@@ -3888,6 +3903,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.CONSOLE_BEHAVIOR,
                 owns_config_sections=(
+                    "console.rail_layout_scope",
                     "console.stack_collapsed_rail_labels",
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
@@ -4057,6 +4073,12 @@ class SettingsScreen(BaseAppScreen):
             False,
         )
 
+    def _loaded_console_rail_layout_scope(self) -> str:
+        """Return the normalized saved rail-layout persistence scope."""
+        return normalize_console_rail_layout_scope(
+            self._console_settings().get("rail_layout_scope")
+        )
+
     def _loaded_paste_collapse_threshold(self) -> int:
         return coerce_int_setting(
             self._console_settings().get(
@@ -4145,9 +4167,7 @@ class SettingsScreen(BaseAppScreen):
             return f"{value:g}"
         return str(int(value))
 
-    def _stage_agent_budget_value(
-        self, field: AgentBudgetField, value: object
-    ) -> None:
+    def _stage_agent_budget_value(self, field: AgentBudgetField, value: object) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
@@ -4405,6 +4425,7 @@ class SettingsScreen(BaseAppScreen):
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         values = {
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
+            "rail_layout_scope": self._loaded_console_rail_layout_scope(),
             "stack_collapsed_rail_labels": self._loaded_stack_collapsed_rail_labels(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
             "max_parallel_runs": self._loaded_console_max_parallel_runs(),
@@ -4525,6 +4546,12 @@ class SettingsScreen(BaseAppScreen):
         return coerce_bool_setting(
             self._console_behavior_value("stack_collapsed_rail_labels"),
             False,
+        )
+
+    def _console_rail_layout_scope(self) -> str:
+        """Return the selected saved-or-draft rail layout scope."""
+        return normalize_console_rail_layout_scope(
+            self._console_behavior_value("rail_layout_scope")
         )
 
     def _console_rail_label_style_name(self, *, loaded: bool = False) -> str:
@@ -6784,6 +6811,23 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 ("Saved as", "chat_defaults.user_display_name"),
                 ("Applies", "Open inherited chats immediately after saving."),
+            )
+        if self._active_settings_field_id == "settings-console-rail-layout-scope":
+            return (
+                (
+                    "Purpose",
+                    "Global keeps one arrangement across workspace switches for continuity.",
+                ),
+                (
+                    "Consequences",
+                    "Per workspace restores each workspace's saved arrangement.",
+                ),
+                (
+                    "Retention",
+                    "Prior global and workspace records are retained when modes change.",
+                ),
+                ("Saved as", "console.rail_layout_scope"),
+                ("Applies", "After Save; the next Console layout read uses it."),
             )
         if (
             self._active_settings_field_id
@@ -13010,6 +13054,18 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             yield Static("Rail presentation", classes="destination-section")
+            yield Static("Rail layout scope", classes="settings-input-label")
+            yield Select(
+                (("Global", "global"), ("Per workspace", "workspace")),
+                value=self._console_rail_layout_scope(),
+                allow_blank=False,
+                id="settings-console-rail-layout-scope",
+            )
+            yield Static(
+                "Global keeps one arrangement everywhere. Per workspace restores "
+                "and keeps each workspace's saved arrangement.",
+                classes="settings-help-copy",
+            )
             yield Checkbox(
                 "Stack collapsed rail labels",
                 value=self._console_rail_labels_stacked(),
@@ -13112,15 +13168,11 @@ class SettingsScreen(BaseAppScreen):
             )
             for budget_field in AGENT_BUDGET_FIELDS:
                 with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        budget_field.label, classes="settings-input-label"
-                    )
+                    yield Static(budget_field.label, classes="settings-input-label")
                     yield Input(
                         value=str(self._agent_budget_value(budget_field)),
                         id=budget_field.widget_id,
-                        classes=(
-                            f"settings-compact-input {AGENT_BUDGET_INPUT_CLASS}"
-                        ),
+                        classes=(f"settings-compact-input {AGENT_BUDGET_INPUT_CLASS}"),
                         placeholder=self._format_agent_budget_number(
                             budget_field, budget_field.default
                         ),
@@ -14995,9 +15047,7 @@ class SettingsScreen(BaseAppScreen):
         show_archived = bool(self._settings_show_archived_workspaces)
         active = registry.get_active_workspace()
         active_id = active.workspace_id if active is not None else None
-        yield Button(
-            "Create workspace…", id="settings-workspace-create", compact=True
-        )
+        yield Button("Create workspace…", id="settings-workspace-create", compact=True)
         yield Checkbox(
             "Show archived", show_archived, id="settings-workspaces-show-archived"
         )
@@ -18067,6 +18117,7 @@ class SettingsScreen(BaseAppScreen):
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             console_behavior_field_ids = {
+                "settings-console-rail-layout-scope",
                 "settings-console-stack-collapsed-rail-labels",
                 "settings-console-paste-collapse-threshold",
                 "settings-console-max-parallel-runs",
@@ -19129,6 +19180,26 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
+    @on(Select.Changed, "#settings-console-rail-layout-scope")
+    def handle_console_rail_layout_scope_changed(self, event: Select.Changed) -> None:
+        """Stage the normalized Console rail layout persistence scope."""
+        event.stop()
+        if self._syncing_console_rail_layout_scope:
+            return
+        normalized_scope = normalize_console_rail_layout_scope(event.value)
+        if normalized_scope == self._console_rail_layout_scope():
+            return
+        self._stage_console_default_value(
+            "rail_layout_scope",
+            normalized_scope,
+        )
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result",
+            self._console_behavior_result_text(),
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
     @on(Button.Pressed, "#settings-console-remote-images-toggle")
     def handle_console_remote_images_toggle(self, event: Button.Pressed) -> None:
         """Flip the remote-images toggle: immediate write, no category draft."""
@@ -19143,9 +19214,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     @on(Button.Pressed, "#settings-console-status-row-position-toggle")
-    def handle_console_status_row_position_toggle(
-        self, event: Button.Pressed
-    ) -> None:
+    def handle_console_status_row_position_toggle(self, event: Button.Pressed) -> None:
         """Flip the status-row placement: immediate write, no category draft."""
         event.stop()
         next_value = self._toggle_status_row_position()
@@ -22795,6 +22864,18 @@ class SettingsScreen(BaseAppScreen):
 
     def _sync_console_behavior_widgets(self) -> None:
         try:
+            self._syncing_console_rail_layout_scope = True
+            try:
+                rail_layout_scope = self.query_one(
+                    "#settings-console-rail-layout-scope", Select
+                )
+                with rail_layout_scope.prevent(Select.Changed):
+                    rail_layout_scope.value = self._console_rail_layout_scope()
+            finally:
+                self._syncing_console_rail_layout_scope = False
+        except QueryError:
+            pass
+        try:
             self._syncing_console_rail_label_style = True
             try:
                 rail_label_toggle = self.query_one(
@@ -22861,10 +22942,10 @@ class SettingsScreen(BaseAppScreen):
         try:
             self._syncing_console_sidechat = True
             try:
-                self.query_one("#settings-console-sidechat-model", Input).value = (
-                    self._console_input_value(
-                        self._console_behavior_value("sidechat_model")
-                    )
+                self.query_one(
+                    "#settings-console-sidechat-model", Input
+                ).value = self._console_input_value(
+                    self._console_behavior_value("sidechat_model")
                 )
                 self.query_one(
                     "#settings-console-sidechat-prompt-template", Input

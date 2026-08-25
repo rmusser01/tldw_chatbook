@@ -410,6 +410,24 @@ def test_research_route_resolves_to_research_screen():
     assert canonical_tab == "research"
 
 
+def test_research_workspace_route_resolves_without_repointing_runs():
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+
+    workspace = resolve_screen_target("research_workspace")
+    runs = resolve_screen_target("research")
+
+    assert workspace == (
+        "research_workspace",
+        "research_workspace",
+        ResearchWorkspaceScreen,
+    )
+    assert runs[2] is ResearchScreen
+
+
 def test_media_route_resolves_to_library_screen():
     """task-2851: the legacy standalone Media Library screen is retired.
 
@@ -485,6 +503,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "home": "HomeScreen",
         "chat": "ChatScreen",
         "library": "LibraryScreen",
+        "research_workspace": "ResearchWorkspaceScreen",
         "artifacts": "ArtifactsScreen",
         "personas": "PersonasScreen",
         "watchlists_collections": "WatchlistsCollectionsScreen",
@@ -3655,6 +3674,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-home", "\u23031 Home"),
         ("nav-console", "\u23032 Console"),
         ("nav-library", "\u23033 Library"),
+        ("nav-research", "F10 Research"),
         ("nav-artifacts", "\u23034 Artifacts"),
         ("nav-personas", "\u23035 Roleplay"),
         ("nav-watchlists_collections", "\u23036 Watchlists"),
@@ -3796,6 +3816,124 @@ def test_primary_routed_screens_use_base_app_screen():
 # REAL navigation path -- ``NavigateToScreen`` posted, drained via bounded
 # polling (the storm pilot's idiom above), real widgets mutated the way a
 # user would -- not direct calls into ``save_state``/``restore_state``.
+
+
+@pytest.mark.asyncio
+async def test_research_workspace_runs_round_trip_restores_independent_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    """The real navigation snapshot must not reset Workspace to Local."""
+    from tldw_chatbook.Research_Workspace import (
+        ResearchPanePreferences,
+        WorkspaceDataSource,
+    )
+
+    import tldw_chatbook.app as app_module
+
+    class _AvailableServerWorkspaceService:
+        async def list_workspaces(self):
+            return [
+                {
+                    "id": "server-intent",
+                    "name": "Server research notebook",
+                    "archived": False,
+                    "version": 3,
+                }
+            ]
+
+    server_context = SimpleNamespace(
+        active_server_id="server-profile-a",
+        auth_token="round-trip-test-token",
+        credential_source="round-trip-test",
+        capabilities={
+            "server_configured": True,
+            "reachability": "reachable",
+            "auth_state": "authenticated",
+            "revision": "round-trip-context-1",
+        },
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    app = _build_test_app()
+    app.server_notes_workspace_service = _AvailableServerWorkspaceService()
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: server_context
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
+        first_workspace = app.screen
+        server_adapter = first_workspace.controller.port_for_data_source(
+            WorkspaceDataSource.SERVER
+        )
+        server_ref = (await server_adapter.list_workspaces())[0].ref
+        server_preferences = ResearchPanePreferences(
+            sources_open=False,
+            studio_open=True,
+            preferred_companion="studio",
+        )
+        first_workspace.overlay_store.save(
+            server_ref,
+            server_preferences,
+            expected_revision=0,
+            timestamp="2026-08-24T00:00:00Z",
+        )
+        first_workspace.controller.select_data_source(WorkspaceDataSource.SERVER)
+        first_workspace.controller.select_workspace(server_ref)
+        first_workspace.active_pane = "studio"
+        first_workspace.pane_preferences = server_preferences
+
+        await app.handle_screen_navigation(NavigateToScreen("research"))
+        assert type(app.screen).__name__ == "ResearchScreen"
+        runs_screen = app.screen
+        runs_state = {
+            "source": "local",
+            "academic": True,
+            "limits": "max_sources=4",
+            "policy": "academic_first",
+            "providers": "arxiv,crossref",
+            "rounds": 2,
+        }
+        runs_screen.restore_state(runs_state)
+        assert runs_screen.save_state() == runs_state
+
+        await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
+        restored = app.screen
+        for _ in range(100):
+            await pilot.pause(0.02)
+            state = restored.controller.catalog_state
+            if (
+                state is not None
+                and state.data_source is WorkspaceDataSource.SERVER
+                and state.recovery is None
+                and restored.controller.selected_ref == server_ref
+                and restored._overlay_revision == 1
+                and restored.pane_preferences == server_preferences
+                and "Server catalog ready"
+                in str(restored.query_one("#research-workspace-status").render())
+            ):
+                break
+        assert type(restored).__name__ == "ResearchWorkspaceScreen"
+        assert restored is not first_workspace
+        assert restored.controller.selected_data_source is WorkspaceDataSource.SERVER
+        assert restored.controller.selected_ref == server_ref
+        assert restored.active_pane == "studio"
+        assert restored._overlay_revision == 1
+        assert restored.pane_preferences == server_preferences
+        assert restored.query_one("#research-data-source-server").has_class(
+            "is-active"
+        )
+        assert not restored.query_one("#research-sources-pane").display
+        assert restored.query_one("#research-chat-pane").display
+        assert restored.query_one("#research-studio-pane").display
+        assert restored._pane_layout is not None
+        assert restored._pane_layout.visible_panes == ("chat", "studio")
+        assert "Server catalog ready" in str(
+            restored.query_one("#research-workspace-status").render()
+        )
+        assert runs_state == app.screen_state_store.restore(
+            "research", app._current_runtime_identity()
+        )
 
 
 @pytest.mark.asyncio
@@ -4922,13 +5060,8 @@ async def test_generic_reentry_returns_to_library_landing():
 
 
 @pytest.mark.asyncio
-async def test_nav_bar_no_destination_truncates_at_160_cols():
-    """NV-01 (TASK-2154.21): the strip fits all 13 destinations at 160 cols.
-
-    The hotkey-prefixed labels (``⌃1 Home`` … ``F9 Settings``) need ~153
-    cells, so the everything-fits threshold sits between 150 and 160; 160
-    gives a clean margin.
-    """
+async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
+    """Fourteen destinations keep full labels through the overflow control."""
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
     class TestApp(ConsolidatedCSSApp):
@@ -4942,18 +5075,11 @@ async def test_nav_bar_no_destination_truncates_at_160_cols():
         strip = nav.query_one("#nav-destination-strip")
         hint = nav.query_one("#nav-overflow-hint", Button)
 
-        # Everything fits, so the overflow affordance hides instead of
-        # re-clipping the strip (the old 14-cell static hint is what cut
-        # "Settings" down to "Set").
-        assert not hint.display
-        assert strip.virtual_size.width <= strip.region.width
-        strip_right = strip.region.x + strip.region.width
+        assert hint.display
+        assert strip.virtual_size.width > strip.region.width
         for destination in SHELL_DESTINATION_ORDER:
             button = nav.query_one(f"#nav-{destination.destination_id}")
-            assert button.region.x >= strip.region.x
-            assert button.region.x + button.region.width <= strip_right, (
-                f"{destination.destination_id} clips at 160 cols: {button.region}"
-            )
+            assert str(button.label).endswith(destination.label)
 
 
 @pytest.mark.asyncio
@@ -4988,6 +5114,10 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
         # (Lab/Logs/Settings), hotkey prefixes survive on the first ten, and
         # the active one is marked.
         assert str(menu.query_one("#nav-overflow-lab", Button).label) == "F7 Lab"
+        assert (
+            str(menu.query_one("#nav-overflow-research", Button).label)
+            == "F10 Research"
+        )
         assert str(menu.query_one("#nav-overflow-logs", Button).label) == "F8 Logs"
         assert str(menu.query_one("#nav-overflow-settings", Button).label) == "F9 Settings"
         assert str(menu.query_one("#nav-overflow-home", Button).label).startswith("⌃1 Home")

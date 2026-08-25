@@ -7,11 +7,12 @@ the widget -- and only the widget, never the owning screen.
 """
 
 from collections import Counter
+from dataclasses import replace
 import importlib
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
@@ -22,6 +23,7 @@ from tldw_chatbook.Widgets.Console.console_run_inspector import (
     _ACTION_GROUPS,
     _ROW_GROUPS,
     ConsoleRunInspector,
+    inspector_group_is_actionable,
 )
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
@@ -93,9 +95,17 @@ def _base_state(**overrides) -> ConsoleInspectorState:
 
 
 class InspectorHarness(App):
-    def __init__(self, state: ConsoleInspectorState, *, ownership_policy=None) -> None:
+    def __init__(
+        self,
+        state: ConsoleInspectorState,
+        *,
+        ownership_policy=None,
+        more_open: bool = False,
+    ) -> None:
         super().__init__()
         self._state = state
+        self._more_open = more_open
+        self.more_events: list[bool] = []
         ownership = _ownership_module()
         self._ownership_policy = (
             ownership_policy or ownership.InspectorOwnershipPolicy.STRICT
@@ -105,8 +115,14 @@ class InspectorHarness(App):
         yield ConsoleRunInspector(
             self._state,
             ownership_policy=self._ownership_policy,
+            more_open=self._more_open,
             id="inspector",
         )
+
+    def on_console_run_inspector_more_toggled(
+        self, event: ConsoleRunInspector.MoreToggled
+    ) -> None:
+        self.more_events.append(event.open)
 
 
 def test_inspector_row_and_action_inventory_has_exactly_one_owner():
@@ -327,14 +343,7 @@ async def test_resilient_collision_projection_keeps_first_instance_consistently(
         assert str(provider.renderable) == "Provider: first provider"
         assert len(app.query("#console-inspector-save-chatbook")) == 1
         assert len(app.query("#console-inspector-dictionaries-row-0")) == 1
-        assert (
-            str(
-                app.query_one(
-                    "#console-inspector-run-status-summary", Static
-                ).renderable
-            )
-            == "Status: Inspector data incomplete"
-        )
+        assert not list(app.query("#console-inspector-run-status-summary"))
         assert diagnostics == [
             (
                 "Inspector ownership incomplete: {}",
@@ -416,10 +425,7 @@ async def test_each_run_group_has_external_heading_and_one_bounded_body():
     async with InspectorHarness(state).run_test(size=(100, 60)) as pilot:
         await pilot.pause()
         inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
-        assert (
-            inspector.query_one("#console-inspector-run-status-summary").parent
-            is inspector
-        )
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
 
         expected_sections = (
             *(owner for owner, _heading_id, _labels in _ROW_GROUPS),
@@ -442,8 +448,30 @@ async def test_each_run_group_has_external_heading_and_one_bounded_body():
             assert children.index(body) == children.index(heading) + 1
             assert len(body.query(ConsoleBoundedSection)) == 0
             for label in labels:
+                if label in {"Selected conversation", "Workspace"}:
+                    assert not body.query(f"#{_ownership_module().ROW_IDS[label]}")
+                    continue
                 row_id = _ownership_module().ROW_IDS[label]
                 assert body.query_one(f"#{row_id}")
+
+
+@pytest.mark.asyncio
+async def test_pinned_run_authority_removes_only_the_duplicate_status_summary():
+    state = _base_state(
+        rows=_base_state().rows
+        + (
+            ConsoleDisplayRow("Recovery action", "Reconnect provider"),
+            ConsoleDisplayRow("Next action", "Open Settings"),
+        )
+    )
+
+    async with InspectorHarness(state).run_test(size=(80, 32)) as pilot:
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
+        assert inspector.query_one("#console-inspector-run-recipe", Static)
+        assert inspector.query_one("#console-inspector-recovery-action", Static)
+        assert inspector.query_one("#console-inspector-next-action", Static)
 
 
 @pytest.mark.asyncio
@@ -508,10 +536,7 @@ async def test_resilient_ownership_omits_unknowns_deduplicates_safe_diagnostic_a
     async with app.run_test(size=(80, 32)) as pilot:
         inspector = app.query_one("#inspector", ConsoleRunInspector)
         provider_before = inspector.query_one("#console-inspector-provider", Static)
-        summary_before = inspector.query_one(
-            "#console-inspector-run-status-summary", Static
-        )
-        assert str(summary_before.renderable) == "Status: Inspector data incomplete"
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
         assert not app.query("#console-inspector-unknown-action")
         assert not [
             widget
@@ -571,12 +596,6 @@ async def test_resilient_ownership_omits_unknowns_deduplicates_safe_diagnostic_a
         )
         await pilot.pause()
         assert inspector.recompose_count == 0
-        assert (
-            inspector.query_one("#console-inspector-run-status-summary", Static)
-            is summary_before
-        )
-        assert str(summary_before.renderable) == "Status: Ready"
-
         inspector.sync_state(
             _base_state(
                 rows=(
@@ -625,16 +644,11 @@ async def test_inspector_row_text_change_updates_rows_in_place():
 
 
 @pytest.mark.asyncio
-async def test_inspector_row_status_change_swaps_class_and_summary_in_place():
+async def test_inspector_row_status_change_swaps_class_in_place():
     app = InspectorHarness(_base_state())
 
     async with app.run_test(size=(80, 32)) as pilot:
         inspector = app.query_one("#inspector", ConsoleRunInspector)
-        summary_before = inspector.query_one(
-            "#console-inspector-run-status-summary", Static
-        )
-        assert str(summary_before.renderable) == "Status: Ready"
-
         new_state = _base_state(
             rows=(
                 ConsoleDisplayRow("Run recipe", "Chat with provider"),
@@ -655,11 +669,7 @@ async def test_inspector_row_status_change_swaps_class_and_summary_in_place():
         assert provider_row.has_class("console-inspector-row-blocked")
         assert not provider_row.has_class("console-inspector-row-ready")
         assert str(provider_row.renderable) == "Provider: Missing API key - Add a key"
-        summary_after = inspector.query_one(
-            "#console-inspector-run-status-summary", Static
-        )
-        assert summary_after is summary_before
-        assert str(summary_after.renderable) == "Status: Blocked"
+        assert not list(inspector.query("#console-inspector-run-status-summary"))
 
 
 @pytest.mark.asyncio
@@ -783,3 +793,259 @@ def test_prefill_rows_route_into_selected_conversation_group():
         for entry_id, text, _status in entries
         if "Prefill" in text and entry_id.startswith("console-inspector-row-")
     ]
+
+
+@pytest.mark.parametrize(
+    ("owner", "value", "status", "expected"),
+    [
+        ("Tools", "", "ready", False),
+        ("Tools", "—", "ready", False),
+        ("Tools", "0", "ready", False),
+        ("Tools", "0 ready", "ready", False),
+        ("Tools", "1 ready", "ready", True),
+        ("Approvals", "0 pending", "ready", False),
+        ("Approvals", "1 pending", "blocked", True),
+        ("Artifacts", "", "ready", False),
+        ("Artifacts", "—", "ready", False),
+        ("Artifacts", "none", "ready", False),
+        ("Artifacts", "unavailable", "ready", False),
+        ("Artifacts", "not available for this item", "ready", False),
+        ("Artifacts", "Chatbook available", "ready", True),
+    ],
+)
+def test_conditional_group_actionability_pins_current_zero_spellings(
+    owner, value, status, expected
+):
+    ownership = _ownership_module()
+    label = {"Tools": "Tools", "Approvals": "Approvals", "Artifacts": "Artifacts"}[
+        owner
+    ]
+    state = _base_state(rows=(ConsoleDisplayRow(label, value, status=status),))
+    owned = ownership.classify_inspector_content(
+        state, ownership.InspectorOwnershipPolicy.STRICT
+    )
+
+    assert inspector_group_is_actionable(owner, owned) is expected
+
+
+def test_conditional_group_enabled_action_is_always_actionable():
+    ownership = _ownership_module()
+    state = _base_state(
+        rows=(ConsoleDisplayRow("Artifacts", "unavailable"),),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "Save as Chatbook", True
+            ),
+        ),
+    )
+    owned = ownership.classify_inspector_content(
+        state, ownership.InspectorOwnershipPolicy.STRICT
+    )
+    assert inspector_group_is_actionable("Artifacts", owned)
+    with pytest.raises(ValueError):
+        inspector_group_is_actionable("Run", owned)
+
+
+def _conditional_state(*, tools=False, approval=False, artifact=False):
+    return _base_state(
+        rows=(
+            ConsoleDisplayRow("Sources", "0 staged", status="ready"),
+            ConsoleDisplayRow("Tools", "1 ready" if tools else "0 ready"),
+            ConsoleDisplayRow(
+                "Approvals",
+                "1 pending" if approval else "0 pending",
+                status="blocked" if approval else "ready",
+            ),
+            ConsoleDisplayRow(
+                "Artifacts", "Chatbook available" if artifact else "unavailable"
+            ),
+            ConsoleDisplayRow("Session provider", "OpenAI"),
+        )
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flags", "promoted", "under_more"),
+    [
+        ({}, (), ("Tools", "Approvals", "Artifacts")),
+        ({"tools": True}, ("Tools",), ("Approvals", "Artifacts")),
+        ({"approval": True}, ("Approvals",), ("Tools", "Artifacts")),
+        ({"artifact": True}, ("Artifacts",), ("Tools", "Approvals")),
+        (
+            {"tools": True, "approval": True, "artifact": True},
+            ("Tools", "Approvals", "Artifacts"),
+            (),
+        ),
+    ],
+)
+async def test_conditional_groups_promote_in_fixed_order_and_never_hide_actions(
+    flags, promoted, under_more
+):
+    app = InspectorHarness(_conditional_state(**flags), more_open=True)
+    async with app.run_test(size=(80, 40)):
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        direct_headings = tuple(
+            str(child.renderable)
+            for child in inspector.children
+            if isinstance(child, Static)
+            and child.has_class("console-inspector-group-heading")
+        )
+        source_index = direct_headings.index("Source Readiness")
+        after_source = direct_headings[source_index + 1 :]
+        assert after_source[: len(promoted)] == promoted
+        assert "Source Readiness" in direct_headings
+        more = list(inspector.query("#console-inspector-more-toggle"))
+        if under_more:
+            assert len(more) == 1
+            more_body = inspector.query_one("#console-inspector-more-body")
+            assert (
+                tuple(
+                    str(heading.renderable)
+                    for heading in more_body.query(".console-inspector-group-heading")
+                )
+                == under_more
+            )
+            for owner in promoted:
+                assert not list(
+                    more_body.query(f"#console-inspector-{owner.lower()}-heading")
+                )
+        else:
+            assert not more
+
+
+@pytest.mark.asyncio
+async def test_more_real_pointer_and_key_grammar_posts_once_only_for_user_changes():
+    app = InspectorHarness(_conditional_state())
+    async with app.run_test(size=(80, 40)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        toggle = inspector.query_one("#console-inspector-more-toggle", Button)
+        body = inspector.query_one("#console-inspector-more-body")
+        assert body.display is False, app.more_events
+
+        assert await pilot.click(toggle)
+        await pilot.pause()
+        assert body.display is True
+        assert app.more_events == [True]
+
+        toggle.focus()
+        await pilot.pause()
+        assert app.focused is toggle
+        await pilot.press("space")
+        await pilot.pause()
+        assert body.display is False, app.more_events
+        await pilot.press("enter")
+        await pilot.pause()
+        assert body.display is True
+        await pilot.press("left")
+        await pilot.pause()
+        assert body.display is False
+        await pilot.press("right")
+        await pilot.pause()
+        assert body.display is True
+        assert app.more_events == [True, False, True, False, True]
+
+        inspector.set_more_open(False)
+        await pilot.pause()
+        assert body.display is False
+        assert app.more_events == [True, False, True, False, True]
+
+
+@pytest.mark.asyncio
+async def test_conditional_focus_demotes_to_heading_then_closed_more_toggle():
+    active = _conditional_state(artifact=True)
+    active = replace(
+        active,
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "Save as Chatbook", True
+            ),
+        ),
+    )
+    app = InspectorHarness(active, more_open=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        action = inspector.query_one("#console-inspector-save-chatbook", Button)
+        action.focus()
+
+        inspector.sync_state(_conditional_state())
+        await pilot.pause()
+        await pilot.pause()
+        assert app.focused.id == "console-inspector-artifacts-heading"
+        more_body = inspector.query_one("#console-inspector-more-body")
+        assert app.focused in tuple(more_body.query("*"))
+
+        inspector.set_more_open(False)
+        await pilot.pause()
+        assert app.focused.id == "console-inspector-more-toggle"
+
+
+@pytest.mark.asyncio
+async def test_conditional_focus_keeps_same_more_heading_across_other_promotion():
+    app = InspectorHarness(_conditional_state(), more_open=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        heading = inspector.query_one("#console-inspector-tools-heading", Static)
+        heading.focus()
+        await pilot.pause()
+        assert app.focused is heading
+
+        inspector.sync_state(_conditional_state(artifact=True))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.focused.id == "console-inspector-tools-heading"
+        assert app.focused in tuple(
+            inspector.query_one("#console-inspector-more-body").query("*")
+        )
+
+
+@pytest.mark.asyncio
+async def test_disabled_approval_recovers_to_closed_more_toggle():
+    active = replace(
+        _conditional_state(approval=True),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-approval", "Review approval", True
+            ),
+        ),
+    )
+    disabled = replace(
+        _conditional_state(),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-approval", "Review approval", False
+            ),
+        ),
+    )
+    app = InspectorHarness(active, more_open=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        inspector.query_one("#console-inspector-review-approval", Button).focus()
+
+        inspector.sync_state(disabled)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.focused.id == "console-inspector-more-toggle"
+
+
+@pytest.mark.asyncio
+async def test_promotion_does_not_proactively_move_focus_from_more_toggle():
+    app = InspectorHarness(_conditional_state(), more_open=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        toggle = inspector.query_one("#console-inspector-more-toggle", Button)
+        toggle.focus()
+        await pilot.pause()
+        assert app.focused is toggle
+
+        inspector.sync_state(_conditional_state(tools=True))
+        await pilot.pause()
+        await pilot.pause()
+
+        promoted = inspector.query_one("#console-inspector-tools-heading")
+        assert app.focused is not promoted
+        assert promoted not in tuple(
+            inspector.query_one("#console-inspector-more-body").query("*")
+        )

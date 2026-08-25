@@ -1,7 +1,6 @@
 """Guardrails for shell-owned chrome and primary destination metadata."""
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -55,3 +54,22 @@ def test_navigation_contract_keeps_context_out_of_top_nav():
 
     for term in forbidden_local_terms:
         assert term not in joined
+
+
+def test_research_shell_chrome_names_one_destination_without_leaking_authority():
+    from tldw_chatbook.UI.Navigation.shell_destinations import (
+        SHELL_DESTINATION_ORDER,
+        get_shell_destination,
+    )
+
+    research = get_shell_destination("research")
+    assert research.label == "Research"
+    assert research.primary_route == "research_workspace"
+    assert research.related_routes == ("research",)
+    assert (
+        sum(item.destination_id == "research" for item in SHELL_DESTINATION_ORDER) == 1
+    )
+    assert "Workspace data:" not in " ".join(
+        f"{item.label} {item.tooltip} {item.purpose}"
+        for item in SHELL_DESTINATION_ORDER
+    )

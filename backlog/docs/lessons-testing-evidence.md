@@ -8458,3 +8458,91 @@ not evidence for "not invoked at all".
 (`waited += 0.05` against a `5.0` limit) is off by one at random — a hundred
 additions of `0.05` do not reliably reach `5.0`. Count polls against an
 integer budget derived once from the two constants.
+
+## A wrong identity space can make a readiness test pass without exercising readiness (TASK-21508, 2026-08-24)
+
+**Incident.** A missing-embeddings test expected Hybrid retrieval to exclude an
+FTS-only Local source. The test passed, but an inverse mutation from
+`fts and vector` to `fts or vector` also passed. The desired-selection fixture
+had supplied the Local membership ID, while the canonical Local `RagScope`
+stores Media IDs; the source was excluded before the readiness predicate ran.
+
+**Rule.** When a result is an intersection of identity, selection, support, and
+readiness gates, mutate each gate independently. A green expected-empty test is
+not evidence for the named gate until making that gate permissive turns the test
+red. Fixtures crossing association and canonical-owner boundaries must state
+which ID space each value occupies.
+---
+
+## A process-global record drained at every teardown charges one test's background work to a bystander (TASK-21592, 2026-08-24)
+
+**TASK-21592, 2026-08-24.** The filing said `Tests/App` polluted `Tests/Library`:
+13-15 errors with node ids that varied run to run, zero when either directory
+ran alone. Reproduced on the filing's own base (`f49956038`): 10 errors together,
+0 for `Tests/Library` alone. Every one of the ten was a **teardown** error on a
+test that had itself **passed**, and every one read the same thing —
+`socket.create_connection -> huggingface.co:443`, with `huggingface_hub` logging
+`Retrying in 1s [Retry 1/5]`.
+
+Two globals in series produced it. `huggingface_hub.constants.HF_HUB_OFFLINE`
+was frozen `False` at import (nothing set it), so a Library test that built the
+default embedding model against an empty cache reached the real hub. Then
+`Tests/network_guard._blocked_attempts` — a module-level list drained and
+asserted empty at *every* test's teardown — collected the five retries, which
+run on a worker thread with 1/2/4/8/16s backoff and outlive the test that
+started them. So the attempts landed on tests B, C, D. The "zero when alone"
+result was not the absence of the fetch: it was too short a tail of subsequent
+tests for the retries to land on.
+
+The count and the ids therefore carried no information about the culprit. Nine
+of the ten node ids named innocent tests, and bisecting on them would have led
+nowhere.
+
+**What to do.** When a suite-wide guard keeps a process-global record and
+asserts it empty per test, record provenance with each entry — at minimum
+`threading.current_thread().name` — and say so in the failure message when it is
+not the main thread. Read the error *body* before the node ids: a batch of
+failures that all carry the same address and differ only in which test they
+landed on is one background actor, not N flaky tests. And check the plugin list
+before trusting an ordering claim: `-p no:randomly` is a no-op in this venv
+because `pytest-randomly` is not installed, so it neither proves nor disproves
+anything about order.
+## Three green tests pinned the requirement; the red one was the only test that opened the database like a stranger (TASK-21441, 2026-08-24)
+
+**TASK-21441, 2026-08-24.** Schema v48 made `_migrate_from_v47_to_v48` raise
+unless the constructor was handed a `ConsoleLibraryMigrationSeed`, exempting a
+*fresh* database — so `CharactersRAGDB` could no longer upgrade an existing one
+without the caller supplying data only the TUI knows how to build. Three tests
+covered that behaviour and all three were **green**, because each asserted the
+requirement rather than the property the requirement destroyed:
+`test_v47_missing_or_invalid_seed_leaves_schema_unchanged[None]`,
+`test_v47_upgrade_rejects_missing_or_invalid_seed_before_ddl[None]`, and
+`test_fresh_database_accepts_no_console_library_migration_seed` (which passes
+either way — a fresh database was the exempted case). ADR-079 even listed
+"a required sanitized migration seed" as an accepted trade-off.
+
+The test that told the truth was
+`Tests/Packaging/test_installed_distribution.py::test_installed_distribution_migrates_v35_database_to_current`,
+which installs the wheel into an empty tree and opens a v35 database from a
+child process with nothing but a path and a client id. It is the only test in
+the repo that opens the database the way a stranger would, and it was red.
+
+**What to do.** A test that asserts *your API raises* is not evidence the
+requirement is correct; it is a transcript of the decision. When a change adds
+a precondition to a component, ask which test exercises that component **from
+outside every convenience the change assumed** — an installed artifact, a
+child process, a caller with no access to app config — and check it is not the
+one that just went red. If the only red test is the one with the fewest
+privileges, the defect is in the precondition, not the test. Fixing it by
+teaching that test to supply the argument deletes the repo's last witness.
+
+**Corollary for fixtures.** The same release broke `add_message` for pre-v48
+schemas by naming the newest column list unconditionally, which stopped
+`Tests/ChaChaNotesDB/historical_bootstrap.py` from seeding historical fixtures
+with production code — the doctrine task-16840 established precisely because
+hand-rolled fixture SQL had been silently wrong. When a schema addition makes
+the production writer unusable against an older schema, the pressure is to go
+back to hand-rolled SQL in the test. Resist it: that trades a loud failure for
+a silent one. (Writing that hand-rolled INSERT is also harder than it looks —
+the first attempt at one in this task died on a `NOT NULL` column the writer
+fills for you.)

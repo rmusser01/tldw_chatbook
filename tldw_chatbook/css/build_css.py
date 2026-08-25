@@ -249,6 +249,7 @@ CSS_MODULES = [
     "features/_tab_dropdown.tcss",
     "features/_watchlists.tcss",
     "features/_lab.tcss",
+    "features/_research_workspace.tcss",
     "features/_logs.tcss",
     "features/_writing.tcss",
     "features/config_search.tcss",

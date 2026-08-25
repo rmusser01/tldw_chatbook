@@ -692,12 +692,53 @@ class ConsoleComposerBar(Horizontal):
     def invalidate_improvement_undo(self) -> None:
         """Expire the one-shot improvement Undo without touching native history."""
         self._improvement_undo = None
+        self._sync_improvement_recovery()
 
     def take_improvement_undo_snapshot(self) -> ComposerDraftSnapshot | None:
         """Consume and return the current exact improvement Undo snapshot."""
         snapshot = self._improvement_undo
         self._improvement_undo = None
+        self._sync_improvement_recovery()
         return snapshot
+
+    @staticmethod
+    def _snapshot_improvement_review_text(snapshot: ComposerDraftSnapshot) -> str:
+        """Build comparison copy without revealing protected inline-file bytes."""
+        parts: list[str] = []
+        for segment in snapshot.segments:
+            if segment.origin == "inline_file":
+                label = (segment.label or "attached file").strip()
+                parts.append(f"[Protected content: {label}]")
+            else:
+                parts.append(segment.text)
+        return "".join(parts)
+
+    def improvement_comparison(self) -> tuple[str, str] | None:
+        """Return safe before/after copy for the current one-shot improvement."""
+        before = self._improvement_undo
+        if before is None:
+            return None
+        after = self.capture_draft_snapshot()
+        return (
+            self._snapshot_improvement_review_text(before),
+            self._snapshot_improvement_review_text(after),
+        )
+
+    def _sync_improvement_recovery(self) -> None:
+        """Show recovery actions only while an exact improvement Undo exists."""
+        visible = self._improvement_undo is not None and not self._collapsed
+        try:
+            recovery = self.query_one(
+                "#console-prompt-improvement-recovery", Horizontal
+            )
+            undo = self.query_one("#console-prompt-improvement-undo", Button)
+            review = self.query_one("#console-prompt-improvement-review", Button)
+        except NoMatches:
+            return
+        recovery.styles.display = "block" if visible else "none"
+        undo.disabled = not visible
+        review.disabled = not visible
+        self._refresh_visible_draft()
 
     def undo_improvement(self) -> bool:
         """Restore and consume the latest exact improvement transaction."""
@@ -1007,6 +1048,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack = list(checkpoint.redo_stack)
         self._improvement_undo = checkpoint.improvement_undo
         self._coalescing_active = checkpoint.coalescing_active
+        self._sync_improvement_recovery()
         self._sync_current_action_state()
 
     @staticmethod
@@ -1236,6 +1278,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack = []
         self._coalescing_active = False
         self._improvement_undo = snapshot
+        self._sync_improvement_recovery()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -1302,6 +1345,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack = []
         self._coalescing_active = False
         self._improvement_undo = snapshot
+        self._sync_improvement_recovery()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -2500,7 +2544,8 @@ class ConsoleComposerBar(Horizontal):
 
     def _apply_draft_height(self, row_count: int) -> None:
         row_count = max(self.MIN_DRAFT_ROWS, min(self.MAX_DRAFT_ROWS, row_count))
-        composer_height = row_count + self.COMPOSER_CHROME_ROWS
+        recovery_rows = int(self._improvement_undo is not None and not self._collapsed)
+        composer_height = row_count + self.COMPOSER_CHROME_ROWS + recovery_rows
         try:
             visible_draft = self.query_one("#console-command-visible-text", Static)
             visible_draft.styles.height = row_count
@@ -2517,8 +2562,12 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             pass
         self.styles.height = composer_height
-        self.styles.min_height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
-        self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
+        self.styles.min_height = (
+            self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS + recovery_rows
+        )
+        self.styles.max_height = (
+            self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS + recovery_rows
+        )
         self.refresh(layout=True)
 
     def _apply_collapsed_geometry(self) -> None:
@@ -2580,6 +2629,7 @@ class ConsoleComposerBar(Horizontal):
             self._apply_collapsed_geometry()
         else:
             self._refresh_visible_draft()
+        self._sync_improvement_recovery()
 
     def _insert_literal_at_cursor(self, text: str) -> None:
         """Splice literal text into the draft at the caret, coalescing segments.
@@ -2954,6 +3004,7 @@ class ConsoleComposerBar(Horizontal):
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
+        self._sync_improvement_recovery()
         self._sync_current_action_state()
         if self._prompt_history is not None:
             # TASK-1364: warm the history entries so ghost text and recall
@@ -4809,14 +4860,20 @@ class ConsoleComposerBar(Horizontal):
         if session_data is None:
             status = self.DEFAULT_STATUS
         else:
-            title = sanitize_character_display_label(
-                getattr(session_data, "title", None),
-                max_characters=500,
-            ) or "Untitled session"
-            backend = sanitize_character_display_label(
-                getattr(session_data, "runtime_backend", None),
-                max_characters=100,
-            ) or "local"
+            title = (
+                sanitize_character_display_label(
+                    getattr(session_data, "title", None),
+                    max_characters=500,
+                )
+                or "Untitled session"
+            )
+            backend = (
+                sanitize_character_display_label(
+                    getattr(session_data, "runtime_backend", None),
+                    max_characters=100,
+                )
+                or "local"
+            )
             raw_assistant = (
                 getattr(session_data, "assistant_id", None)
                 or getattr(
@@ -4826,14 +4883,20 @@ class ConsoleComposerBar(Horizontal):
                 )
                 or "General"
             )
-            assistant = sanitize_character_display_label(
-                raw_assistant,
-                max_characters=180,
-            ) or "General"
-            workspace = sanitize_character_display_label(
-                getattr(session_data, "workspace_id", None),
-                max_characters=180,
-            ) or "global"
+            assistant = (
+                sanitize_character_display_label(
+                    raw_assistant,
+                    max_characters=180,
+                )
+                or "General"
+            )
+            workspace = (
+                sanitize_character_display_label(
+                    getattr(session_data, "workspace_id", None),
+                    max_characters=180,
+                )
+                or "global"
+            )
             status = (
                 f"Active session: {title} | Backend: {backend} | "
                 f"Assistant: {assistant} | Scope: {workspace}"
@@ -5307,3 +5370,32 @@ class ConsoleComposerBar(Horizontal):
             )
             collapsed_stop.styles.display = "block" if self._run_active else "none"
             yield collapsed_stop
+
+        recovery_row = Horizontal(id="console-prompt-improvement-recovery")
+        recovery_row.styles.display = "none"
+        with recovery_row:
+            yield Static(
+                "Draft improved",
+                id="console-prompt-improvement-status",
+                markup=False,
+            )
+            undo_button = self._bounded_button(
+                "Undo",
+                width=8,
+                id="console-prompt-improvement-undo",
+                classes="destination-action-button",
+                tooltip="Restore the draft from before this improvement.",
+                disabled=True,
+            )
+            undo_button.styles.line_pad = 0
+            yield undo_button
+            review_button = self._bounded_button(
+                "Review changes",
+                width=16,
+                id="console-prompt-improvement-review",
+                classes="destination-action-button",
+                tooltip="Compare the original and improved drafts.",
+                disabled=True,
+            )
+            review_button.styles.line_pad = 0
+            yield review_button

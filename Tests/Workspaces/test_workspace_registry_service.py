@@ -10,6 +10,8 @@ from typing import Iterator
 
 import pytest
 
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
     DEFAULT_WORKSPACE_ID,
@@ -335,6 +337,81 @@ def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> 
     memberships = service.get_item_memberships("note", "note-1")
 
     assert {membership.workspace_id for membership in memberships} == {"ws-a", "ws-b"}
+
+
+def test_unlink_membership_removes_only_matching_membership_and_scope_item(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    media_db = MediaDatabase(tmp_path / "media.sqlite", client_id="client-1")
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        url="file:///research-source.txt",
+        title="Canonical source",
+        media_type="document",
+        content="Canonical content must survive workspace unlink.",
+    )
+    assert media_id is not None
+    item_id = str(media_id)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.link_membership("ws-a", item_type="media", item_id=item_id, role="source")
+    service.link_membership(
+        "ws-a", item_type="media", item_id=item_id, role="reference"
+    )
+    service.link_membership("ws-b", item_type="media", item_id=item_id, role="source")
+    service.set_workspace_scope(
+        "ws-a",
+        RagScope(
+            items=(
+                ScopeItem("media", item_id),
+                ScopeItem("media", "42"),
+                ScopeItem("note", item_id),
+            ),
+            updated_at="2026-08-24T12:00:00Z",
+        ),
+    )
+
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id=item_id
+    ) is True
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id=item_id
+    ) is False
+
+    assert {
+        (membership.workspace_id, membership.role)
+        for membership in service.get_item_memberships("media", item_id)
+    } == {("ws-a", "reference"), ("ws-b", "source")}
+    scope = service.get_workspace_scope("ws-a")
+    assert scope is not None
+    assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
+    canonical = media_db.get_media_by_id(media_id)
+    assert canonical is not None
+    assert canonical["content"] == "Canonical content must survive workspace unlink."
+
+
+def test_unlink_reference_membership_keeps_source_scope_selected(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.link_membership("ws-a", item_type="media", item_id="41", role="source")
+    service.link_membership(
+        "ws-a", item_type="media", item_id="41", role="reference"
+    )
+    scope = RagScope(
+        items=(ScopeItem("media", "41"),),
+        updated_at="2026-08-24T12:00:00Z",
+    )
+    service.set_workspace_scope("ws-a", scope)
+
+    assert service.unlink_membership(
+        "ws-a", item_type="media", item_id="41", role="reference"
+    ) is True
+
+    assert service.get_workspace_scope("ws-a") == scope
+    memberships = service.get_item_memberships("media", "41")
+    assert [(membership.workspace_id, membership.role) for membership in memberships] == [
+        ("ws-a", "source")
+    ]
 
 
 def test_registry_persists_runtime_bindings_without_secrets(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from textual import on
 
 from .shell_destinations import (
     SHELL_DESTINATION_ORDER,
+    SHELL_DESTINATION_SHORTCUTS,
     get_shell_destination,
     resolve_shell_route,
 )
@@ -39,13 +40,6 @@ def _straddles_viewport(region: Region, viewport: Region) -> bool:
     )
 
 
-#: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first
-#: nine destinations in SHELL_DESTINATION_ORDER and ctrl+0 selects the tenth.
-#: The remaining destinations get F7/F8/F9 (see app.py SHELL_DESTINATION_FKEYS);
-#: their labels carry the key name so the bar stays truthful.
-NAV_HOTKEY_DIGITS: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
-NAV_FKEY_LABELS: tuple[str, ...] = ("F7", "F8", "F9")
-
 #: F-002: the tab labels used to read "1 Home", implying a bare-digit key
 #: while the actual binding (app.py SHELL_DESTINATION_HOTKEYS) is ctrl+digit.
 #: The UP ARROWHEAD glyph (⌃, the macOS control convention) makes the label
@@ -53,29 +47,23 @@ NAV_FKEY_LABELS: tuple[str, ...] = ("F7", "F8", "F9")
 NAV_HOTKEY_GLYPH = "⌃"
 
 
-def nav_button_label(index: int, label: str) -> str:
+def nav_button_label(destination_id: str, label: str) -> str:
     """Prefix a destination label with its hotkey affordance when it has one.
 
-    The destination hotkey layer is ``ctrl+<digit>`` for the first ten
-    destinations and F7/F8/F9 for the rest (see ``app.py``), so the label
-    must say so: rendering a bare "1 Home" taught users a key that does
-    nothing.
+    Shortcut ownership comes from the stable destination-ID mapping, so the
+    label cannot drift when navigation order changes.
 
     Args:
-        index: Position of the destination in SHELL_DESTINATION_ORDER.
+        destination_id: Stable shell destination ID.
         label: Compact destination label from the shell destination model.
 
     Returns:
-        ``"⌃<digit> <label>"`` for the first ten destinations,
-        ``"F<n> <label>"`` for the next ones with an F-key route,
-        else the bare ``label``.
+        The shortcut-prefixed label.
     """
-    if 0 <= index < len(NAV_HOTKEY_DIGITS):
-        return f"{NAV_HOTKEY_GLYPH}{NAV_HOTKEY_DIGITS[index]} {label}"
-    fkey_index = index - len(NAV_HOTKEY_DIGITS)
-    if 0 <= fkey_index < len(NAV_FKEY_LABELS):
-        return f"{NAV_FKEY_LABELS[fkey_index]} {label}"
-    return label
+    shortcut = SHELL_DESTINATION_SHORTCUTS[destination_id]
+    if shortcut.startswith("ctrl+"):
+        return f"{NAV_HOTKEY_GLYPH}{shortcut.removeprefix('ctrl+')} {label}"
+    return f"{shortcut.upper()} {label}"
 
 
 class NavigateToScreen(Message):
@@ -353,9 +341,12 @@ class MainNavigationBar(Container):
         left_hint.display = False
         yield left_hint
         with Horizontal(id="nav-destination-strip", classes="main-nav"):
-            for index, destination in enumerate(SHELL_DESTINATION_ORDER):
+            for destination in SHELL_DESTINATION_ORDER:
                 button = NavigationButton(
-                    nav_button_label(index, destination.label),
+                    nav_button_label(
+                        destination.destination_id,
+                        destination.label,
+                    ),
                     id=f"nav-{destination.destination_id}",
                     classes="nav-button ascii-nav-tab",
                     tooltip=destination.tooltip,
@@ -407,7 +398,11 @@ class MainNavigationBar(Container):
         # early check measures a zero-width region and pins the hint visible).
         # Re-check on short timers and on every later resize.
         self.set_timer(0.05, self._refresh_overflow_hint_visibility)
+        # The overflow hint can reduce the strip only after the first active
+        # scroll. Recenter once that final width is known.
+        self.set_timer(0.06, self._recenter_strip)
         self.set_timer(0.25, self._refresh_overflow_hint_visibility)
+        self.set_timer(0.26, self._recenter_strip)
 
     def _mark_mount_settled(self) -> None:
         """Close the mount-settle window -- but only once the screen's
@@ -626,7 +621,7 @@ class MainNavigationBar(Container):
     def _scroll_to_focused_then_ghost_check(self, widget: "NavigationButton") -> None:
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
-            strip.scroll_to_widget(widget, animate=False)
+            strip.scroll_to_widget(widget, animate=False, immediate=True)
         except Exception:
             return
         self.call_after_refresh(self._ghost_clipped_buttons)
@@ -731,7 +726,16 @@ class MainNavigationBar(Container):
         except Exception:
             return
         try:
-            strip.scroll_to_widget(button, animate=False)
+            strip.scroll_to_widget(button, animate=False, immediate=True)
+            # Textual's widget helper can settle one cell short after the
+            # docked overflow control narrows the strip. Finish the tiny
+            # horizontal correction so the active button never straddles.
+            if button.region.right > strip.region.right:
+                strip.scroll_to(
+                    x=strip.scroll_x + button.region.right - strip.region.right,
+                    animate=False,
+                    immediate=True,
+                )
         except Exception:
             return
         self.call_after_refresh(self._ghost_clipped_buttons)
@@ -807,7 +811,7 @@ class MainNavigationBar(Container):
         ):
             try:
                 strip = self.query_one("#nav-destination-strip", Horizontal)
-                strip.scroll_to_widget(focused, animate=False)
+                strip.scroll_to_widget(focused, animate=False, immediate=True)
             except Exception:
                 return
             self.call_after_refresh(self._ghost_clipped_buttons)
@@ -935,7 +939,7 @@ class MainNavigationBar(Container):
                 # below (see docstring: a synchronous re-measurement here
                 # cannot be trusted).
                 try:
-                    strip.scroll_to_widget(button, animate=False)
+                    strip.scroll_to_widget(button, animate=False, immediate=True)
                 except Exception:
                     pass
             should_ghost = straddles and button.id != active_id and button.id != focused_id

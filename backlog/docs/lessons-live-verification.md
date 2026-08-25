@@ -5,6 +5,27 @@ structurally could not surface. Every entry states the incident that produced it
 
 ---
 
+## A manually pinned tmux window can make a correct TUI look as if its right rail vanished
+
+**TASK-20937.6, 2026-08-24.** A Console QA session was created at 235x52 and
+then forced to `window-size manual` before an iTerm2 operator attached. The
+server-side `tmux capture-pane` showed the complete `<-Inspect` handle at the
+right application edge. Both operator screenshots omitted it, and were initially
+misclassified as partial acceptance evidence. The screenshots also truncated the
+header's Hands-free control and tmux's own right-side date/status text, proving
+that the whole tmux canvas—not only the Inspector—extended past the client
+viewport. The fixed manual canvas was wider than the actual iTerm2 client, so the
+client clipped its rightmost columns.
+
+**What to do.** For operator captures, use tmux `window-size latest` (or the
+normal client-following policy), then record the resulting client/window/pane
+cells after attachment. A detached `capture-pane` proves the server buffer, not
+that the terminal client can see all of it. Reject any screenshot whose terminal
+status line or app header is cut at the same edge as the feature under test; do
+not diagnose product geometry until the client and tmux window sizes agree.
+
+---
+
 ## The suite cannot see a contract you guessed
 
 **What happened.** The Library ingest UAT (tasks 673–702) found **seven** defects

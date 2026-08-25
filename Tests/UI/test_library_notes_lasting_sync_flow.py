@@ -9,6 +9,11 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
+from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncAction,
+    NotesSyncActionKind,
+)
+from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationPlan
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
     NotesSyncRootRuntimeSnapshot,
@@ -24,6 +29,9 @@ from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
 )
 from tldw_chatbook.Widgets import Library as library_widgets
 from tldw_chatbook.app import TldwCli
+
+#: A runtime observation token is a 64-character opaque provenance handle.
+OBSERVATION_TOKEN = "b" * 64
 
 
 def test_production_screen_derives_lasting_route_from_the_app_runtime() -> None:
@@ -137,9 +145,26 @@ async def test_activation_result_routes_to_truthful_receipt_or_root_recovery(
     expected_copy: str,
 ) -> None:
     class _Runtime:
+        def __init__(self) -> None:
+            self.activation_calls: list[tuple[str, object]] = []
+
+        async def check_root(self, root_id: str) -> ReconciliationPlan:
+            return ReconciliationPlan(
+                root_id=root_id,
+                observation_token=OBSERVATION_TOKEN,
+                safe_actions=(
+                    NotesSyncAction("act-1", NotesSyncActionKind.UPDATE_NOTE, "bind-1"),
+                ),
+                attention=(),
+                skips=(),
+                managed_placement_effects=(),
+                deletion_groups=(),
+            )
+
         async def activate_root(
-            self, _root_id: str, _authorization: object
+            self, root_id: str, authorization: object
         ) -> NotesSyncControlResult:
+            self.activation_calls.append((root_id, authorization))
             return result
 
         def snapshot(self) -> NotesSyncRuntimeSnapshot:
@@ -157,12 +182,23 @@ async def test_activation_result_routes_to_truthful_receipt_or_root_recovery(
         def begin_selection(self) -> None:
             raise AssertionError("activation must not enter import")
 
+    runtime = _Runtime()
     controller = LibraryNotesSyncController(
-        runtime=_Runtime(),
+        runtime=runtime,
         import_controller=_Importer(),
     )
-    accepted = await controller.activate_root("root-1")
+    # Activation is only reachable from a current, activation-typed migration
+    # review that carries the runtime's own observation token; calling it from
+    # the default phase short-circuits on the provenance guard and never
+    # reaches the runtime (TASK-21531).
+    await controller.check_migration("root-1")
+    assert controller.snapshot.review.activation is True
+    accepted = await controller.activate_root("root-1", OBSERVATION_TOKEN)
 
+    # Both parameterisations must prove activation actually ran: a guard
+    # short-circuit also returns False, so `accepted` alone cannot distinguish
+    # the "failed" case from an activation that never happened.
+    assert runtime.activation_calls == [("root-1", OBSERVATION_TOKEN)]
     assert accepted is result.accepted
     assert controller.snapshot.phase == expected_phase
 

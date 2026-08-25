@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, cast
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 
@@ -942,25 +942,43 @@ class ChatConversationService:
                 "depth_cap": depth_cap,
             }
 
-        total_root_threads = self.db.count_root_messages_for_conversation(
+        # TASK-22206: ONE conversation-scoped query (no BLOB hydration),
+        # then a purely in-memory, iterative tree assembly. The old shape
+        # issued one get_messages_for_conversation_by_parent_ids call per
+        # node -- each a full-conversation scan under the production query
+        # plan (sqlite_stat1 absent) -- and recursed once per message.
+        rows = self.db.get_message_tree_rows_for_conversation(
             conversation_id,
-            include_deleted_conversation=False,
-        )
-        root_rows = self.db.get_root_messages_for_conversation(
-            conversation_id,
-            limit=root_limit,
-            offset=root_offset,
             order_by_timestamp=order_by_timestamp,
             include_deleted_conversation=False,
         )
-        root_threads = self._build_message_tree(
-            conversation_id,
-            root_rows,
-            order_by_timestamp=order_by_timestamp,
+        children_by_parent: dict[Any, list[Mapping[str, Any]]] = {}
+        root_rows: list[Mapping[str, Any]] = []
+        for row in rows:
+            parent_id = row.get("parent_message_id")
+            if parent_id is None:
+                root_rows.append(row)
+            else:
+                children_by_parent.setdefault(parent_id, []).append(row)
+        # Same predicate the old COUNT query used, computed from the same
+        # fetch (conversation-scoped, live rows, live conversation).
+        total_root_threads = len(root_rows)
+        # Replicate SQL LIMIT/OFFSET semantics for non-positive inputs:
+        # a negative OFFSET is 0, a negative LIMIT means "no limit".
+        effective_offset = max(0, root_offset)
+        if root_limit < 0:
+            paged_root_rows = root_rows[effective_offset:]
+        else:
+            paged_root_rows = root_rows[
+                effective_offset : effective_offset + root_limit
+            ]
+
+        root_threads, image_pending = self._build_message_tree(
+            paged_root_rows,
+            children_by_parent,
             depth_cap=depth_cap,
-            depth=1,
-            seen_message_ids=set(),
         )
+        self._hydrate_tree_images(image_pending)
 
         return {
             "conversation": conversation,
@@ -969,7 +987,7 @@ class ChatConversationService:
                 "limit": root_limit,
                 "offset": root_offset,
                 "total_root_threads": total_root_threads,
-                "has_more": root_offset + len(root_rows) < total_root_threads,
+                "has_more": root_offset + len(paged_root_rows) < total_root_threads,
             },
             "depth_cap": depth_cap,
         }
@@ -1135,50 +1153,98 @@ class ChatConversationService:
 
     def _build_message_tree(
         self,
-        conversation_id: str,
-        rows: Iterable[Mapping[str, Any]],
+        paged_root_rows: Sequence[Mapping[str, Any]],
+        children_by_parent: Mapping[Any, Sequence[Mapping[str, Any]]],
         *,
-        order_by_timestamp: str,
         depth_cap: int,
-        depth: int,
-        seen_message_ids: set[str],
-    ) -> list[dict[str, Any]]:
-        nodes: list[dict[str, Any]] = []
-        for row in rows:
+    ) -> tuple[list[dict[str, Any]], list[tuple[Any, dict[str, Any]]]]:
+        """Assemble nested tree nodes iteratively from one row fetch.
+
+        TASK-22206: replaces the recursive one-query-per-node walk (O(N^2)
+        row scans, RecursionError at ~1000-deep linear conversations).
+        Semantics preserved exactly: per-parent child order is the fetch's
+        timestamp order (a stable partition of one ``ORDER BY m.timestamp``
+        result); a node at ``depth >= depth_cap`` or whose id was already
+        visited keeps ``children=[]`` with ``truncated=True``; a row
+        ``normalize_message_row`` rejects is dropped along with its subtree;
+        a row without an id gets no children. The visited set is global
+        rather than the old per-path copy -- the two differ only on inputs a
+        real DB cannot produce (a duplicated primary key), and the global
+        set is what makes the walk O(N).
+
+        BLOB columns are never touched here: rows carry ``has_image`` and
+        image-bearing nodes are returned for one batched hydration pass
+        (``_hydrate_tree_images``).
+
+        Args:
+            paged_root_rows: The page of root rows, in fetch order.
+            children_by_parent: All non-root rows, bucketed by
+                ``parent_message_id``, each bucket in fetch order.
+            depth_cap: Maximum depth; roots are depth 1.
+
+        Returns:
+            The nested root nodes, and ``(message_id, node)`` pairs for
+            every node whose row carries an image.
+        """
+        roots: list[dict[str, Any]] = []
+        image_pending: list[tuple[Any, dict[str, Any]]] = []
+        seen_message_ids: set[Any] = set()
+        # (row, depth, parent's children list); explicit stack keeps
+        # arbitrary-depth conversations off the Python recursion limit.
+        stack: list[tuple[Mapping[str, Any], int, list[dict[str, Any]]]] = [
+            (row, 1, roots) for row in reversed(paged_root_rows)
+        ]
+        while stack:
+            row, depth, siblings = stack.pop()
             message_id = row.get("id")
             normalized_row = normalize_message_row(row)
             if normalized_row is None:
                 continue
+            if message_id is not None and row.get("has_image"):
+                image_pending.append((message_id, normalized_row))
             if message_id is not None and message_id in seen_message_ids:
                 normalized_row["children"] = []
                 normalized_row["truncated"] = True
-                nodes.append(normalized_row)
+                siblings.append(normalized_row)
                 continue
-
-            next_seen = set(seen_message_ids)
             if message_id is not None:
-                next_seen.add(message_id)
-
+                seen_message_ids.add(message_id)
             if depth >= depth_cap:
                 normalized_row["children"] = []
                 normalized_row["truncated"] = True
-                nodes.append(normalized_row)
+                siblings.append(normalized_row)
                 continue
-
-            child_rows = self.db.get_messages_for_conversation_by_parent_ids(
-                conversation_id,
-                [message_id] if message_id is not None else [],
-                order_by_timestamp=order_by_timestamp,
-                include_deleted_conversation=False,
-            )
-            normalized_row["children"] = self._build_message_tree(
-                conversation_id,
-                child_rows,
-                order_by_timestamp=order_by_timestamp,
-                depth_cap=depth_cap,
-                depth=depth + 1,
-                seen_message_ids=next_seen,
-            )
+            children: list[dict[str, Any]] = []
+            normalized_row["children"] = children
             normalized_row["truncated"] = False
-            nodes.append(normalized_row)
-        return nodes
+            siblings.append(normalized_row)
+            if message_id is not None:
+                for child_row in reversed(children_by_parent.get(message_id, ())):
+                    stack.append((child_row, depth + 1, children))
+        return roots, image_pending
+
+    def _hydrate_tree_images(
+        self, image_pending: Sequence[tuple[Any, dict[str, Any]]]
+    ) -> None:
+        """Fill image BLOBs into built tree nodes, one batched fetch.
+
+        TASK-22206: nodes leave ``_build_message_tree`` with
+        ``image_data=None``; the actual BLOBs are read here, once, only for
+        the messages that have one. A conversation without images performs
+        zero BLOB reads. Skipped silently for DB objects (test fakes) that
+        do not expose the batched fetch -- their rows carry ``image_data``
+        inline and ``normalize_message_row`` already passed it through.
+        """
+        if not image_pending:
+            return
+        fetcher = getattr(self.db, "get_message_images_by_ids", None)
+        if not callable(fetcher):
+            return
+        images = fetcher([message_id for message_id, _node in image_pending])
+        for message_id, node in image_pending:
+            image_row = images.get(message_id)
+            if image_row is None:
+                # Deleted between the two reads; the node keeps image_data
+                # None, matching a snapshot taken a moment later.
+                continue
+            node["image_data"] = image_row.get("image_data")

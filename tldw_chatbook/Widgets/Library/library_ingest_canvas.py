@@ -562,7 +562,9 @@ class LibraryIngestQueuePanel(Vertical):
                 row_classes += " library-ingest-row-failed"
             elif row.state == IngestJobState.SKIPPED:
                 row_classes += " library-ingest-row-skipped"
-            stt_actions = _stt_recovery_actions(row.error_detail)
+            stt_actions = (
+                () if row.research_owned else _stt_recovery_actions(row.error_detail)
+            )
             has_actions = (
                 row.can_open
                 or row.can_open_on_server
@@ -682,7 +684,11 @@ class LibraryIngestQueuePanel(Vertical):
                         )
                     if row.can_retry and not stt_actions:
                         yield Button(
-                            "Retry",
+                            (
+                                "Retry Research source"
+                                if row.research_owned
+                                else "Retry"
+                            ),
                             id=f"library-ingest-retry-{row.job_id}",
                             classes=(
                                 "library-canvas-action library-ingest-retry "
