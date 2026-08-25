@@ -1175,8 +1175,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._refresh_overview_data()
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Re-derive responsive state without changing the preference."""
-        self._recompute_effective_layout()
+        """Re-derive responsive state without changing the preference.
+
+        Threads the current effective layout as ``previous`` so the
+        resolver's boundary hysteresis (TASK-22211) can absorb
+        sub-hysteresis width changes -- the +/-1-cell oscillation of a
+        drag-resize, and the 2-cell delta of an ancestor scrollbar
+        appearing or disappearing -- instead of mounting/removing a whole
+        pane per Resize event. Only this resize path threads state: manual
+        gestures and section switches still resolve fresh.
+        """
+        self._recompute_effective_layout(previous=self._effective_region_layout)
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply a validated section/run deep link from shell navigation."""
@@ -3036,7 +3045,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
 
     def _available_layout_width(self) -> int:
-        """Best live width for the pure responsive resolver."""
+        """Best live width for the pure responsive resolver.
+
+        Scrollbar-toggle flap (TASK-22211): the preferred candidate,
+        ``workbench.size.width``, shrinks by the scrollbar width (2 cells)
+        when an ancestor grows a vertical scrollbar (the Screen defaults to
+        ``overflow-y: auto``), so a measurement taken across a scrollbar
+        toggle can differ by 2 with no user resize. That delta is absorbed
+        in CODE, not CSS: a scrollbar toggle posts no Resize to this
+        Screen (Textual posts Resize to the resized widget only, and it
+        does not bubble), so it cannot trigger a recompute by itself, and
+        every resize-driven recompute threads the previous effective
+        layout into the resolver whose `LAYOUT_HYSTERESIS_WIDTH` (4) is
+        deliberately wider than the scrollbar -- see `on_resize` and
+        `resolve_effective_layout`. Measuring the genuinely narrower width
+        when a scrollbar is really present remains correct; only the
+        sub-hysteresis flap is suppressed.
+        """
         if not self.is_mounted:
             return 10_000
         candidates: list[int] = []
@@ -3076,8 +3101,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         *,
         section: str | None = None,
         request_workbench: bool = True,
+        previous: RegionLayout | None = None,
     ) -> int | None:
-        """Resolve and push transient responsive/Article Focus state."""
+        """Resolve and push transient responsive/Article Focus state.
+
+        Args:
+            section: Section to resolve for; defaults to the active one.
+            request_workbench: Whether to push the result at the workbench.
+            previous: Previously resolved effective layout, threaded into
+                the resolver for boundary hysteresis (TASK-22211). Only the
+                resize path passes it: a Resize-driven recompute must not
+                flip a pane on a sub-hysteresis width change, while manual
+                gestures, section switches, and the first resolve keep
+                today's fresh (hysteresis-free) resolution.
+        """
         section = self.active_section if section is None else section
         read_mode = section == "items"
         width = self._available_layout_width()
@@ -3099,6 +3136,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             read_mode=read_mode,
             article_focus=self._article_focus_active,
             priority_target=self._responsive_priority_target,
+            previous=previous,
         )
         previous = self._effective_region_layout
         if (
