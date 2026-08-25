@@ -440,13 +440,16 @@ class LocalResearchWorkspaceAdapter:
         note = self._note_from_row(ref, row)
         if note.note_id != note_id:
             raise ValueError("Local Notes returned a mismatched canonical note id")
-        if await self._is_workspace_note(ref, note_id):
+        is_workspace_note = await self._is_workspace_note(ref, note_id)
+        has_proof = note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
+        if is_workspace_note and receipt.state == "pending" and not has_proof:
             if not self._note_matches_request(note, request):
                 await asyncio.to_thread(
                     self._service.record_quick_note_failure,
                     receipt.receipt_id,
                     self._notes_user_id,
                     expected_revision=receipt.revision,
+                    expected_lease_token=receipt.lease_token,
                     reason_code="owner_conflict",
                     permanent=True,
                 )
@@ -456,15 +459,18 @@ class LocalResearchWorkspaceAdapter:
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
             return note
-        has_proof = note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
-        if not has_proof or not self._note_matches_request(note, request):
+        if (
+            receipt.state != "projection_committed" and not has_proof
+        ) or not self._note_matches_request(note, request):
             await asyncio.to_thread(
                 self._service.record_quick_note_failure,
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
                 reason_code=("proof_mismatch" if not has_proof else "owner_conflict"),
                 permanent=True,
             )
@@ -475,13 +481,35 @@ class LocalResearchWorkspaceAdapter:
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
+        if receipt.state == "owner_committed":
+            receipt = await asyncio.to_thread(
+                self._service.project_quick_note_create,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
+                title=note.title,
+            )
+        if has_proof:
+            await notes.remove_internal_note_keyword(
+                scope="local_note",
+                note_id=note.note_id,
+                keyword=encode_receipt_proof(receipt.owner_proof),
+                user_id=self._notes_user_id,
+            )
+        cleaned = await self._load_local_note_row(notes, note.note_id)
+        if cleaned is None or note_has_receipt_proof(
+            cleaned.get("keywords"), receipt.owner_proof
+        ):
+            raise CharactersRAGDBError("Local Notes proof cleanup did not settle")
         completed = await asyncio.to_thread(
             self._service.complete_quick_note_create,
             receipt.receipt_id,
             self._notes_user_id,
             expected_revision=receipt.revision,
-            title=note.title,
+            expected_lease_token=receipt.lease_token,
         )
         if not completed:
             if not await self._is_workspace_note(ref, note.note_id):
@@ -504,6 +532,16 @@ class LocalResearchWorkspaceAdapter:
                 offset=0,
             )
             for receipt in receipts:
+                try:
+                    receipt = await asyncio.to_thread(
+                        self._service.claim_quick_note_recovery,
+                        receipt.receipt_id,
+                        self._notes_user_id,
+                        expected_revision=receipt.revision,
+                        expected_lease_token=receipt.lease_token,
+                    )
+                except WorkspaceRegistryServiceError:
+                    continue
                 receipt_ref = QualifiedWorkspaceRef(
                     WorkspaceDataSource.LOCAL, receipt.workspace_id
                 )
@@ -527,6 +565,7 @@ class LocalResearchWorkspaceAdapter:
                         receipt.receipt_id,
                         self._notes_user_id,
                         expected_revision=receipt.revision,
+                        expected_lease_token=receipt.lease_token,
                         reason_code="owner_unavailable",
                     )
                 except WorkspaceRegistryServiceError:
@@ -536,6 +575,7 @@ class LocalResearchWorkspaceAdapter:
                             receipt.receipt_id,
                             self._notes_user_id,
                             expected_revision=receipt.revision,
+                            expected_lease_token=receipt.lease_token,
                             reason_code="registry_failure",
                         )
                     except WorkspaceRegistryServiceError:
@@ -576,32 +616,35 @@ class LocalResearchWorkspaceAdapter:
         ref: QualifiedWorkspaceRef,
         row: Mapping[str, Any] | None,
     ) -> None:
-        if receipt.state == "pending" and row is None:
-            await asyncio.to_thread(
-                self._service.discard_quick_note_receipt,
-                receipt.receipt_id,
-                self._notes_user_id,
-                expected_revision=receipt.revision,
-            )
-            return
         if row is None:
-            await asyncio.to_thread(
-                self._service.discard_quick_note_receipt,
+            discarded = await asyncio.to_thread(
+                self._service.discard_abandoned_quick_note_receipt,
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
+            if not discarded:
+                await asyncio.to_thread(
+                    self._service.record_quick_note_failure,
+                    receipt.receipt_id,
+                    self._notes_user_id,
+                    expected_revision=receipt.revision,
+                    expected_lease_token=receipt.lease_token,
+                    reason_code="owner_missing",
+                )
             return
-        owner_complete = (
-            str(row.get("id") or "") == receipt.canonical_note_id
-            and note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
-        )
-        if not owner_complete:
+        has_proof = note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
+        if (
+            str(row.get("id") or "") != receipt.canonical_note_id
+            or (receipt.state != "projection_committed" and not has_proof)
+        ):
             await asyncio.to_thread(
                 self._service.record_quick_note_failure,
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
                 reason_code="proof_mismatch",
                 permanent=True,
             )
@@ -612,14 +655,37 @@ class LocalResearchWorkspaceAdapter:
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
         note = self._note_from_row(ref, row)
+        if receipt.state == "owner_committed":
+            receipt = await asyncio.to_thread(
+                self._service.project_quick_note_create,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
+                title=note.title,
+            )
+        if has_proof:
+            notes = self._require_notes_scope("save_note")
+            await notes.remove_internal_note_keyword(
+                scope="local_note",
+                note_id=note.note_id,
+                keyword=encode_receipt_proof(receipt.owner_proof),
+                user_id=self._notes_user_id,
+            )
+            cleaned = await self._load_local_note_row(notes, note.note_id)
+            if cleaned is None or note_has_receipt_proof(
+                cleaned.get("keywords"), receipt.owner_proof
+            ):
+                raise CharactersRAGDBError("Local Notes proof cleanup did not settle")
         await asyncio.to_thread(
             self._service.complete_quick_note_create,
             receipt.receipt_id,
             self._notes_user_id,
             expected_revision=receipt.revision,
-            title=note.title,
+            expected_lease_token=receipt.lease_token,
         )
 
     async def _reconcile_quick_note_delete(
@@ -637,6 +703,7 @@ class LocalResearchWorkspaceAdapter:
                     receipt.receipt_id,
                     self._notes_user_id,
                     expected_revision=receipt.revision,
+                    expected_lease_token=receipt.lease_token,
                     reason_code="owner_conflict",
                     permanent=True,
                 )
@@ -655,6 +722,7 @@ class LocalResearchWorkspaceAdapter:
                     receipt.receipt_id,
                     self._notes_user_id,
                     expected_revision=receipt.revision,
+                    expected_lease_token=receipt.lease_token,
                     reason_code="owner_conflict",
                     permanent=True,
                 )
@@ -670,12 +738,14 @@ class LocalResearchWorkspaceAdapter:
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
         await asyncio.to_thread(
             self._service.complete_quick_note_delete,
             receipt.receipt_id,
             self._notes_user_id,
             expected_revision=receipt.revision,
+            expected_lease_token=receipt.lease_token,
         )
 
     async def delete_note(
@@ -711,6 +781,7 @@ class LocalResearchWorkspaceAdapter:
                         receipt.receipt_id,
                         self._notes_user_id,
                         expected_revision=receipt.revision,
+                        expected_lease_token=receipt.lease_token,
                     )
                     raise ResearchNoteConflictError(ref, safe_note_id) from exc
                 deleted = True
@@ -726,12 +797,14 @@ class LocalResearchWorkspaceAdapter:
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
             await asyncio.to_thread(
                 self._service.complete_quick_note_delete,
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
             )
             return deleted
 

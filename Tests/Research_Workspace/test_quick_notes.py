@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from loguru import logger
@@ -120,6 +121,7 @@ class RecordingRegistry:
                 owner_proof="owner-proof-1234567890abcdef1234567890abcdef",
                 lease_token="lease-token-1234567890abcdef1234567890abcdef",
                 lease_expires_at="2026-08-24T00:00:30+00:00",
+                abandon_after="2026-08-31T00:00:00+00:00",
                 state="pending",
                 revision=1,
                 failure_count=0,
@@ -147,6 +149,7 @@ class RecordingRegistry:
                 owner_proof="owner-proof-1234567890abcdef1234567890abcdef",
                 lease_token="lease-token-1234567890abcdef1234567890abcdef",
                 lease_expires_at="2026-08-24T00:00:30+00:00",
+                abandon_after="2026-08-31T00:00:00+00:00",
                 state="pending",
                 revision=1,
                 failure_count=0,
@@ -178,12 +181,36 @@ class RecordingRegistry:
         ]
         return tuple(rows[offset : offset + limit]), len(rows)
 
+    def claim_quick_note_recovery(
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
+    ):
+        receipt = self.receipts[receipt_id]
+        assert receipt.local_user_id == local_user_id
+        assert receipt.revision == expected_revision
+        assert receipt.lease_token == expected_lease_token
+        self.calls.append(
+            (
+                "claim_recovery",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+            )
+        )
+        return receipt
+
     def record_quick_note_failure(
         self,
         receipt_id,
         local_user_id,
         *,
         expected_revision,
+        expected_lease_token,
         reason_code,
         permanent=False,
     ):
@@ -199,6 +226,7 @@ class RecordingRegistry:
                 receipt_id,
                 local_user_id,
                 expected_revision,
+                expected_lease_token,
                 reason_code,
                 permanent,
             )
@@ -206,40 +234,134 @@ class RecordingRegistry:
         return receipt
 
     def mark_quick_note_owner_committed(
-        self, receipt_id, local_user_id, *, expected_revision
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
     ):
         receipt = self.receipts[receipt_id]
         if receipt.state == "pending":
             receipt.state = "owner_committed"
             receipt.revision += 1
-        self.calls.append(("mark_committed", receipt_id, local_user_id, expected_revision))
+        self.calls.append(
+            (
+                "mark_committed",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+            )
+        )
         return receipt
 
     def discard_quick_note_receipt(
-        self, receipt_id, local_user_id, *, expected_revision
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
     ):
         self.receipts.pop(receipt_id, None)
-        self.calls.append(("discard_receipt", receipt_id, local_user_id, expected_revision))
+        self.calls.append(
+            (
+                "discard_receipt",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+            )
+        )
         return True
 
+    def discard_abandoned_quick_note_receipt(
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
+    ):
+        self.calls.append(
+            (
+                "discard_abandoned",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+            )
+        )
+        return False
+
+    def project_quick_note_create(
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
+        title,
+    ):
+        receipt = self.receipts[receipt_id]
+        if receipt.state == "owner_committed":
+            if not any(
+                item.item_type == "note"
+                and item.item_id == receipt.canonical_note_id
+                and item.role == "note"
+                for item in self.memberships
+            ):
+                self.memberships.append(
+                    SimpleNamespace(
+                        item_type="note",
+                        item_id=receipt.canonical_note_id,
+                        role="note",
+                    )
+                )
+            receipt.state = "projection_committed"
+            receipt.revision += 1
+        self.calls.append(
+            (
+                "project_create",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+                title,
+            )
+        )
+        return receipt
+
     def complete_quick_note_create(
-        self, receipt_id, local_user_id, *, expected_revision, title
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
     ):
         receipt = self.receipts.pop(receipt_id, None)
         if receipt is None:
             return False
-        self.memberships.append(
-            SimpleNamespace(
-                item_type="note", item_id=receipt.canonical_note_id, role="note"
-            )
-        )
         self.calls.append(
-            ("complete_create", receipt_id, local_user_id, expected_revision, title)
+            (
+                "complete_create",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+            )
         )
         return True
 
     def complete_quick_note_delete(
-        self, receipt_id, local_user_id, *, expected_revision
+        self,
+        receipt_id,
+        local_user_id,
+        *,
+        expected_revision,
+        expected_lease_token,
     ):
         receipt = self.receipts.pop(receipt_id, None)
         if receipt is None:
@@ -252,7 +374,13 @@ class RecordingRegistry:
             )
         ]
         self.calls.append(
-            ("complete_delete", receipt_id, local_user_id, expected_revision)
+            (
+                "complete_delete",
+                receipt_id,
+                local_user_id,
+                expected_revision,
+                expected_lease_token,
+            )
         )
         return True
 
@@ -316,6 +444,17 @@ class RecordingNotesScope:
         self.rows.pop(str(kwargs["note_id"]), None)
         return True
 
+    async def remove_internal_note_keyword(self, **kwargs):
+        self.calls.append(("remove_internal_keyword", kwargs))
+        row = self.rows.get(str(kwargs["note_id"]))
+        if row is None:
+            return False
+        keyword = str(kwargs["keyword"])
+        row["keywords"] = [
+            value for value in row.get("keywords", []) if str(value) != keyword
+        ]
+        return True
+
 
 class FailingMembershipRegistry:
     """Inject one role-specific registry failure while retaining real SQLite."""
@@ -351,6 +490,12 @@ class FailingMembershipRegistry:
             self.fail_link_role = None
             raise WorkspaceRegistryServiceError("injected registry link failure")
         return self.service.complete_quick_note_create(*args, **kwargs)
+
+    def project_quick_note_create(self, *args, **kwargs):
+        if self.fail_link_role == "note":
+            self.fail_link_role = None
+            raise WorkspaceRegistryServiceError("injected registry link failure")
+        return self.service.project_quick_note_create(*args, **kwargs)
 
     def complete_quick_note_delete(self, *args, **kwargs):
         if self.fail_unlink_role == "note":
@@ -442,8 +587,13 @@ async def test_local_create_preclaims_canonical_id_then_promotes_note_membership
     )
     assert registry.calls[1][0] == "get_memberships"
     assert registry.calls[2][0] == "mark_committed"
-    assert registry.calls[2][2:] == ("chatbook-user", 1)
-    assert registry.calls[3][0] == "complete_create"
+    assert registry.calls[2][2:] == (
+        "chatbook-user",
+        1,
+        "lease-token-1234567890abcdef1234567890abcdef",
+    )
+    assert registry.calls[3][0] == "project_create"
+    assert registry.calls[4][0] == "complete_create"
     assert saved.ref == LOCAL_REF
     assert saved.note_id != request.operation_id
     assert saved.version == 1
@@ -681,6 +831,7 @@ async def test_local_note_round_trip_uses_real_sqlite_owners_and_cleans_membersh
 async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concurrent_retry(
     tmp_path,
 ) -> None:
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
     notes_path = tmp_path / "canonical-notes.sqlite"
     workspace_path = tmp_path / "workspace.sqlite"
     notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
@@ -694,7 +845,7 @@ async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concu
         policy_enforcer=None,
     )
     registry_db = WorkspaceDB(workspace_path, client_id="research-client")
-    registry = LocalWorkspaceRegistryService(registry_db)
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
     registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
     failing = FailingMembershipRegistry(registry, fail_link_role="note")
     adapter = LocalResearchWorkspaceAdapter(
@@ -708,7 +859,10 @@ async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concu
         await adapter.save_note(LOCAL_REF, request)
 
     receipts, total = registry.list_quick_note_receipts(
-        "research-user", workspace_id=LOCAL_REF.workspace_id, limit=100
+        "research-user",
+        workspace_id=LOCAL_REF.workspace_id,
+        include_blocked=True,
+        limit=100,
     )
     assert total == 1
     receipt = receipts[0]
@@ -720,6 +874,7 @@ async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concu
     assert registry.get_item_memberships("note", receipt.canonical_note_id) == ()
     registry_db.close()
     notes_db.close_connection()
+    clock.advance(60)
 
     reopened_notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
     reopened_notes_scope = NotesScopeService(
@@ -732,7 +887,9 @@ async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concu
         policy_enforcer=None,
     )
     reopened_registry_db = WorkspaceDB(workspace_path, client_id="research-client")
-    reopened_registry = LocalWorkspaceRegistryService(reopened_registry_db)
+    reopened_registry = LocalWorkspaceRegistryService(
+        reopened_registry_db, now_factory=clock
+    )
     reopened_adapter = LocalResearchWorkspaceAdapter(
         reopened_registry,
         notes_scope_service=reopened_notes_scope,
@@ -844,6 +1001,7 @@ async def test_pending_create_receipt_with_atomic_owner_row_recovers_after_reope
 async def test_local_delete_retry_cleans_membership_after_owner_already_deleted(
     tmp_path,
 ) -> None:
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
     notes_path = tmp_path / "canonical-delete.sqlite"
     workspace_path = tmp_path / "workspace-delete.sqlite"
     notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
@@ -857,7 +1015,7 @@ async def test_local_delete_retry_cleans_membership_after_owner_already_deleted(
         policy_enforcer=None,
     )
     registry_db = WorkspaceDB(workspace_path, client_id="research-client")
-    registry = LocalWorkspaceRegistryService(registry_db)
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
     registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
     adapter = LocalResearchWorkspaceAdapter(
         registry,
@@ -883,6 +1041,7 @@ async def test_local_delete_retry_cleans_membership_after_owner_already_deleted(
     assert registry.get_item_memberships("note", created.note_id)
     registry_db.close()
     notes_db.close_connection()
+    clock.advance(60)
 
     reopened_notes_db = CharactersRAGDB(str(notes_path), client_id="research-app")
     reopened_notes_scope = NotesScopeService(
@@ -895,7 +1054,9 @@ async def test_local_delete_retry_cleans_membership_after_owner_already_deleted(
         policy_enforcer=None,
     )
     reopened_registry_db = WorkspaceDB(workspace_path, client_id="research-client")
-    reopened_registry = LocalWorkspaceRegistryService(reopened_registry_db)
+    reopened_registry = LocalWorkspaceRegistryService(
+        reopened_registry_db, now_factory=clock
+    )
     reopened_adapter = LocalResearchWorkspaceAdapter(
         reopened_registry,
         notes_scope_service=reopened_notes_scope,
@@ -1437,6 +1598,7 @@ async def test_existing_canonical_row_with_mismatched_metadata_is_never_promoted
 async def test_delete_receipt_reopen_cleans_all_roles_and_rag_scope_globally(
     tmp_path,
 ) -> None:
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
     notes_path = tmp_path / "delete-owner.sqlite"
     workspace_path = tmp_path / "delete-registry.sqlite"
     notes_db = CharactersRAGDB(str(notes_path), client_id="template")
@@ -1450,7 +1612,7 @@ async def test_delete_receipt_reopen_cleans_all_roles_and_rag_scope_globally(
         policy_enforcer=None,
     )
     registry_db = WorkspaceDB(workspace_path)
-    registry = LocalWorkspaceRegistryService(registry_db)
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
     registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="First")
     registry.create_workspace(workspace_id="workspace-other", name="Other")
     adapter = LocalResearchWorkspaceAdapter(
@@ -1496,10 +1658,13 @@ async def test_delete_receipt_reopen_cleans_all_roles_and_rag_scope_globally(
     ) is None
     registry_db.close()
     notes_db.close_connection()
+    clock.advance(60)
 
     reopened_notes_db = CharactersRAGDB(str(notes_path), client_id="template")
     reopened_registry_db = WorkspaceDB(workspace_path)
-    reopened_registry = LocalWorkspaceRegistryService(reopened_registry_db)
+    reopened_registry = LocalWorkspaceRegistryService(
+        reopened_registry_db, now_factory=clock
+    )
     reopened_adapter = LocalResearchWorkspaceAdapter(
         reopened_registry,
         notes_scope_service=NotesScopeService(
@@ -1573,18 +1738,24 @@ def test_receipt_listing_filters_before_bounds_and_transitions_monotonically(
         )
         assert rows == (first,) and total == 1
         committed = registry.mark_quick_note_owner_committed(
-            first.receipt_id, "user-a", expected_revision=1
+            first.receipt_id,
+            "user-a",
+            expected_revision=1,
+            expected_lease_token=first.lease_token,
         )
         assert (committed.state, committed.revision) == ("owner_committed", 2)
         idempotent = registry.mark_quick_note_owner_committed(
-            first.receipt_id, "user-a", expected_revision=1
+            first.receipt_id,
+            "user-a",
+            expected_revision=1,
+            expected_lease_token=first.lease_token,
         )
         assert idempotent == committed
         assert not registry.complete_quick_note_create(
             first.receipt_id,
             "user-a",
             expected_revision=1,
-            title="Wrong revision",
+            expected_lease_token=first.lease_token,
         )
         with pytest.raises(ValueError, match="limit"):
             registry.list_quick_note_receipts("user-a", limit=101)
@@ -1766,7 +1937,7 @@ async def test_live_pending_create_is_not_reconciled_by_independent_adapter(
 
 
 @pytest.mark.asyncio
-async def test_missing_owner_pending_receipt_clears_only_after_lease_expiry_and_reopen(
+async def test_missing_owner_pending_receipt_survives_lease_and_clears_only_after_abandonment_grace(
     tmp_path,
 ) -> None:
     path = tmp_path / "lease-expiry.sqlite"
@@ -1798,9 +1969,205 @@ async def test_missing_owner_pending_receipt_clears_only_after_lease_expiry_and_
         await adapter.reconcile_quick_notes()
         assert reopened.list_quick_note_receipts(
             "notes-user", include_blocked=True, limit=100
+        )[1] == 1
+        clock.advance(6 * 24 * 60 * 60)
+        await adapter.reconcile_quick_notes()
+        assert reopened.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 1
+        clock.advance(2 * 24 * 60 * 60)
+        await adapter.reconcile_quick_notes()
+        assert reopened.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
         )[1] == 0
     finally:
         reopened_db.close()
+
+
+def _fresh_operation_token() -> str:
+    return f"research-note-{uuid4().hex}"
+
+
+def test_stale_create_holder_cannot_mutate_same_id_recreated_receipt(tmp_path) -> None:
+    registry_db = WorkspaceDB(tmp_path / "create-lease-aba.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    try:
+        for mutation in ("mark", "failure", "discard"):
+            operation_token = _fresh_operation_token()
+            stale = registry.claim_quick_note_create(
+                LOCAL_REF.workspace_id,
+                local_user_id="notes-user",
+                operation_token=operation_token,
+            )
+            assert registry.discard_quick_note_receipt(
+                stale.receipt_id,
+                "notes-user",
+                expected_revision=stale.revision,
+                expected_lease_token=stale.lease_token,
+            )
+            current = registry.claim_quick_note_create(
+                LOCAL_REF.workspace_id,
+                local_user_id="notes-user",
+                operation_token=operation_token,
+            )
+            assert current.revision == stale.revision
+            assert current.lease_token != stale.lease_token
+
+            if mutation == "mark":
+                with pytest.raises(WorkspaceRegistryServiceError, match="changed"):
+                    registry.mark_quick_note_owner_committed(
+                        stale.receipt_id,
+                        "notes-user",
+                        expected_revision=stale.revision,
+                        expected_lease_token=stale.lease_token,
+                    )
+            elif mutation == "failure":
+                with pytest.raises(WorkspaceRegistryServiceError, match="changed"):
+                    registry.record_quick_note_failure(
+                        stale.receipt_id,
+                        "notes-user",
+                        expected_revision=stale.revision,
+                        expected_lease_token=stale.lease_token,
+                        reason_code="registry_failure",
+                    )
+            else:
+                assert not registry.discard_quick_note_receipt(
+                    stale.receipt_id,
+                    "notes-user",
+                    expected_revision=stale.revision,
+                    expected_lease_token=stale.lease_token,
+                )
+
+            rows, total = registry.list_quick_note_receipts(
+                "notes-user", include_blocked=True, limit=100
+            )
+            assert total >= 1
+            assert current.receipt_id in {row.receipt_id for row in rows}
+    finally:
+        registry_db.close()
+
+
+def test_stale_create_holder_cannot_complete_recreated_projected_receipt(
+    tmp_path,
+) -> None:
+    registry_db = WorkspaceDB(tmp_path / "create-complete-aba.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    operation_token = _fresh_operation_token()
+    try:
+        stale = registry.claim_quick_note_create(
+            LOCAL_REF.workspace_id,
+            local_user_id="notes-user",
+            operation_token=operation_token,
+        )
+        stale = registry.mark_quick_note_owner_committed(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+        )
+        stale = registry.project_quick_note_create(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+            title="First owner",
+        )
+        assert registry.discard_quick_note_receipt(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+        )
+
+        current = registry.claim_quick_note_create(
+            LOCAL_REF.workspace_id,
+            local_user_id="notes-user",
+            operation_token=operation_token,
+        )
+        current = registry.mark_quick_note_owner_committed(
+            current.receipt_id,
+            "notes-user",
+            expected_revision=current.revision,
+            expected_lease_token=current.lease_token,
+        )
+        current = registry.project_quick_note_create(
+            current.receipt_id,
+            "notes-user",
+            expected_revision=current.revision,
+            expected_lease_token=current.lease_token,
+            title="Second owner",
+        )
+        assert current.revision == stale.revision
+        assert not registry.complete_quick_note_create(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+        )
+        assert registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 1
+    finally:
+        registry_db.close()
+
+
+def test_stale_delete_holder_cannot_complete_recreated_receipt(tmp_path) -> None:
+    registry_db = WorkspaceDB(tmp_path / "delete-complete-aba.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    registry.link_membership(
+        LOCAL_REF.workspace_id,
+        item_type="note",
+        item_id="canonical-note",
+        role="note",
+    )
+    try:
+        stale = registry.claim_quick_note_delete(
+            LOCAL_REF.workspace_id,
+            local_user_id="notes-user",
+            canonical_note_id="canonical-note",
+            expected_version=3,
+        )
+        stale = registry.mark_quick_note_owner_committed(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+        )
+        assert registry.discard_quick_note_receipt(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+        )
+
+        current = registry.claim_quick_note_delete(
+            LOCAL_REF.workspace_id,
+            local_user_id="notes-user",
+            canonical_note_id="canonical-note",
+            expected_version=3,
+        )
+        current = registry.mark_quick_note_owner_committed(
+            current.receipt_id,
+            "notes-user",
+            expected_revision=current.revision,
+            expected_lease_token=current.lease_token,
+        )
+        assert current.revision == stale.revision
+        assert not registry.complete_quick_note_delete(
+            stale.receipt_id,
+            "notes-user",
+            expected_revision=stale.revision,
+            expected_lease_token=stale.lease_token,
+        )
+        assert registry.get_item_memberships("note", "canonical-note")
+        assert registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 1
+    finally:
+        registry_db.close()
 
 
 @pytest.mark.asyncio
@@ -1837,6 +2204,16 @@ async def test_poison_receipt_backoff_does_not_starve_later_actionable_receipt(
             return await super().get_note_detail(**kwargs)
 
     notes = PoisonNotes()
+    notes.rows[healthy.canonical_note_id] = {
+        "id": healthy.canonical_note_id,
+        "title": "Healthy",
+        "content": "Recoverable owner",
+        "version": 1,
+        "last_modified": "2026-08-24T00:00:00Z",
+        "keywords": [
+            f"research-receipt-proof:{healthy.owner_proof}",
+        ],
+    }
     adapter = LocalResearchWorkspaceAdapter(
         registry, notes_scope_service=notes, notes_user_id="notes-user"
     )
@@ -1860,6 +2237,7 @@ async def test_poison_receipt_backoff_does_not_starve_later_actionable_receipt(
 async def test_delete_reconciliation_blocks_aba_restored_active_owner(
     tmp_path, change_after_restore: bool
 ) -> None:
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
     notes_path = tmp_path / f"aba-notes-{change_after_restore}.sqlite"
     workspace_path = tmp_path / f"aba-workspace-{change_after_restore}.sqlite"
     notes_db = CharactersRAGDB(str(notes_path), client_id="template")
@@ -1872,7 +2250,7 @@ async def test_delete_reconciliation_blocks_aba_restored_active_owner(
         local_notes_service=interop, server_service=None, policy_enforcer=None
     )
     registry_db = WorkspaceDB(workspace_path)
-    registry = LocalWorkspaceRegistryService(registry_db)
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
     registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
     adapter = LocalResearchWorkspaceAdapter(
         registry, notes_scope_service=notes_scope, notes_user_id="notes-user"
@@ -1909,10 +2287,13 @@ async def test_delete_reconciliation_blocks_aba_restored_active_owner(
         restored_version += 1
     registry_db.close()
     notes_db.close_connection()
+    clock.advance(60)
 
     reopened_notes_db = CharactersRAGDB(str(notes_path), client_id="template")
     reopened_registry_db = WorkspaceDB(workspace_path)
-    reopened_registry = LocalWorkspaceRegistryService(reopened_registry_db)
+    reopened_registry = LocalWorkspaceRegistryService(
+        reopened_registry_db, now_factory=clock
+    )
     reopened = LocalResearchWorkspaceAdapter(
         reopened_registry,
         notes_scope_service=NotesScopeService(
@@ -1957,6 +2338,7 @@ async def test_owner_committed_delete_retries_active_exact_expected_version() ->
         receipt.receipt_id,
         "notes-user",
         expected_revision=receipt.revision,
+        expected_lease_token=receipt.lease_token,
     )
     adapter = LocalResearchWorkspaceAdapter(
         registry, notes_scope_service=notes, notes_user_id="notes-user"
@@ -1996,6 +2378,7 @@ def test_receipt_updated_at_never_regresses_when_wall_clock_moves_backward(
             receipt.receipt_id,
             "notes-user",
             expected_revision=receipt.revision,
+            expected_lease_token=receipt.lease_token,
         )
         assert committed.updated_at >= receipt.updated_at
     finally:
@@ -2007,12 +2390,13 @@ async def test_internal_receipt_proof_is_atomic_hidden_and_never_logged(tmp_path
     messages: list[str] = []
     sink = logger.add(messages.append, level="DEBUG", format="{message}")
     notes_db = CharactersRAGDB(str(tmp_path / "proof-notes.sqlite"), client_id="template")
+    interop = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="research-client",
+        global_db_to_use=notes_db,
+    )
     notes_scope = NotesScopeService(
-        local_notes_service=NotesInteropService(
-            base_db_directory=tmp_path,
-            api_client_id="research-client",
-            global_db_to_use=notes_db,
-        ),
+        local_notes_service=interop,
         server_service=None,
         policy_enforcer=None,
     )
@@ -2047,13 +2431,288 @@ async def test_internal_receipt_proof_is_atomic_hidden_and_never_logged(tmp_path
             for value in keywords
             if value.startswith("research-receipt-proof:")
         ]
-        assert len(proofs) == 1
+        assert proofs == []
+        raw_library_keywords = interop.get_keywords_for_note(
+            "notes-user", created.note_id
+        )
+        assert [row["keyword"] for row in raw_library_keywords] == ["visible-tag"]
+        assert all(
+            not row["keyword"].startswith("research-receipt-proof:")
+            for row in interop.list_keywords("notes-user", limit=100, offset=0)
+        )
+        assert interop.search_keywords(
+            "notes-user", "research-receipt-proof", limit=100
+        ) == []
+        library_page = interop.list_library_notes("notes-user", limit=20, offset=0)
+        assert library_page["items"][0]["keywords"] == ["visible-tag"]
+        graph = notes_scope._build_local_notes_graph(user_id="notes-user")
+        assert "research-receipt-proof:" not in repr(graph)
         assert created.tags == ("visible-tag",)
-        assert proofs[0] not in "\n".join(messages)
+        assert "research-receipt-proof:" not in "\n".join(messages)
     finally:
         registry_db.close()
         notes_db.close_connection()
         logger.remove(sink)
+
+
+@pytest.mark.asyncio
+async def test_create_reopens_from_projection_committed_and_removes_private_proof(
+    tmp_path,
+) -> None:
+    class FailCleanupOnce(NotesScopeService):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.fail_cleanup = True
+
+        async def remove_internal_note_keyword(self, **kwargs):
+            if self.fail_cleanup:
+                self.fail_cleanup = False
+                raise CharactersRAGDBError("private cleanup failure")
+            return await super().remove_internal_note_keyword(**kwargs)
+
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
+    notes_path = tmp_path / "projection-proof-notes.sqlite"
+    workspace_path = tmp_path / "projection-proof-workspace.sqlite"
+    notes_db = CharactersRAGDB(str(notes_path), client_id="template")
+    interop = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="research-client",
+        global_db_to_use=notes_db,
+    )
+    notes_scope = FailCleanupOnce(
+        local_notes_service=interop,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    registry_db = WorkspaceDB(workspace_path)
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, notes_scope_service=notes_scope, notes_user_id="notes-user"
+    )
+    request = ResearchNoteSaveRequest(
+        title="Resume cleanup",
+        content="Canonical body",
+        operation_id=_fresh_operation_token(),
+    )
+    try:
+        with pytest.raises(CharactersRAGDBError, match="private cleanup"):
+            await adapter.save_note(LOCAL_REF, request)
+        receipt = registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[0][0]
+        assert receipt.state == "projection_committed"
+        assert registry.get_item_memberships("note", receipt.canonical_note_id)
+        internal_rows = [
+            row
+            for row in notes_db.get_keywords_for_note(receipt.canonical_note_id)
+            if str(row["keyword"]).startswith("research-receipt-proof:")
+        ]
+        assert len(internal_rows) == 1
+        internal_row = internal_rows[0]
+        internal_keyword = str(internal_row["keyword"])
+        assert all(
+            not str(row["keyword"]).startswith("research-receipt-proof:")
+            for row in interop.get_keywords_for_note(
+                "notes-user", receipt.canonical_note_id
+            )
+        )
+        assert interop.get_keyword_by_id("notes-user", int(internal_row["id"])) is None
+        assert interop.get_keyword_by_text("notes-user", internal_keyword) is None
+        assert interop.get_notes_for_keyword(
+            "notes-user", int(internal_row["id"]), limit=100
+        ) == []
+        assert internal_keyword not in {
+            str(row["keyword"])
+            for row in interop.list_keywords("notes-user", limit=100, offset=0)
+        }
+        assert interop.search_keywords(
+            "notes-user", "research-receipt-proof", limit=100
+        ) == []
+        assert notes_db.get_keywords_for_notes_batch(
+            [receipt.canonical_note_id]
+        ) == {}
+        assert internal_keyword not in {
+            str(row["keyword"])
+            for row in notes_db.list_keywords(limit=100, offset=0)
+        }
+        assert notes_db.search_keywords(
+            "research-receipt-proof", limit=100
+        ) == []
+        library_page = interop.list_library_notes(
+            "notes-user", limit=20, offset=0
+        )
+        assert library_page["items"][0]["keywords"] == []
+        assert interop.search_library_notes(
+            "notes-user",
+            query="research-receipt-proof",
+            limit=20,
+            offset=0,
+        )["total"] == 0
+        assert "research-receipt-proof:" not in repr(
+            notes_scope._build_local_notes_graph(user_id="notes-user")
+        )
+
+        clock.advance(60)
+        await adapter.reconcile_quick_notes()
+        assert registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 0
+        assert all(
+            not str(row["keyword"]).startswith("research-receipt-proof:")
+            for row in notes_db.get_keywords_for_note(receipt.canonical_note_id)
+        )
+    finally:
+        registry_db.close()
+        notes_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_create_reopens_after_proof_cleanup_before_receipt_completion(
+    tmp_path,
+) -> None:
+    class FailCompleteOnce:
+        def __init__(self, service):
+            self.service = service
+            self.fail = True
+
+        def __getattr__(self, name):
+            return getattr(self.service, name)
+
+        def complete_quick_note_create(self, *args, **kwargs):
+            if self.fail:
+                self.fail = False
+                raise WorkspaceRegistryServiceError("injected completion failure")
+            return self.service.complete_quick_note_create(*args, **kwargs)
+
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
+    notes_db = CharactersRAGDB(
+        str(tmp_path / "cleanup-complete-notes.sqlite"), client_id="template"
+    )
+    notes_scope = NotesScopeService(
+        local_notes_service=NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="research-client",
+            global_db_to_use=notes_db,
+        ),
+        server_service=None,
+        policy_enforcer=None,
+    )
+    registry_db = WorkspaceDB(tmp_path / "cleanup-complete-workspace.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    adapter = LocalResearchWorkspaceAdapter(
+        FailCompleteOnce(registry),
+        notes_scope_service=notes_scope,
+        notes_user_id="notes-user",
+    )
+    try:
+        with pytest.raises(WorkspaceRegistryServiceError, match="completion failure"):
+            await adapter.save_note(
+                LOCAL_REF,
+                ResearchNoteSaveRequest(
+                    title="Resume completion",
+                    content="Canonical body",
+                    operation_id=_fresh_operation_token(),
+                ),
+            )
+        receipt = registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[0][0]
+        assert receipt.state == "projection_committed"
+        assert all(
+            not str(row["keyword"]).startswith("research-receipt-proof:")
+            for row in notes_db.get_keywords_for_note(receipt.canonical_note_id)
+        )
+
+        clock.advance(60)
+        reopened = LocalResearchWorkspaceAdapter(
+            registry, notes_scope_service=notes_scope, notes_user_id="notes-user"
+        )
+        await reopened.reconcile_quick_notes()
+        assert registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 0
+        assert registry.get_item_memberships("note", receipt.canonical_note_id)
+    finally:
+        registry_db.close()
+        notes_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_writer_blocked_past_work_lease_leaves_recoverable_owner_commit(
+    tmp_path,
+) -> None:
+    class BarrierScope(NotesScopeService):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def save_note(self, **kwargs):
+            if kwargs.get("create_note_id"):
+                self.started.set()
+                await self.release.wait()
+            return await super().save_note(**kwargs)
+
+    clock = MutableClock(datetime(2026, 8, 24, tzinfo=timezone.utc))
+    notes_db = CharactersRAGDB(
+        str(tmp_path / "long-writer-notes.sqlite"), client_id="template"
+    )
+    notes_scope = BarrierScope(
+        local_notes_service=NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="research-client",
+            global_db_to_use=notes_db,
+        ),
+        server_service=None,
+        policy_enforcer=None,
+    )
+    registry_db = WorkspaceDB(tmp_path / "long-writer-workspace.sqlite")
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=clock)
+    registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+    writer = LocalResearchWorkspaceAdapter(
+        registry, notes_scope_service=notes_scope, notes_user_id="notes-user"
+    )
+    reconciler = LocalResearchWorkspaceAdapter(
+        registry, notes_scope_service=notes_scope, notes_user_id="notes-user"
+    )
+    task = asyncio.create_task(
+        writer.save_note(
+            LOCAL_REF,
+            ResearchNoteSaveRequest(
+                title="Slow owner",
+                content="Canonical body",
+                operation_id=_fresh_operation_token(),
+            ),
+        )
+    )
+    try:
+        await notes_scope.started.wait()
+        clock.advance(60)
+        await reconciler.reconcile_quick_notes()
+        assert registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 1
+        notes_scope.release.set()
+        with pytest.raises(WorkspaceRegistryServiceError, match="changed"):
+            await task
+
+        clock.advance(10 * 60)
+        await reconciler.reconcile_quick_notes()
+        assert registry.list_quick_note_receipts(
+            "notes-user", include_blocked=True, limit=100
+        )[1] == 0
+        page = await reconciler.list_notes(
+            LOCAL_REF, ResearchNotePageRequest(limit=20, offset=0)
+        )
+        assert [note.title for note in page.items] == ["Slow owner"]
+    finally:
+        notes_scope.release.set()
+        if not task.done():
+            task.cancel()
+        registry_db.close()
+        notes_db.close_connection()
 
 
 def test_keyword_operations_never_log_raw_tag_or_provenance(tmp_path) -> None:

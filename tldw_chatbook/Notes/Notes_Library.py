@@ -36,6 +36,14 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 
 logger = logging.getLogger(__name__)
 
+_RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
+
+
+def _is_internal_research_keyword(row: Any) -> bool:
+    return isinstance(row, dict) and str(row.get("keyword") or "").startswith(
+        _RESEARCH_RECEIPT_PROOF_PREFIX
+    )
+
 
 class NotesInteropService:
     def __init__(
@@ -762,12 +770,39 @@ class NotesInteropService:
 
     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keywords_for_note(note_id=note_id)
+        return [
+            row
+            for row in db.get_keywords_for_note(note_id=note_id)
+            if not _is_internal_research_keyword(row)
+        ]
+
+    def get_internal_keywords_for_note(
+        self, user_id: str, note_id: str
+    ) -> List[Dict[str, Any]]:
+        """Return raw keywords solely for receipt recovery."""
+
+        return self._get_db(user_id).get_keywords_for_note(note_id=note_id)
+
+    def remove_internal_note_keyword(
+        self, user_id: str, note_id: str, keyword_text: str
+    ) -> bool:
+        """Remove an exact recovery marker without exposing it to ordinary callers."""
+
+        if not isinstance(keyword_text, str) or not keyword_text.startswith(
+            _RESEARCH_RECEIPT_PROOF_PREFIX
+        ):
+            raise ValueError("Only internal Research receipt keywords may be removed.")
+        return self._get_db(user_id).unlink_note_from_keyword_by_text(
+            note_id=note_id, keyword_text=keyword_text
+        )
 
     def get_notes_for_keyword(
         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
+        keyword = db.get_keyword_by_id(keyword_id=keyword_id)
+        if _is_internal_research_keyword(keyword):
+            return []
         return db.get_notes_for_keyword(
             keyword_id=keyword_id, limit=limit, offset=offset
         )
@@ -784,19 +819,36 @@ class NotesInteropService:
         self, user_id: str, keyword_id: int
     ) -> Optional[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keyword_by_id(keyword_id=keyword_id)
+        row = db.get_keyword_by_id(keyword_id=keyword_id)
+        return None if _is_internal_research_keyword(row) else row
 
     def get_keyword_by_text(
         self, user_id: str, keyword_text: str
     ) -> Optional[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keyword_by_text(keyword_text=keyword_text)
+        row = db.get_keyword_by_text(keyword_text=keyword_text)
+        return None if _is_internal_research_keyword(row) else row
+
+    def get_internal_keyword_by_text(
+        self, user_id: str, keyword_text: str
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve a recovery marker solely for receipt keyword synchronization."""
+
+        if not isinstance(keyword_text, str) or not keyword_text.startswith(
+            _RESEARCH_RECEIPT_PROOF_PREFIX
+        ):
+            raise ValueError("Only internal Research receipt keywords may be read.")
+        return self._get_db(user_id).get_keyword_by_text(keyword_text=keyword_text)
 
     def list_keywords(
         self, user_id: str, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.list_keywords(limit=limit, offset=offset)
+        return [
+            row
+            for row in db.list_keywords(limit=limit, offset=offset)
+            if not _is_internal_research_keyword(row)
+        ]
 
     def soft_delete_keyword(
         self, user_id: str, keyword_id: int, expected_version: int
@@ -810,7 +862,11 @@ class NotesInteropService:
         self, user_id: str, search_term: str, limit: int = 10
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.search_keywords(search_term=search_term, limit=limit)
+        return [
+            row
+            for row in db.search_keywords(search_term=search_term, limit=limit)
+            if not _is_internal_research_keyword(row)
+        ]
 
     # --- Character Card Methods ---
 

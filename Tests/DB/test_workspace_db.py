@@ -118,6 +118,7 @@ _QUICK_NOTE_RECEIPT_COLUMNS = {
     "owner_proof",
     "lease_token",
     "lease_expires_at",
+    "abandon_after",
     "expected_version",
     "state",
     "revision",
@@ -181,6 +182,24 @@ def _create_early_branch_v4_database(path: Path) -> None:
     connection.executescript(_EARLY_V4_RECEIPT_SCHEMA)
     connection.execute(
         "UPDATE workspace_memberships SET role = 'note' WHERE role = 'note_pending'"
+    )
+    connection.execute(
+        """
+        INSERT INTO workspace_memberships
+          (membership_id, workspace_id, item_type, item_id, role,
+           transfer_policy, title, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "legitimate-blank-prefixed-note",
+            "local-kept",
+            "note",
+            "research-note-legitimate-owner-row",
+            "note",
+            "reference",
+            "",
+            "2026-08-24T00:00:00Z",
+        ),
     )
     connection.execute(
         """
@@ -326,7 +345,7 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == [1, 2, 3, 4, 5]
+        assert [row[0] for row in versions] == [1, 2, 3, 4, 5, 6]
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
@@ -405,7 +424,7 @@ def test_genuine_v3_upgrade_adds_payload_free_receipts_and_drops_unverifiable_le
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 5
+    assert db.get_schema_version() == 6
     with db.connection() as connection:
         columns = {
             row[1]
@@ -467,7 +486,7 @@ def test_workspace_v4_inline_migration_matches_packaged_sql_and_rolls_back(
     connection.close()
 
 
-def test_early_branch_v4_upgrade_quarantines_unsafe_receipts_and_phantom_links(
+def test_early_branch_v4_upgrade_quarantines_only_unsafe_receipts(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "early-v4.sqlite"
@@ -475,7 +494,7 @@ def test_early_branch_v4_upgrade_quarantines_unsafe_receipts_and_phantom_links(
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 5
+    assert db.get_schema_version() == 6
     migration_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql"
@@ -489,10 +508,14 @@ def test_early_branch_v4_upgrade_quarantines_unsafe_receipts_and_phantom_links(
         assert connection.execute(
             "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
             ("legacy-pending",),
-        ).fetchone() is None
+        ).fetchone() is not None
         assert connection.execute(
             "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
             ("legitimate-blank-note",),
+        ).fetchone() is not None
+        assert connection.execute(
+            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+            ("legitimate-blank-prefixed-note",),
         ).fetchone() is not None
         columns = {
             row[1]
@@ -526,6 +549,42 @@ def test_workspace_v5_remediation_rolls_back_early_v4_atomically(tmp_path: Path)
         "SELECT role FROM workspace_memberships WHERE membership_id = ?",
         ("legacy-pending",),
     ).fetchone()[0] == "note"
+    connection.close()
+
+
+def test_workspace_v6_inline_migration_matches_packaged_sql_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    migration_path = (
+        Path(__file__).parents[2]
+        / "tldw_chatbook/DB/migrations/workspaces_v5_to_v6_quick_note_recovery.sql"
+    )
+    assert migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V5_TO_V6_SQL
+
+    path = tmp_path / "rollback-v5.sqlite"
+    _create_early_branch_v4_database(path)
+    connection = sqlite3.connect(path)
+    connection.executescript(WorkspaceDB._MIGRATE_V4_TO_V5_SQL)
+    connection.close()
+
+    class BrokenV6WorkspaceDB(WorkspaceDB):
+        _MIGRATE_V5_TO_V6_SQL = WorkspaceDB._MIGRATE_V5_TO_V6_SQL.replace(
+            "COMMIT;", "INSERT INTO missing_v6_table VALUES (1);\n\nCOMMIT;"
+        )
+
+    with pytest.raises(sqlite3.Error):
+        BrokenV6WorkspaceDB(path)
+
+    connection = sqlite3.connect(path)
+    assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+    assert "abandon_after" not in {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(research_quick_note_receipts)")
+    }
+    assert connection.execute(
+        "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+        ("legitimate-blank-prefixed-note",),
+    ).fetchone() is not None
     connection.close()
 
 
@@ -569,6 +628,7 @@ def test_quick_note_receipt_table_rejects_invalid_owner_state_and_version_guards
         "owner_proof": "owner-proof-1234567890abcdef1234567890abcdef",
         "lease_token": "lease-token-1234567890abcdef1234567890abcdef",
         "lease_expires_at": "2026-08-24T00:00:30+00:00",
+        "abandon_after": "2026-08-31T00:00:00+00:00",
         "expected_version": 1,
         "state": "pending",
         "revision": 1,

@@ -82,6 +82,8 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
     ),
 }
 
+_RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
+
 
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
@@ -741,7 +743,14 @@ class NotesScopeService:
         for keyword_key, keyword_text in requested_keyword_map.items():
             if keyword_key in existing_keyword_map:
                 continue
-            keyword_row = service.get_keyword_by_text(user_id, keyword_key)
+            if keyword_key.startswith(_RESEARCH_RECEIPT_PROOF_PREFIX) and hasattr(
+                service, "get_internal_keyword_by_text"
+            ):
+                keyword_row = service.get_internal_keyword_by_text(
+                    user_id, keyword_key
+                )
+            else:
+                keyword_row = service.get_keyword_by_text(user_id, keyword_key)
             keyword_id = (
                 keyword_row.get("id") if isinstance(keyword_row, dict) else None
             )
@@ -1772,9 +1781,14 @@ class NotesScopeService:
             raise ValueError("Direct note keyword reads are Local Notes only.")
         if type(include_internal) is not bool:
             raise TypeError("include_internal must be a bool")
-        rows = self.local_notes_service.get_keywords_for_note(
-            self._require_user_id(user_id), str(note_id)
-        )
+        service = self.local_notes_service
+        local_user_id = self._require_user_id(user_id)
+        if include_internal and hasattr(service, "get_internal_keywords_for_note"):
+            rows = service.get_internal_keywords_for_note(
+                local_user_id, str(note_id)
+            )
+        else:
+            rows = service.get_keywords_for_note(local_user_id, str(note_id))
         if not isinstance(rows, list):
             raise ValueError("Local Notes returned invalid keywords.")
         keywords = [
@@ -1787,8 +1801,32 @@ class NotesScopeService:
         return [
             keyword
             for keyword in keywords
-            if not keyword.startswith("research-receipt-proof:")
+            if not keyword.startswith(_RESEARCH_RECEIPT_PROOF_PREFIX)
         ]
+
+    async def remove_internal_note_keyword(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        keyword: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Remove one Research recovery marker from its Local Note owner."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Internal note keyword cleanup is Local Notes only.")
+        if not isinstance(keyword, str) or not keyword.startswith(
+            _RESEARCH_RECEIPT_PROOF_PREFIX
+        ):
+            raise ValueError("Only internal Research receipt keywords may be removed.")
+        service = self.local_notes_service
+        if service is None or not hasattr(service, "remove_internal_note_keyword"):
+            raise ValueError("Local Notes internal keyword cleanup is unavailable.")
+        return service.remove_internal_note_keyword(
+            self._require_user_id(user_id), str(note_id), keyword
+        )
 
     async def load_workspace_context(
         self,

@@ -217,6 +217,7 @@ class ResearchQuickNoteReceipt:
     owner_proof: str
     lease_token: str
     lease_expires_at: str
+    abandon_after: str
     state: str = "pending"
     revision: int = 1
     failure_count: int = 0
@@ -238,6 +239,7 @@ class ResearchQuickNoteReceipt:
             "owner_proof",
             "lease_token",
             "lease_expires_at",
+            "abandon_after",
             "next_retry_at",
             "created_at",
             "updated_at",
@@ -253,11 +255,18 @@ class ResearchQuickNoteReceipt:
             raise ValueError("receipt proof or lease token is invalid")
         if self.operation_kind not in {"create", "delete"}:
             raise ValueError("operation_kind is invalid")
-        if self.state not in {"pending", "owner_committed", "blocked"}:
+        if self.state not in {
+            "pending",
+            "owner_committed",
+            "projection_committed",
+            "blocked",
+        }:
             raise ValueError("state is invalid")
         if type(self.revision) is not int or self.revision < 1:
             raise ValueError("revision is invalid")
         if self.state != "pending" and self.revision < 2:
+            raise ValueError("state and revision are inconsistent")
+        if self.state == "projection_committed" and self.revision < 3:
             raise ValueError("state and revision are inconsistent")
         if type(self.failure_count) is not int or not 0 <= self.failure_count <= 3:
             raise ValueError("failure_count is invalid")
@@ -265,6 +274,7 @@ class ResearchQuickNoteReceipt:
             "",
             "proof_mismatch",
             "owner_conflict",
+            "owner_missing",
             "owner_unavailable",
             "registry_failure",
         }:

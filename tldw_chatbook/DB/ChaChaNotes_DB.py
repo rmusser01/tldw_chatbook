@@ -13413,9 +13413,18 @@ UPDATE db_schema_version
         Returns:
             A list of keyword dictionaries.
         """
-        return self._list_generic_items(
-            "keywords", "keyword COLLATE NOCASE", limit, offset
+        cursor = self.execute_query(
+            """
+            SELECT * FROM keywords
+            WHERE deleted = 0
+              AND keyword NOT LIKE ?
+            ORDER BY keyword COLLATE NOCASE
+            LIMIT ? OFFSET ?
+            """,
+            ("research-receipt-proof:%", limit, offset),
+            redact_params=True,
         )
+        return [dict(row) for row in cursor.fetchall()]
 
     def soft_delete_keyword(self, keyword_id: int, expected_version: int) -> bool:
         """
@@ -13465,9 +13474,20 @@ UPDATE db_schema_version
         match_expression = build_phrase_match_query(search_term)
         if not match_expression:
             return []
-        return self._search_generic_items_fts(
-            "keywords_fts", "keywords", "keyword", match_expression, limit
+        cursor = self.execute_query(
+            """
+            SELECT main.*
+            FROM keywords_fts fts
+            JOIN keywords main ON fts.rowid = main.id
+            WHERE fts.keyword MATCH ? AND main.deleted = 0
+              AND main.keyword NOT LIKE ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (match_expression, "research-receipt-proof:%", limit),
+            redact_params=True,
         )
+        return [dict(row) for row in cursor.fetchall()]
 
     # Keyword Collections
     def add_keyword_collection(
@@ -13772,6 +13792,7 @@ UPDATE db_schema_version
             FROM note_keywords nk
             JOIN keywords k ON nk.keyword_id = k.id
             WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
+              AND k.keyword NOT LIKE 'research-receipt-proof:%'
             ORDER BY k.keyword COLLATE NOCASE
         """
         cursor = conn.execute(query, tuple(note_ids))
@@ -13872,7 +13893,9 @@ UPDATE db_schema_version
         keyword_branch = (
             "id IN (SELECT nk.note_id FROM note_keywords nk "
             "JOIN keywords k ON nk.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            "WHERE k.deleted = 0 "
+            "AND k.keyword NOT LIKE 'research-receipt-proof:%' "
+            "AND k.keyword LIKE ? ESCAPE '\\')"
         )
 
         branches = [
@@ -15084,6 +15107,55 @@ UPDATE db_schema_version
             "note_keywords", "note_id", note_id, "keyword_id", keyword_id, "unlink"
         )
 
+    def unlink_note_from_keyword_by_text(
+        self, note_id: str, keyword_text: str
+    ) -> bool:
+        """Atomically remove one exact keyword link without exposing its row."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise InputError("Note ID cannot be empty.")
+        if not isinstance(keyword_text, str) or not keyword_text.strip():
+            raise InputError("Keyword text cannot be empty.")
+        now_iso = self._get_current_utc_timestamp_iso()
+        try:
+            with self.transaction() as conn:
+                keyword = conn.execute(
+                    "SELECT id FROM keywords WHERE keyword = ? AND deleted = 0",
+                    (keyword_text.strip(),),
+                ).fetchone()
+                if keyword is None:
+                    return False
+                keyword_id = int(keyword["id"])
+                cursor = conn.execute(
+                    "DELETE FROM note_keywords WHERE note_id = ? AND keyword_id = ?",
+                    (note_id.strip(), keyword_id),
+                )
+                if cursor.rowcount > 0:
+                    conn.execute(
+                        """
+                        INSERT INTO sync_log (
+                            entity, entity_id, operation, timestamp,
+                            client_id, version, payload
+                        ) VALUES ('note_keywords', ?, 'delete', ?, ?, 1, ?)
+                        """,
+                        (
+                            f"{note_id.strip()}_{keyword_id}",
+                            now_iso,
+                            self.client_id,
+                            json.dumps(
+                                {"note_id": note_id.strip(), "keyword_id": keyword_id}
+                            ),
+                        ),
+                    )
+                return cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            logger.opt(exception=True).error(
+                "SQLite error removing a note keyword by exact text"
+            )
+            raise CharactersRAGDBError(
+                "Database error removing the note keyword link"
+            ) from exc
+
     def get_keywords_for_note(
         self, note_id: str
     ) -> List[Dict[str, Any]]:  # note_id is str
@@ -15129,10 +15201,15 @@ UPDATE db_schema_version
                 FROM note_keywords nk
                 JOIN keywords k ON nk.keyword_id = k.id
                 WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
+                  AND k.keyword NOT LIKE ?
                 ORDER BY nk.note_id, k.keyword COLLATE NOCASE
                 """
         try:
-            cursor = self.execute_query(query, tuple(note_ids))
+            cursor = self.execute_query(
+                query,
+                tuple(note_ids) + ("research-receipt-proof:%",),
+                redact_params=True,
+            )
             results = cursor.fetchall()
 
             keywords_by_note: Dict[str, List[str]] = {}
