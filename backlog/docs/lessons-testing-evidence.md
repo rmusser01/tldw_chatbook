@@ -8410,3 +8410,42 @@ landed on is one background actor, not N flaky tests. And check the plugin list
 before trusting an ordering claim: `-p no:randomly` is a no-op in this venv
 because `pytest-randomly` is not installed, so it neither proves nor disproves
 anything about order.
+## Three green tests pinned the requirement; the red one was the only test that opened the database like a stranger (TASK-21441, 2026-08-24)
+
+**TASK-21441, 2026-08-24.** Schema v48 made `_migrate_from_v47_to_v48` raise
+unless the constructor was handed a `ConsoleLibraryMigrationSeed`, exempting a
+*fresh* database — so `CharactersRAGDB` could no longer upgrade an existing one
+without the caller supplying data only the TUI knows how to build. Three tests
+covered that behaviour and all three were **green**, because each asserted the
+requirement rather than the property the requirement destroyed:
+`test_v47_missing_or_invalid_seed_leaves_schema_unchanged[None]`,
+`test_v47_upgrade_rejects_missing_or_invalid_seed_before_ddl[None]`, and
+`test_fresh_database_accepts_no_console_library_migration_seed` (which passes
+either way — a fresh database was the exempted case). ADR-079 even listed
+"a required sanitized migration seed" as an accepted trade-off.
+
+The test that told the truth was
+`Tests/Packaging/test_installed_distribution.py::test_installed_distribution_migrates_v35_database_to_current`,
+which installs the wheel into an empty tree and opens a v35 database from a
+child process with nothing but a path and a client id. It is the only test in
+the repo that opens the database the way a stranger would, and it was red.
+
+**What to do.** A test that asserts *your API raises* is not evidence the
+requirement is correct; it is a transcript of the decision. When a change adds
+a precondition to a component, ask which test exercises that component **from
+outside every convenience the change assumed** — an installed artifact, a
+child process, a caller with no access to app config — and check it is not the
+one that just went red. If the only red test is the one with the fewest
+privileges, the defect is in the precondition, not the test. Fixing it by
+teaching that test to supply the argument deletes the repo's last witness.
+
+**Corollary for fixtures.** The same release broke `add_message` for pre-v48
+schemas by naming the newest column list unconditionally, which stopped
+`Tests/ChaChaNotesDB/historical_bootstrap.py` from seeding historical fixtures
+with production code — the doctrine task-16840 established precisely because
+hand-rolled fixture SQL had been silently wrong. When a schema addition makes
+the production writer unusable against an older schema, the pressure is to go
+back to hand-rolled SQL in the test. Resist it: that trades a loud failure for
+a silent one. (Writing that hand-rolled INSERT is also harder than it looks —
+the first attempt at one in this task died on a `NOT NULL` column the writer
+fills for you.)

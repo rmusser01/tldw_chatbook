@@ -57,7 +57,15 @@ def open_current_chachanotes_from_legacy(
     client_id: str,
     auto_retrieve_on_send: bool = False,
 ) -> CharactersRAGDB:
-    """Open a pre-v45 fixture with the explicit sanitized migration seed."""
+    """Open a legacy fixture with an EXPLICIT sanitized migration seed.
+
+    A bare ``CharactersRAGDB(path, client_id=...)`` also upgrades a legacy
+    fixture (task-21441 made the seed optional; ``Tests/DB/
+    test_chachanotes_bare_open_self_migration.py`` is the guard). Use this
+    helper only when the fixture's assertions depend on the seeded
+    automatic-retrieval value; otherwise the bare open is the more honest
+    fixture, because it is what a non-TUI consumer actually does.
+    """
     return CharactersRAGDB(
         str(db_path),
         client_id=client_id,
@@ -89,8 +97,10 @@ def chachanotes_db_at_version(
         version: The historical schema version to stop the chain at. Must be
             within ``[MINIMUM_BOOTSTRAP_VERSION, _CURRENT_SCHEMA_VERSION]``.
         client_id: Client id for the bootstrap connection.
-        console_library_migration_seed: Sanitized seed for a historical chain
-            that traverses the v44-to-v45 migration.
+        console_library_migration_seed: Optional sanitized seed for a
+            historical chain that traverses the v47-to-v48 migration. Omit it
+            unless the fixture asserts on the seeded automatic-retrieval
+            value; the step defaults to off (task-21441).
 
     Yields:
         The open ``CharactersRAGDB`` instance, recorded at ``version``.

@@ -420,26 +420,68 @@ def test_initializer_begins_immediate_before_its_first_version_read(
     db.close_connection()
 
 
-@pytest.mark.parametrize("migration_seed", [None, object()])
-def test_v47_missing_or_invalid_seed_leaves_schema_unchanged(
+def test_v47_invalid_seed_leaves_schema_unchanged(
     tmp_path: Path,
     v47_template: Path,
-    migration_seed: object,
 ) -> None:
-    path = tmp_path / "missing-seed.sqlite"
+    """A wrong-typed seed is a caller defect and still stops before the DDL.
+
+    The ``None`` half of this parametrization inverted in task-21441 -- see
+    ``test_v47_absent_seed_migrates_with_retrieval_off`` below. Absent is a
+    legitimate state with a defined default; malformed is not.
+    """
+    path = tmp_path / "invalid-seed.sqlite"
     _copy_template(v47_template, path)
     before = _schema_snapshot(path)
 
-    with pytest.raises(SchemaError, match="migration seed is required"):
+    with pytest.raises(SchemaError, match="must be a ConsoleLibraryMigrationSeed"):
         CharactersRAGDB(
             path,
             client_id="invalid-seed",
-            console_library_migration_seed=migration_seed,  # type: ignore[arg-type]
+            console_library_migration_seed=object(),  # type: ignore[arg-type]
         )
 
     with sqlite3.connect(path) as connection:
         assert _version(connection) == 47
     assert _schema_snapshot(path) == before
+
+
+def test_v47_absent_seed_migrates_with_retrieval_off(
+    tmp_path: Path,
+    v47_template: Path,
+) -> None:
+    """No seed is not a failure: the step defaults, and the default is safe.
+
+    This case used to raise ``SchemaError`` and is the whole reason
+    ``CharactersRAGDB`` could not migrate itself (task-21441). The result must
+    be indistinguishable from an explicit ``auto_retrieve_on_send=False``,
+    including for the soft-deleted conversation the template carries.
+    """
+    absent = tmp_path / "absent-seed.sqlite"
+    explicit = tmp_path / "explicit-false-seed.sqlite"
+    _copy_template(v47_template, absent)
+    _copy_template(v47_template, explicit)
+
+    CharactersRAGDB(absent, client_id="absent-seed").close_connection()
+    CharactersRAGDB(
+        explicit,
+        client_id="explicit-seed",
+        console_library_migration_seed=FALSE_SEED,
+    ).close_connection()
+
+    for path in (absent, explicit):
+        with sqlite3.connect(path) as connection:
+            assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+            assert sorted(
+                connection.execute(
+                    "SELECT conversation_id, auto_retrieve_on_send,"
+                    " assistant_library_access"
+                    " FROM console_conversation_library_policy"
+                ).fetchall()
+            ) == [
+                ("active-conversation", 0, 1),
+                ("deleted-conversation", 0, 1),
+            ]
 
 
 @pytest.mark.parametrize("failure_index", range(12))
