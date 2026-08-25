@@ -8610,3 +8610,40 @@ changed; **the latency it implicitly depended on did.**
    and two live tmux arms all passed the version that had to be withdrawn; the
    only thing that caught it was 506 unrelated navigation tests, and it cost
    5 minutes to run.
+
+---
+
+## A green suite cannot certify a SQLite isolation-mode flip — only a per-idiom write census can
+
+**TASK-22224, 2026-08-25.** Flipping held-connection stores to
+`isolation_level = None` (autocommit) so the explicit-BEGIN transaction
+managers stop being degraded by leaked implicit transactions. Empirical probes
+on the shipped pair (Python 3.12.11 / SQLite 3.49.1) showed the change is
+invisible to any test that only exercises success paths, while three idioms
+silently change meaning: a multi-statement `with conn:` body loses atomicity
+(the context manager only commits/rolls back, it never BEGINs — the statements
+each self-commit, and an exception mid-body keeps the earlier writes);
+`conn.commit()`/`rollback()` outside an explicit BEGIN become no-ops; and
+`executemany` stops being all-or-nothing on a mid-batch error. Every one of
+those degradations produces a suite that stays green — the data only diverges
+on a failure injected *between* statements. Two stores (`Evals_DB`, with a
+deliberately NESTED `with conn:` pair that explicit BEGIN cannot express, and
+`sync_state_repository`, with an eight-DELETE commit span) were left on legacy
+isolation with the exception documented at the opener, because converting them
+is a write-path refactor, not a connection flag. A second trap found in the
+same pass: ChaChaNotes' `vacuum()` "temporarily" set `isolation_level = None`
+and *restored* `""` — after the store-level flip, that restore would have
+silently returned the held connection to legacy mode for the rest of its life
+(`Prompts_DB`/`Client_Media_DB_v2` still carry the same toggle and must fix it
+when they flip).
+
+**What to do.** Before flipping any store to autocommit, census every
+`commit()`, `rollback()`, `with conn:` block, `executemany`, and
+`executescript` in the store AND its out-of-module consumers, and classify
+each span as single-statement (safe), manager-owned explicit BEGIN (safe), or
+multi-statement implicit (NOT safe — convert or keep legacy and document).
+Treat a green run as evidence of nothing here; the evidence is the census plus
+guards that assert the transaction statements SQLite actually ran
+(`set_trace_callback`), pinned red-first against both failure modes (loud
+"cannot start a transaction within a transaction" and ChaChaNotes' silent
+borrow, which surfaces only as an EMPTY trace).

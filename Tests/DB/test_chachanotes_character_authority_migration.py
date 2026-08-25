@@ -208,6 +208,14 @@ def test_local_authority_accessor_borrows_caller_owned_sqlite_transaction(
     )
     conn = db.get_connection()
     try:
+        # task-22224: the held connection is autocommit now, so a
+        # caller-owned transaction is armed with an explicit BEGIN (bare DML
+        # used to arm it via the legacy implicit-DEFERRED leak -- exactly the
+        # degradation that change removed). The subject pinned here is
+        # unchanged: the accessor must BORROW the caller's transaction, not
+        # steal, commit, or roll it back, and must leave the managed depth
+        # counter untouched.
+        conn.execute("BEGIN")
         conn.execute(
             """
             UPDATE rag_identity_context

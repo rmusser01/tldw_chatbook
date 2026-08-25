@@ -3240,6 +3240,17 @@ UPDATE db_schema_version
                 conn.execute("PRAGMA synchronous=NORMAL;")
 
                 conn.execute("PRAGMA foreign_keys = ON;")
+                # task-22224: a HELD connection needs true autocommit (see
+                # Library_Ingest_Jobs_DB.py's module docstring -- the store
+                # template -- for the rule). Under the legacy default, one
+                # bare DML statement auto-BEGINs a DEFERRED transaction that
+                # ``TransactionContextManager`` then silently BORROWS at
+                # depth 0, degrading ``transaction(immediate=True)`` to a
+                # deferred snapshot nothing ever commits. With autocommit,
+                # the manager's explicit BEGIN [IMMEDIATE] is the only
+                # transaction owner; ``commit()``/``rollback()`` outside an
+                # explicit BEGIN are no-ops.
+                conn.isolation_level = None
                 self._local.conn = conn
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}"
@@ -16712,10 +16723,12 @@ UPDATE db_schema_version
 
         try:
             conn = self.get_connection()
-            # Vacuum must be run outside of a transaction
-            conn.isolation_level = None
+            # VACUUM must run outside a transaction. The connection is
+            # permanently in autocommit (isolation_level=None, task-22224),
+            # so no toggle is needed -- the old restore-to-"" here would have
+            # silently flipped this thread's held connection back to legacy
+            # implicit-transaction mode for the rest of its life.
             conn.execute("VACUUM")
-            conn.isolation_level = ""  # Restore default
             logger.info(f"Successfully vacuumed database: {self.db_path_str}")
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
@@ -19475,6 +19488,11 @@ class TransactionContextManager:
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
+            # task-22224: with the held connection in autocommit, this borrow
+            # branch is reachable only when a caller explicitly issued BEGIN
+            # on the connection itself -- the legacy implicit-DEFERRED leak
+            # (bare DML silently degrading transaction(immediate=True) to a
+            # borrowed deferred snapshot) can no longer arm it.
             if self.conn.in_transaction:
                 self.borrows_native_transaction = True
                 self.db._local.transaction_depth = 1
