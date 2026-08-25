@@ -541,3 +541,10 @@ update only the affected canvas region instead of rebuilding the whole
 screen. One visible refinement: opening the Prompts/Skills Import… row
 parks the caret in its path field, and Cancel returns focus to the Import…
 button.)*
+
+*Verified against fix/task-22207-perf (dev @ 983aa5878) — 2026-08-25
+(TASK-22207, performance — no workflow changes: arrow-keying through Browse
+Media's Items list no longer rebuilds the Reader's document body per
+keystroke; the "Loading preview…" banner paints and clears in place, and
+only the row you settle on renders its document, once. Behavior of the
+settle delay, Read/Analysis/Highlights/Info modes, and Find is unchanged.)*

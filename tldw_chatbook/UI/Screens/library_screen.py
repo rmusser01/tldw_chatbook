@@ -34419,6 +34419,22 @@ class LibraryScreen(BaseAppScreen):
             preview_available,
             preview_source,
         ) = self._library_media_image_preview_projection()
+        loading = (
+            self._library_media_reader_session.pending_request is not None
+            and self._library_media_reader_session.error is None
+        )
+        loading_message = (
+            self._library_media_reader_session.pending_banner or "Loading media…"
+        )
+        # task-22207: ``loading``/``loading_message`` are deliberately NOT
+        # part of this comparison. Every traversal keystroke flips the
+        # pending flag before this runs, so including it made the test
+        # always fall through to a full viewer recompose -- re-parsing the
+        # document being LEFT purely to paint "Loading…". The comparison
+        # now covers only real compose identity (display state built from
+        # the loaded detail, sub-state flags, highlights, search, mode,
+        # preview identity); the loading placeholder is patched in place on
+        # the unchanged path via ``viewer.sync_loading_state``.
         unchanged = (
             viewer.viewer == viewer_state
             and viewer.editing == self._library_media_editing
@@ -34428,14 +34444,8 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
-            and viewer.loading
-            == (
-                self._library_media_reader_session.pending_request is not None
-                and self._library_media_reader_session.error is None
-            )
-            and viewer.loading_message
-            == (self._library_media_reader_session.pending_banner or "Loading media…")
-            and viewer.error_message == (self._library_media_reader_session.error or "")
+            and viewer.error_message
+            == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
             and viewer.external_detail
@@ -34447,7 +34457,9 @@ class LibraryScreen(BaseAppScreen):
             and viewer.image_preview_hidden == preview_hidden
             and viewer.image_preview_available == preview_available
         )
-        if not unchanged:
+        if unchanged:
+            viewer.sync_loading_state(loading=loading, message=loading_message)
+        else:
             viewer.viewer = viewer_state
             viewer.editing = self._library_media_editing
             viewer.confirming_delete = self._library_media_confirming_delete
@@ -34456,13 +34468,8 @@ class LibraryScreen(BaseAppScreen):
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
-            viewer.loading = (
-                self._library_media_reader_session.pending_request is not None
-                and self._library_media_reader_session.error is None
-            )
-            viewer.loading_message = (
-                self._library_media_reader_session.pending_banner or "Loading media…"
-            )
+            viewer.loading = loading
+            viewer.loading_message = loading_message
             viewer.error_message = self._library_media_reader_session.error or ""
             viewer.reader_mode = self._library_media_reader_session.mode
             viewer.more_open = self._library_media_reader_session.more_open
