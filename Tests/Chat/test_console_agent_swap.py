@@ -23,6 +23,8 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
     AgentStep,
@@ -46,6 +48,21 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from Tests.console_provider_doubles import provider_resolution, with_destination
+
+
+def _first(matches, *, what: str):
+    """First match, or an assertion that names what never arrived.
+
+    A bare `next(<genexpr>)` here raised StopIteration out of the calling
+    coroutine, and Python re-raises that as `RuntimeError: coroutine raised
+    StopIteration` -- a message naming neither the missing row nor the send
+    that failed to produce it. Thirty-odd assertions in this module reported
+    every "the turn produced nothing" failure that way.
+    """
+    value = next(iter(matches), None)
+    assert value is not None, f"no {what} was produced by the turn under test"
+    return value
+
 
 
 def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
@@ -304,7 +321,17 @@ def _mcp_tests_keep_a_small_catalog(monkeypatch):
 
 def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
     gateway = _Gateway(scripts, child_scripts)
-    store = ConsoleChatStore()
+    # A real persistence, as production always wires one when the DB opens
+    # (`ConsoleRuntime.ensure_chat_store`). A bare `ConsoleChatStore()` has
+    # `persistence is None`, and since `a26cdafd8` a MANUAL or QUEUED send on a
+    # non-ephemeral session requires `commit_durable_turn` -- so every send here
+    # was refused with "Durable turn acceptance is unavailable; the provider was
+    # not called." before reaching the agent swap these tests are about.
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(
+            CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
+        )
+    )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -381,11 +408,11 @@ async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_e
         mark_fallback_calls=frozenset({fallback_call}),
     )
 
-    assistant = next(
+    assistant = _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert result.visible_copy == assistant.content == "Primary final answer"
     # The repair turn (the last parent script) is bypassed, which is the
     # whole point -- so the run stops one parent turn short.
@@ -406,11 +433,11 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
         [[NO_PROVIDER_CONTENT_COPY], [repaired]],
     )
 
-    assistant = next(
+    assistant = _first((
         message
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert result.visible_copy == assistant.content == repaired
     assert len(gateway.calls) == 2
     assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
@@ -495,15 +522,15 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "complete"
     assert assistant.persisted_message_id is not None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
     # The native id create_run stored was corrected to the persisted id.
     assert primary["assistant_message_id"] != assistant.id
@@ -560,15 +587,15 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is not None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
     assert primary["assistant_message_id"] != assistant.id
 
@@ -612,15 +639,15 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert assistant.persisted_message_id is not None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
 
 
@@ -646,15 +673,15 @@ async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is None
 
-    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] is None
 
 
@@ -781,11 +808,11 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.content == ""
     # The controller-side bookkeeping has already been reset by
@@ -839,11 +866,11 @@ async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.content == ""
     assert "late done text" not in assistant.content
@@ -872,11 +899,11 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "complete"
     assert assistant.content == "original answer."
     assert assistant.variants is None
@@ -926,11 +953,11 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "complete"
 
     def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
@@ -1000,11 +1027,11 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
         # a chunk into the store -- simulating Stop landing while the
         # (slow) provider is still silent.
         session_id = store.active_session_id
-        assistant_message_id = next(
+        assistant_message_id = _first((
             m.id
             for m in reversed(store.messages_for_session(session_id))
             if m.role is ConsoleMessageRole.ASSISTANT
-        )
+        ), what="ASSISTANT message")
         store.mark_message_stopped(assistant_message_id)
         # Fix round 1 (Critical 1): should_cancel now reads only its own
         # run's per-session cancel_event, never the shared `_stop_requested`
@@ -1019,7 +1046,7 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
 
     session_id = store.active_session_id
     messages = store.messages_for_session(session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     # The late "late answer." chunks were dropped, not leaked into content.
     assert assistant.status == "stopped"
     assert assistant.content == ""
@@ -1065,7 +1092,7 @@ async def test_bridge_exception_fails_message_and_unwedges_controller(tmp_path):
 
     first_session_id = store.active_session_id
     messages = store.messages_for_session(first_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert any(m.role is ConsoleMessageRole.SYSTEM for m in messages)
     assert controller.run_state.status is ConsoleRunStatus.FAILED
@@ -1104,11 +1131,11 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert assistant.content == "partial answer before erroring"
     assert "[agent error]" not in assistant.content
@@ -1150,7 +1177,7 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
     session_id = store.active_session_id
     messages = store.messages_for_session(session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.status == "failed"
     assert assistant.content == "still thinking about it"
     system_rows = [m for m in messages if m.role is ConsoleMessageRole.SYSTEM]
@@ -1174,11 +1201,11 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     first = await controller.submit_draft("hi")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.content == "good original answer."
     assert assistant.status == "complete"
 
@@ -1224,11 +1251,11 @@ async def test_retry_through_agent_path_uses_bridge_and_completes(tmp_path):
     first = await controller.submit_draft("please answer")
     assert first.accepted is True
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "failed"
 
     calls = {"n": 0}
@@ -1255,11 +1282,11 @@ async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(
     )
     await controller.submit_draft("tell me about France")
     session_id = store.active_session_id
-    first_assistant = next(
+    first_assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert first_assistant.content == "Paris is the capital."
 
     real_run_reply = controller._agent_bridge.run_reply
@@ -1293,11 +1320,11 @@ async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
     )
     await controller.submit_draft("hi")
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.content == "first answer."
 
     real_run_reply = controller._agent_bridge.run_reply
@@ -1636,7 +1663,7 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "done with mcp."
     assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "allowed")]
 
@@ -1677,7 +1704,7 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "approved and done."
     assert service.execute_calls == [
         ("local:srv", "run", {"x": 1}, "agent", "approved")
@@ -1763,7 +1790,7 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "it was refused."
     tool_rows = [m for m in messages if m.role is ConsoleMessageRole.TOOL]
     assert any(
@@ -1920,7 +1947,7 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     )
 
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "primary done."
 
 
@@ -1953,7 +1980,7 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
 
     assert result.accepted is True
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = _first((m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), what="ASSISTANT message")
     assert assistant.content == "it was refused too."
     assert (
         service.execute_calls == []
@@ -2013,11 +2040,11 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     assert result.accepted is True
 
     session_id = store.active_session_id
-    assistant = next(
+    assistant = _first((
         m
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    ), what="ASSISTANT message")
     assert assistant.status == "stopped"
     assert assistant.persisted_message_id is not None
 
