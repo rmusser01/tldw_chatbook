@@ -694,6 +694,62 @@ async def test_shared_library_pane_writes_settle_latest_across_destinations(
 
 
 @pytest.mark.asyncio
+async def test_shared_library_pane_double_failure_restores_durable_choice(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    writes = []
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    def fail_save(section, key, value):
+        writes.append((section, key, value))
+        if len(writes) == 1:
+            first_started.set()
+            release_first.wait(timeout=10)
+        return False
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", fail_save)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        conversations = await _wait_for_selector(
+            screen, pilot, "#library-conversations-reader-shell"
+        )
+        conversations.library_grip.press()
+        await asyncio.to_thread(first_started.wait, 10)
+        try:
+            screen.query_one("#library-row-browse-media", Button).press()
+            media = await _wait_for_selector(
+                screen, pilot, "#library-media-reader-shell"
+            )
+            assert not media.effective_layout.library_open
+            media.library_grip.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_reader_persistence_generations["library"]
+                == 2,
+                message="Newer shared Library-pane intent was not claimed.",
+            )
+        finally:
+            release_first.set()
+
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert writes == [
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        ]
+        assert screen._library_media_reader_preferences.library_open
+        assert screen._library_conversation_reader_preferences.library_open
+        assert app.app_config["library"]["reader"]["library_open"] is True
+        assert media.effective_layout.library_open
+
+
+@pytest.mark.asyncio
 async def test_failed_library_pane_write_resyncs_mounted_peer_shell(monkeypatch):
     app = _build_media_test_app()
     write_started = threading.Event()
