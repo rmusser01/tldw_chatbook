@@ -3344,6 +3344,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_preview_status: dict[str, str] = {}
         self._library_media_preview_hidden: set[str] = set()
         self._library_media_preview_loading: dict[str, int] = {}
+        # task-22208: viewer display-state memo, keyed by the DETAIL OBJECT
+        # (identity) plus the build parameters. ``build_library_media_
+        # viewer_state`` copies the whole content string per call
+        # (``str(content).strip()``), so it must run once per detail
+        # ARRIVAL, not once per sync. The detail is only ever replaced
+        # wholesale (worker settle) or cleared to None -- never mutated in
+        # place -- so identity is a sound arrival marker; the sentinel
+        # guarantees the first call always misses. See
+        # ``_library_media_viewer_state_cached`` for the full key.
+        self._library_media_viewer_state_memo_detail: Any = object()
+        self._library_media_viewer_state_memo_states: dict[
+            tuple[str, str, str, bool], Any
+        ] = {}
         self._library_notes_view: str = "list"
         self._library_notes_lasting_origin: str | None = None
         self._library_notes_select_mode: bool = False
@@ -10915,7 +10928,9 @@ class LibraryScreen(BaseAppScreen):
         detail = self._library_media_detail
         if not isinstance(detail, Mapping):
             return None
-        viewer = build_library_media_viewer_state(detail)
+        # task-22208: memoized -- this runs inside the viewer sync's
+        # unchanged compare (console representation) on every interaction.
+        viewer = self._library_media_viewer_state_cached(detail)
         external_detail = self._library_media_reader_session.external_detail
         media_id = (
             self._library_media_reader_session.loaded_id
@@ -15482,7 +15497,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode = (
             "rendered"
             if isinstance(self._library_media_detail, Mapping)
-            and build_library_media_viewer_state(self._library_media_detail).is_markdown
+            and self._library_media_viewer_state_cached(
+                self._library_media_detail
+            ).is_markdown
             else "raw"
         )
         if (
@@ -34640,7 +34657,9 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(self._library_media_detail, Mapping)
             else None
         )
-        content = build_library_media_viewer_state(detail).content if detail else ""
+        content = (
+            self._library_media_viewer_state_cached(detail).content if detail else ""
+        )
         matches = find_content_matches(content, self._library_media_content_query)
         viewer = self._mounted_library_media_viewer()
         if viewer is None:
@@ -34746,9 +34765,26 @@ class LibraryScreen(BaseAppScreen):
         return viewer
 
     def _library_media_image_preview_projection(
-        self,
+        self, *, build_widget: bool = True
     ) -> tuple[Widget | None, str, bool, bool, Any]:
-        """Build the current item's ephemeral preview projection."""
+        """Build the current item's ephemeral preview projection.
+
+        task-22208: with ``build_widget=False`` this returns only the cheap
+        identity facts (status, hidden, available, source image) and never
+        invokes the widget factory -- the sync's unchanged compare reads
+        exactly those four fields, so the expensive PIL build must not run
+        just to decide nothing changed. The widget slot is None in that
+        mode; callers that conclude "changed" call again with the default
+        to build (and to surface a build failure through the normal
+        failure-status path).
+
+        Args:
+            build_widget: Whether to construct the preview widget for the
+                visible case.
+
+        Returns:
+            (widget, status, hidden, available, source-image) projection.
+        """
         session = self._library_media_reader_session
         canonical_id = session.loaded_id or ""
         if (
@@ -34764,6 +34800,8 @@ class LibraryScreen(BaseAppScreen):
             return None, status, False, False, None
         if hidden:
             return None, status, True, True, image
+        if not build_widget:
+            return None, status, False, True, image
         try:
             factory = self._library_media_preview_factory
             if factory is None:
@@ -34789,20 +34827,86 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_preview_status[canonical_id] = failure
             return None, failure, False, False, None
 
+    def _library_media_viewer_state_cached(
+        self,
+        detail: Mapping[str, Any] | None,
+        *,
+        arrival_note: str = "",
+        backend: str = "local",
+        canonical_id: str = "",
+        force_raw: bool = False,
+    ):
+        """Memoized ``build_library_media_viewer_state`` per detail arrival.
+
+        task-22208: the raw builder performs at least one O(document) string
+        copy per call, and it used to run 2+ times per viewer sync (display
+        state + the console-representation clause of the unchanged compare)
+        on EVERY interaction -- traversal step, mode switch, More toggle,
+        Escape. This memo bounds that to once per (detail arrival x build
+        parameters), and because a no-change sync gets back the SAME state
+        object, the sync's unchanged test can short-circuit on identity
+        before ever falling back to the structural (content-memcmp) compare.
+
+        Memo key and invalidation:
+        * the detail OBJECT, by identity -- the detail is only replaced
+          wholesale by ``_refresh_library_media_detail``'s settle (a fresh
+          dict per fetch) or cleared to None, never mutated in place, so a
+          new arrival (including an edit's refetch) always misses and
+          rebuilds; a None detail memoizes the empty state the same way;
+        * ``arrival_note`` / ``backend`` / ``canonical_id`` / ``force_raw``
+          -- the remaining builder inputs; the per-detail entry dict is
+          reset whenever the detail identity changes, so it holds at most
+          the couple of parameter combinations live for one arrival.
+
+        Known consequence, accepted by design: the "Updated: <age>" relative
+        label freezes for the lifetime of one detail arrival (the raw
+        builder stamps it from ``now`` per call). Recomputing it per sync is
+        what the memo exists to stop -- and under the task-21116 compare a
+        ticked-over age label would otherwise force a FULL document
+        recompose just to repaint one metadata line.
+
+        Args:
+            detail: The loaded detail mapping, or None for the empty state.
+            arrival_note: One-shot context line (see the raw builder).
+            backend: Provenance backend displayed by Reader Info.
+            canonical_id: Stable backend-qualified id override.
+            force_raw: Force ``is_markdown`` False (external/server details
+                render raw); folded into the memo so the replace also
+                happens once per arrival.
+
+        Returns:
+            The memoized immutable viewer state.
+        """
+        if self._library_media_viewer_state_memo_detail is not detail:
+            self._library_media_viewer_state_memo_detail = detail
+            self._library_media_viewer_state_memo_states = {}
+        key = (arrival_note, backend, canonical_id, force_raw)
+        states = self._library_media_viewer_state_memo_states
+        state = states.get(key)
+        if state is None:
+            state = build_library_media_viewer_state(
+                detail,
+                arrival_note=arrival_note,
+                backend=backend,
+                canonical_id=canonical_id,
+            )
+            if force_raw:
+                state = dataclasses.replace(state, is_markdown=False)
+            states[key] = state
+        return state
+
     def _build_library_media_viewer_display_state(
         self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
     ):
         """Build display facts and qualify one-off server provenance."""
         session = self._library_media_reader_session
-        state = build_library_media_viewer_state(
+        return self._library_media_viewer_state_cached(
             detail,
             arrival_note=arrival_note,
             backend="server" if session.external_detail else "local",
             canonical_id=(session.loaded_id or "") if session.external_detail else "",
+            force_raw=session.external_detail,
         )
-        if session.external_detail:
-            return dataclasses.replace(state, is_markdown=False)
-        return state
 
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
         """Re-read every viewer compose input after its mount await.
@@ -34832,13 +34936,16 @@ class LibraryScreen(BaseAppScreen):
         highlights = tuple(
             build_library_media_highlight_rows(self._library_media_highlights)
         )
+        # task-22208: identity facts only -- the compare below reads status/
+        # hidden/available/source, so the PIL preview widget must not be
+        # built (and discarded) just to decide nothing changed.
         (
-            preview_widget,
+            _,
             preview_status,
             preview_hidden,
             preview_available,
             preview_source,
-        ) = self._library_media_image_preview_projection()
+        ) = self._library_media_image_preview_projection(build_widget=False)
         loading = (
             self._library_media_reader_session.pending_request is not None
             and self._library_media_reader_session.error is None
@@ -34855,8 +34962,17 @@ class LibraryScreen(BaseAppScreen):
         # the loaded detail, sub-state flags, highlights, search, mode,
         # preview identity); the loading placeholder is patched in place on
         # the unchanged path via ``viewer.sync_loading_state``.
+        # task-22208: identity first -- ``viewer_state`` is memoized per
+        # detail arrival (``_library_media_viewer_state_cached``), so on a
+        # no-change sync it IS the object the mounted viewer already holds
+        # and the O(document) structural compare (which memcmps the whole
+        # content string) never runs. The ``==`` fallback stays: identity is
+        # inconclusive exactly when a new detail arrived, and a re-fetch
+        # with byte-identical values must still compare EQUAL so the
+        # document is not rebuilt (pinned by task-22207's alternating-focus
+        # probe).
         unchanged = (
-            viewer.viewer == viewer_state
+            (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -34878,8 +34994,28 @@ class LibraryScreen(BaseAppScreen):
             and viewer.image_preview_available == preview_available
         )
         if unchanged:
+            # Re-anchor the memoized state object so the NEXT no-change sync
+            # short-circuits on identity again -- after an identical
+            # re-fetch settles (new detail dict, equal values), the mounted
+            # viewer would otherwise hold the previous arrival's state
+            # object and pay the structural compare on every sync until
+            # something actually changed.
+            viewer.viewer = viewer_state
             viewer.sync_loading_state(loading=loading, message=loading_message)
         else:
+            # Something changed, so the viewer recomposes: build the
+            # preview widget now (a fresh instance -- a removed widget
+            # cannot be remounted; the expensive mosaic renderable inside is
+            # memoized by ``build_media_image_widget``). Assign the
+            # POST-build projection: a build failure flips the status caches
+            # and this keeps the mounted state consistent with them.
+            (
+                preview_widget,
+                preview_status,
+                preview_hidden,
+                preview_available,
+                preview_source,
+            ) = self._library_media_image_preview_projection()
             viewer.viewer = viewer_state
             viewer.editing = self._library_media_editing
             viewer.confirming_delete = self._library_media_confirming_delete
@@ -35224,7 +35360,9 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(self._library_media_detail, Mapping)
             else None
         )
-        content = build_library_media_viewer_state(detail).content if detail else ""
+        content = (
+            self._library_media_viewer_state_cached(detail).content if detail else ""
+        )
         matches = find_content_matches(content, self._library_media_content_query)
         if not matches:
             return
