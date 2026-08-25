@@ -10,6 +10,7 @@ import math
 import re
 import threading
 import time
+import tomllib
 import uuid
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
@@ -61,6 +62,7 @@ from ...config import (
     coerce_bool_setting,
     get_cli_setting,
     get_notes_sync_state_db_path,
+    read_cli_config_serialized,
     resolve_tldw_api_config,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
@@ -5437,12 +5439,48 @@ class LibraryScreen(BaseAppScreen):
         if key == "library_open" or destination == "conversations":
             self._sync_library_conversation_reader_layout_from_shell(priority)
 
+    async def _read_library_reader_persisted_preference(
+        self,
+        section: str,
+        key: Literal["library_open", "items_open"],
+    ) -> bool | None:
+        """Read one effective pane value from the authoritative config boundary."""
+        try:
+            serialized = await asyncio.to_thread(read_cli_config_serialized)
+            values = tomllib.loads(serialized)
+            if section == "library.reader" and key == "library_open":
+                library = values.get("library", {})
+                if not isinstance(library, Mapping):
+                    raise KeyError("library")
+                reader = library.get("reader", {})
+                legacy = library.get("media_reader", {})
+                if isinstance(reader, Mapping) and key in reader:
+                    raw_value = reader.get(key)
+                elif isinstance(legacy, Mapping):
+                    raw_value = legacy.get(key)
+                else:
+                    raw_value = None
+            else:
+                value: object = values
+                for part in section.split("."):
+                    if not isinstance(value, Mapping):
+                        raise KeyError(part)
+                    value = value.get(part, {})
+                if not isinstance(value, Mapping):
+                    raise KeyError(key)
+                raw_value = value.get(key)
+            return getattr(normalize_adaptive_reader_preferences({key: raw_value}), key)
+        except Exception:
+            logger.warning("Library reader persisted pane value could not be verified.")
+            return None
+
     async def _persist_library_reader_preference(
         self,
         destination: Literal["media", "conversations"],
         pane: Literal["library", "items"],
         value: bool,
         generation: int,
+        verify_failure_from_config: bool = False,
     ) -> None:
         """Persist one grip choice and reconcile writes superseded in flight."""
         key: Literal["library_open", "items_open"] = (
@@ -5515,6 +5553,30 @@ class LibraryScreen(BaseAppScreen):
                     attempted_generation = current_generation
                     attempted_value = current_value
                     continue
+                if verify_failure_from_config:
+                    physical_value = (
+                        await self._read_library_reader_persisted_preference(
+                            section, key
+                        )
+                    )
+                    if physical_value is None:
+                        return
+                    current_generation = self._library_reader_persistence_generations[
+                        authority
+                    ]
+                    current_value = getattr(getattr(self, preferences_attribute), key)
+                    self._library_reader_durable_preferences[authority] = physical_value
+                    self._library_reader_durable_generations[authority] = (
+                        current_generation
+                    )
+                    if (
+                        attempted_generation != current_generation
+                        or attempted_value != current_value
+                    ):
+                        return
+                    if physical_value == current_value:
+                        return
+                    break
                 if (
                     attempted_generation != current_generation
                     or attempted_value != current_value
@@ -5660,16 +5722,32 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_preferences = (
             self._load_library_conversation_reader_preferences()
         )
-        self._library_reader_durable_preferences.update(
-            library=self._library_conversation_reader_preferences.library_open,
-            conversations_items=self._library_conversation_reader_preferences.items_open,
-            media_items=self._library_media_reader_preferences.items_open,
-        )
-        self._library_reader_durable_generations.update(
-            self._library_reader_persistence_generations
-        )
         self._sync_library_media_reader_layout_from_shell()
         self._sync_library_conversation_reader_layout_from_shell()
+        for destination, pane, value in (
+            (
+                "media",
+                "library",
+                self._library_media_reader_preferences.library_open,
+            ),
+            ("media", "items", self._library_media_reader_preferences.items_open),
+            (
+                "conversations",
+                "items",
+                self._library_conversation_reader_preferences.items_open,
+            ),
+        ):
+            authority = self._library_reader_persistence_key(destination, pane)
+            self.run_worker(
+                self._persist_library_reader_preference(
+                    destination,
+                    pane,
+                    value,
+                    self._library_reader_persistence_generations[authority],
+                    verify_failure_from_config=True,
+                ),
+                group=f"library_reader_{authority}_settings_persistence",
+            )
 
     def request_library_media_layout_refresh(self, generation: int) -> None:
         """Compatibility alias for callers using the former Media-specific name."""
