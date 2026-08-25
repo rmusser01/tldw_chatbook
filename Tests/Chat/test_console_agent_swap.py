@@ -48,6 +48,22 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from Tests.console_provider_doubles import provider_resolution, with_destination
+from Tests.console_provider_doubles import persisted_console_store
+
+
+def _assert_durable_row(store, message_id: str) -> None:
+    """Assert ``message_id`` addresses a live row in ChaChaNotes.
+
+    Args:
+        store: The Console store whose persistence owns the durable rows.
+        message_id: Durable id a run recorded.
+    """
+    row = store.persistence.db.get_connection().execute(
+        "SELECT id, deleted FROM messages WHERE id = ?", (message_id,)
+    ).fetchone()
+    assert row is not None, f"run points at {message_id!r}, absent from messages"
+    assert not row["deleted"], f"run points at soft-deleted row {message_id!r}"
+
 
 
 def _first(matches, *, what: str):
@@ -504,8 +520,12 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     """
     from Tests.Chat.test_console_chat_store import FakePersistence
 
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -532,8 +552,15 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
 
     primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    # The native id create_run stored was corrected to the persisted id.
-    assert primary["assistant_message_id"] != assistant.id
+    # The run must point at a row that DURABLY EXISTS -- the property the old
+    # `!= assistant.id` assertion was standing in for. `a26cdafd8`'s durable
+    # dispatch checkpoint made that inequality false on purpose:
+    # `insert_with_messages` inserts the row with
+    # `acceptance.assistant_message_id`, so for a checkpointed turn the durable
+    # id IS the native id. Asserting they differ tested an implementation
+    # detail production deliberately reversed; asserting the row resolves
+    # tests what the run actually needs.
+    _assert_durable_row(store, primary["assistant_message_id"])
 
 
 @pytest.mark.asyncio
@@ -557,8 +584,12 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     """
     from Tests.Chat.test_console_chat_store import FakePersistence
 
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -597,7 +628,8 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
 
     primary = _first((r for r in _all_runs(db) if r["agent_kind"] == "primary"), what="primary agent run")
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    assert primary["assistant_message_id"] != assistant.id
+    # See the note above: a checkpointed turn's durable id IS its native id.
+    _assert_durable_row(store, primary["assistant_message_id"])
 
 
 @pytest.mark.asyncio
@@ -609,8 +641,12 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     """
     from Tests.Chat.test_console_chat_store import FakePersistence
 
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -2012,8 +2048,12 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
             yield "answered anyway."
 
     gateway = _YieldThenParkGateway()
-    persistence = FakePersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
+    # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
+    # every send through it was refused before reaching the agent swap under
+    # test. These tests never assert on the double itself -- only on persisted
+    # ids, which a real service supplies.
+    store = persisted_console_store()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -2059,7 +2099,8 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
 
     assert primary is not None, "primary run never settled"
     assert primary["assistant_message_id"] == assistant.persisted_message_id
-    assert primary["assistant_message_id"] != assistant.id
+    # See the note above: a checkpointed turn's durable id IS its native id.
+    _assert_durable_row(store, primary["assistant_message_id"])
 
 
 @pytest.mark.asyncio
