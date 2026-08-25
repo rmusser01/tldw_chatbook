@@ -40,14 +40,18 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
+from tldw_chatbook.UI.Console_Modules import realtime as realtime_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
 
-async def _wait_for(condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT) -> None:
+async def _wait_for(
+    condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if condition():
@@ -346,34 +350,30 @@ def _patch_realtime_config(
     needs a configured key even though the injected session never uses it.
 
     `resolve_handsfree_engine`/`realtime_enabled` are pinned on `hands_free_
-    module`, not `chat_screen_module`: the engine fork that reads them moved
+    module`, not `realtime_module`: the engine fork that reads them moved
     to `ConsoleHandsFreeController` (wave-2 console decomposition, task 1),
     and it holds its own separate copy of this import -- pinning only
-    `chat_screen_module`'s (now nonexistent) copy would silently stop
+    `realtime_module`'s copy would silently stop
     governing the fork's actual behaviour. `acoustic_barge_in_enabled` is
     pinned on BOTH modules: the realtime engine's own `_enter_console_
-    realtime_loop` reads `chat_screen_module`'s copy, and a pipeline
+    realtime_loop` reads `realtime_module`'s copy, and a pipeline
     fallback (`_console_realtime_fallback_to_pipeline` -> `Console
     HandsFreeController._enter_console_hands_free_pipeline_loop`) reads
     `hands_free_module`'s separate copy -- a test exercising the fallback
     path needs both to agree.
     """
-    monkeypatch.setattr(chat_screen_module, "get_api_key", lambda _name: api_key)
-    monkeypatch.setattr(
-        hands_free_module, "resolve_handsfree_engine", lambda: engine
-    )
+    monkeypatch.setattr(realtime_module, "get_api_key", lambda _name: api_key)
+    monkeypatch.setattr(hands_free_module, "resolve_handsfree_engine", lambda: engine)
     monkeypatch.setattr(hands_free_module, "realtime_enabled", lambda: enabled)
-    monkeypatch.setattr(chat_screen_module, "realtime_provider", lambda: provider)
-    monkeypatch.setattr(chat_screen_module, "realtime_model", lambda: "gpt-realtime")
-    monkeypatch.setattr(chat_screen_module, "realtime_voice", lambda: "marin")
+    monkeypatch.setattr(realtime_module, "realtime_provider", lambda: provider)
+    monkeypatch.setattr(realtime_module, "realtime_model", lambda: "gpt-realtime")
+    monkeypatch.setattr(realtime_module, "realtime_voice", lambda: "marin")
     monkeypatch.setattr(
-        chat_screen_module,
+        realtime_module,
         "realtime_idle_timeout_seconds",
         lambda: idle_timeout_seconds,
     )
-    monkeypatch.setattr(
-        chat_screen_module, "acoustic_barge_in_enabled", lambda: acoustic
-    )
+    monkeypatch.setattr(realtime_module, "acoustic_barge_in_enabled", lambda: acoustic)
     monkeypatch.setattr(
         hands_free_module, "acoustic_barge_in_enabled", lambda: acoustic
     )
@@ -394,8 +394,10 @@ async def _enter_live_realtime(console, pilot, rig) -> FakeRealtimeSession:
     await _wait_for(lambda: rig.session.connected, pilot)
     rig.session.fire_ready()
     await _wait_for(
-        lambda: console._console_realtime is not None
-        and console._console_realtime.controller.state == "live",
+        lambda: (
+            console._console_realtime is not None
+            and console._console_realtime.controller.state == "live"
+        ),
         pilot,
     )
     return rig.session
@@ -408,6 +410,7 @@ async def test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_ex
     """Mounted realtime callbacks drive Buddy and release on exact loop exit."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
+    app.persona_buddy_controller = PersonaBuddyController()
     rig = _install_realtime_fakes(app)
     host = ConsoleHarness(app)
 
@@ -437,7 +440,7 @@ async def test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_ex
         )
 
         generation = console._console_realtime.buddy_generation
-        console._console_realtime_exit_loop(None)
+        console._realtime._console_realtime_exit_loop(None)
         await _wait_for(
             lambda: app.persona_buddy_controller.snapshot().state == "idle", pilot
         )
@@ -456,6 +459,7 @@ async def test_persona_buddy_realtime_generation_survives_screen_replacement(
     """A stale real screen cannot release its successor's same-session loop."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
+    app.persona_buddy_controller = PersonaBuddyController()
     _install_realtime_fakes(app)
     host = ConsoleHarness(app)
 
@@ -478,7 +482,7 @@ async def test_persona_buddy_realtime_generation_survives_screen_replacement(
         assert replacement_generation > old_generation
         assert app.persona_buddy_controller.snapshot().state == "offline"
 
-        old_screen._release_console_realtime_state()
+        old_screen._realtime._release_console_realtime_state()
         assert app.persona_buddy_controller.snapshot().state == "offline"
         assert (
             replacement._console_runtime().persona_buddy_sink.active_owner_count(
@@ -487,7 +491,7 @@ async def test_persona_buddy_realtime_generation_survives_screen_replacement(
             == 1
         )
 
-        replacement._console_realtime_exit_loop(None)
+        replacement._realtime._console_realtime_exit_loop(None)
         await _wait_for(
             lambda: app.persona_buddy_controller.snapshot().state == "idle", pilot
         )
@@ -657,10 +661,10 @@ async def test_turn_detection_settings_reach_the_session_on_connect_and_reconnec
     bring the symptom back mid-conversation."""
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module, "realtime_turn_detection", lambda: "server_vad"
+        realtime_module, "realtime_turn_detection", lambda: "server_vad"
     )
-    monkeypatch.setattr(chat_screen_module, "realtime_vad_threshold", lambda: 0.6)
-    monkeypatch.setattr(chat_screen_module, "realtime_vad_silence_ms", lambda: 700)
+    monkeypatch.setattr(realtime_module, "realtime_vad_threshold", lambda: 0.6)
+    monkeypatch.setattr(realtime_module, "realtime_vad_silence_ms", lambda: 700)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
     host = ConsoleHarness(app)
@@ -760,8 +764,7 @@ async def test_seed_strips_the_interrupted_ui_marker(monkeypatch):
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content=(
-                "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                "Half a sentence" + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
         )
 
@@ -891,9 +894,7 @@ async def test_a_late_input_transcript_never_overwrites_the_next_turn(monkeypatc
             second_row_id = console._console_realtime.user_row_id
 
             session.fire_input_transcript("turn two")
-            await _wait_for(
-                lambda: _messages(console)[1].content == "turn two", pilot
-            )
+            await _wait_for(lambda: _messages(console)[1].content == "turn two", pilot)
             # Turn one's transcript finally arrives -- far too late.
             session.fire_input_transcript("turn one")
             await pilot.pause()
@@ -937,7 +938,9 @@ async def test_assistant_transcript_streams_into_the_reply_row(monkeypatch):
         )
 
         assistant = [
-            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+            row
+            for row in _messages(console)
+            if row.role is ConsoleMessageRole.ASSISTANT
         ][0]
         assert assistant.status == "complete"
 
@@ -968,7 +971,9 @@ async def test_barge_in_marks_the_reply_row_as_interrupted(monkeypatch):
         await pilot.pause()
 
         assistant = [
-            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+            row
+            for row in _messages(console)
+            if row.role is ConsoleMessageRole.ASSISTANT
         ][0]
         assert assistant.content.endswith("interrupted"), assistant.content
 
@@ -1181,11 +1186,7 @@ async def test_a_failed_audio_sink_is_latched_not_retried_per_delta(monkeypatch)
 
         assert len(builds) == 1, f"sink construction retried per delta: {len(builds)}"
         assert (
-            sum(
-                1
-                for message, _kwargs in notifications
-                if "audio" in message.lower()
-            )
+            sum(1 for message, _kwargs in notifications if "audio" in message.lower())
             == 1
         ), notifications
 
@@ -1548,7 +1549,7 @@ async def test_a_stale_playback_completion_never_ends_the_next_reply(monkeypatch
         await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
         stale_token = state.reply_token - 1
 
-        console._console_realtime_playback_finished(state, stale_token)
+        console._realtime._console_realtime_playback_finished(state, stale_token)
         await pilot.pause()
 
         assert state.controller.state == "speaking"
@@ -1692,9 +1693,9 @@ async def test_missing_api_key_refuses_before_any_connect_attempt(monkeypatch):
 
         assert rig.sessions == [], "a connect was attempted with no API key"
         assert console._console_realtime is None
-        assert any(
-            "API key" in message for message, _kwargs in notifications
-        ), notifications
+        assert any("API key" in message for message, _kwargs in notifications), (
+            notifications
+        )
 
 
 @pytest.mark.asyncio
@@ -1736,7 +1737,7 @@ async def test_connect_timeout_is_bounded_and_falls_back(monkeypatch):
     _install_streaming_session(monkeypatch, service)
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module, "CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS", 0.05
+        realtime_module, "CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS", 0.05
     )
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
@@ -1811,7 +1812,8 @@ async def test_realtime_lifecycle_is_persistently_logged(monkeypatch):
         diagnostics_logger.setLevel(previous_level)
 
     assert all(
-        record.name == "tldw_chatbook.diagnostics.realtime" for record in capture.records
+        record.name == "tldw_chatbook.diagnostics.realtime"
+        for record in capture.records
     )
     # `event=<name> field=value …` -- the same single-line shape the
     # dictation events already write, and the shape the persistent
@@ -1890,7 +1892,8 @@ async def test_a_whole_turn_is_reconstructable_from_the_persistent_log(monkeypat
 
     names = _event_names(capture)
     assert all(
-        record.name == "tldw_chatbook.diagnostics.realtime" for record in capture.records
+        record.name == "tldw_chatbook.diagnostics.realtime"
+        for record in capture.records
     )
     turn = [name for name in names if name not in {"realtime_entry", "realtime_ready"}]
     assert turn[:4] == [
@@ -1909,11 +1912,13 @@ async def test_a_whole_turn_is_reconstructable_from_the_persistent_log(monkeypat
         if message.startswith("event=realtime_reply_done ")
     ]
     assert len(done_records) == 2, done_records
-    assert "initiator=generation" in done_records[0] and "decision=deferred" in (
-        done_records[0]
+    assert (
+        "initiator=generation" in done_records[0]
+        and "decision=deferred" in (done_records[0])
     )
-    assert "initiator=playback" in done_records[1] and "decision=fired" in (
-        done_records[1]
+    assert (
+        "initiator=playback" in done_records[1]
+        and "decision=fired" in (done_records[1])
     )
 
 
@@ -2011,9 +2016,9 @@ async def test_close_before_ready_fails_the_connect_instead_of_hanging(monkeypat
         logger.remove(sink_id)
 
     # Never the key itself -- not in the toast, not in any log line.
-    assert _KEY_FRAGMENT not in " ".join(
-        message for message, _kw in notifications
-    ), "a key fragment reached a toast"
+    assert _KEY_FRAGMENT not in " ".join(message for message, _kw in notifications), (
+        "a key fragment reached a toast"
+    )
     assert not any(_KEY_FRAGMENT in record for record in records), (
         "a key fragment reached the log"
     )
@@ -2055,9 +2060,7 @@ async def test_ready_that_never_arrives_times_out_instead_of_hanging(monkeypatch
     """Belt and braces: `connect()` returned and NOTHING followed. No
     unforeseen no-ready path may hang the entry."""
     _patch_realtime_config(monkeypatch)
-    monkeypatch.setattr(
-        chat_screen_module, "CONSOLE_REALTIME_READY_TIMEOUT_SECONDS", 0.05
-    )
+    monkeypatch.setattr(realtime_module, "CONSOLE_REALTIME_READY_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(
         hands_free_module.console_voice_input,
         "probe",
@@ -2289,9 +2292,7 @@ async def test_adopted_capture_sends_its_transcript_as_a_text_turn(monkeypatch):
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for(
-            lambda: console._console_dictation_state == "recording", pilot
-        )
+        await _wait_for(lambda: console._console_dictation_state == "recording", pilot)
         service.emit_final("what is the capital of france")
         await pilot.pause()
 
@@ -2301,9 +2302,7 @@ async def test_adopted_capture_sends_its_transcript_as_a_text_turn(monkeypatch):
         rig.session.fire_ready()
 
         await _wait_for(lambda: bool(rig.session.text_items), pilot)
-        assert rig.session.text_items == [
-            ("what is the capital of france", True)
-        ]
+        assert rig.session.text_items == [("what is the capital of france", True)]
         # The adopted transcript became the turn itself, not a stray draft.
         assert composer.draft_text().strip() == ""
         assert any(
@@ -2369,7 +2368,9 @@ async def test_exit_mid_reply_closes_the_reply_row_as_interrupted(monkeypatch):
         await _wait_for(lambda: console._console_realtime is None, pilot)
 
         assistant = [
-            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+            row
+            for row in _messages(console)
+            if row.role is ConsoleMessageRole.ASSISTANT
         ][0]
         assert assistant.status == "complete"
         assert assistant.content.endswith("interrupted"), assistant.content
@@ -2447,8 +2448,7 @@ async def test_realtime_rows_carry_engine_provenance(monkeypatch):
         # The user row is attributed to the TRANSCRIPTION model, matching
         # how its usage (spoken-audio duration) is attributed.
         assert (
-            user.metadata.model
-            == chat_screen_module.CONSOLE_REALTIME_TRANSCRIPTION_MODEL
+            user.metadata.model == realtime_module.CONSOLE_REALTIME_TRANSCRIPTION_MODEL
         )
         assert assistant.metadata is not None
         assert assistant.metadata.engine == "realtime"
@@ -2483,7 +2483,9 @@ async def test_barge_in_sets_the_structured_interrupted_flag(monkeypatch):
         await pilot.pause()
 
         assistant = [
-            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+            row
+            for row in _messages(console)
+            if row.role is ConsoleMessageRole.ASSISTANT
         ][0]
         assert assistant.content.endswith("interrupted"), assistant.content
         assert assistant.metadata is not None
@@ -2514,7 +2516,9 @@ async def test_a_completed_reply_is_not_marked_interrupted(monkeypatch):
         )
 
         assistant = [
-            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+            row
+            for row in _messages(console)
+            if row.role is ConsoleMessageRole.ASSISTANT
         ][0]
         assert assistant.metadata is not None
         assert assistant.metadata.interrupted is False
@@ -2538,8 +2542,7 @@ async def test_seed_trims_the_marker_from_a_flagged_interrupted_reply(monkeypatc
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content=(
-                "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                "Half a sentence" + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
             metadata=MessageMetadata(engine="realtime", interrupted=True),
         )
@@ -2630,13 +2633,18 @@ async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
         await _wait_for(lambda: len(_messages(console)) == 1, pilot)
         session.fire_input_transcript("   ")
         await _wait_for(
-            lambda: _messages(console)[0].metadata is not None
-            and _messages(console)[0].metadata.transcript_status == "empty",
+            lambda: (
+                _messages(console)[0].metadata is not None
+                and _messages(console)[0].metadata.transcript_status == "empty"
+            ),
             pilot,
         )
 
         user = _messages(console)[0]
-        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert (
+            user.content
+            == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        )
         assert user.metadata.engine == "realtime"
 
 
@@ -2660,8 +2668,10 @@ async def test_a_second_empty_transcript_does_not_double_mark_the_row(monkeypatc
         await _wait_for(lambda: len(_messages(console)) == 1, pilot)
         session.fire_input_transcript("")
         await _wait_for(
-            lambda: _messages(console)[0].content
-            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            lambda: (
+                _messages(console)[0].content
+                == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+            ),
             pilot,
         )
         session.fire_input_transcript("   ")
@@ -2669,7 +2679,10 @@ async def test_a_second_empty_transcript_does_not_double_mark_the_row(monkeypatc
         await pilot.pause()
 
         user = _messages(console)[0]
-        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert (
+            user.content
+            == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        )
         assert user.metadata.transcript_status == "empty"
 
 
@@ -2717,8 +2730,10 @@ async def test_an_empty_transcript_retries_the_status_after_a_swallowed_metadata
 
         session.fire_input_transcript("")
         await _wait_for(
-            lambda: _messages(console)[0].content
-            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            lambda: (
+                _messages(console)[0].content
+                == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+            ),
             pilot,
         )
         # Partial state reached: content landed, status write was swallowed.
@@ -2735,7 +2750,8 @@ async def test_an_empty_transcript_retries_the_status_after_a_swallowed_metadata
 
         user = _messages(console)[0]
         assert (
-            user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+            user.content
+            == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         )
 
         from tldw_chatbook.Chat.console_chat_controller import _is_empty_transcript_row
@@ -2761,7 +2777,7 @@ async def test_seed_excludes_a_row_whose_transcript_came_back_empty(monkeypatch)
         store.append_message(
             session_id,
             role=ConsoleMessageRole.USER,
-            content=chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            content=realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
             metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
         )
         store.append_message(
@@ -2847,8 +2863,7 @@ async def test_seed_still_trims_a_marker_suffix_on_a_row_without_metadata(monkey
             store.active_session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content=(
-                "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                "Half a sentence" + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
         )
 
@@ -2859,7 +2874,9 @@ async def test_seed_still_trims_a_marker_suffix_on_a_row_without_metadata(monkey
 
 
 @pytest.mark.asyncio
-async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(monkeypatch):
+async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(
+    monkeypatch,
+):
     """F2: the marker append and the metadata write are separate calls, each
     independently swallowed on failure. A row carrying the marker but no flag
     must still not seed chrome into the model."""
@@ -2875,8 +2892,7 @@ async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(monk
             store.active_session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content=(
-                "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                "Half a sentence" + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
             metadata=MessageMetadata(engine="realtime", interrupted=False),
         )
