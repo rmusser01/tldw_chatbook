@@ -8,7 +8,7 @@ from typing import Any, Callable, Literal, Mapping, Optional
 from loguru import logger
 
 logger = logger.bind(module="rag_scope")
-SCOPE_VERSION = 1
+SCOPE_VERSION = 2
 SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 _KNOWN_SOURCE_TYPES = (SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE)
@@ -123,6 +123,7 @@ class RagScope:
     """
     items: tuple[ScopeItem, ...]
     updated_at: str
+    empty_is_scoped: bool = False
 
 def serialize_scope(scope: RagScope) -> dict:
     """Serialize a scope to its stored JSON-safe dict shape.
@@ -137,6 +138,7 @@ def serialize_scope(scope: RagScope) -> dict:
         "version": SCOPE_VERSION,
         "updated_at": scope.updated_at,
         "items": [{"source_type": i.source_type, "source_id": i.source_id} for i in scope.items],
+        "empty_is_scoped": scope.empty_is_scoped,
     }
 
 def parse_scope(raw: Any) -> Optional[RagScope]:
@@ -164,6 +166,10 @@ def parse_scope(raw: Any) -> Optional[RagScope]:
         return None
     items_raw = raw.get("items")
     updated_at = raw.get("updated_at")
+    empty_is_scoped = raw.get("empty_is_scoped", False)
+    if version >= 2 and type(empty_is_scoped) is not bool:
+        _warn_malformed("empty_is_scoped is not a bool")
+        return None
     if not isinstance(items_raw, list):
         _warn_malformed("items is not a list")
         return None
@@ -183,7 +189,11 @@ def parse_scope(raw: Any) -> Optional[RagScope]:
             _warn_malformed("source_id is missing")
             return None
         items.append(ScopeItem(str(stype), str(sid)))
-    return RagScope(items=tuple(items), updated_at=updated_at)
+    return RagScope(
+        items=tuple(items),
+        updated_at=updated_at,
+        empty_is_scoped=bool(empty_is_scoped),
+    )
 
 @dataclass(frozen=True)
 class EffectiveScope:

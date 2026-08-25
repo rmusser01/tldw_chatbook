@@ -92,6 +92,15 @@ APACHE_SUBTREE_LICENSE_PATHS = frozenset(
         "tldw_chatbook/tldw_api/LICENSE",
     }
 )
+PERSONA_VISUAL_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v40_to_v41_persona_visual.sql"
+)
+CONSOLE_PROJECT_CONTEXT_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v41_to_v42_console_project_context.sql"
+)
+RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql"
+)
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
     "admiration",
@@ -825,6 +834,7 @@ import sqlite3
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 
 import tldw_chatbook
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Utils.path_validation import validate_path
 
@@ -870,7 +880,13 @@ try:
 finally:
     CharactersRAGDB._CURRENT_SCHEMA_VERSION = current_schema_version
 
-upgraded_db = CharactersRAGDB(migration_path, client_id="installed-probe-current")
+upgraded_db = CharactersRAGDB(
+    migration_path,
+    client_id="installed-probe-current",
+    console_library_migration_seed=ConsoleLibraryMigrationSeed(
+        auto_retrieve_on_send=False
+    ),
+)
 upgraded_connection = upgraded_db.get_connection()
 assert upgraded_db._get_db_version(upgraded_connection) == current_schema_version
 installed_tables = {
@@ -887,6 +903,7 @@ assert {
     "visual_identity_bindings",
 } <= installed_tables
 assert "transcript_annotations" in installed_tables
+assert "research_quick_note_owner_proofs" in installed_tables
 upgraded_db.close_connection()
 print(f"installed-wheel-v35-to-current-ok v{current_schema_version}")
 """
@@ -1554,38 +1571,32 @@ def test_built_artifacts_match_distribution_contract(
     sdist_members = _sdist_members(built_distributions.sdist)
     wheel_members = _wheel_members(built_distributions.wheel)
 
-    required_sdist = (
-        {
-            "LICENSE",
-            "README.md",
-            "CLAUDE.md",
-            "CHANGELOG.md",
-            "MANIFEST.in",
-            "pyproject.toml",
-            "requirements.txt",
-            "tldw_chatbook/css/tldw_cli_modular.tcss",
-            "tldw_chatbook/css/components/stats_screen.css",
-            "tldw_chatbook/Config_Files/rag_pipelines.toml",
-            "tldw_chatbook/Evals/config/eval_config.yaml",
-            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-            *APACHE_SUBTREE_LICENSE_PATHS,
-            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-        }
-        | SAMIRA_RESOURCE_PATHS
-    )
-    required_wheel = (
-        {
-            "tldw_chatbook/css/tldw_cli_modular.tcss",
-            "tldw_chatbook/Config_Files/rag_pipelines.toml",
-            "tldw_chatbook/Evals/config/eval_config.yaml",
-            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-            *APACHE_SUBTREE_LICENSE_PATHS,
-            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-        }
-        | SAMIRA_RESOURCE_PATHS
-    )
+    required_sdist = {
+        "LICENSE",
+        "README.md",
+        "CLAUDE.md",
+        "CHANGELOG.md",
+        "MANIFEST.in",
+        "pyproject.toml",
+        "requirements.txt",
+        "tldw_chatbook/css/tldw_cli_modular.tcss",
+        "tldw_chatbook/css/components/stats_screen.css",
+        "tldw_chatbook/Config_Files/rag_pipelines.toml",
+        "tldw_chatbook/Evals/config/eval_config.yaml",
+        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+        *APACHE_SUBTREE_LICENSE_PATHS,
+        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+    } | SAMIRA_RESOURCE_PATHS
+    required_wheel = {
+        "tldw_chatbook/css/tldw_cli_modular.tcss",
+        "tldw_chatbook/Config_Files/rag_pipelines.toml",
+        "tldw_chatbook/Evals/config/eval_config.yaml",
+        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+        *APACHE_SUBTREE_LICENSE_PATHS,
+        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+    } | SAMIRA_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     for members in (sdist_members, wheel_members):
@@ -1990,9 +2001,7 @@ def test_release_checker_reports_every_missing_database_migration(
     Aborting at the first gap is exactly how 19 missing files stayed invisible
     behind one reported symptom (task-19860).
     """
-    dropped = set(sorted(SOURCE_MIGRATION_PATHS)[:3]) | {
-        max(SOURCE_MIGRATION_PATHS)
-    }
+    dropped = set(sorted(SOURCE_MIGRATION_PATHS)[:3]) | {max(SOURCE_MIGRATION_PATHS)}
     dist_dir = _dist_dir_without(
         built_distributions,
         tmp_path,

@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import base64
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
+from secrets import token_urlsafe
 import sqlite3
-from uuid import uuid4
+from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
 from loguru import logger
 
-from tldw_chatbook.Chat.rag_scope import RagScope, parse_scope, serialize_scope
+from tldw_chatbook.Chat.rag_scope import (
+    RagScope,
+    ScopeItem,
+    parse_scope,
+    serialize_scope,
+)
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -20,6 +29,7 @@ from .models import (
     DEFAULT_WORKSPACE_NAME,
     RuntimeBindingKind,
     RuntimeBindingStatus,
+    ResearchQuickNoteReceipt,
     WorkspaceAuthority,
     WorkspaceMembership,
     WorkspaceRecord,
@@ -31,6 +41,62 @@ from .models import (
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
+_QUICK_NOTE_LEASE_SECONDS = 30
+_QUICK_NOTE_ABANDON_SECONDS = 7 * 24 * 60 * 60
+_QUICK_NOTE_MAX_FAILURES = 3
+_QUICK_NOTE_FAILURE_REASONS = {
+    "proof_mismatch",
+    "owner_conflict",
+    "owner_missing",
+    "owner_unavailable",
+    "registry_failure",
+}
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _future_timestamp(value: str, seconds: int) -> str:
+    return (_parse_utc_timestamp(value) + timedelta(seconds=seconds)).isoformat()
+
+
+def _monotonic_timestamp(previous: str, candidate: str) -> str:
+    return previous if _parse_utc_timestamp(previous) >= _parse_utc_timestamp(candidate) else candidate
+
+
+def _length_prefixed_identity(*axes: str) -> str:
+    payload = bytearray()
+    for axis in axes:
+        encoded = axis.encode("utf-8")
+        payload.extend(len(encoded).to_bytes(4, "big"))
+        payload.extend(encoded)
+    return base64.urlsafe_b64encode(bytes(payload)).decode("ascii")
+
+
+def _validate_quick_note_operation_token(value: str) -> None:
+    if not value.startswith("research-note-") or len(value) != 46:
+        raise ValueError("operation_token is not an app-minted Quick Note token")
+    try:
+        operation_uuid = UUID(hex=value.removeprefix("research-note-"))
+    except ValueError as exc:
+        raise ValueError(
+            "operation_token is not an app-minted Quick Note token"
+        ) from exc
+    if (
+        operation_uuid.version != 4
+        or operation_uuid.variant != RFC_4122
+        or value != f"research-note-{operation_uuid.hex}"
+    ):
+        raise ValueError("operation_token is not an app-minted Quick Note token")
+
+
+def _opaque_receipt_token(factory: Callable[[], str], field_name: str) -> str:
+    raw = _normalize_required_text(factory(), field_name)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _filesystem_binding_missing(locator: str) -> bool:
@@ -193,11 +259,15 @@ class LocalWorkspaceRegistryService:
         *,
         id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
+        receipt_token_factory: Callable[[], str] | None = None,
     ) -> None:
         self.db = db
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or utc_now_iso
         self._mutation_generation = 0
+        self._receipt_token_factory = receipt_token_factory or (
+            lambda: token_urlsafe(32)
+        )
 
     @property
     def mutation_generation(self) -> int:
@@ -687,6 +757,91 @@ class LocalWorkspaceRegistryService:
             return _membership_from_row(row)
         raise WorkspaceRegistryServiceError("Workspace membership link failed.")
 
+    def unlink_membership(
+        self,
+        workspace_id: str,
+        *,
+        item_type: str,
+        item_id: str,
+        role: str = "source",
+    ) -> bool:
+        """Remove one association without deleting the item."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_item_type = _normalize_required_text(item_type, "item_type")
+        safe_item_id = _normalize_required_text(item_id, "item_id")
+        safe_role = _normalize_required_text(role, "role")
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = ?
+                        AND item_id = ?
+                        AND role = ?
+                    """,
+                    (safe_workspace_id, safe_item_type, safe_item_id, safe_role),
+                )
+                if cursor.rowcount == 0:
+                    return False
+                if safe_role != "source":
+                    return True
+
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM workspace_rag_scopes
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+                if row is None:
+                    return True
+                try:
+                    raw_scope = json.loads(row["payload"])
+                except (TypeError, ValueError):
+                    return True
+                scope = parse_scope(raw_scope)
+                if scope is None:
+                    return True
+                remaining = tuple(
+                    item
+                    for item in scope.items
+                    if not (
+                        item.source_type == safe_item_type
+                        and item.source_id == safe_item_id
+                    )
+                )
+                if remaining == scope.items:
+                    return True
+                if not remaining and not scope.empty_is_scoped:
+                    conn.execute(
+                        "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                        (safe_workspace_id,),
+                    )
+                    return True
+                updated_scope = RagScope(
+                    items=remaining,
+                    updated_at=self._now_factory(),
+                    empty_is_scoped=scope.empty_is_scoped,
+                )
+                conn.execute(
+                    """
+                    UPDATE workspace_rag_scopes
+                    SET payload = ?, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (
+                        json.dumps(serialize_scope(updated_scope)),
+                        updated_scope.updated_at,
+                        safe_workspace_id,
+                    ),
+                )
+                return True
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
     def get_item_memberships(
         self,
         item_type: str,
@@ -733,6 +888,1039 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
+
+    def list_workspace_source_memberships(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
+        """Return one bounded page of canonical Media source associations."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        try:
+            with self.db.connection() as conn:
+                total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM workspace_memberships
+                        WHERE workspace_id = ?
+                            AND item_type = 'media'
+                            AND role = 'source'
+                        """,
+                        (safe_workspace_id,),
+                    ).fetchone()[0]
+                )
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = 'media'
+                        AND role = 'source'
+                    ORDER BY created_at ASC, item_id ASC, membership_id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (safe_workspace_id, limit, offset),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return tuple(_membership_from_row(row) for row in rows), total
+
+    def list_workspace_note_memberships(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        role: str = "note",
+    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
+        """Return one bounded page of canonical Notes associations."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_role = _normalize_required_text(role, "role")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        try:
+            with self.db.connection() as conn:
+                total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM workspace_memberships
+                        WHERE workspace_id = ?
+                            AND item_type = 'note'
+                            AND role = ?
+                        """,
+                        (safe_workspace_id, safe_role),
+                    ).fetchone()[0]
+                )
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = 'note'
+                        AND role = ?
+                    ORDER BY created_at DESC, item_id ASC, membership_id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (safe_workspace_id, safe_role, limit, offset),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return tuple(_membership_from_row(row) for row in rows), total
+
+    @staticmethod
+    def _quick_note_identity(
+        *,
+        workspace_id: str,
+        local_user_id: str,
+        operation_token: str,
+        kind: str,
+        data_source: str = "local",
+        server_profile_id: str = "",
+        principal_id: str = "",
+    ) -> tuple[str, str]:
+        seed = _length_prefixed_identity(
+            "chatbook-quick-note-v2",
+            data_source,
+            server_profile_id,
+            principal_id,
+            workspace_id,
+            local_user_id,
+            operation_token,
+        )
+        canonical_note_id = f"research-note-{uuid5(NAMESPACE_URL, seed).hex}"
+        receipt_seed = _length_prefixed_identity(seed, kind)
+        receipt_id = f"quick-note-receipt-{uuid5(NAMESPACE_URL, receipt_seed).hex}"
+        return receipt_id, canonical_note_id
+
+    def claim_quick_note_create(
+        self,
+        workspace_id: str,
+        *,
+        local_user_id: str,
+        operation_token: str,
+    ) -> ResearchQuickNoteReceipt:
+        """Idempotently claim an owner-qualified Local note create intent."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_token = _normalize_required_text(operation_token, "operation_token")
+        _validate_quick_note_operation_token(safe_token)
+        if self.get_workspace(safe_workspace_id) is None:
+            raise WorkspaceNotFound(safe_workspace_id)
+        receipt_id, note_id = self._quick_note_identity(
+            workspace_id=safe_workspace_id,
+            local_user_id=safe_user_id,
+            operation_token=safe_token,
+            kind="create",
+        )
+        now = self._now_factory()
+        owner_proof = _opaque_receipt_token(
+            self._receipt_token_factory, "owner_proof"
+        )
+        lease_token = _opaque_receipt_token(
+            self._receipt_token_factory, "lease_token"
+        )
+        lease_expires_at = _future_timestamp(now, _QUICK_NOTE_LEASE_SECONDS)
+        abandon_after = _future_timestamp(now, _QUICK_NOTE_ABANDON_SECONDS)
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO research_quick_note_receipts (
+                        receipt_id, data_source, server_profile_id, principal_id,
+                        workspace_id, local_user_id,
+                        operation_token, operation_kind, canonical_note_id,
+                        owner_proof, lease_token, lease_expires_at, abandon_after,
+                        expected_version, state, revision, failure_count,
+                        next_retry_at, blocked_reason_code, created_at, updated_at
+                    ) VALUES (?, 'local', '', '', ?, ?, ?, 'create', ?, ?, ?, ?, ?,
+                              NULL, 'pending', 1, 0, ?, '', ?, ?)
+                    """,
+                    (
+                        receipt_id,
+                        safe_workspace_id,
+                        safe_user_id,
+                        safe_token,
+                        note_id,
+                        owner_proof,
+                        lease_token,
+                        lease_expires_at,
+                        abandon_after,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (receipt_id,),
+                ).fetchone()
+                if (
+                    row is not None
+                    and row["state"] == "pending"
+                    and _parse_utc_timestamp(str(row["lease_expires_at"]))
+                    <= _parse_utc_timestamp(now)
+                    and _parse_utc_timestamp(str(row["next_retry_at"]))
+                    <= _parse_utc_timestamp(now)
+                ):
+                    updated_at = _monotonic_timestamp(str(row["updated_at"]), now)
+                    renewed_until = _future_timestamp(
+                        updated_at, _QUICK_NOTE_LEASE_SECONDS
+                    )
+                    conn.execute(
+                        """
+                        UPDATE research_quick_note_receipts
+                        SET lease_token = ?, lease_expires_at = ?,
+                            revision = revision + 1, updated_at = ?
+                        WHERE receipt_id = ? AND local_user_id = ?
+                          AND operation_token = ? AND operation_kind = 'create'
+                          AND canonical_note_id = ? AND state = 'pending'
+                          AND lease_token = ? AND revision = ?
+                        """,
+                        (
+                            lease_token,
+                            renewed_until,
+                            updated_at,
+                            receipt_id,
+                            safe_user_id,
+                            safe_token,
+                            note_id,
+                            str(row["lease_token"]),
+                            int(row["revision"]),
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                        (receipt_id,),
+                    ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        receipt = _quick_note_receipt_from_row(row)
+        if (
+            receipt.workspace_id != safe_workspace_id
+            or receipt.local_user_id != safe_user_id
+            or receipt.operation_token != safe_token
+            or receipt.canonical_note_id != note_id
+            or receipt.operation_kind != "create"
+        ):
+            raise WorkspaceRegistryServiceError("Quick Note receipt identity mismatch.")
+        return receipt
+
+    def claim_quick_note_delete(
+        self,
+        workspace_id: str,
+        *,
+        local_user_id: str,
+        canonical_note_id: str,
+        expected_version: int,
+    ) -> ResearchQuickNoteReceipt:
+        """Durably record a delete before mutating its canonical Notes owner."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_note_id = _normalize_required_text(canonical_note_id, "canonical_note_id")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("expected_version must be a positive integer")
+        delete_seed = _length_prefixed_identity(
+            "chatbook-quick-note-delete-v2",
+            "local",
+            "",
+            "",
+            safe_workspace_id,
+            safe_user_id,
+            safe_note_id,
+            str(expected_version),
+        )
+        operation_token = "research-note-delete-" + uuid5(
+            NAMESPACE_URL, delete_seed
+        ).hex
+        receipt_id, _ = self._quick_note_identity(
+            workspace_id=safe_workspace_id,
+            local_user_id=safe_user_id,
+            operation_token=operation_token,
+            kind="delete",
+        )
+        now = self._now_factory()
+        owner_proof = _opaque_receipt_token(
+            self._receipt_token_factory, "owner_proof"
+        )
+        lease_token = _opaque_receipt_token(
+            self._receipt_token_factory, "lease_token"
+        )
+        lease_expires_at = _future_timestamp(now, _QUICK_NOTE_LEASE_SECONDS)
+        abandon_after = _future_timestamp(now, _QUICK_NOTE_ABANDON_SECONDS)
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO research_quick_note_receipts (
+                        receipt_id, data_source, server_profile_id, principal_id,
+                        workspace_id, local_user_id,
+                        operation_token, operation_kind, canonical_note_id,
+                        owner_proof, lease_token, lease_expires_at, abandon_after,
+                        expected_version, state, revision, failure_count,
+                        next_retry_at, blocked_reason_code, created_at, updated_at
+                    ) VALUES (?, 'local', '', '', ?, ?, ?, 'delete', ?, ?, ?, ?, ?,
+                              ?, 'pending', 1, 0, ?, '', ?, ?)
+                    """,
+                    (
+                        receipt_id,
+                        safe_workspace_id,
+                        safe_user_id,
+                        operation_token,
+                        safe_note_id,
+                        owner_proof,
+                        lease_token,
+                        lease_expires_at,
+                        abandon_after,
+                        expected_version,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (receipt_id,),
+                ).fetchone()
+                if (
+                    row is not None
+                    and row["state"] != "blocked"
+                    and _parse_utc_timestamp(str(row["lease_expires_at"]))
+                    <= _parse_utc_timestamp(now)
+                    and _parse_utc_timestamp(str(row["next_retry_at"]))
+                    <= _parse_utc_timestamp(now)
+                ):
+                    updated_at = _monotonic_timestamp(str(row["updated_at"]), now)
+                    renewed_until = _future_timestamp(
+                        updated_at, _QUICK_NOTE_LEASE_SECONDS
+                    )
+                    conn.execute(
+                        """
+                        UPDATE research_quick_note_receipts
+                        SET lease_token = ?, lease_expires_at = ?,
+                            revision = revision + 1, updated_at = ?
+                        WHERE receipt_id = ? AND local_user_id = ?
+                          AND workspace_id = ? AND operation_kind = 'delete'
+                          AND canonical_note_id = ? AND expected_version = ?
+                          AND lease_token = ? AND revision = ?
+                        """,
+                        (
+                            lease_token,
+                            renewed_until,
+                            updated_at,
+                            receipt_id,
+                            safe_user_id,
+                            safe_workspace_id,
+                            safe_note_id,
+                            expected_version,
+                            str(row["lease_token"]),
+                            int(row["revision"]),
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                        (receipt_id,),
+                    ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        receipt = _quick_note_receipt_from_row(row)
+        if (
+            receipt.workspace_id != safe_workspace_id
+            or receipt.local_user_id != safe_user_id
+            or receipt.canonical_note_id != safe_note_id
+            or receipt.expected_version != expected_version
+            or receipt.operation_kind != "delete"
+        ):
+            raise WorkspaceRegistryServiceError("Quick Note receipt identity mismatch.")
+        return receipt
+
+    def list_quick_note_receipts(
+        self,
+        local_user_id: str,
+        *,
+        workspace_id: str | None = None,
+        operation_kind: str | None = None,
+        include_blocked: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[tuple[ResearchQuickNoteReceipt, ...], int]:
+        """List a bounded, owner-filtered receipt page for reconciliation."""
+
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_workspace_id = (
+            _normalize_required_text(workspace_id, "workspace_id")
+            if workspace_id is not None
+            else None
+        )
+        if operation_kind is not None and operation_kind not in {"create", "delete"}:
+            raise ValueError("operation_kind is invalid")
+        if type(include_blocked) is not bool:
+            raise TypeError("include_blocked must be a bool")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        now = self._now_factory()
+        params: tuple[object, ...] = (
+            safe_user_id,
+            safe_workspace_id,
+            safe_workspace_id,
+            operation_kind,
+            operation_kind,
+        )
+        actionable_sql = ""
+        if not include_blocked:
+            actionable_sql = """
+              AND state <> 'blocked'
+              AND julianday(next_retry_at) <= julianday(?)
+              AND julianday(lease_expires_at) <= julianday(?)
+            """
+            params += (now, now)
+        try:
+            with self.db.connection() as conn:
+                total = int(
+                    conn.execute(
+                        f"""
+                        SELECT COUNT(*) FROM research_quick_note_receipts
+                        WHERE local_user_id = ?
+                          AND (? IS NULL OR workspace_id = ?)
+                          AND (? IS NULL OR operation_kind = ?)
+                          {actionable_sql}
+                        """,
+                        params,
+                    ).fetchone()[0]
+                )
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE local_user_id = ?
+                      AND (? IS NULL OR workspace_id = ?)
+                      AND (? IS NULL OR operation_kind = ?)
+                      {actionable_sql}
+                    ORDER BY
+                        julianday(next_retry_at) ASC,
+                        julianday(updated_at) ASC,
+                        receipt_id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    params + (limit, offset),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return tuple(_quick_note_receipt_from_row(row) for row in rows), total
+
+    def claim_quick_note_recovery(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+    ) -> ResearchQuickNoteReceipt:
+        """Claim one expired receipt before inspecting either durable owner."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+        now = self._now_factory()
+        new_lease_token = _opaque_receipt_token(
+            self._receipt_token_factory, "lease_token"
+        )
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                current = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND revision = ? AND lease_token = ?
+                      AND state <> 'blocked'
+                      AND julianday(next_retry_at) <= julianday(?)
+                      AND julianday(lease_expires_at) <= julianday(?)
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                        now,
+                        now,
+                    ),
+                ).fetchone()
+                if current is None:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                updated_at = _monotonic_timestamp(str(current["updated_at"]), now)
+                lease_expires_at = _future_timestamp(
+                    updated_at, _QUICK_NOTE_LEASE_SECONDS
+                )
+                cursor = conn.execute(
+                    """
+                    UPDATE research_quick_note_receipts
+                    SET lease_token = ?, lease_expires_at = ?,
+                        revision = revision + 1, updated_at = ?
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND data_source = ? AND server_profile_id = ?
+                      AND principal_id = ? AND workspace_id = ?
+                      AND operation_token = ? AND operation_kind = ?
+                      AND canonical_note_id = ? AND revision = ?
+                      AND lease_token = ?
+                    """,
+                    (
+                        new_lease_token,
+                        lease_expires_at,
+                        updated_at,
+                        safe_receipt_id,
+                        safe_user_id,
+                        current["data_source"],
+                        current["server_profile_id"],
+                        current["principal_id"],
+                        current["workspace_id"],
+                        current["operation_token"],
+                        current["operation_kind"],
+                        current["canonical_note_id"],
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                row = conn.execute(
+                    "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (safe_receipt_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        return _quick_note_receipt_from_row(row)
+
+    def mark_quick_note_owner_committed(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+    ) -> ResearchQuickNoteReceipt:
+        """Advance one receipt from pending to owner_committed exactly once."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                current = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND lease_token = ?
+                    """,
+                    (safe_receipt_id, safe_user_id, safe_lease_token),
+                ).fetchone()
+                if current is None:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                updated_at = _monotonic_timestamp(str(current["updated_at"]), now)
+                lease_expires_at = _future_timestamp(
+                    updated_at, _QUICK_NOTE_LEASE_SECONDS
+                )
+                cursor = conn.execute(
+                    """
+                    UPDATE research_quick_note_receipts
+                    SET state = 'owner_committed', revision = revision + 1,
+                        lease_expires_at = ?, next_retry_at = ?,
+                        blocked_reason_code = '', updated_at = ?
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = ? AND canonical_note_id = ?
+                      AND state = 'pending' AND revision = ? AND lease_token = ?
+                    """,
+                    (
+                        lease_expires_at,
+                        updated_at,
+                        updated_at,
+                        safe_receipt_id,
+                        safe_user_id,
+                        current["operation_kind"],
+                        current["canonical_note_id"],
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                )
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND lease_token = ?
+                    """,
+                    (safe_receipt_id, safe_user_id, safe_lease_token),
+                ).fetchone()
+                if row is None or (
+                    cursor.rowcount == 0
+                    and not (
+                        row["state"] == "owner_committed"
+                        and int(row["revision"]) >= expected_revision + 1
+                    )
+                ):
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return _quick_note_receipt_from_row(row)
+
+    def discard_quick_note_receipt(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+    ) -> bool:
+        """Discard a receipt after proving no canonical recovery work remains."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND revision = ? AND lease_token = ?
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                )
+                return cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def discard_abandoned_quick_note_receipt(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+    ) -> bool:
+        """Discard missing-owner recovery only after its durable grace."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND revision = ? AND lease_token = ?
+                      AND julianday(abandon_after) <= julianday(?)
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                        now,
+                    ),
+                )
+                return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def record_quick_note_failure(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+        reason_code: str,
+        permanent: bool = False,
+    ) -> ResearchQuickNoteReceipt:
+        """Record one sanitized failure with bounded backoff and CAS fencing."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+        if reason_code not in _QUICK_NOTE_FAILURE_REASONS:
+            raise ValueError("reason_code is invalid")
+        if type(permanent) is not bool:
+            raise TypeError("permanent must be a bool")
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                current = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND revision = ? AND lease_token = ?
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                ).fetchone()
+                if current is None:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                failure_count = min(
+                    _QUICK_NOTE_MAX_FAILURES, int(current["failure_count"]) + 1
+                )
+                blocked = permanent or (
+                    reason_code != "owner_missing"
+                    and failure_count >= _QUICK_NOTE_MAX_FAILURES
+                )
+                state = "blocked" if blocked else str(current["state"])
+                updated_at = _monotonic_timestamp(str(current["updated_at"]), now)
+                next_retry_at = _future_timestamp(
+                    updated_at,
+                    300 if reason_code == "owner_missing" else min(300, 2**failure_count),
+                )
+                conn.execute(
+                    """
+                    UPDATE research_quick_note_receipts
+                    SET state = ?, revision = revision + 1,
+                        failure_count = ?, next_retry_at = ?,
+                        lease_expires_at = ?, blocked_reason_code = ?, updated_at = ?
+                    WHERE receipt_id = ? AND local_user_id = ? AND revision = ?
+                      AND operation_kind = ? AND canonical_note_id = ?
+                      AND lease_token = ?
+                    """,
+                    (
+                        state,
+                        failure_count,
+                        next_retry_at,
+                        updated_at,
+                        reason_code,
+                        updated_at,
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        current["operation_kind"],
+                        current["canonical_note_id"],
+                        safe_lease_token,
+                    ),
+                )
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                    """,
+                    (safe_receipt_id, safe_user_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        return _quick_note_receipt_from_row(row)
+
+    def project_quick_note_create(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+        title: str,
+    ) -> ResearchQuickNoteReceipt:
+        """Atomically link the owner and persist proof-cleanup-pending state."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        safe_title = str(title).strip()
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = 'create'
+                      AND state = 'owner_committed' AND revision = ?
+                      AND lease_token = ?
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_memberships (
+                        membership_id, workspace_id, item_type, item_id, role,
+                        transfer_policy, title, created_at
+                    ) VALUES (?, ?, 'note', ?, 'note', 'reference', ?, ?)
+                    """,
+                    (
+                        self._id_factory(),
+                        row["workspace_id"],
+                        row["canonical_note_id"],
+                        safe_title,
+                        now,
+                    ),
+                )
+                updated_at = _monotonic_timestamp(str(row["updated_at"]), now)
+                lease_expires_at = _future_timestamp(
+                    updated_at, _QUICK_NOTE_LEASE_SECONDS
+                )
+                cursor = conn.execute(
+                    """
+                    UPDATE research_quick_note_receipts
+                    SET state = 'projection_committed', revision = revision + 1,
+                        lease_expires_at = ?, next_retry_at = ?,
+                        blocked_reason_code = '', updated_at = ?
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = 'create'
+                      AND canonical_note_id = ? AND state = 'owner_committed'
+                      AND revision = ? AND lease_token = ?
+                    """,
+                    (
+                        lease_expires_at,
+                        updated_at,
+                        updated_at,
+                        safe_receipt_id,
+                        safe_user_id,
+                        row["canonical_note_id"],
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                projected = conn.execute(
+                    "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                    (safe_receipt_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if projected is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        return _quick_note_receipt_from_row(projected)
+
+    def complete_quick_note_create(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+    ) -> bool:
+        """Consume a projection only after the caller removed its owner proof."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = 'create'
+                      AND state = 'projection_committed' AND revision = ?
+                      AND lease_token = ?
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                )
+                return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def complete_quick_note_delete(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        expected_lease_token: str,
+    ) -> bool:
+        """Atomically remove every projection and consume a committed delete."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        safe_lease_token = _normalize_required_text(
+            expected_lease_token, "expected_lease_token"
+        )
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND operation_kind = 'delete'
+                      AND state = 'owner_committed' AND revision = ?
+                      AND lease_token = ?
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                ).fetchone()
+                if row is None:
+                    return False
+                note_id = str(row["canonical_note_id"])
+                conn.execute(
+                    "DELETE FROM workspace_memberships WHERE item_type = 'note' AND item_id = ?",
+                    (note_id,),
+                )
+                scope_rows = conn.execute(
+                    "SELECT workspace_id, payload FROM workspace_rag_scopes"
+                ).fetchall()
+                for scope_row in scope_rows:
+                    try:
+                        scope = parse_scope(json.loads(scope_row["payload"]))
+                    except (TypeError, ValueError):
+                        scope = None
+                    if scope is None:
+                        conn.execute(
+                            "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                            (scope_row["workspace_id"],),
+                        )
+                        continue
+                    remaining = tuple(
+                        item
+                        for item in scope.items
+                        if not (
+                            item.source_type == "note" and item.source_id == note_id
+                        )
+                    )
+                    if remaining == scope.items:
+                        continue
+                    if not remaining and not scope.empty_is_scoped:
+                        conn.execute(
+                            "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                            (scope_row["workspace_id"],),
+                        )
+                        continue
+                    updated = RagScope(
+                        items=remaining,
+                        updated_at=self._now_factory(),
+                        empty_is_scoped=scope.empty_is_scoped,
+                    )
+                    conn.execute(
+                        """
+                        UPDATE workspace_rag_scopes SET payload = ?, updated_at = ?
+                        WHERE workspace_id = ?
+                        """,
+                        (
+                            json.dumps(serialize_scope(updated)),
+                            updated.updated_at,
+                            scope_row["workspace_id"],
+                        ),
+                    )
+                conn.execute(
+                    """
+                    DELETE FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND canonical_note_id = ? AND revision = ?
+                      AND lease_token = ?
+                    """,
+                    (
+                        safe_receipt_id,
+                        safe_user_id,
+                        note_id,
+                        expected_revision,
+                        safe_lease_token,
+                    ),
+                )
+                return True
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def get_workspace_source_membership(
+        self, workspace_id: str, membership_id: str
+    ) -> WorkspaceMembership | None:
+        """Return one source membership by its association identity."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_membership_id = _normalize_required_text(
+            membership_id, "membership_id"
+        )
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND membership_id = ?
+                        AND item_type = 'media'
+                        AND role = 'source'
+                    """,
+                    (safe_workspace_id, safe_membership_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return _membership_from_row(row) if row is not None else None
 
     def list_workspace_conversations(
         self,
@@ -1072,17 +2260,17 @@ class LocalWorkspaceRegistryService:
         section 2). Guarded end to end, mirroring
         ``Chat.rag_scope.read_conversation_scope``: a missing row, malformed
         payload JSON, a non-dict payload, or a malformed/forward-versioned
-        scope payload (``parse_scope``'s own guards) all read as unscoped
-        (``None``) rather than raising. A stored zero-item scope also reads
-        as ``None`` -- same "no distinct scoped-with-nothing state" contract
-        as the conversation level.
+        scope payload (``parse_scope``'s own guards) all fail closed to an
+        explicit empty scope. A missing row remains unscoped. An ordinary
+        stored zero-item scope still reads as ``None``; only Research's
+        explicit-empty encoding and corrupt existing rows narrow retrieval.
 
         Args:
             workspace_id: Workspace identifier.
 
         Returns:
-            The stored ``RagScope``, or ``None`` when unscoped, missing,
-            malformed, or empty.
+            The stored ``RagScope``; ``None`` only when missing, cleared, or
+            ordinarily empty. Malformed existing rows return explicit empty.
 
         Raises:
             WorkspaceRegistryServiceError: If the underlying read fails.
@@ -1093,7 +2281,7 @@ class LocalWorkspaceRegistryService:
             with self.db.connection() as conn:
                 row = conn.execute(
                     """
-                    SELECT payload
+                    SELECT payload, updated_at
                     FROM workspace_rag_scopes
                     WHERE workspace_id = ?
                     """,
@@ -1107,14 +2295,149 @@ class LocalWorkspaceRegistryService:
             raw = json.loads(row["payload"])
         except (TypeError, ValueError):
             logger.warning(
-                "workspace rag_scope payload malformed for {}; treating as unscoped",
+                "workspace rag_scope payload malformed for {}; failing closed",
                 safe_workspace_id,
             )
-            return None
+            return RagScope(
+                items=(),
+                updated_at=str(row["updated_at"] or "corrupt"),
+                empty_is_scoped=True,
+            )
         scope = parse_scope(raw)
-        if scope is not None and not scope.items:
+        if scope is None:
+            safe_stamp = raw.get("updated_at") if isinstance(raw, dict) else None
+            return RagScope(
+                items=(),
+                updated_at=(
+                    safe_stamp
+                    if isinstance(safe_stamp, str)
+                    else str(row["updated_at"] or "corrupt")
+                ),
+                empty_is_scoped=True,
+            )
+        if scope is not None and not scope.items and not scope.empty_is_scoped:
             return None
         return scope
+
+    def reconcile_research_source_selection(
+        self,
+        workspace_id: str,
+        *,
+        media_id: str,
+        desired_selected: bool,
+    ) -> RagScope | None:
+        """Atomically reconcile one attached Media item into Research scope.
+
+        A missing scope means every workspace source is implicitly selected.
+        Selecting another source therefore leaves the row absent, while
+        deselecting one materializes all other representable source
+        memberships. Existing explicit scopes change only the target Media
+        item. Malformed stored state starts from explicit empty so a repair
+        cannot widen retrieval.
+
+        Args:
+            workspace_id: Workspace owning the source association.
+            media_id: Canonical Local Media id already linked as a source.
+            desired_selected: Whether that Media item should be desired.
+
+        Returns:
+            The persisted explicit scope, or ``None`` when implicit selection
+            remains authoritative.
+
+        Raises:
+            ValueError: If an identity is invalid or selection is not boolean.
+            WorkspaceRegistryServiceError: If the item is not attached or the
+                storage update fails.
+        """
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_media_id = _normalize_required_text(media_id, "media_id")
+        if type(desired_selected) is not bool:
+            raise ValueError("desired_selected must be a bool")
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                memberships = conn.execute(
+                    """
+                    SELECT item_type, item_id
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND role = 'source'
+                        AND item_type IN ('media', 'note')
+                    ORDER BY created_at ASC, item_type ASC, item_id ASC,
+                        membership_id ASC
+                    """,
+                    (safe_workspace_id,),
+                ).fetchall()
+                if not any(
+                    row["item_type"] == "media" and row["item_id"] == safe_media_id
+                    for row in memberships
+                ):
+                    raise WorkspaceRegistryServiceError(
+                        "Research source is not attached to this workspace."
+                    )
+
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM workspace_rag_scopes
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+                if row is None and desired_selected:
+                    return None
+
+                if row is None:
+                    existing = [
+                        ScopeItem(item["item_type"], item["item_id"])
+                        for item in memberships
+                        if not (
+                            item["item_type"] == "media"
+                            and item["item_id"] == safe_media_id
+                        )
+                    ]
+                else:
+                    try:
+                        raw_scope = json.loads(row["payload"])
+                    except (TypeError, ValueError):
+                        raw_scope = None
+                    scope = parse_scope(raw_scope)
+                    existing = list(scope.items if scope is not None else ())
+                    existing = [
+                        item
+                        for item in existing
+                        if not (
+                            item.source_type == "media"
+                            and item.source_id == safe_media_id
+                        )
+                    ]
+                    if desired_selected:
+                        existing.append(ScopeItem("media", safe_media_id))
+
+                scope = RagScope(
+                    items=tuple(existing),
+                    updated_at=self._now_factory(),
+                    empty_is_scoped=True,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO workspace_rag_scopes (
+                        workspace_id, payload, updated_at
+                    )
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(workspace_id) DO UPDATE SET
+                        payload = excluded.payload,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        safe_workspace_id,
+                        json.dumps(serialize_scope(scope)),
+                        scope.updated_at,
+                    ),
+                )
+                return scope
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
     def set_workspace_scope(self, workspace_id: str, scope: RagScope | None) -> None:
         """Persist or clear a workspace's RAG retrieval scope.
@@ -1122,8 +2445,9 @@ class LocalWorkspaceRegistryService:
         ``scope=None`` deletes the stored row entirely. A zero-item scope
         also normalizes to a delete, mirroring
         ``Chat.rag_scope.write_conversation_scope``'s "save with zero
-        selected clears the scope" contract (design spec section 4) -- there
-        is no "scoped with nothing selected" state.
+        selected clears the scope" contract (design spec section 4). Research
+        explicitly opts into a distinct zero-item scope with
+        ``empty_is_scoped=True``; ordinary Console callers do not.
 
         Deleting a scope for a workspace id that has none (or that does not
         exist) is a harmless no-op. Setting a non-empty scope for a
@@ -1142,7 +2466,7 @@ class LocalWorkspaceRegistryService:
         """
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
-        if scope is not None and not scope.items:
+        if scope is not None and not scope.items and not scope.empty_is_scoped:
             scope = None
         try:
             with self.db.transaction() as conn:
@@ -1257,6 +2581,32 @@ def _membership_from_row(row: sqlite3.Row) -> WorkspaceMembership:
         transfer_policy=WorkspaceTransferPolicy(row["transfer_policy"]),
         title=row["title"],
         created_at=row["created_at"],
+    )
+
+
+def _quick_note_receipt_from_row(row: sqlite3.Row) -> ResearchQuickNoteReceipt:
+    return ResearchQuickNoteReceipt(
+        receipt_id=row["receipt_id"],
+        data_source=row["data_source"],
+        server_profile_id=row["server_profile_id"],
+        principal_id=row["principal_id"],
+        workspace_id=row["workspace_id"],
+        local_user_id=row["local_user_id"],
+        operation_token=row["operation_token"],
+        operation_kind=row["operation_kind"],
+        canonical_note_id=row["canonical_note_id"],
+        owner_proof=row["owner_proof"],
+        lease_token=row["lease_token"],
+        lease_expires_at=row["lease_expires_at"],
+        abandon_after=row["abandon_after"],
+        expected_version=row["expected_version"],
+        state=row["state"],
+        revision=int(row["revision"]),
+        failure_count=int(row["failure_count"]),
+        next_retry_at=row["next_retry_at"],
+        blocked_reason_code=row["blocked_reason_code"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 

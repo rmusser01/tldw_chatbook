@@ -3,6 +3,7 @@
 #
 # Imports
 import logging
+import re
 import threading
 import sqlite3  # For exception handling in _get_db
 import time
@@ -35,6 +36,15 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 # Functions:
 
 logger = logging.getLogger(__name__)
+
+_RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
+
+
+def _is_internal_research_keyword(row: Any) -> bool:
+    return isinstance(row, dict) and re.fullmatch(
+        rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
+        str(row.get("keyword") or ""),
+    ) is not None
 
 
 class NotesInteropService:
@@ -171,6 +181,38 @@ class NotesInteropService:
                 ) from e
 
     # --- Note Methods ---
+
+    def note_transaction(self, user_id: str) -> Any:
+        """Return the canonical Notes transaction for one mutation owner."""
+
+        return self._get_db(user_id).transaction(immediate=True)
+
+    def add_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Store one private recovery proof outside all ordinary Notes metadata."""
+
+        return self._get_db(user_id).add_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
+    def has_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Verify one exact private recovery proof without returning its payload."""
+
+        return self._get_db(user_id).has_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
+
+    def remove_internal_research_quick_note_owner_proof(
+        self, user_id: str, note_id: str, owner_proof: str
+    ) -> bool:
+        """Remove only the exact private proof held by the caller."""
+
+        return self._get_db(user_id).remove_research_quick_note_owner_proof(
+            note_id, owner_proof
+        )
 
     def add_note(
         self, user_id: str, title: str, content: str, note_id: Optional[str] = None
@@ -757,12 +799,19 @@ class NotesInteropService:
 
     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keywords_for_note(note_id=note_id)
+        return [
+            row
+            for row in db.get_keywords_for_note(note_id=note_id)
+            if not _is_internal_research_keyword(row)
+        ]
 
     def get_notes_for_keyword(
         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
+        keyword = db.get_keyword_by_id(keyword_id=keyword_id)
+        if _is_internal_research_keyword(keyword):
+            return []
         return db.get_notes_for_keyword(
             keyword_id=keyword_id, limit=limit, offset=offset
         )
@@ -779,19 +828,25 @@ class NotesInteropService:
         self, user_id: str, keyword_id: int
     ) -> Optional[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keyword_by_id(keyword_id=keyword_id)
+        row = db.get_keyword_by_id(keyword_id=keyword_id)
+        return None if _is_internal_research_keyword(row) else row
 
     def get_keyword_by_text(
         self, user_id: str, keyword_text: str
     ) -> Optional[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.get_keyword_by_text(keyword_text=keyword_text)
+        row = db.get_keyword_by_text(keyword_text=keyword_text)
+        return None if _is_internal_research_keyword(row) else row
 
     def list_keywords(
         self, user_id: str, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.list_keywords(limit=limit, offset=offset)
+        return [
+            row
+            for row in db.list_keywords(limit=limit, offset=offset)
+            if not _is_internal_research_keyword(row)
+        ]
 
     def soft_delete_keyword(
         self, user_id: str, keyword_id: int, expected_version: int
@@ -805,7 +860,11 @@ class NotesInteropService:
         self, user_id: str, search_term: str, limit: int = 10
     ) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)
-        return db.search_keywords(search_term=search_term, limit=limit)
+        return [
+            row
+            for row in db.search_keywords(search_term=search_term, limit=limit)
+            if not _is_internal_research_keyword(row)
+        ]
 
     # --- Character Card Methods ---
 

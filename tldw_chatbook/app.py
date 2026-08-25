@@ -157,6 +157,7 @@ from tldw_chatbook.Constants import (
     TAB_STUDY,
     TAB_WRITING,
     TAB_RESEARCH,
+    TAB_RESEARCH_WORKSPACE,
     TAB_CHATBOOKS,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
@@ -433,6 +434,20 @@ from .Research_Interop import (
     ResearchScopeService,
     ServerResearchService,
 )
+from .Research_Workspace.source_association import (
+    ResearchSourceAssociationCoordinator,
+    ResearchSourceAssociationScheduler,
+)
+from .Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+    SourceOperationConflictError,
+)
+from .Research_Workspace.paste_staging import ResearchPasteStagingStore
+from .Research_Workspace.source_operations import (
+    SourceOperationStage,
+    SourceOperationStatus,
+)
+from .Research_Workspace.source_readiness import ResearchSourceReadinessCoordinator
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from .Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
@@ -508,7 +523,11 @@ from .UI.Navigation.screen_registry import (
     resolve_screen_target,
     screen_load_error,
 )
-from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+from .UI.Navigation.shell_destinations import (
+    SHELL_DESTINATION_ORDER,
+    SHELL_DESTINATION_SHORTCUTS,
+    get_shell_destination,
+)
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
 from .UI.stable_command_palette import StableCommandPalette
@@ -1053,6 +1072,7 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
+        TAB_RESEARCH_WORKSPACE: "Open Research Workspace for grounded research",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
@@ -1135,6 +1155,10 @@ class TabNavigationProvider(Provider):
         }
         if destination.full_label:
             terms.add(destination.full_label)
+        for related_route in destination.related_routes:
+            terms.add(related_route)
+            terms.add(get_tab_display_label(related_route))
+        terms.update(destination.palette_aliases)
         for legacy_route in destination.legacy_routes:
             terms.add(legacy_route)
             terms.add(get_tab_display_label(legacy_route))
@@ -2324,6 +2348,11 @@ class LibraryIngestQueueMixin:
     touches either heavy worker).
     """
 
+    _RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY = (
+        "Research source retry is unavailable. Open Research Workspace "
+        "and retry from its receipt."
+    )
+
     def _init_library_ingest_runtime_state(self) -> None:
         """Initialize every host attribute the ingest job loop reads.
 
@@ -2346,6 +2375,12 @@ class LibraryIngestQueueMixin:
         closing app.
         """
         self.library_ingest_jobs = LibraryIngestJobRegistry()
+        self._research_source_terminal_jobs_scheduled: set[str] = set()
+        self._research_source_parse_dispatch_pending: set[str] = set()
+        self._research_source_restore_in_progress = False
+        self.library_ingest_jobs.add_listener(
+            self._schedule_settled_research_source_operations
+        )
         self._ingest_parse_pool = None
         self._ingest_parse_pool_generation: int = 0
         self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
@@ -2364,6 +2399,261 @@ class LibraryIngestQueueMixin:
         self._parakeet_submitting_scope_ids: set[str] = set()
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
+
+    def _schedule_settled_research_source_operations(self) -> None:
+        """Schedule durable association work after a linked job has settled.
+
+        Registry listeners run after the in-memory transition has completed.
+        This listener only queues an async worker; it never calls the
+        coordinator (and therefore never touches SQLite) synchronously inside
+        the registry mutation.
+        """
+        jobs = self.library_ingest_jobs.jobs()
+        self._research_source_terminal_jobs_scheduled.intersection_update(
+            job.job_id for job in jobs
+        )
+        if self._research_source_restore_in_progress:
+            return
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if scheduler is None:
+            return
+        terminal_states = {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }
+        for job in jobs:
+            operation_id = str(job.research_source_operation_id or "").strip()
+            if (
+                not operation_id
+                or job.state not in terminal_states
+                or job.job_id in self._research_source_terminal_jobs_scheduled
+            ):
+                continue
+            self._research_source_terminal_jobs_scheduled.add(job.job_id)
+            self.run_worker(
+                self._resume_settled_research_source_operation(
+                    job.job_id,
+                    operation_id,
+                ),
+                group="research_source_association",
+            )
+
+    async def _resume_settled_research_source_operation(
+        self, job_id: str, operation_id: str
+    ) -> None:
+        """Run one scheduled resume and release suppression after exceptions."""
+
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if scheduler is None:
+            self._research_source_terminal_jobs_scheduled.discard(job_id)
+            return
+        try:
+            operation = await scheduler.resume(operation_id)
+            staging_store = getattr(self, "research_paste_staging_store", None)
+            job = self.library_ingest_jobs.get_job(job_id)
+            state = str(getattr(getattr(job, "state", None), "value", ""))
+            if staging_store is not None and (
+                state in {"cancelled", "skipped"}
+                or (
+                    operation is not None
+                    and operation.catalog_status is SourceOperationStatus.SUCCEEDED
+                )
+            ):
+                await asyncio.to_thread(staging_store.delete, operation_id)
+        except Exception:
+            self._research_source_terminal_jobs_scheduled.discard(job_id)
+            logger.opt(exception=True).warning(
+                "Research source association worker failed; operation remains resumable"
+            )
+
+    def _restore_ingest_jobs_and_schedule_research_sources(self) -> None:
+        """Restore ingest history before queuing bounded source-operation work."""
+
+        restore_was_in_progress = self._research_source_restore_in_progress
+        self._research_source_restore_in_progress = True
+        try:
+            self._restore_ingest_jobs()
+        finally:
+            self._research_source_restore_in_progress = restore_was_in_progress
+        ingest_store = getattr(self, "_library_ingest_jobs_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if ingest_store is not None and operation_store is not None:
+            self.run_worker(
+                self._reconcile_research_source_held_jobs(),
+                group="research_source_held_startup",
+            )
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if scheduler is not None:
+            self.run_worker(
+                scheduler.resume_startup(),
+                group="research_source_association_startup",
+            )
+        staging_store = getattr(self, "research_paste_staging_store", None)
+        if staging_store is not None and operation_store is not None:
+            self.run_worker(
+                self._sweep_research_paste_staging(),
+                group="research_paste_staging_startup",
+            )
+
+    async def _sweep_research_paste_staging(self) -> None:
+        """Run one bounded fail-safe startup sweep away from the UI loop."""
+
+        staging_store = getattr(self, "research_paste_staging_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if staging_store is None or operation_store is None:
+            return
+        try:
+            await asyncio.to_thread(
+                staging_store.sweep,
+                operation_store,
+                job_registry=self.library_ingest_jobs,
+                limit=100,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research paste staging sweep failed; artifacts were retained"
+            )
+
+    async def _reconcile_research_source_held_jobs(self, *, limit: int = 50) -> None:
+        """Boundedly link or cancel durable Research jobs left held at restart."""
+
+        ingest_store = getattr(self, "_library_ingest_jobs_store", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        if ingest_store is None or operation_store is None:
+            return
+        try:
+            rows = await asyncio.to_thread(ingest_store.list_dispatch_held, limit=limit)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research source held-job startup scan failed; jobs remain held"
+            )
+            return
+        for row in rows:
+            job_id = str(row.get("job_id") or "")
+            operation_id = str(row.get("research_source_operation_id") or "")
+            job = self.library_ingest_jobs.get_job(job_id)
+            if (
+                job is None
+                or job.state is not IngestJobState.QUEUED
+                or not job.dispatch_held
+                or job.research_source_operation_id != operation_id
+            ):
+                continue
+            try:
+                operation = await asyncio.to_thread(operation_store.get, operation_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Research source held-job receipt read failed "
+                    "(job_id={}, operation_id={}); retained for recovery",
+                    job_id,
+                    operation_id,
+                )
+                continue
+
+            expected_origin = str(
+                getattr(getattr(operation, "data_source", None), "value", "")
+            )
+            compatible = operation is not None and expected_origin == job.origin
+            if (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.PENDING
+                and not operation.ingest_job_id
+            ):
+                try:
+                    operation = await asyncio.to_thread(
+                        operation_store.advance_stage,
+                        operation_id,
+                        stage=SourceOperationStage.CATALOG,
+                        status=SourceOperationStatus.IN_PROGRESS,
+                        expected_revision=operation.revision,
+                        ingest_job_id=job_id,
+                    )
+                except Exception:
+                    try:
+                        operation = await asyncio.to_thread(
+                            operation_store.get, operation_id
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Research source held-job link remains pending "
+                            "(job_id={}, operation_id={})",
+                            job_id,
+                            operation_id,
+                        )
+                        continue
+                    expected_origin = str(
+                        getattr(getattr(operation, "data_source", None), "value", "")
+                    )
+                    compatible = operation is not None and expected_origin == job.origin
+
+            linked = (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+                and operation.ingest_job_id == job_id
+            )
+            if linked:
+                try:
+                    released = self.library_ingest_jobs.release_dispatch_hold(
+                        job_id, require_persisted=True
+                    )
+                    if released is None:
+                        continue
+                    self._dispatch_research_source_catalog_job(job_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Research source held-job dispatch could not start "
+                        "(job_id={}, operation_id={})",
+                        job_id,
+                        operation_id,
+                    )
+                    try:
+                        self._fail_research_source_prepared_job(job_id)
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Research source held-job dispatch failure could not be persisted "
+                            "(job_id={}, operation_id={})",
+                            job_id,
+                            operation_id,
+                        )
+                continue
+
+            still_pending = (
+                compatible
+                and operation.catalog_status is SourceOperationStatus.PENDING
+                and not operation.ingest_job_id
+            )
+            if still_pending:
+                continue
+            try:
+                cancelled = self._cancel_research_source_prepared_job(job_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Research source incompatible held-job cancellation failed "
+                    "(job_id={}, operation_id={}); staging retained",
+                    job_id,
+                    operation_id,
+                )
+                continue
+            if cancelled.state not in {
+                IngestJobState.CANCELLED,
+                IngestJobState.FAILED,
+                IngestJobState.DONE,
+                IngestJobState.SKIPPED,
+            }:
+                continue
+            staging_store = getattr(self, "research_paste_staging_store", None)
+            if staging_store is not None:
+                try:
+                    await asyncio.to_thread(staging_store.delete, operation_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Research source terminal held-job staging cleanup failed "
+                        "(job_id={}, operation_id={})",
+                        job_id,
+                        operation_id,
+                    )
 
     def _restore_ingest_jobs(self) -> None:
         """Start the one-time restore of persisted ingest job history.
@@ -2517,6 +2807,9 @@ class LibraryIngestQueueMixin:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         batch_id: str | None = None,
         active_duplicate_consent: ActiveIngestConsentScope | None = None,
+        research_source_operation_id: str | None = None,
+        required_origin: str | None = None,
+        _prepare_only: bool = False,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -2542,6 +2835,8 @@ class LibraryIngestQueueMixin:
             chunk_size: Requested chunk size when ``chunk_enabled``.
             active_duplicate_consent: Exact candidate and active-membership scope
                 captured by an explicitly confirmed submission.
+            required_origin: Optional fail-closed owner precondition for a captured
+                Research workspace authority. General Library submissions omit it.
 
         Returns:
             The newly created job: ``QUEUED`` normally, or immediately
@@ -2550,8 +2845,37 @@ class LibraryIngestQueueMixin:
             so each file gets its own queue row, its own outcome and its own
             retry -- one unsupported file no longer fails its siblings.
         """
+        normalized_required_origin = (
+            str(required_origin).strip().lower()
+            if required_origin is not None
+            else None
+        )
+        if normalized_required_origin not in {None, "local", "server"}:
+            raise ValueError("required_origin must be local or server")
         backend = self._resolve_ingest_backend()
+        if (
+            normalized_required_origin is not None
+            and backend != normalized_required_origin
+        ):
+            selected = normalized_required_origin.title()
+            raise ValueError(
+                f"Ingestion is unavailable for the selected {selected} authority. "
+                f"The active Library ingest owner is {backend.title()}."
+            )
+        if research_source_operation_id and normalized_required_origin is not None:
+            self._validate_research_source_operation_authority(
+                research_source_operation_id,
+                expected_origin=normalized_required_origin,
+            )
         expanded = self._expand_library_ingest_source(source_path)
+        if _prepare_only and expanded is not None:
+            raise ValueError(
+                "Research source preparation accepts one file or URL, not a folder."
+            )
+        if research_source_operation_id and expanded is not None and len(expanded) > 1:
+            raise ValueError(
+                "Folder imports require one Research source operation per catalog item."
+            )
         sources = tuple(expanded) if expanded is not None else (source_path,)
         matches = self.library_ingest_jobs.find_active_source_matches(
             sources, origin=backend
@@ -2601,6 +2925,7 @@ class LibraryIngestQueueMixin:
                     chunk_size=chunk_size,
                     detected_type="",
                     ingest_options=normalized_options,
+                    research_source_operation_id=research_source_operation_id,
                 )
                 failed = self.library_ingest_jobs.mark_failed(
                     empty_job.job_id,
@@ -2641,6 +2966,7 @@ class LibraryIngestQueueMixin:
                         chunk_enabled=chunk_enabled,
                         chunk_size=chunk_size,
                         backend=backend,
+                        research_source_operation_id=research_source_operation_id,
                     )
                     if first_job is None:
                         first_job = job
@@ -2652,7 +2978,7 @@ class LibraryIngestQueueMixin:
             assert first_job is not None
             return first_job
 
-        return self._submit_library_ingest_job_admitted(
+        admitted_kwargs = dict(
             source_path=source_path,
             ingest_options=normalized_options,
             title=title,
@@ -2663,6 +2989,114 @@ class LibraryIngestQueueMixin:
             chunk_size=chunk_size,
             batch_id=batch_id,
             backend=backend,
+            research_source_operation_id=research_source_operation_id,
+        )
+        if _prepare_only:
+            return self._prepare_library_ingest_job_admitted(
+                **admitted_kwargs,
+                dispatch_held=True,
+                require_persisted=True,
+            )
+        return self._submit_library_ingest_job_admitted(**admitted_kwargs)
+
+    def prepare_research_source_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any] | None = None,
+        title: str = "",
+        author: str = "",
+        keywords: tuple[str, ...] = (),
+        perform_analysis: bool = False,
+        chunk_enabled: bool = False,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        research_source_operation_id: str,
+        required_origin: str,
+    ) -> LibraryIngestJob:
+        """Durably queue one qualified Research source without dispatching it."""
+
+        return self.submit_library_ingest_job(
+            source_path=source_path,
+            ingest_options=ingest_options,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            research_source_operation_id=research_source_operation_id,
+            required_origin=required_origin,
+            _prepare_only=True,
+        )
+
+    def _prepare_library_ingest_job_admitted(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+        chunk_enabled: bool,
+        chunk_size: int,
+        batch_id: str | None,
+        backend: str,
+        research_source_operation_id: str | None,
+        require_persisted: bool,
+        dispatch_held: bool = False,
+    ) -> LibraryIngestJob:
+        """Create one queued row without starting its Local or Server owner."""
+
+        detected_type = ""
+        if backend == "server":
+            if is_web_clip_source(source_path):
+                build_web_clip_kwargs(
+                    source_path,
+                    options=ingest_options,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                )
+                detected_type = "web"
+            else:
+                kwargs = build_server_ingest_kwargs(
+                    source_path,
+                    options=ingest_options,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                    perform_analysis=perform_analysis,
+                )
+                detected_type = str(kwargs.get("media_type") or "")
+        else:
+            try:
+                detected_type = classify_ingest_source(source_path) or ""
+            except FileIngestionError:
+                detected_type = ""
+            except Exception:
+                logger.warning(
+                    "classify_ingest_source failed unexpectedly "
+                    "(operation_id={}, origin={}); treating as light work "
+                    "(heavy-lane cap may not apply).",
+                    research_source_operation_id or "none",
+                    backend,
+                )
+        return self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+            detected_type=detected_type,
+            ingest_options=ingest_options,
+            origin=backend,
+            batch_id=batch_id,
+            research_source_operation_id=research_source_operation_id,
+            dispatch_held=dispatch_held,
+            require_persisted=require_persisted,
         )
 
     def _submit_library_ingest_job_admitted(
@@ -2678,6 +3112,7 @@ class LibraryIngestQueueMixin:
         chunk_size: int,
         batch_id: str | None,
         backend: str,
+        research_source_operation_id: str | None,
     ) -> LibraryIngestJob:
         """Route a source already admitted by ``submit_library_ingest_job``."""
         if backend == "server":
@@ -2697,6 +3132,7 @@ class LibraryIngestQueueMixin:
                 author=author,
                 keywords=keywords,
                 perform_analysis=perform_analysis,
+                research_source_operation_id=research_source_operation_id,
             )
 
         return self._submit_local_library_ingest_job(
@@ -2709,6 +3145,7 @@ class LibraryIngestQueueMixin:
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
             batch_id=batch_id,
+            research_source_operation_id=research_source_operation_id,
         )
 
     def _submit_local_library_ingest_job(
@@ -2723,41 +3160,26 @@ class LibraryIngestQueueMixin:
         chunk_enabled: bool,
         chunk_size: int,
         batch_id: str | None,
+        research_source_operation_id: str | None,
     ) -> LibraryIngestJob:
         """Append one admitted local source and top up the parse pool."""
-        try:
-            detected_type = classify_ingest_source(source_path) or ""
-        except FileIngestionError:
-            # Expected for an unsupported extension -- treat as light work.
-            detected_type = ""
-        except Exception:
-            # An UNEXPECTED classification failure must not silently disable the
-            # heavy-lane cap (an empty type is treated as light work, so a
-            # misclassified audio/video job would bypass the transcription cap).
-            # Log it so a regression is observable, then fall back to light.
-            logger.opt(exception=True).warning(
-                f"classify_ingest_source failed unexpectedly for {source_path!r}; "
-                "treating as light work (heavy-lane cap may not apply)."
-            )
-            detected_type = ""
-        job = self.library_ingest_jobs.submit(
+        job = self._prepare_library_ingest_job_admitted(
             source_path=source_path,
+            ingest_options=ingest_options,
             title=title,
             author=author,
             keywords=keywords,
             perform_analysis=perform_analysis,
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
-            detected_type=detected_type,
-            ingest_options=ingest_options,
             batch_id=batch_id,
+            backend="local",
+            research_source_operation_id=research_source_operation_id,
+            require_persisted=False,
         )
+        self._dispatch_research_source_catalog_job(job.job_id)
         if self.media_db is None:
-            failed = self.library_ingest_jobs.mark_failed(
-                job.job_id, error="Media database is unavailable."
-            )
-            return failed if failed is not None else job
-        self._top_up_ingest_parse_pool()
+            return self.library_ingest_jobs.get_job(job.job_id) or job
         return job
 
     def retry_library_ingest_job(
@@ -2766,11 +3188,11 @@ class LibraryIngestQueueMixin:
         *,
         transcription_provider: str | None = None,
     ) -> Optional[LibraryIngestJob]:
-        """Requeue a previously failed job and top up the parse pool.
+        """Retry a previously failed Library or Research-owned ingest job.
 
-        UI-thread only. A thin wrapper over
-        ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
-        when ``job_id`` is unknown or the job is not currently ``FAILED``.
+        UI-thread only. Ordinary Library jobs use the legacy synchronous
+        ``LibraryIngestJobRegistry.requeue`` path. Research-owned jobs hand
+        catalog retry ownership to their durable source-operation scheduler.
 
         Args:
             job_id: The failed job to requeue.
@@ -2778,15 +3200,24 @@ class LibraryIngestQueueMixin:
         Returns:
             The newly appended ``QUEUED`` job (or immediately ``FAILED``
             when ``media_db`` is unavailable), or ``None`` when nothing was
-            requeued.
+            requeued. Research-owned jobs schedule their durable catalog-stage
+            retry and return ``None``; the async owner returns the exact
+            replacement only after its operation lineage is reconciled.
         """
         replacement_options = None
         if transcription_provider not in {None, "faster-whisper"}:
             return None
+        source = self.library_ingest_jobs.get_job(job_id)
+        if source is None:
+            return None
+        operation_id = str(source.research_source_operation_id or "").strip()
+        if operation_id:
+            self._schedule_research_source_catalog_retry(
+                source,
+                operation_id=operation_id,
+            )
+            return None
         if transcription_provider is not None:
-            source = self.library_ingest_jobs.get_job(job_id)
-            if source is None:
-                return None
             replacement_options = deepcopy(source.ingest_options)
             replacement_options.setdefault("audio_video", {})[
                 "transcription_provider"
@@ -2805,12 +3236,282 @@ class LibraryIngestQueueMixin:
         self._top_up_ingest_parse_pool()
         return requeued
 
+    def _schedule_research_source_catalog_retry(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+        notify_unavailable: bool = True,
+    ) -> bool:
+        """Queue the durable Research retry owner without generic requeueing."""
+
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        run_worker = getattr(self, "run_worker", None)
+        if (
+            source.state is not IngestJobState.FAILED
+            or source.superseded
+            or source.dismissed
+            or source.permanent
+            or scheduler is None
+            or operation_store is None
+            or not callable(run_worker)
+        ):
+            if notify_unavailable:
+                self._notify_research_source_retry_unavailable()
+            return False
+        awaitable = self._retry_research_source_catalog_job(
+            source,
+            operation_id=operation_id,
+        )
+        try:
+            run_worker(awaitable, group="research_source_catalog_retry")
+        except Exception:
+            awaitable.close()
+            if notify_unavailable:
+                self._notify_research_source_retry_unavailable()
+            return False
+        return True
+
+    async def _retry_research_source_catalog_job(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+    ) -> LibraryIngestJob | None:
+        """Retry one exact Research catalog receipt and reload its replacement."""
+
+        operation_store = getattr(self, "research_source_operation_store", None)
+        scheduler = getattr(self, "research_source_association_scheduler", None)
+        if operation_store is None or scheduler is None:
+            self._notify_research_source_retry_unavailable()
+            return None
+        try:
+            # Keep this indexed preflight on the event-loop turn so concurrent
+            # clicks reach the scheduler fence in order instead of racing the
+            # same SQLite connection from two executor threads.
+            operation = operation_store.get(operation_id)
+        except Exception:
+            operation = None
+        operation_source = getattr(
+            getattr(operation, "data_source", None), "value", ""
+        )
+        expected_origin = (
+            operation_source if operation_source in {"local", "server"} else ""
+        )
+        if (
+            operation is None
+            or operation.operation_id != operation_id
+            or operation.ingest_job_id != source.job_id
+            or source.research_source_operation_id != operation_id
+            or source.origin != expected_origin
+        ):
+            self._notify_research_source_retry_unavailable()
+            return None
+        try:
+            receipt = await scheduler.retry(
+                operation_id,
+                stage=SourceOperationStage.CATALOG,
+            )
+        except SourceOperationConflictError:
+            receipt = None
+        except Exception:
+            self._notify_research_source_retry_unavailable()
+            return None
+        replacement = self._research_source_retry_replacement(
+            source,
+            operation_id=operation_id,
+            receipt=receipt,
+        )
+        if replacement is None:
+            # A second click may have waited behind the scheduler fence. Re-read
+            # the durable winner so every caller converges on the same job.
+            try:
+                receipt = await asyncio.to_thread(operation_store.get, operation_id)
+            except Exception:
+                receipt = None
+            replacement = self._research_source_retry_replacement(
+                source,
+                operation_id=operation_id,
+                receipt=receipt,
+            )
+        if replacement is None:
+            self._notify_research_source_retry_unavailable()
+        return replacement
+
+    def _research_source_retry_replacement(
+        self,
+        source: LibraryIngestJob,
+        *,
+        operation_id: str,
+        receipt: Any,
+    ) -> LibraryIngestJob | None:
+        """Return only the released replacement named by the exact receipt."""
+
+        if (
+            receipt is None
+            or getattr(receipt, "operation_id", "") != operation_id
+            or getattr(receipt, "catalog_status", None)
+            not in {
+                SourceOperationStatus.IN_PROGRESS,
+                SourceOperationStatus.SUCCEEDED,
+            }
+        ):
+            return None
+        replacement_id = str(getattr(receipt, "ingest_job_id", "") or "")
+        if not replacement_id or replacement_id == source.job_id:
+            return None
+        replacement = self.library_ingest_jobs.get_job(replacement_id)
+        if (
+            replacement is None
+            or replacement.retry_of_job_id != source.job_id
+            or replacement.research_source_operation_id != operation_id
+            or replacement.origin != source.origin
+            or replacement.dispatch_held
+        ):
+            return None
+        return replacement
+
+    def _notify_research_source_retry_unavailable(self) -> None:
+        """Report a fixed path-free recovery without exposing owner failures."""
+
+        notify = getattr(self, "notify", None)
+        if callable(notify):
+            notify(
+                self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
+                severity="warning",
+            )
+
+    def _requeue_research_source_catalog_job(
+        self, job_id: str
+    ) -> Optional[LibraryIngestJob]:
+        """Persist a replacement Research ingest without dispatching it."""
+
+        source = self.library_ingest_jobs.get_job(job_id)
+        if source is None or source.origin not in {"local", "server"}:
+            return None
+        return self.library_ingest_jobs.requeue(job_id, dispatch_held=True)
+
+    def _cancel_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
+        """Durably cancel an undispatched row whose operation link failed."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            raise ValueError("Prepared Research ingest job does not exist.")
+        if current.state in {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }:
+            return current
+        cancelled = self.library_ingest_jobs.mark_cancelled(
+            job_id,
+            reason="Research source operation could not be linked.",
+            require_persisted=True,
+        )
+        if cancelled is None:
+            raise ValueError("Prepared Research ingest job cannot be cancelled.")
+        return cancelled
+
+    def _fail_research_source_prepared_job(self, job_id: str) -> LibraryIngestJob:
+        """Durably fail a linked row whose owner dispatch did not start."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            raise ValueError("Prepared Research ingest job does not exist.")
+        if current.state in {
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.CANCELLED,
+            IngestJobState.SKIPPED,
+        }:
+            return current
+        failed = self.library_ingest_jobs.mark_failed(
+            job_id,
+            error="Research catalog dispatch could not be started.",
+            require_persisted=True,
+        )
+        if failed is None:
+            raise ValueError("Prepared Research ingest job cannot be failed.")
+        return failed
+
+    def _dispatch_research_source_catalog_job(self, job_id: str) -> None:
+        """Dispatch an already-persisted ingest through its bound adapter."""
+
+        requeued = self.library_ingest_jobs.get_job(job_id)
+        if requeued is None:
+            raise ValueError("Replacement ingest job does not exist.")
+        if requeued.dispatch_held:
+            requeued = self.library_ingest_jobs.release_dispatch_hold(
+                job_id, require_persisted=True
+            )
+            if requeued is None:
+                raise ValueError("Prepared Research ingest job cannot be released.")
+        if requeued.origin == "local":
+            if self.media_db is None:
+                self.library_ingest_jobs.mark_failed(
+                    requeued.job_id,
+                    error="Media database is unavailable.",
+                )
+                return
+            if (
+                requeued.state is IngestJobState.PARSING
+                and requeued.retry_of_job_id
+                and requeued.research_source_operation_id
+            ):
+                pending = getattr(
+                    self,
+                    "_research_source_parse_dispatch_pending",
+                    None,
+                )
+                if pending is None:
+                    pending = set()
+                    self._research_source_parse_dispatch_pending = pending
+                pending.add(requeued.job_id)
+            self._top_up_ingest_parse_pool()
+            return
+        if requeued.origin != "server":
+            raise ValueError("Replacement ingest authority is unsupported.")
+
+        try:
+            if is_web_clip_source(requeued.source_path):
+                kwargs = build_web_clip_kwargs(
+                    requeued.source_path,
+                    options=requeued.ingest_options,
+                    title=requeued.title,
+                    author=requeued.author,
+                    keywords=requeued.keywords,
+                )
+                self._send_web_clip_job(requeued.job_id, kwargs)
+            else:
+                kwargs = build_server_ingest_kwargs(
+                    requeued.source_path,
+                    options=requeued.ingest_options,
+                    title=requeued.title,
+                    author=requeued.author,
+                    keywords=requeued.keywords,
+                    perform_analysis=requeued.perform_analysis,
+                )
+                self._send_server_ingest_job(requeued.job_id, kwargs)
+        except (NotAWebClipSource, ServerIngestUnsupported) as exc:
+            self.library_ingest_jobs.mark_failed(
+                requeued.job_id,
+                error=str(exc),
+                permanent=True,
+            )
+            return None
+
     def retry_library_ingest_job_with_provider(
         self,
         job_id: str,
         provider: str,
     ) -> Optional[LibraryIngestJob]:
-        """Run the one supported explicit cross-provider recovery action."""
+        """Run the supported provider recovery for ordinary Library jobs.
+
+        Research-owned jobs preserve the operation's captured options and
+        route through the durable catalog retry owner instead.
+        """
 
         if provider != "faster-whisper":
             return None
@@ -4212,14 +4913,39 @@ class LibraryIngestQueueMixin:
             return
         worker_count = self._ingest_parse_worker_count()
         heavy_cap = self._ingest_heavy_lane_max_workers()
+        pending_research = getattr(
+            self,
+            "_research_source_parse_dispatch_pending",
+            set(),
+        )
+        pending_research_jobs: dict[str, LibraryIngestJob] = {}
+        for pending_job_id in tuple(pending_research):
+            pending_job = self.library_ingest_jobs.get_job(pending_job_id)
+            if (
+                pending_job is None
+                or pending_job.state is not IngestJobState.PARSING
+                or pending_job.origin != "local"
+            ):
+                pending_research.discard(pending_job_id)
+                continue
+            pending_research_jobs[pending_job_id] = pending_job
         # Read the total + heavy in-flight counts ONCE, then include local-STT
         # jobs provisionally owned by an off-loop dispatch thread. Those rows
         # remain QUEUED until coordinator admission succeeds, but still consume
         # capacity; otherwise a later top-up could overfill the pool with light
         # work while identity resolution is in flight.
-        parsing_count = self.library_ingest_jobs.counts().get("parsing", 0)
-        heavy_parsing_count = self.library_ingest_jobs.parsing_count_for_types(
-            _INGEST_HEAVY_TYPES
+        parsing_count = max(
+            0,
+            self.library_ingest_jobs.counts().get("parsing", 0)
+            - len(pending_research_jobs),
+        )
+        heavy_parsing_count = max(
+            0,
+            self.library_ingest_jobs.parsing_count_for_types(_INGEST_HEAVY_TYPES)
+            - sum(
+                job.detected_type in _INGEST_HEAVY_TYPES
+                for job in pending_research_jobs.values()
+            ),
         )
         provisional_local_jobs = []
         for provisional_job_id in self._ingest_local_stt_jobs:
@@ -4242,9 +4968,24 @@ class LibraryIngestQueueMixin:
             heavy_full = (
                 heavy_parsing_count >= heavy_cap or local_stt_busy or dictation_reserved
             )
-            job = self.library_ingest_jobs.next_queued(
-                skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+            preclaimed = False
+            eligible_pending = (
+                job
+                for job in pending_research_jobs.values()
+                if not (heavy_full and job.detected_type in _INGEST_HEAVY_TYPES)
             )
+            job = min(
+                eligible_pending,
+                key=lambda item: item.submitted_at,
+                default=None,
+            )
+            if job is not None:
+                preclaimed = True
+                pending_research_jobs.pop(job.job_id, None)
+            else:
+                job = self.library_ingest_jobs.next_queued(
+                    skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+                )
             if job is None:
                 return
             try:
@@ -4263,6 +5004,8 @@ class LibraryIngestQueueMixin:
                     error=failure_text,
                     permanent=False,
                 )
+                if preclaimed:
+                    pending_research.discard(job.job_id)
                 continue
             except _template_resolution_errors() as exc:
                 # (task 10, AC 37/AC-24b) A template choice that no longer
@@ -4295,6 +5038,8 @@ class LibraryIngestQueueMixin:
                 try:
                     self._submit_local_stt_job(job, options)
                 except Exception as exc:
+                    if preclaimed:
+                        pending_research.discard(job_id)
                     code, recovery_actions = self._classify_local_stt_dispatch_error(
                         str(options.get("transcription_provider") or ""), exc
                     )
@@ -4317,12 +5062,18 @@ class LibraryIngestQueueMixin:
                         },
                     )
                     continue
+                if preclaimed:
+                    pending_research.discard(job_id)
                 parsing_count += 1
                 if job.detected_type in _INGEST_HEAVY_TYPES:
                     heavy_parsing_count += 1
                 continue
-            claimed = self.library_ingest_jobs.mark_parsing(
-                job.job_id, detected_type=job.detected_type
+            claimed = (
+                job
+                if preclaimed
+                else self.library_ingest_jobs.mark_parsing(
+                    job.job_id, detected_type=job.detected_type
+                )
             )
             if claimed is None:
                 logger.error(
@@ -4337,6 +5088,8 @@ class LibraryIngestQueueMixin:
             try:
                 pool = self._ensure_ingest_parse_pool()
             except Exception as exc:
+                if preclaimed:
+                    pending_research.discard(job_id)
                 # CONTAINMENT (live-QA crash fix): pool CREATION itself
                 # failed -- e.g. the spawn machinery raising at
                 # construction time (the fileno-less-stderr resource-
@@ -4379,7 +5132,11 @@ class LibraryIngestQueueMixin:
                         self._ingest_pool_error_callback, generation, job_id
                     ),
                 )
+                if preclaimed:
+                    pending_research.discard(job_id)
             except Exception as exc:
+                if preclaimed:
+                    pending_research.discard(job_id)
                 # The pool itself rejected the submission synchronously
                 # (e.g. it was already terminated/closed) -- every job
                 # currently PARSING was submitted to this same broken pool
@@ -4854,6 +5611,58 @@ class LibraryIngestQueueMixin:
         )
         return "server" if active_source == "server" else "local"
 
+    def _validate_research_source_operation_authority(
+        self,
+        operation_id: str,
+        *,
+        expected_origin: str,
+    ) -> Any:
+        """Recover and validate the durable qualified intake authority.
+
+        This is called before queue admission and again by delayed Server
+        dispatch workers.  The visible Research screen and the current Library
+        origin are never accepted as substitutes for the persisted operation.
+        """
+
+        store = getattr(self, "research_source_operation_store", None)
+        get_operation = getattr(store, "get", None)
+        if not callable(get_operation):
+            raise ValueError(
+                "Durable Research source authority is unavailable; reopen Add Sources."
+            )
+        operation = get_operation(operation_id)
+        operation_origin = str(
+            getattr(getattr(operation, "data_source", None), "value", "") or ""
+        )
+        if operation is None or operation_origin != expected_origin:
+            raise ValueError(
+                "The intake no longer matches its captured Research workspace authority."
+            )
+        if expected_origin != "server":
+            return operation
+
+        context_provider = getattr(self, "server_context_provider", None)
+        get_context = getattr(context_provider, "get_active_context", None)
+        if not callable(get_context):
+            raise ValueError(
+                "The captured Server workspace authority is unavailable; restore it and retry."
+            )
+        from tldw_chatbook.runtime_policy.server_event_scope import (
+            event_principal_id_from_active_context,
+        )
+
+        context = get_context()
+        profile_id = str(getattr(context, "active_server_id", "") or "").strip()
+        principal_id = event_principal_id_from_active_context(context) or ""
+        if (
+            profile_id != getattr(operation, "server_profile_id", "")
+            or principal_id != getattr(operation, "principal_id", "")
+        ):
+            raise ValueError(
+                "The captured Server workspace authority changed; restore it and retry."
+            )
+        return operation
+
     def _submit_server_ingest_job(
         self,
         *,
@@ -4863,6 +5672,7 @@ class LibraryIngestQueueMixin:
         author: str,
         keywords: tuple[str, ...],
         perform_analysis: bool,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Queue a ``server``-origin job and send it to the server.
 
@@ -4877,13 +5687,19 @@ class LibraryIngestQueueMixin:
             be sent at all.
         """
         try:
-            kwargs = build_server_ingest_kwargs(
-                source_path,
-                options=ingest_options,
+            job = self._prepare_library_ingest_job_admitted(
+                source_path=source_path,
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
                 perform_analysis=perform_analysis,
+                chunk_enabled=False,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                batch_id=None,
+                backend="server",
+                research_source_operation_id=research_source_operation_id,
+                require_persisted=False,
             )
         except ServerIngestUnsupported as exc:
             job = self.library_ingest_jobs.submit(
@@ -4894,23 +5710,12 @@ class LibraryIngestQueueMixin:
                 perform_analysis=perform_analysis,
                 origin="server",
                 ingest_options=ingest_options,
+                research_source_operation_id=research_source_operation_id,
             )
-            failed = self.library_ingest_jobs.mark_failed(
+            return self.library_ingest_jobs.mark_failed(
                 job.job_id, error=str(exc), permanent=True
-            )
-            return failed if failed is not None else job
-
-        job = self.library_ingest_jobs.submit(
-            source_path=source_path,
-            title=title,
-            author=author,
-            keywords=keywords,
-            perform_analysis=perform_analysis,
-            detected_type=str(kwargs.get("media_type") or ""),
-            origin="server",
-            ingest_options=ingest_options,
-        )
-        self._send_server_ingest_job(job.job_id, kwargs)
+            ) or job
+        self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
     def _submit_web_clip_job(
@@ -4922,6 +5727,7 @@ class LibraryIngestQueueMixin:
         author: str,
         keywords: tuple[str, ...],
         perform_analysis: bool,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Queue a ``server``-origin job that clips a web page.
 
@@ -4936,12 +5742,19 @@ class LibraryIngestQueueMixin:
             be clipped at all.
         """
         try:
-            kwargs = build_web_clip_kwargs(
-                source_path,
-                options=ingest_options,
+            job = self._prepare_library_ingest_job_admitted(
+                source_path=source_path,
+                ingest_options=ingest_options,
                 title=title,
                 author=author,
                 keywords=keywords,
+                perform_analysis=perform_analysis,
+                chunk_enabled=False,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                batch_id=None,
+                backend="server",
+                research_source_operation_id=research_source_operation_id,
+                require_persisted=False,
             )
         except NotAWebClipSource as exc:
             job = self.library_ingest_jobs.submit(
@@ -4952,23 +5765,12 @@ class LibraryIngestQueueMixin:
                 perform_analysis=perform_analysis,
                 origin="server",
                 ingest_options=ingest_options,
+                research_source_operation_id=research_source_operation_id,
             )
-            failed = self.library_ingest_jobs.mark_failed(
+            return self.library_ingest_jobs.mark_failed(
                 job.job_id, error=str(exc), permanent=True
-            )
-            return failed if failed is not None else job
-
-        job = self.library_ingest_jobs.submit(
-            source_path=source_path,
-            title=title,
-            author=author,
-            keywords=keywords,
-            perform_analysis=perform_analysis,
-            detected_type="web",
-            origin="server",
-            ingest_options=ingest_options,
-        )
-        self._send_web_clip_job(job.job_id, kwargs)
+            ) or job
+        self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
     @work(group="library_ingest_remote_submit")
@@ -4979,6 +5781,22 @@ class LibraryIngestQueueMixin:
         one-shot submissions on the user's behalf, and neither should be able to
         pile up.
         """
+        job = self.library_ingest_jobs.get_job(job_id)
+        if job is not None and job.research_source_operation_id:
+            try:
+                self._validate_research_source_operation_authority(
+                    job.research_source_operation_id,
+                    expected_origin="server",
+                )
+            except ValueError:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=(
+                        "The captured Server workspace authority changed before "
+                        "submission. Restore it and retry this intake."
+                    ),
+                )
+                return
         service = getattr(self, "server_media_reading_service", None)
         clip = getattr(service, "ingest_web_content", None)
         if not callable(clip):
@@ -5024,6 +5842,22 @@ class LibraryIngestQueueMixin:
         coroutine, so staying on the event loop keeps every registry mutation
         on the UI thread without marshalling.
         """
+        job = self.library_ingest_jobs.get_job(job_id)
+        if job is not None and job.research_source_operation_id:
+            try:
+                self._validate_research_source_operation_authority(
+                    job.research_source_operation_id,
+                    expected_origin="server",
+                )
+            except ValueError:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=(
+                        "The captured Server workspace authority changed before "
+                        "submission. Restore it and retry this intake."
+                    ),
+                )
+                return
         service = getattr(self, "server_media_reading_service", None)
         submit = getattr(service, "submit_ingest_jobs", None) or getattr(
             service, "submit_media_ingest_jobs", None
@@ -5701,13 +6535,8 @@ class TldwCli(
             )
         return sources + super()._get_default_css()
 
-    # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
-    # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
-    # (Lab, Logs, Settings) so every destination has a keyboard route.
-    SHELL_DESTINATION_HOTKEYS: tuple[str, ...] = tuple(
-        f"ctrl+{digit}" for digit in "1234567890"
-    )
-    SHELL_DESTINATION_FKEYS: tuple[str, ...] = ("f7", "f8", "f9")
+    # Shell shortcuts are keyed by stable destination ID so inserting a new
+    # destination cannot transfer an existing shortcut to another screen.
     BINDINGS = (
         [
             Binding("ctrl+q", "quit", "Quit App", show=True),
@@ -5723,31 +6552,14 @@ class TldwCli(
         ]
         + [
             Binding(
-                key,
-                f"shell_destination({index})",
+                SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
+                f"shell_destination({destination.destination_id!r})",
                 f"Go to {destination.accessible_label}",
-                show=False,
+                show=SHELL_DESTINATION_SHORTCUTS[
+                    destination.destination_id
+                ].startswith("f"),
             )
-            for index, (key, destination) in enumerate(
-                zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
-            )
-        ]
-        + [
-            # 10 = len of the ctrl+digit layer ("1234567890"); a class-body
-            # comprehension cannot reference class-level names, so this stays a
-            # literal.
-            Binding(
-                key,
-                f"shell_destination({10 + fkey_index})",
-                f"Go to {destination.accessible_label}",
-                show=True,
-            )
-            for fkey_index, (key, destination) in enumerate(
-                zip(
-                    SHELL_DESTINATION_FKEYS,
-                    SHELL_DESTINATION_ORDER[len("1234567890") :],
-                )
-            )
+            for destination in SHELL_DESTINATION_ORDER
         ]
     )
     COMMANDS = App.COMMANDS | {
@@ -7112,20 +7924,55 @@ class TldwCli(
     ) -> HomeControlResult:
         """Retry the active Home item through the configured adapter.
 
-        Library ingest job targets (``local:ingest:<job_id>``) are requeued
-        directly through ``retry_library_ingest_job`` -- the real requeue
-        seam over ``self.library_ingest_jobs`` -- instead of falling through
-        to ``_handle_home_control_action``/the adapter, which has no
-        visibility into the in-memory ingest job registry and always
-        degrades to the honest "not connected to an active run service yet"
-        fallback for this target shape. Non-ingest targets (approvals,
-        watchlist runs, schedules) are unaffected and still route through
-        the adapter exactly as before.
+        Library ingest targets (``local:ingest:<job_id>``) use the ingest
+        retry seam instead of the generic Home adapter. Ordinary jobs retain
+        synchronous registry requeueing; Research-owned jobs schedule their
+        durable catalog-stage retry and report Research Workspace recovery.
+        Non-ingest targets are unaffected and still route through the adapter.
         """
         if target_id is not None and str(target_id).startswith("local:ingest:"):
             job_id = str(target_id)[len("local:ingest:") :]
-            requeued = self.retry_library_ingest_job(job_id)
-            if requeued is None:
+            source = self.library_ingest_jobs.get_job(job_id)
+            operation_id = str(
+                getattr(source, "research_source_operation_id", "") or ""
+            ).strip()
+            research_retry_requested = bool(
+                source is not None
+                and operation_id
+                and self._schedule_research_source_catalog_retry(
+                    source,
+                    operation_id=operation_id,
+                    notify_unavailable=False,
+                )
+            )
+            requeued = (
+                None
+                if operation_id
+                else self.retry_library_ingest_job(job_id)
+            )
+            if research_retry_requested:
+                basename = escape_markup(
+                    Path(str(source.source_path)).name or str(source.source_path)
+                )
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Research source retry requested for {basename}.",
+                    recovery_route=TAB_RESEARCH_WORKSPACE,
+                    target_id=target_id,
+                    target_route=TAB_RESEARCH_WORKSPACE,
+                )
+            elif operation_id:
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.UNAVAILABLE,
+                    message=self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
+                    severity="warning",
+                    recovery_route=TAB_RESEARCH_WORKSPACE,
+                    target_id=target_id,
+                    target_route=TAB_RESEARCH_WORKSPACE,
+                )
+            elif requeued is None:
                 # Unknown job id, or the job is no longer FAILED (e.g. it
                 # was already retried/finished by the time the button was
                 # pressed) -- ``requeue`` is a documented no-op in that case.
@@ -7519,6 +8366,83 @@ class TldwCli(
             self.local_workspace_db = None
             self.workspace_registry_service = None
 
+    def _wire_research_source_association(self) -> None:
+        """Compose durable post-ingest association services."""
+
+        try:
+            self.research_paste_staging_store = ResearchPasteStagingStore(
+                get_user_data_dir() / "research_paste_staging"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Private Research paste staging unavailable"
+            )
+            self.research_paste_staging_store = None
+        try:
+            from .Research_Workspace import (
+                LocalResearchWorkspaceAdapter,
+                ServerResearchWorkspaceAdapter,
+                WorkspaceDataSource,
+            )
+
+            if self.local_workspace_db is None:
+                raise RuntimeError("Workspace database is unavailable.")
+            operation_store = ResearchSourceOperationStore(self.local_workspace_db)
+            coordinator = ResearchSourceAssociationCoordinator(
+                operation_store=operation_store,
+                ingest_jobs=self.library_ingest_jobs,
+                local_registry=self.workspace_registry_service,
+                server_service=self.server_notes_workspace_service,
+                server_context_provider=self.server_context_provider,
+                catalog_requeuer=self._requeue_research_source_catalog_job,
+                catalog_dispatcher=self._dispatch_research_source_catalog_job,
+            )
+            readiness_adapters = {}
+            if self.workspace_registry_service is not None:
+                readiness_adapters[WorkspaceDataSource.LOCAL] = (
+                    LocalResearchWorkspaceAdapter(
+                        self.workspace_registry_service,
+                        media_scope_service=getattr(
+                            self, "media_reading_scope_service", None
+                        ),
+                    )
+                )
+            if (
+                self.server_notes_workspace_service is not None
+                and self.server_context_provider is not None
+            ):
+                readiness_adapters[WorkspaceDataSource.SERVER] = (
+                    ServerResearchWorkspaceAdapter(
+                        self.server_notes_workspace_service,
+                        self.server_context_provider,
+                        media_scope_service=getattr(
+                            self, "media_reading_scope_service", None
+                        ),
+                    )
+                )
+            readiness_coordinator = ResearchSourceReadinessCoordinator(
+                operation_store=operation_store,
+                adapters=readiness_adapters,
+            )
+            scheduler = ResearchSourceAssociationScheduler(
+                coordinator=coordinator,
+                operation_store=operation_store,
+                readiness_coordinator=readiness_coordinator,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Research source association unavailable during app wiring"
+            )
+            self.research_source_operation_store = None
+            self.research_source_association_coordinator = None
+            self.research_source_readiness_coordinator = None
+            self.research_source_association_scheduler = None
+            return
+        self.research_source_operation_store = operation_store
+        self.research_source_association_coordinator = coordinator
+        self.research_source_readiness_coordinator = readiness_coordinator
+        self.research_source_association_scheduler = scheduler
+
     def _build_chatbook_db_paths(self) -> dict[str, str]:
         return {
             "ChaChaNotes": str(get_chachanotes_db_path()),
@@ -7684,6 +8608,7 @@ class TldwCli(
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
         self._init_library_ingest_runtime_state()
+        self._wire_research_source_association()
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
@@ -9431,7 +10356,83 @@ class TldwCli(
         wake-task-0-report.md``, P3b). Screens still die on navigation;
         only the runtime survives.
         """
+        if screen_name == TAB_RESEARCH_WORKSPACE:
+            return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
+
+    def _create_research_workspace_screen(self, screen_class: type):
+        """Late-bind the foundation to the currently active owner services."""
+
+        from .Research_Workspace import (
+            LocalResearchWorkspaceAdapter,
+            ResearchPresentationOverlayStore,
+            ResearchWorkspaceController,
+            ServerResearchWorkspaceAdapter,
+            WorkspaceDataSource,
+        )
+
+        ports = {}
+        local_service = getattr(self, "workspace_registry_service", None)
+        media_scope_service = getattr(self, "media_reading_scope_service", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        association_scheduler = getattr(
+            self, "research_source_association_scheduler", None
+        )
+        if local_service is not None:
+            ports[WorkspaceDataSource.LOCAL] = LocalResearchWorkspaceAdapter(
+                local_service,
+                media_scope_service=media_scope_service,
+                operation_store=operation_store,
+                association_scheduler=association_scheduler,
+                notes_scope_service=getattr(self, "notes_scope_service", None),
+                notes_user_id=getattr(self, "notes_user_id", ""),
+            )
+        server_service = getattr(self, "server_notes_workspace_service", None)
+        server_context_provider = getattr(self, "server_context_provider", None)
+        if server_service is not None and server_context_provider is not None:
+            ports[WorkspaceDataSource.SERVER] = ServerResearchWorkspaceAdapter(
+                server_service,
+                server_context_provider,
+                media_scope_service=media_scope_service,
+                operation_store=operation_store,
+                association_scheduler=association_scheduler,
+            )
+        controller = ResearchWorkspaceController(ports)
+        overlay_store = ResearchPresentationOverlayStore(
+            get_user_data_dir() / "research_workspace_overlay.json"
+        )
+        return screen_class(
+            self,
+            controller=controller,
+            overlay_store=overlay_store,
+            operation_store=operation_store,
+            association_scheduler=association_scheduler,
+            paste_staging_store=getattr(
+                self, "research_paste_staging_store", None
+            ),
+        )
+
+    async def _reconcile_research_quick_notes_startup(self) -> None:
+        """Resume one bounded global Local Quick Note receipt page."""
+
+        from .Research_Workspace import LocalResearchWorkspaceAdapter
+
+        registry = getattr(self, "workspace_registry_service", None)
+        notes_scope = getattr(self, "notes_scope_service", None)
+        notes_user_id = str(getattr(self, "notes_user_id", "") or "").strip()
+        if registry is None or notes_scope is None or not notes_user_id:
+            return
+        try:
+            await LocalResearchWorkspaceAdapter(
+                registry,
+                notes_scope_service=notes_scope,
+                notes_user_id=notes_user_id,
+            ).reconcile_quick_notes()
+        except Exception as exc:  # noqa: BLE001 - startup recovery must degrade safely
+            logger.warning(
+                "Research Quick Note startup reconciliation deferred: {}",
+                type(exc).__name__,
+            )
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
@@ -11139,7 +12140,13 @@ class TldwCli(
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
-        self._restore_ingest_jobs()
+        self._restore_ingest_jobs_and_schedule_research_sources()
+        self.run_worker(
+            self._reconcile_research_quick_notes_startup(),
+            group="research-quick-notes-startup-reconciliation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:
@@ -14065,21 +15072,16 @@ class TldwCli(
         )
         self.push_screen(WorkbenchHelpPanel(state))
 
-    def action_shell_destination(self, index: int | str) -> None:
-        """Navigate to the shell destination at ``index`` (Ctrl+1..9, Ctrl+0 layer).
+    def action_shell_destination(self, destination_id: str) -> None:
+        """Navigate to the shell destination identified by a stable ID.
 
         Args:
-            index: Zero-based destination index. Textual binding action arguments
-                are passed as strings, so this is accepted as either an ``int``
-                (direct calls/tests) or ``str`` (hotkey bindings) and coerced.
+            destination_id: Shell destination ID from the Textual binding.
         """
         try:
-            idx = int(index)
-        except (ValueError, TypeError):
+            destination = get_shell_destination(destination_id)
+        except KeyError:
             return
-        if idx < 0 or idx >= len(SHELL_DESTINATION_ORDER):
-            return
-        destination = SHELL_DESTINATION_ORDER[idx]
         self.post_message(NavigateToScreen(destination.primary_route))
 
     async def action_focus_next_workbench_pane(self) -> None:

@@ -118,6 +118,7 @@ VALID_TABLES = {
         "rag_payload_tombstones",
         "rag_source_observations",
         "rag_trace_evidence_refs",
+        "research_quick_note_owner_proofs",
         "review_history",
         "study_sessions",
         "sync_conflicts",

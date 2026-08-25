@@ -898,6 +898,19 @@ AFTER DELETE ON notes BEGIN
   VALUES('delete',old.rowid,old.title,old.content);
 END;
 
+/* Private, local-only Research Quick Note recovery ownership.
+   Deliberately has no sync/FTS/export trigger or ordinary Notes metadata seam. */
+CREATE TABLE IF NOT EXISTS research_quick_note_owner_proofs(
+  note_id     TEXT PRIMARY KEY NOT NULL
+              REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  owner_proof TEXT NOT NULL CHECK (
+      length(owner_proof) = 64
+      AND owner_proof = lower(owner_proof)
+      AND owner_proof NOT GLOB '*[^0-9a-f]*'
+  ),
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 /*----------------------------------------------------------------
   7. Linking tables (no FTS)
 ----------------------------------------------------------------*/
@@ -2926,6 +2939,84 @@ ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
     _MIGRATE_V41_TO_V42_SQL = """
 ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql.
+    # This table is private local recovery state: no trigger may project it to
+    # sync_log, FTS, keyword/tag surfaces, exports, graph, or RAG.
+    _MIGRATE_V42_TO_V43_CREATE_SQL = """CREATE TABLE research_quick_note_owner_proofs(
+  note_id     TEXT PRIMARY KEY NOT NULL
+              REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  owner_proof TEXT NOT NULL CHECK (
+      length(owner_proof) = 64
+      AND owner_proof = lower(owner_proof)
+      AND owner_proof NOT GLOB '*[^0-9a-f]*'
+  ),
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+    _MIGRATE_V42_TO_V43_BACKFILL_SQL = """
+INSERT OR IGNORE INTO research_quick_note_owner_proofs (note_id, owner_proof)
+SELECT nk.note_id,
+       substr(k.keyword, length('research-receipt-proof:') + 1)
+  FROM note_keywords AS nk
+  JOIN keywords AS k ON k.id = nk.keyword_id
+ WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+   AND substr(k.keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(k.keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
+"""
+    _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL = """
+DELETE FROM sync_log
+ WHERE entity = 'note_keywords'
+   AND EXISTS (
+       SELECT 1
+         FROM keywords AS k
+        WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+          AND substr(k.keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(k.keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
+          AND CAST(json_extract(sync_log.payload, '$.keyword_id') AS INTEGER) = k.id
+   );
+"""
+    _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL = """
+DELETE FROM sync_log
+ WHERE entity = 'keywords'
+   AND entity_id IN (
+       SELECT CAST(id AS TEXT)
+         FROM keywords
+        WHERE length(keyword) = length('research-receipt-proof:') + 64
+          AND substr(keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
+   );
+"""
+    _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL = """
+DELETE FROM keywords
+ WHERE length(keyword) = length('research-receipt-proof:') + 64
+   AND substr(keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
+"""
+    _MIGRATE_V42_TO_V43_SQL = (
+        _MIGRATE_V42_TO_V43_CREATE_SQL
+        + _MIGRATE_V42_TO_V43_BACKFILL_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
+        + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
+    )
 
     # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
@@ -5813,10 +5904,11 @@ UPDATE db_schema_version
             ) from exc
 
     def _migrate_from_v42_to_v43(self, conn: sqlite3.Connection) -> None:
-        """Add the local-only ``message_exchanges`` table (task-18300, Console
-        Conversation Inspector): per-message provider-exchange capture rows.
-        No sync triggers, no FTS -- local-only precedent (v29->v30
-        usage_json)."""
+        """Add local message exchanges and private Quick Note owner proofs.
+
+        Both features first shipped from schema version 42, so they share one
+        atomic migration and one guarded version transition to 43.
+        """
         if self._get_db_version(conn) != 42:
             raise SchemaError(
                 f"[{self._SCHEMA_NAME} V42→V43] Migration requires schema version 42"
@@ -5845,10 +5937,103 @@ UPDATE db_schema_version
                         "Message exchanges migration contains incomplete SQL"
                     )
 
-                # The migration file is DDL-only (see its header); the
-                # version bump is a separate, rowcount-guarded UPDATE here
-                # -- matching the v29->v30 usage_json shape -- rather than
-                # embedded in the script like the v32-v39 migrations do.
+                table_row = cursor.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    ("research_quick_note_owner_proofs",),
+                ).fetchone()
+                if table_row is None:
+                    cursor.execute(self._MIGRATE_V42_TO_V43_CREATE_SQL)
+                else:
+                    columns = cursor.execute(
+                        "PRAGMA table_info(research_quick_note_owner_proofs)"
+                    ).fetchall()
+                    column_shape = [
+                        (
+                            str(row[1]),
+                            str(row[2]).upper(),
+                            int(row[3]),
+                            row[4],
+                            int(row[5]),
+                        )
+                        for row in columns
+                    ]
+                    expected_shape = [
+                        ("note_id", "TEXT", 1, None, 1),
+                        ("owner_proof", "TEXT", 1, None, 0),
+                        ("created_at", "DATETIME", 1, "CURRENT_TIMESTAMP", 0),
+                    ]
+                    foreign_keys = cursor.execute(
+                        "PRAGMA foreign_key_list(research_quick_note_owner_proofs)"
+                    ).fetchall()
+                    has_exact_foreign_key = len(foreign_keys) == 1 and (
+                        str(foreign_keys[0][2]),
+                        str(foreign_keys[0][3]),
+                        str(foreign_keys[0][4]),
+                        str(foreign_keys[0][5]).upper(),
+                        str(foreign_keys[0][6]).upper(),
+                    ) == ("notes", "note_id", "id", "CASCADE", "CASCADE")
+                    normalized_sql = " ".join(
+                        str(table_row[0] or "").lower().split()
+                    )
+                    has_canonical_check = all(
+                        fragment in normalized_sql
+                        for fragment in (
+                            "length(owner_proof) = 64",
+                            "owner_proof = lower(owner_proof)",
+                            "owner_proof not glob '*[^0-9a-f]*'",
+                        )
+                    )
+                    trigger_count = int(
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM sqlite_master "
+                            "WHERE type = 'trigger' AND tbl_name = ?",
+                            ("research_quick_note_owner_proofs",),
+                        ).fetchone()[0]
+                    )
+                    if (
+                        column_shape != expected_shape
+                        or not has_exact_foreign_key
+                        or not has_canonical_check
+                        or trigger_count != 0
+                    ):
+                        raise SchemaError(
+                            f"[{self._SCHEMA_NAME} V42→V43] Existing private proof table has an incompatible shape"
+                        )
+
+                conflicting_legacy_proof = cursor.execute(
+                    """
+                    SELECT 1
+                      FROM research_quick_note_owner_proofs AS p
+                      JOIN note_keywords AS nk ON nk.note_id = p.note_id
+                      JOIN keywords AS k ON k.id = nk.keyword_id
+                     WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+                       AND substr(k.keyword, 1, length('research-receipt-proof:'))
+                           = 'research-receipt-proof:' COLLATE BINARY
+                       AND trim(
+                           substr(k.keyword, length('research-receipt-proof:') + 1),
+                           '0123456789abcdef'
+                       ) = ''
+                       AND p.owner_proof <> substr(
+                           k.keyword, length('research-receipt-proof:') + 1
+                       )
+                     LIMIT 1
+                    """
+                ).fetchone()
+                if conflicting_legacy_proof is not None:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V42→V43] Conflicting private proof ownership"
+                    )
+                for remediation_sql in (
+                    self._MIGRATE_V42_TO_V43_BACKFILL_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL,
+                    self._MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL,
+                ):
+                    cursor.execute(remediation_sql)
+
+                # Both v42 feature additions commit behind one guarded schema
+                # transition so a partial failure cannot stamp either one as
+                # complete independently.
                 version_cursor = cursor.execute(
                     """
                     UPDATE db_schema_version
@@ -12799,6 +12984,9 @@ UPDATE db_schema_version
         """
         now = self._get_current_utc_timestamp_iso()
         client_id_to_use = item_data.get("client_id", self.client_id)
+        value_is_sensitive = table_name == "keywords"
+        logged_value = "<redacted>" if value_is_sensitive else main_col_value
+        conflict_entity_id = "redacted-keyword" if value_is_sensitive else main_col_value
 
         other_cols = list(other_fields_map.keys())
         other_placeholders_list = ["?"] * len(other_cols)
@@ -12875,12 +13063,12 @@ UPDATE db_schema_version
                     ).rowcount
                     if row_count_undelete == 0:
                         raise ConflictError(
-                            f"Failed to undelete {table_name} '{main_col_value}' due to version mismatch or it became active/disappeared.",
+                            f"Failed to undelete {table_name} '{logged_value}' due to version mismatch or it became active/disappeared.",
                             entity=table_name,
-                            entity_id=main_col_value,
+                            entity_id=conflict_entity_id,
                         )
                     logger.info(
-                        f"Undeleted and updated {table_name} '{main_col_value}' with ID: {item_id}, new version {next_version}."
+                        f"Undeleted and updated {table_name} '{logged_value}' with ID: {item_id}, new version {next_version}."
                     )
                     return item_id
 
@@ -12888,7 +13076,7 @@ UPDATE db_schema_version
                 cursor_insert = conn.execute(query, params_tuple_insert)
                 item_id_insert = cursor_insert.lastrowid
                 logger.info(
-                    f"Added {table_name} '{main_col_value}' with ID: {item_id_insert}."
+                    f"Added {table_name} '{logged_value}' with ID: {item_id_insert}."
                 )
                 return item_id_insert
         except sqlite3.IntegrityError as e:
@@ -12897,12 +13085,12 @@ UPDATE db_schema_version
                 in str(e).lower()
             ):  # Use lower for robustness
                 logger.warning(
-                    f"{table_name} with {unique_col_name} '{main_col_value}' already exists and is active."
+                    f"{table_name} with {unique_col_name} '{logged_value}' already exists and is active."
                 )
                 raise ConflictError(
-                    f"{table_name} '{main_col_value}' already exists and is active.",
+                    f"{table_name} '{logged_value}' already exists and is active.",
                     entity=table_name,
-                    entity_id=main_col_value,
+                    entity_id=conflict_entity_id,
                 ) from e
             raise CharactersRAGDBError(
                 f"Database integrity error adding {table_name}: {e}"
@@ -12910,7 +13098,7 @@ UPDATE db_schema_version
         except ConflictError:  # From undelete path
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error adding {table_name} '{main_col_value}': {e}")
+            logger.error(f"Database error adding {table_name} '{logged_value}': {e}")
             raise
         return None  # Should not be reached if exceptions are raised properly
 
@@ -12961,12 +13149,15 @@ UPDATE db_schema_version
             f"SELECT * FROM {table_name} WHERE {unique_col_name} = ? AND deleted = 0"
         )
         try:
-            cursor = self.execute_query(query, (value,))
+            cursor = self.execute_query(
+                query, (value,), redact_params=table_name == "keywords"
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
         except CharactersRAGDBError as e:
+            logged_value = "<redacted>" if table_name == "keywords" else value
             logger.error(
-                f"Database error fetching {table_name} by {unique_col_name} '{value}': {e}"
+                f"Database error fetching {table_name} by {unique_col_name} '{logged_value}': {e}"
             )
             raise
 
@@ -13328,10 +13519,19 @@ UPDATE db_schema_version
             LIMIT ?
         """
         try:
-            cursor = self.execute_query(query, (search_term, limit))
+            cursor = self.execute_query(
+                query,
+                (search_term, limit),
+                redact_params=main_table_name == "keywords",
+            )
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching {main_table_name} for '{search_term}': {e}")
+            logged_term = (
+                "<redacted>" if main_table_name == "keywords" else search_term
+            )
+            logger.error(
+                f"Error searching {main_table_name} for '{logged_term}': {e}"
+            )
             raise
 
     # Keywords
@@ -13398,9 +13598,17 @@ UPDATE db_schema_version
         Returns:
             A list of keyword dictionaries.
         """
-        return self._list_generic_items(
-            "keywords", "keyword COLLATE NOCASE", limit, offset
+        cursor = self.execute_query(
+            """
+            SELECT * FROM keywords
+            WHERE deleted = 0
+            ORDER BY keyword COLLATE NOCASE
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+            redact_params=True,
         )
+        return [dict(row) for row in cursor.fetchall()]
 
     def soft_delete_keyword(self, keyword_id: int, expected_version: int) -> bool:
         """
@@ -13450,9 +13658,19 @@ UPDATE db_schema_version
         match_expression = build_phrase_match_query(search_term)
         if not match_expression:
             return []
-        return self._search_generic_items_fts(
-            "keywords_fts", "keywords", "keyword", match_expression, limit
+        cursor = self.execute_query(
+            """
+            SELECT main.*
+            FROM keywords_fts fts
+            JOIN keywords main ON fts.rowid = main.id
+            WHERE fts.keyword MATCH ? AND main.deleted = 0
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (match_expression, limit),
+            redact_params=True,
         )
+        return [dict(row) for row in cursor.fetchall()]
 
     # Keyword Collections
     def add_keyword_collection(
@@ -13670,6 +13888,71 @@ UPDATE db_schema_version
             logger.error(f"Database error adding note '{title.strip()}': {e}")
             raise
 
+    @staticmethod
+    def _validate_research_quick_note_owner_proof(owner_proof: str) -> str:
+        """Validate one hashed private recovery proof without echoing it."""
+
+        if not isinstance(owner_proof, str) or re.fullmatch(
+            r"[0-9a-f]{64}", owner_proof
+        ) is None:
+            raise ValueError("Research Quick Note owner proof is invalid.")
+        return owner_proof
+
+    def add_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Store private recovery ownership; never project it to sync or metadata."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        with self.transaction() as cursor:
+            result = cursor.execute(
+                """
+                INSERT INTO research_quick_note_owner_proofs (note_id, owner_proof)
+                VALUES (?, ?)
+                """,
+                (note_id.strip(), safe_proof),
+            )
+        return result.rowcount == 1
+
+    def has_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Verify exact private recovery ownership without exposing the proof row."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        row = self.get_connection().execute(
+            """
+            SELECT 1
+              FROM research_quick_note_owner_proofs
+             WHERE note_id = ? AND owner_proof = ?
+             LIMIT 1
+            """,
+            (note_id.strip(), safe_proof),
+        ).fetchone()
+        return row is not None
+
+    def remove_research_quick_note_owner_proof(
+        self, note_id: str, owner_proof: str
+    ) -> bool:
+        """Remove only the exact private proof held by a recovery receipt."""
+
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError("note_id must be non-blank text")
+        safe_proof = self._validate_research_quick_note_owner_proof(owner_proof)
+        with self.transaction() as cursor:
+            result = cursor.execute(
+                """
+                DELETE FROM research_quick_note_owner_proofs
+                 WHERE note_id = ? AND owner_proof = ?
+                """,
+                (note_id.strip(), safe_proof),
+            )
+        return result.rowcount == 1
+
     def get_note_by_id(self, note_id: str) -> Optional[Dict[str, Any]]:
         query = "SELECT * FROM notes WHERE id = ? AND deleted = 0"
         cursor = self.execute_query(query, (note_id,))
@@ -13857,7 +14140,8 @@ UPDATE db_schema_version
         keyword_branch = (
             "id IN (SELECT nk.note_id FROM note_keywords nk "
             "JOIN keywords k ON nk.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            "WHERE k.deleted = 0 "
+            "AND k.keyword LIKE ? ESCAPE '\\')"
         )
 
         branches = [
@@ -15117,7 +15401,11 @@ UPDATE db_schema_version
                 ORDER BY nk.note_id, k.keyword COLLATE NOCASE
                 """
         try:
-            cursor = self.execute_query(query, tuple(note_ids))
+            cursor = self.execute_query(
+                query,
+                tuple(note_ids),
+                redact_params=True,
+            )
             results = cursor.fetchall()
 
             keywords_by_note: Dict[str, List[str]] = {}

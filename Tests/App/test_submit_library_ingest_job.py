@@ -9,11 +9,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from loguru import logger
 from textual.app import App
 
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
     ActiveIngestConsentScope,
@@ -24,9 +27,23 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
     LibraryIngestJobRegistry,
     build_active_ingest_consent_scope,
+    plan_restore,
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
+from tldw_chatbook.Research_Workspace.source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+    SourceOperationStatus,
+)
+from tldw_chatbook.Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+)
+from tldw_chatbook.Research_Workspace.paste_staging import ResearchPasteStagingStore
+from tldw_chatbook.runtime_policy.server_event_scope import (
+    event_principal_id_from_active_context,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.app import TldwCli
 import tldw_chatbook.app as app_module
@@ -39,6 +56,472 @@ def _minimal_app(media_db: Any = None) -> TldwCli:
     app.media_db = media_db
     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
     return app
+
+
+def test_required_persisted_submit_is_durable_before_listener_visibility(
+    tmp_path: Path,
+) -> None:
+    """A prepared row is on disk before any lifecycle listener can observe it."""
+
+    registry = LibraryIngestJobRegistry()
+    store = LibraryIngestJobsDB(tmp_path / "prepared.sqlite")
+    registry.attach_store(store)
+    observations: list[tuple[str, str]] = []
+    registry.add_listener(
+        lambda: observations.extend(
+            (row["job_id"], row["state"]) for row in store.all_jobs()
+        )
+    )
+
+    job = registry.submit(
+        source_path="https://example.invalid/evidence",
+        origin="server",
+        research_source_operation_id="operation-durable-prepare",
+        require_persisted=True,
+    )
+
+    assert observations == [(job.job_id, "queued")]
+    assert store.all_jobs()[0]["research_source_operation_id"] == (
+        "operation-durable-prepare"
+    )
+    store.close()
+    restarted = LibraryIngestJobsDB(tmp_path / "prepared.sqlite")
+    try:
+        assert restarted.all_jobs()[0]["state"] == "queued"
+    finally:
+        restarted.close()
+
+
+def test_required_persisted_submit_without_store_mutates_no_registry() -> None:
+    """Research preparation cannot degrade to an in-memory-only queue row."""
+
+    registry = LibraryIngestJobRegistry()
+
+    with pytest.raises(RuntimeError, match="persistence store"):
+        registry.submit(
+            source_path="https://example.invalid/evidence",
+            origin="server",
+            research_source_operation_id="operation-no-store",
+            require_persisted=True,
+        )
+
+    assert registry.jobs() == ()
+
+
+@pytest.mark.parametrize("settlement", ["cancelled", "failed"])
+def test_required_prepared_settlement_is_durable_before_terminal_listener(
+    tmp_path: Path,
+    settlement: str,
+) -> None:
+    """Link/dispatch failures cannot leave a restartable queued row on disk."""
+
+    registry = LibraryIngestJobRegistry()
+    store = LibraryIngestJobsDB(tmp_path / f"prepared-{settlement}.sqlite")
+    registry.attach_store(store)
+    job = registry.submit(
+        source_path="https://example.invalid/evidence",
+        origin="server",
+        research_source_operation_id=f"operation-{settlement}",
+        require_persisted=True,
+    )
+    observations: list[str] = []
+    registry.add_listener(lambda: observations.append(store.all_jobs()[0]["state"]))
+
+    if settlement == "cancelled":
+        registry.mark_cancelled(
+            job.job_id,
+            reason="Research source operation could not be linked.",
+            require_persisted=True,
+        )
+    else:
+        registry.mark_failed(
+            job.job_id,
+            error="Research catalog dispatch could not be started.",
+            require_persisted=True,
+        )
+
+    assert observations == [settlement]
+    assert store.all_jobs()[0]["state"] == settlement
+    store.close()
+
+
+@pytest.mark.parametrize("origin", ["local", "server"])
+def test_research_prepare_persists_exact_authority_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    """Initial Research intake stops at a durable queued row until linked."""
+
+    app = _minimal_app(media_db="present")
+    ingest_store = LibraryIngestJobsDB(tmp_path / f"prepare-{origin}.sqlite")
+    app.library_ingest_jobs.attach_store(ingest_store)
+    operation = ResearchSourceOperation(
+        operation_id=f"operation-prepare-{origin}",
+        idempotency_key=f"prepare-{origin}",
+        data_source=(
+            WorkspaceDataSource.LOCAL
+            if origin == "local"
+            else WorkspaceDataSource.SERVER
+        ),
+        server_profile_id="profile" if origin == "server" else "",
+        principal_id="principal" if origin == "server" else "",
+        workspace_id=f"workspace-{origin}",
+        canonical_item_type=(
+            CanonicalItemType.LOCAL_LIBRARY
+            if origin == "local"
+            else CanonicalItemType.SERVER_MEDIA
+        ),
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: origin)
+    monkeypatch.setattr(
+        app,
+        "_validate_research_source_operation_authority",
+        lambda operation_id, *, expected_origin: operation,
+    )
+    top_up = MagicMock()
+    monkeypatch.setattr(app, "_top_up_ingest_parse_pool", top_up)
+    remote_send = MagicMock()
+    monkeypatch.setattr(app, "_send_web_clip_job", remote_send)
+    source = (
+        "https://example.invalid/evidence"
+        if origin == "server"
+        else str(tmp_path / "evidence.txt")
+    )
+    if origin == "local":
+        Path(source).write_text("Evidence", encoding="utf-8")
+
+    job = app.prepare_research_source_ingest_job(
+        source_path=source,
+        research_source_operation_id=operation.operation_id,
+        required_origin=origin,
+    )
+
+    assert job.state is IngestJobState.QUEUED
+    assert job.origin == origin
+    assert job.research_source_operation_id == operation.operation_id
+    assert job.dispatch_held is True
+    assert ingest_store.all_jobs()[0]["state"] == "queued"
+    assert ingest_store.all_jobs()[0]["dispatch_held"] == 1
+    top_up.assert_not_called()
+    remote_send.assert_not_called()
+    ingest_store.close()
+
+
+def test_ordinary_submission_is_never_dispatch_held(tmp_path: Path) -> None:
+    """The eligibility barrier is opt-in for Research preparation only."""
+
+    app = _minimal_app(media_db="present")
+    store = LibraryIngestJobsDB(tmp_path / "ordinary.sqlite")
+    app.library_ingest_jobs.attach_store(store)
+
+    job = app.submit_library_ingest_job(source_path=str(tmp_path / "ordinary.txt"))
+
+    assert job.dispatch_held is False
+    assert store.all_jobs()[0]["dispatch_held"] == 0
+    store.close()
+
+
+def _pending_source_operation(
+    operation_id: str, *, origin: str
+) -> ResearchSourceOperation:
+    return ResearchSourceOperation(
+        operation_id=operation_id,
+        idempotency_key=f"idempotency-{operation_id}",
+        data_source=(
+            WorkspaceDataSource.LOCAL
+            if origin == "local"
+            else WorkspaceDataSource.SERVER
+        ),
+        server_profile_id="profile" if origin == "server" else "",
+        principal_id="principal" if origin == "server" else "",
+        workspace_id=f"workspace-{origin}",
+        canonical_item_type=(
+            CanonicalItemType.LOCAL_LIBRARY
+            if origin == "local"
+            else CanonicalItemType.SERVER_MEDIA
+        ),
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_pending_held_job_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    """A crash between prepare and link resumes from both durable owners."""
+
+    jobs_path = tmp_path / "jobs.sqlite"
+    ingest_store = LibraryIngestJobsDB(jobs_path)
+    original = LibraryIngestJobRegistry()
+    original.attach_store(ingest_store)
+    held = original.submit(
+        source_path=str(tmp_path / "managed.txt"),
+        origin="local",
+        research_source_operation_id="operation-restart",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    operation_store = ResearchSourceOperationStore(workspace_db)
+    operation_store.create(
+        _pending_source_operation("operation-restart", origin="local")
+    )
+    staging = ResearchPasteStagingStore(tmp_path / "staging")
+    staged_path = staging.stage(
+        "operation-restart", title="Paste", body="private staged body"
+    )
+
+    restored = LibraryIngestJobRegistry()
+    plan = plan_restore(
+        ingest_store.all_jobs(),
+        max_persisted=100,
+        now_iso="2026-08-24T10:01:00+00:00",
+    )
+    restored.restore(plan.jobs, plan.next_id)
+    restored.attach_store(ingest_store)
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = restored
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = operation_store
+    app.research_paste_staging_store = staging
+    dispatched: list[str] = []
+    app._dispatch_research_source_catalog_job = dispatched.append  # type: ignore[method-assign]
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    operation = operation_store.get("operation-restart")
+    assert operation is not None
+    assert operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+    assert operation.ingest_job_id == held.job_id
+    assert restored.get_job(held.job_id).dispatch_held is False
+    assert ingest_store.all_jobs()[0]["dispatch_held"] == 0
+    assert dispatched == [held.job_id]
+    assert staged_path.exists()
+    ingest_store.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_isolates_transient_row_and_releases_next(
+    tmp_path: Path,
+) -> None:
+    """One unreadable operation cannot strand a later held job in the page."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(ingest_store)
+    first = registry.submit(
+        source_path="/managed/first.txt",
+        origin="local",
+        research_source_operation_id="operation-transient",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    second = registry.submit(
+        source_path="/managed/second.txt",
+        origin="local",
+        research_source_operation_id="operation-releasable",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    real_store = ResearchSourceOperationStore(workspace_db)
+    real_store.create(_pending_source_operation("operation-releasable", origin="local"))
+
+    class OneTransientStore:
+        def get(self, operation_id):
+            if operation_id == "operation-transient":
+                raise OSError("private store unavailable")
+            return real_store.get(operation_id)
+
+        def advance_stage(self, *args, **kwargs):
+            return real_store.advance_stage(*args, **kwargs)
+
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = registry
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = OneTransientStore()
+    app.research_paste_staging_store = None
+    dispatched: list[str] = []
+    app._dispatch_research_source_catalog_job = dispatched.append  # type: ignore[method-assign]
+
+    await app._reconcile_research_source_held_jobs(limit=2)
+
+    assert registry.get_job(first.job_id).dispatch_held is True
+    assert registry.get_job(second.job_id).dispatch_held is False
+    assert dispatched == [second.job_id]
+    ingest_store.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_terminal_listener_schedules_exactly_once(
+    tmp_path: Path,
+) -> None:
+    """Release visibility plus immediate settlement cannot duplicate resume work."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(ingest_store)
+    held = registry.submit(
+        source_path="/managed/source.txt",
+        origin="local",
+        research_source_operation_id="operation-listener-once",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    operation_store = ResearchSourceOperationStore(workspace_db)
+    operation_store.create(
+        _pending_source_operation("operation-listener-once", origin="local")
+    )
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = registry
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = operation_store
+    app.research_paste_staging_store = None
+    app.research_source_association_scheduler = object()
+    app._research_source_terminal_jobs_scheduled = set()
+    app._research_source_restore_in_progress = False
+    groups: list[str] = []
+
+    def record_worker(awaitable, *, group: str) -> None:
+        groups.append(group)
+        awaitable.close()
+
+    app.run_worker = record_worker  # type: ignore[method-assign]
+    registry.add_listener(app._schedule_settled_research_source_operations)
+    app._dispatch_research_source_catalog_job = (  # type: ignore[method-assign]
+        lambda job_id: registry.mark_failed(job_id, error="Immediate owner failure")
+    )
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    assert groups == ["research_source_association"]
+    assert app._research_source_terminal_jobs_scheduled == {held.job_id}
+    ingest_store.close()
+    workspace_db.close()
+
+
+@pytest.mark.asyncio
+async def test_incompatible_held_job_cleans_staging_only_after_durable_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed cancellation keeps both the eligibility hold and paste payload."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(ingest_store)
+    held = registry.submit(
+        source_path="/managed/paste.txt",
+        origin="server",
+        research_source_operation_id="operation-missing",
+        dispatch_held=True,
+        require_persisted=True,
+    )
+    staging = ResearchPasteStagingStore(tmp_path / "staging")
+    artifact = staging.stage("operation-missing", title="Paste", body="private")
+    app = _minimal_app(media_db="present")
+    app.library_ingest_jobs = registry
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = SimpleNamespace(
+        get=lambda _operation_id: None
+    )
+    app.research_paste_staging_store = staging
+    monkeypatch.setattr(
+        app,
+        "_cancel_research_source_prepared_job",
+        MagicMock(side_effect=OSError("cancel store unavailable")),
+    )
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    assert registry.get_job(held.job_id).state is IngestJobState.QUEUED
+    assert registry.get_job(held.job_id).dispatch_held is True
+    assert artifact.exists()
+
+    monkeypatch.setattr(
+        app,
+        "_cancel_research_source_prepared_job",
+        TldwCli._cancel_research_source_prepared_job.__get__(app, TldwCli),
+    )
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    assert registry.get_job(held.job_id).state is IngestJobState.CANCELLED
+    assert not artifact.exists()
+    ingest_store.close()
+
+
+def test_research_local_classification_warning_omits_managed_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unexpected classifier failure logs lineage, never a private staging path."""
+
+    app = _minimal_app(media_db="present")
+    managed_path = str(tmp_path / "research" / "paste" / "PRIVATE-name.txt")
+    monkeypatch.setattr(
+        app_module,
+        "classify_ingest_source",
+        MagicMock(side_effect=RuntimeError(f"classifier broke for {managed_path!r}")),
+    )
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        app._prepare_library_ingest_job_admitted(
+            source_path=managed_path,
+            ingest_options={},
+            title="Paste",
+            author="",
+            keywords=(),
+            perform_analysis=False,
+            chunk_enabled=False,
+            chunk_size=DEFAULT_CHUNK_SIZE,
+            batch_id=None,
+            backend="local",
+            research_source_operation_id="operation-private-log",
+            require_persisted=False,
+        )
+    finally:
+        logger.remove(sink)
+
+    rendered = "".join(messages)
+    assert managed_path not in rendered
+    assert "PRIVATE-name.txt" not in rendered
+    assert "operation-private-log" in rendered
+
+
+def test_dispatch_failure_settlement_does_not_renotify_an_already_terminal_job(
+    tmp_path: Path,
+) -> None:
+    """A dispatcher that settled before raising must not schedule twice."""
+
+    app = _minimal_app(media_db="present")
+    store = LibraryIngestJobsDB(tmp_path / "terminal-dispatch.sqlite")
+    app.library_ingest_jobs.attach_store(store)
+    job = app.library_ingest_jobs.submit(
+        source_path="https://example.invalid/evidence",
+        origin="server",
+        research_source_operation_id="operation-terminal-dispatch",
+        require_persisted=True,
+    )
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Owner already settled")
+    notifications: list[IngestJobState] = []
+    app.library_ingest_jobs.add_listener(
+        lambda: notifications.append(app.library_ingest_jobs.get_job(job.job_id).state)
+    )
+
+    settled = app._fail_research_source_prepared_job(job.job_id)
+
+    assert settled.state is IngestJobState.FAILED
+    assert settled.error == "Owner already settled"
+    assert notifications == []
+    store.close()
 
 
 def _minimal_stt_app() -> TldwCli:
@@ -56,6 +539,40 @@ def _minimal_stt_app() -> TldwCli:
     app._marshal_local_stt_call = lambda callback: callback()  # type: ignore[method-assign]
     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
     return app
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("job_state", "catalog_status", "expected_delete"),
+    [
+        ("done", SourceOperationStatus.SUCCEEDED, True),
+        ("cancelled", SourceOperationStatus.FAILED, True),
+        ("failed", SourceOperationStatus.FAILED, False),
+    ],
+)
+async def test_terminal_research_job_cleans_paste_only_after_success_or_cancel(
+    job_state: str,
+    catalog_status: SourceOperationStatus,
+    expected_delete: bool,
+) -> None:
+    app = object.__new__(TldwCli)
+    scheduler = SimpleNamespace(
+        resume=AsyncMock(return_value=SimpleNamespace(catalog_status=catalog_status))
+    )
+    staging = SimpleNamespace(delete=MagicMock(return_value=True))
+    app.research_source_association_scheduler = scheduler
+    app.research_paste_staging_store = staging
+    app._research_source_terminal_jobs_scheduled = {"job-1"}
+    app.library_ingest_jobs = SimpleNamespace(
+        get_job=lambda _job_id: SimpleNamespace(state=SimpleNamespace(value=job_state))
+    )
+
+    await app._resume_settled_research_source_operation("job-1", "operation-1")
+
+    scheduler.resume.assert_awaited_once_with("operation-1")
+    assert staging.delete.called is expected_delete
+    if expected_delete:
+        staging.delete.assert_called_once_with("operation-1")
 
 
 def test_local_stt_accessors_share_one_executor_and_coordinator_without_deadlock(
@@ -1407,9 +1924,7 @@ class TestIngestJobOptions:
         assert options["start_time"] is None
         assert options["end_time"] is None
 
-    def test_cookies_file_maps_to_use_cookies_and_cookies(
-        self, tmp_path: Any
-    ) -> None:
+    def test_cookies_file_maps_to_use_cookies_and_cookies(self, tmp_path: Any) -> None:
         """(task-3306) A cookies FILE PATH travels; its presence IS the
         use_cookies flag -- there is no separate toggle to go stale.
 
@@ -1534,11 +2049,13 @@ class TestIngestJobOptions:
         monkeypatch.setattr(
             app_module,
             "get_cli_setting",
-            lambda key, *args: secret_path
-            if key == "transcription.transcribe_cpp.model_path"
-            else args[0]
-            if args
-            else None,
+            lambda key, *args: (
+                secret_path
+                if key == "transcription.transcribe_cpp.model_path"
+                else args[0]
+                if args
+                else None
+            ),
         )
         app = _minimal_app()
         job = _make_job(
@@ -1864,18 +2381,13 @@ class TestIngestJobOptionsWiring:
         app = _minimal_app()
         job = _make_job(source_path="/tmp/test.txt", ingest_options=snapshot)
         local_options = app._ingest_job_options(job)
-        server_kwargs = build_server_ingest_kwargs(
-            "/tmp/test.txt", options=snapshot
-        )
+        server_kwargs = build_server_ingest_kwargs("/tmp/test.txt", options=snapshot)
 
         assert local_options["chunk_options"] is not None
         assert (
-            local_options["chunk_options"]["overlap"]
-            == server_kwargs["chunk_overlap"]
+            local_options["chunk_options"]["overlap"] == server_kwargs["chunk_overlap"]
         )
-        assert (
-            local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
-        )
+        assert local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
 
     def test_fresh_snapshot_seeds_shared_generic_schema_defaults(self) -> None:
         screen = object.__new__(LibraryScreen)
@@ -1895,10 +2407,7 @@ class TestIngestJobOptionsWiring:
             }
         }
 
-        assert {
-            name: snapshot["generic"][name]
-            for name in defaults
-        } == defaults
+        assert {name: snapshot["generic"][name] for name in defaults} == defaults
 
     def test_server_request_strips_external_parakeet_path_and_scope(self) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
@@ -2137,8 +2646,8 @@ class TestIngestJobOptionsWiring:
         options = app._ingest_job_options(job)
 
         assert "api_name" not in options
-        assert "not supported for ingest analysis" in (
-            options["analysis_skipped_reason"]
+        assert (
+            "not supported for ingest analysis" in (options["analysis_skipped_reason"])
         )
 
 
@@ -2164,10 +2673,7 @@ class TestIngestDoneProgress:
             == "Imported notes.txt — analysis skipped: OpenAI is not ready "
             "(Missing API key)"
         )
-        assert (
-            progress["analysis_skipped"]
-            == "OpenAI is not ready (Missing API key)"
-        )
+        assert progress["analysis_skipped"] == "OpenAI is not ready (Missing API key)"
 
     def test_analysis_failed_reason_appended(self) -> None:
         """(task-3301 xhigh review round, F4) A failed analysis annotates
@@ -2198,9 +2704,7 @@ class TestIngestDoneProgress:
             == "Imported clip.mp4 — cookies ignored: Cookies file not found: "
             "/tmp/c.txt"
         )
-        assert progress["cookies_problem"] == (
-            "Cookies file not found: /tmp/c.txt"
-        )
+        assert progress["cookies_problem"] == ("Cookies file not found: /tmp/c.txt")
 
     def test_duplicate_message_keeps_matched_prefix(self) -> None:
         from tldw_chatbook.Library.library_ingest_jobs import (
@@ -2238,9 +2742,125 @@ def test_submit_refuses_active_local_duplicate_before_second_append(
 
     assert [job.job_id for job in app.library_ingest_jobs.jobs()] == before_ids
     allocate_job_id.assert_not_called()
-    assert caught.value.matches == (
-        ActiveIngestJobRef(first.job_id, first.state),
+    assert caught.value.matches == (ActiveIngestJobRef(first.job_id, first.state),)
+
+
+def test_research_ingest_required_origin_fails_before_queue_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_app(media_db="present")
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "local")
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ValueError, match="selected Server authority"):
+        app.submit_library_ingest_job(
+            source_path="https://example.invalid/paper",
+            research_source_operation_id="operation-server-1",
+            required_origin="server",
+        )
+
+    assert app.library_ingest_jobs.jobs() == ()
+    admitted.assert_not_called()
+
+
+def test_research_ingest_rejects_changed_server_identity_before_queue_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_app(media_db="present")
+    captured_context = SimpleNamespace(
+        active_server_id="server-a",
+        auth_token="captured-token",
+        credential_source="fixture",
     )
+    changed_context = SimpleNamespace(
+        active_server_id="server-b",
+        auth_token="changed-token",
+        credential_source="fixture",
+    )
+    operation = ResearchSourceOperation(
+        operation_id="operation-server-qualified",
+        idempotency_key="intake-server-qualified",
+        data_source=WorkspaceDataSource.SERVER,
+        server_profile_id="server-a",
+        principal_id=event_principal_id_from_active_context(captured_context) or "",
+        workspace_id="workspace-server",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+    app.research_source_operation_store = SimpleNamespace(
+        get=lambda operation_id: (
+            operation if operation_id == operation.operation_id else None
+        )
+    )
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: changed_context
+    )
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "server")
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ValueError, match="captured Server workspace authority"):
+        app.submit_library_ingest_job(
+            source_path="https://example.invalid/paper",
+            research_source_operation_id=operation.operation_id,
+            required_origin="server",
+        )
+
+    assert app.library_ingest_jobs.jobs() == ()
+    admitted.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_remote_research_dispatch_rechecks_qualified_identity_before_service_call() -> (
+    None
+):
+    app = _minimal_app(media_db="present")
+    captured_context = SimpleNamespace(
+        active_server_id="server-a",
+        auth_token="captured-token",
+        credential_source="fixture",
+    )
+    changed_context = SimpleNamespace(
+        active_server_id="server-b",
+        auth_token="changed-token",
+        credential_source="fixture",
+    )
+    operation = ResearchSourceOperation(
+        operation_id="operation-delayed-server",
+        idempotency_key="intake-delayed-server",
+        data_source=WorkspaceDataSource.SERVER,
+        server_profile_id="server-a",
+        principal_id=event_principal_id_from_active_context(captured_context) or "",
+        workspace_id="workspace-server",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+    app.research_source_operation_store = SimpleNamespace(
+        get=lambda _operation_id: operation
+    )
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: changed_context
+    )
+    submit = AsyncMock(return_value={"jobs": [], "errors": []})
+    app.server_media_reading_service = SimpleNamespace(submit_ingest_jobs=submit)
+    job = app.library_ingest_jobs.submit(
+        source_path="paper.pdf",
+        origin="server",
+        research_source_operation_id=operation.operation_id,
+    )
+
+    await TldwCli._send_server_ingest_job.__wrapped__(app, job.job_id, {"files": []})
+
+    submit.assert_not_called()
+    failed = app.library_ingest_jobs.get_job(job.job_id)
+    assert failed is not None
+    assert failed.state is IngestJobState.FAILED
+    assert "captured Server workspace authority" in failed.error
 
 
 def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
@@ -2282,9 +2902,7 @@ def test_submit_refuses_active_server_duplicate_before_remote_call(
     source = tmp_path / "a.txt"
     source.write_text("body")
     monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "server")
-    active = app.library_ingest_jobs.submit(
-        source_path=str(source), origin="server"
-    )
+    active = app.library_ingest_jobs.submit(source_path=str(source), origin="server")
     remote = MagicMock()
     monkeypatch.setattr(app, "_submit_server_ingest_job", remote)
 
@@ -2798,9 +3416,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     assert progress_context == (app._ingest_parse_pool_generation, valid.job_id)
     assert options["transcription_provider"] == "faster-whisper"
     routing_warnings = [
-        message
-        for message in warning_messages
-        if "batch STT routing failed" in message
+        message for message in warning_messages if "batch STT routing failed" in message
     ]
     assert len(routing_warnings) == 1
     assert invalid.job_id in routing_warnings[0]
@@ -2886,20 +3502,14 @@ class TestWriteStageFailureCategory:
         )
 
         exc = NoContentExtractedError("No text could be extracted from x.pdf.")
-        assert (
-            app_module._library_ingest_write_failure_category(exc)
-            == "no_content"
-        )
+        assert app_module._library_ingest_write_failure_category(exc) == "no_content"
 
     def test_a_real_database_failure_is_a_write_error(self) -> None:
         """The one cause a bare retry can genuinely clear keeps its name."""
         from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError
 
         exc = DatabaseError("database is locked")
-        assert (
-            app_module._library_ingest_write_failure_category(exc)
-            == "write_error"
-        )
+        assert app_module._library_ingest_write_failure_category(exc) == "write_error"
 
     def test_an_unknown_write_stage_failure_is_silent_not_optimistic(
         self,
@@ -2943,9 +3553,7 @@ class TestServerSubmitRefusesZeroByteSources:
         )
         return app
 
-    def test_a_zero_byte_file_fails_locally_and_is_never_sent(
-        self, tmp_path
-    ) -> None:
+    def test_a_zero_byte_file_fails_locally_and_is_never_sent(self, tmp_path) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
             server_ingest_refusal,
         )
@@ -3010,6 +3618,4 @@ class TestServerSubmitRefusesZeroByteSources:
         )
 
         assert job.state is IngestJobState.QUEUED
-        assert [kwargs["file_paths"] for _job_id, kwargs in app._sent] == [
-            [str(real)]
-        ]
+        assert [kwargs["file_paths"] for _job_id, kwargs in app._sent] == [[str(real)]]

@@ -27,6 +27,7 @@ TAB_STTS = "stts"
 TAB_STUDY = "study"
 TAB_WRITING = "writing"
 TAB_RESEARCH = "research"
+TAB_RESEARCH_WORKSPACE = "research_workspace"
 TAB_SUBSCRIPTIONS = "subscriptions"
 TAB_CHATBOOKS = "chatbooks"
 TAB_HOME = "home"
@@ -96,6 +97,7 @@ TAB_DISPLAY_LABELS = {
     TAB_STUDY: "Study",
     TAB_WRITING: "Writing",
     TAB_RESEARCH: "Research",
+    TAB_RESEARCH_WORKSPACE: "Research Workspace",
     TAB_CHATBOOKS: "Chatbooks",
     TAB_HOME: "Home",
     TAB_LIBRARY: "Library",
