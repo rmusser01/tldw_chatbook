@@ -9180,7 +9180,7 @@ class ConsoleChatStore:
             current = self._native_parent_by_message.get(current)
         return None
 
-    def durable_parent_for_message(self, message_id: str) -> tuple[bool, str | None]:
+    def durable_parent_for_message(self, message_id: str) -> str | None:
         """Resolve the persisted parent one durable write should thread.
 
         The dispatch checkpoint path used to read ``message.parent_message_id``
@@ -9194,25 +9194,19 @@ class ConsoleChatStore:
             message_id: Native id of the message about to be persisted.
 
         Returns:
-            ``(has_native_parent, persisted_parent_id)``. The second element
-            is the nearest PERSISTED ancestor (non-persisted mid-chain nodes
-            are skipped, matching :meth:`_persist_new_message`), or ``None``
-            when nothing above it is durable.
+            The nearest PERSISTED ancestor's persisted id -- non-persisted
+            mid-chain nodes are skipped, matching :meth:`_persist_new_message`
+            -- or ``None`` when nothing above it is durable, which is the
+            documented "true persisted root" answer rather than an error.
         """
 
         session_id = self._message_session_index.get(message_id)
         if session_id is None:
-            return (False, None)
+            return None
         message = self._nodes_by_session.get(session_id, {}).get(message_id)
         if message is None:
-            return (False, None)
-        has_native_parent = (
-            self._native_parent_by_message.get(message_id) is not None
-        )
-        return (
-            has_native_parent,
-            self._nearest_persisted_ancestor_id(session_id, message),
-        )
+            return None
+        return self._nearest_persisted_ancestor_id(session_id, message)
 
     def _persist_new_message(
         self,

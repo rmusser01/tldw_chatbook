@@ -5592,9 +5592,7 @@ class ConsoleChatController:
         # documented "true persisted root" answer, which is exactly what the
         # store does with it, and `insert_with_messages` validates a parent
         # only when one is given.
-        _, parent_message_id = self.store.durable_parent_for_message(
-            echoed_user.id
-        )
+        parent_message_id = self.store.durable_parent_for_message(echoed_user.id)
         contributions = (
             (preparation_outcome.contribution,)
             if preparation_outcome is not None
