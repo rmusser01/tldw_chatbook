@@ -38,7 +38,7 @@ Move Database Notes into the shared Library adaptive reader structure while pres
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Inventory Notes capabilities and draft authority
-2. Add presentation-only reader state with test-first identity and mode contracts
+2. Add presentation-only reader behavior with test-first identity and mode contracts
 3. Split the persistent list and permanent work pane without changing Notes authority
 4. Verify workflows, geometry, focus, and capability preservation
 
@@ -51,9 +51,10 @@ Reason: consumes the accepted Library structural boundary without changing Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 - Mounted Database Notes as one shared adaptive reader with retained Library, Items, and Work owners. The Notes list remains mounted while the work pane projects loading, Edit, Preview, Info, Create/templates, import, lasting sync, conflict, delete, and recovery states.
-- Kept `LibraryNoteSessionCoordinator` and its snapshot as the sole item-draft authority. Presentation state only controls mode, compact layout, bulk read-only labelling, and retained-pane visibility; no multi-item draft registry or replacement authority was added.
+- Kept `LibraryNoteSessionCoordinator` and its snapshot as the sole item-draft authority. The mounted work pane projects mode, compact layout, bulk read-only labelling, and retained-pane visibility directly from the production session and shell state; no multi-item draft registry or replacement authority was added.
 - Preserved the existing dirty-flush, generation, version, destructive-admission, retry, exact-placement, and receipt contracts. Final review hardening added dirty guards to permanent Navigator tasks, delayed placement identity commits until navigation is permitted, and prevented Back/Save from discarding or mutating the labelled bulk preview.
 - Added adaptive geometry, independent list collapse, compact controls, truthful focus restoration, and narrow-width minimum handling. A live TUI walkthrough at 170x48 confirmed all three panes and at 90x30 confirmed optional navigation collapse with Work receiving the available width.
-- Verification after rebasing onto `origin/dev` at `1b21f5339`: 133 Notes shell tests passed; 88 reader/state/widget/CSS tests passed; 29 import/sync/File Notes journey tests passed with one unchanged baseline case deselected; Ruff, compileall, and `git diff --check` passed. A four-file branch-versus-`dev` comparison produced the same 28 pre-existing failures on each side and no branch-only failure. Two review passes ended with no actionable findings.
+- Verification after rebasing onto `origin/dev` at `d05714ac6`: 123 production reader/session/widget/CSS tests passed; the earlier 133 Notes shell tests and 29 import/sync/File Notes journey tests passed with one unchanged baseline case deselected; Ruff, compileall, and `git diff --check` passed. A four-file branch-versus-`dev` comparison produced the same 28 pre-existing failures on each side and no branch-only failure. Two internal review passes ended with no actionable findings.
+- Qodo correctly identified that the standalone `NotesReaderState` model and its unit tests were disconnected from the mounted reader. The review fix removed that unused parallel model rather than wiring in a second Notes authority, added an architecture regression that requires the production session coordinator to remain the only Database Notes reader model, and retained production-shaped UI/session coverage for all reader behavior.
 - ADR: implemented the existing boundary in `backlog/decisions/086-library-adaptive-reader-shell.md`; no new ADR was required because storage, sync ownership, and service contracts were unchanged. No generalisable new repository lesson was identified beyond the task-specific regression coverage added here.
 <!-- SECTION:NOTES:END -->
