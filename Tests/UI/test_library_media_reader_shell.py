@@ -642,6 +642,106 @@ async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_shared_library_pane_writes_settle_latest_across_destinations(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    disk = {"library_open": True}
+    writes = []
+    older_started = threading.Event()
+    newer_started = threading.Event()
+
+    def save_setting(section, key, value):
+        if value is False:
+            older_started.set()
+            newer_started.wait(timeout=1)
+        else:
+            disk[key] = value
+            writes.append((section, key, value))
+            newer_started.set()
+            return True
+        disk[key] = value
+        writes.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        conversations = await _wait_for_selector(
+            screen, pilot, "#library-conversations-reader-shell"
+        )
+        conversations.library_grip.press()
+        await asyncio.to_thread(older_started.wait, 10)
+
+        screen.query_one("#library-row-browse-media", Button).press()
+        media = await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+        assert not media.effective_layout.library_open
+        media.library_grip.press()
+        await pilot.pause()
+        await screen.workers.wait_for_complete()
+
+        assert disk["library_open"] is True, writes
+        assert set(writes) == {
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        }
+
+
+@pytest.mark.asyncio
+async def test_failed_library_pane_write_resyncs_mounted_peer_shell(monkeypatch):
+    app = _build_media_test_app()
+    write_started = threading.Event()
+    release_write = threading.Event()
+    notices = []
+
+    def fail_save(*_args):
+        write_started.set()
+        release_write.wait(timeout=10)
+        return False
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", fail_save)
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append((message, kwargs)),
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        conversations = await _wait_for_selector(
+            screen, pilot, "#library-conversations-reader-shell"
+        )
+        conversations.library_grip.press()
+        await asyncio.to_thread(write_started.wait, 10)
+        try:
+            screen.query_one("#library-row-browse-media", Button).press()
+            media = await _wait_for_selector(
+                screen, pilot, "#library-media-reader-shell"
+            )
+            assert not media.effective_layout.library_open
+        finally:
+            release_write.set()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(notices),
+            message="Failed pane write did not report or restore.",
+        )
+        await pilot.pause()
+        assert screen._library_media_reader_preferences.library_open
+        assert media.effective_layout.library_open
+
+
+@pytest.mark.asyncio
 async def test_settings_refresh_re_resolves_mounted_shell_without_media_reads_or_writes(
     monkeypatch,
 ):

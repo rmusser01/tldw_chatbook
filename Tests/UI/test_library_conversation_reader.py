@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from textual.containers import VerticalScroll
@@ -1133,6 +1134,50 @@ async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> 
         settled = screen._library_conversation_reader_state
         assert settled.complete and settled.loaded_actions_eligible
         assert [call["message_offset"] for call in service.calls].count(0) == 2
+
+
+@pytest.mark.parametrize("trigger", ("find", "retry"))
+@pytest.mark.asyncio
+async def test_select_mode_keeps_partial_reader_bulk_fence_during_recovery(
+    trigger: str,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records()[:1])
+    service = _ProgressiveConversationService()
+    app.local_chat_conversation_service = service
+    host = LibraryHarness(app, screen=_active_conversations_screen(app))
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await asyncio.to_thread(service.second_started.wait, 10)
+        try:
+            screen.query_one("#library-conversations-select-toggle", Button).press()
+            await pilot.pause()
+            calls_before_recovery = len(service.calls)
+
+            if trigger == "find":
+                find = screen.query_one("#library-conversation-reader-find", Input)
+                find.value = "needle"
+                find.focus()
+                await pilot.press("enter")
+            else:
+                screen.retry_library_conversation_reader(
+                    SimpleNamespace(stop=lambda: None)
+                )
+            await pilot.pause()
+
+            state = screen._library_conversation_reader_state
+            assert screen._library_conversations_select_mode
+            assert state.bulk_active
+            assert not state.loading
+            assert not state.loaded_actions_eligible
+            assert len(service.calls) == calls_before_recovery
+        finally:
+            service.release_second.set()
+
+        await screen.workers.wait_for_complete()
+        assert screen._library_conversation_reader_state.bulk_active
 
 
 @pytest.mark.asyncio

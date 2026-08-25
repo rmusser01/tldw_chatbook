@@ -3126,8 +3126,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_preferences = (
             self._load_library_conversation_reader_preferences()
         )
+        library_pane_persistence_lock = asyncio.Lock()
+        self._library_reader_persistence_generations = {
+            "library": 0,
+            "conversations_items": 0,
+            "media_items": 0,
+        }
         self._library_conversation_reader_persistence_locks = {
-            "library": asyncio.Lock(),
+            "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
         self._library_conversation_find_focus_intent: tuple[int, int, str] | None = None
@@ -3213,7 +3219,7 @@ class LibraryScreen(BaseAppScreen):
             self._load_library_media_reader_preferences()
         )
         self._library_media_reader_persistence_locks = {
-            "library": asyncio.Lock(),
+            "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
         self._library_reader_layout_refresh_generation = int(
@@ -5380,18 +5386,56 @@ class LibraryScreen(BaseAppScreen):
         other = getattr(self, other_attribute)
         setattr(self, other_attribute, dataclasses.replace(other, library_open=value))
 
+    def _claim_library_reader_persistence(
+        self,
+        destination: Literal["media", "conversations"],
+        pane: Literal["library", "items"],
+    ) -> int:
+        """Claim the shared Library or destination-specific Items authority."""
+        key = "library" if pane == "library" else f"{destination}_items"
+        generation = self._library_reader_persistence_generations[key] + 1
+        self._library_reader_persistence_generations[key] = generation
+        return generation
+
+    def _library_reader_persistence_is_current(
+        self,
+        destination: Literal["media", "conversations"],
+        pane: Literal["library", "items"],
+        generation: int,
+    ) -> bool:
+        key = "library" if pane == "library" else f"{destination}_items"
+        return self._library_reader_persistence_generations[key] == generation
+
+    def _sync_library_reader_preference_layout(
+        self,
+        destination: Literal["media", "conversations"],
+        key: Literal["library_open", "items_open"],
+        priority: Literal["library", "items"] | None = None,
+    ) -> None:
+        """Sync the mounted consumer of one optimistic choice or rollback."""
+        if key == "library_open" or destination == "media":
+            self._sync_library_media_reader_layout_from_shell(priority)
+        if key == "library_open" or destination == "conversations":
+            self._sync_library_conversation_reader_layout_from_shell(priority)
+
     async def _persist_library_conversation_reader_preference(
         self,
         pane: Literal["library", "items"],
         value: bool,
         previous_value: bool,
+        generation: int,
     ) -> None:
         """Persist one Conversations grip choice, rolling back failed writes."""
         key: Literal["library_open", "items_open"] = (
             "library_open" if pane == "library" else "items_open"
         )
         async with self._library_conversation_reader_persistence_locks[pane]:
-            if getattr(self._library_conversation_reader_preferences, key) != value:
+            if (
+                not self._library_reader_persistence_is_current(
+                    "conversations", pane, generation
+                )
+                or getattr(self._library_conversation_reader_preferences, key) != value
+            ):
                 return
             try:
                 persisted = await asyncio.to_thread(
@@ -5404,13 +5448,17 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 persisted = False
-        if persisted is True or (
-            getattr(self._library_conversation_reader_preferences, key) != value
+        if (
+            persisted is True
+            or not self._library_reader_persistence_is_current(
+                "conversations", pane, generation
+            )
+            or getattr(self._library_conversation_reader_preferences, key) != value
         ):
             return
         self._replace_library_reader_preference("conversations", key, previous_value)
         self._mirror_library_conversation_reader_preference(key, previous_value)
-        self._sync_library_conversation_reader_layout_from_shell()
+        self._sync_library_reader_preference_layout("conversations", key)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(
@@ -5536,6 +5584,7 @@ class LibraryScreen(BaseAppScreen):
         pane: Literal["library", "items"],
         value: bool,
         previous_value: bool,
+        generation: int,
     ) -> None:
         """Persist one manual grip choice and restore it if the write fails."""
         key: Literal["library_open", "items_open"] = (
@@ -5544,7 +5593,12 @@ class LibraryScreen(BaseAppScreen):
         async with self._library_media_reader_persistence_locks[pane]:
             # If another press superseded this value before its write began,
             # only the newer preference needs to reach disk.
-            if getattr(self._library_media_reader_preferences, key) != value:
+            if (
+                not self._library_reader_persistence_is_current(
+                    "media", pane, generation
+                )
+                or getattr(self._library_media_reader_preferences, key) != value
+            ):
                 return
             try:
                 persisted = await asyncio.to_thread(
@@ -5560,11 +5614,14 @@ class LibraryScreen(BaseAppScreen):
 
         # A newer press may already have replaced this attempted value. Do
         # not let an older failed write roll that newer preference back.
-        if getattr(self._library_media_reader_preferences, key) != value:
+        if (
+            not self._library_reader_persistence_is_current("media", pane, generation)
+            or getattr(self._library_media_reader_preferences, key) != value
+        ):
             return
         self._replace_library_reader_preference("media", key, previous_value)
         self._mirror_library_media_reader_preference(key, previous_value)
-        self._sync_library_media_reader_layout_from_shell()
+        self._sync_library_reader_preference_layout("media", key)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(
@@ -5619,15 +5676,18 @@ class LibraryScreen(BaseAppScreen):
             key: Literal["library_open", "items_open"] = (
                 "library_open" if event.pane == "library" else "items_open"
             )
+            generation = self._claim_library_reader_persistence(
+                "conversations", event.pane
+            )
             previous_value = getattr(self._library_conversation_reader_preferences, key)
             self._replace_library_reader_preference("conversations", key, opening)
             self._mirror_library_conversation_reader_preference(key, opening)
-            self._sync_library_conversation_reader_layout_from_shell(
-                event.pane if opening else None
+            self._sync_library_reader_preference_layout(
+                "conversations", key, event.pane if opening else None
             )
             self.run_worker(
                 self._persist_library_conversation_reader_preference(
-                    event.pane, opening, previous_value
+                    event.pane, opening, previous_value, generation
                 ),
                 group=f"library_conversation_reader_{event.pane}_persistence",
             )
@@ -5639,17 +5699,19 @@ class LibraryScreen(BaseAppScreen):
         key: Literal["library_open", "items_open"] = (
             "library_open" if event.pane == "library" else "items_open"
         )
+        generation = self._claim_library_reader_persistence("media", event.pane)
         previous_value = getattr(self._library_media_reader_preferences, key)
         self._replace_library_reader_preference("media", key, opening)
         self._mirror_library_media_reader_preference(key, opening)
-        self._sync_library_media_reader_layout_from_shell(
-            event.pane if opening else None
+        self._sync_library_reader_preference_layout(
+            "media", key, event.pane if opening else None
         )
         self.run_worker(
             self._persist_library_media_reader_preference(
                 event.pane,
                 opening,
                 previous_value,
+                generation,
             ),
             group=f"library_media_reader_{event.pane}_persistence",
         )
@@ -19612,6 +19674,11 @@ class LibraryScreen(BaseAppScreen):
 
     def _retry_library_conversation_reader(self) -> None:
         """Start one generation-fenced reader retry when selection is known."""
+        if (
+            self._library_conversations_select_mode
+            or self._library_conversation_reader_state.bulk_active
+        ):
+            return
         try:
             state, request = retry_conversation(self._library_conversation_reader_state)
         except ValueError:
