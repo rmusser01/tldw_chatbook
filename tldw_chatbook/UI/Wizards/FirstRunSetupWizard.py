@@ -147,6 +147,60 @@ class SetupRadioButton(RadioButton):
         return super()._button
 
 
+class SetupRadioSet(RadioSet):
+    """Wizard radio group with WAI-ARIA radio semantics (TASK-21142).
+
+    UAT N-8: stock RadioSet separates highlight from selection, so a user
+    who arrows to "Full setup" and presses Next silently proceeds on the
+    Quick track — the highlight glyph is far subtler than the ● selection
+    glyph and reads as a no-op. Here selection follows the highlight, the
+    way OS radio groups and the WAI-ARIA radio pattern behave.
+
+    UAT N-1: stock RadioSet consumes Enter as a redundant re-toggle. With
+    selection following the highlight there is nothing left for Enter to
+    toggle, so it requests a wizard advance instead — the "form + Enter =
+    continue" reflex.
+    """
+
+    class AdvanceRequested(Message):
+        """Enter on a settled radio group asks the wizard to advance."""
+
+    BINDINGS = [Binding("enter", "request_advance", "Next", show=False)]
+
+    def action_next_button(self) -> None:
+        super().action_next_button()
+        self._select_highlighted()
+
+    def action_previous_button(self) -> None:
+        super().action_previous_button()
+        self._select_highlighted()
+
+    def _select_highlighted(self) -> None:
+        # Follow the highlight only during USER navigation: RadioSet's own
+        # _on_mount calls action_next_button() to seat the initial
+        # highlight, and following that call would auto-select the first
+        # option on every mount — clobbering deliberately-unselected
+        # groups (AppearanceStep's fresh-run theme radio commits nothing
+        # precisely because nothing is pressed). Focus is the discriminator:
+        # key bindings only fire on the focused set.
+        if not self.has_focus:
+            return
+        # ``_selected`` is RadioSet's highlight index — private, but this
+        # repo pins textual >=8,<9 and the coupling fails loudly in the
+        # keyboard contract tests on any upgrade that changes it.
+        index = self._selected
+        buttons = list(self.query(RadioButton))
+        if index is None or not (0 <= index < len(buttons)):
+            return
+        button = buttons[index]
+        if not button.value and not button.disabled:
+            button.value = True
+
+    def action_request_advance(self) -> None:
+        self._select_highlighted()
+        self.post_message(self.AdvanceRequested())
+
+
 class SetupWizardProgress(WizardProgress):
     """Progress indicator rendered from the resolved first-run track."""
 
@@ -386,7 +440,7 @@ class SetupStep(WizardStep):
             # Textual's per-item "attach to the enclosing with-block
             # container" step (compose_add_child), which normally runs
             # inside the SAME loop that calls next() on this generator.
-            # Nested containers (``with RadioSet(): yield SetupRadioButton``)
+            # Nested containers (``with SetupRadioSet(): yield SetupRadioButton``)
             # would silently end up childless -- their leaves float as
             # stray top-level siblings instead -- if drained with a bare
             # list(). textual.compose.compose() reproduces that per-item
@@ -3030,7 +3084,7 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
-            with RadioSet(id="setup-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-model-choice", classes="setup-choice-list"):
                 # disabled=True: an un-disabled placeholder is a real,
                 # toggleable RadioButton -- pressing Enter/Space while it is
                 # the only/highlighted option (e.g. an impatient user, or
@@ -3843,7 +3897,7 @@ class VoiceSetupStep(SetupStep):
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
             yield Label("Service", classes="setup-field-label")
-            with RadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
+            with SetupRadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
                 yield SetupRadioButton(
                     "PocketTTS",
                     id="setup-voice-preset-pocket",
@@ -3864,7 +3918,7 @@ class VoiceSetupStep(SetupStep):
                 placeholder="http://127.0.0.1:8765/v1/audio/speech",
             )
             yield Label("Authentication", classes="setup-field-label")
-            with RadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
+            with SetupRadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
                 yield SetupRadioButton(
                     "None",
                     id="setup-voice-auth-none",
@@ -4426,7 +4480,7 @@ class RagStep(SetupStep):
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
-            with RadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
                 for model_id in self._embedding_model_ids():
                     yield SetupRadioButton(model_id)
 
@@ -4710,7 +4764,7 @@ class SpeechSetupStep(SetupStep):
                 disabled=self._external_commit_pending,
             )
             yield Label("Language", classes="setup-field-label")
-            with RadioSet(
+            with SetupRadioSet(
                 id="setup-speech-language-choice", classes="setup-choice-list"
             ):
                 for option in speech_state.speech_language_options(
@@ -4731,7 +4785,7 @@ class SpeechSetupStep(SetupStep):
                         disabled=not option.selectable or self._lifecycle_pending,
                     )
             yield Label("Precision", classes="setup-field-label")
-            with RadioSet(
+            with SetupRadioSet(
                 id="setup-speech-precision-choice", classes="setup-choice-list"
             ):
                 for option in speech_state.speech_precision_options(
@@ -6281,7 +6335,7 @@ class AppearanceStep(SetupStep):
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
-            with RadioSet(id="setup-theme-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-theme-choice", classes="setup-choice-list"):
                 yield from self._theme_buttons(self._theme_shortlist())
             yield Button(
                 "Show all themes…",
@@ -6289,7 +6343,7 @@ class AppearanceStep(SetupStep):
                 classes="setup-tertiary-button",
             )
             yield Label("Splash screen card", classes="setup-field-label")
-            with RadioSet(id="setup-splash-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-splash-choice", classes="setup-choice-list"):
                 yield SetupRadioButton("Surprise me (random)", value=True)
                 for card_name in self._card_names()[:10]:
                     yield SetupRadioButton(card_name)
@@ -6474,7 +6528,7 @@ class WelcomeStep(SetupStep):
                 "changed later in Settings, and every step can be skipped.",
                 classes="setup-subtitle",
             )
-            with RadioSet(id="setup-track-choice", classes="setup-choice-list"):
+            with SetupRadioSet(id="setup-track-choice", classes="setup-choice-list"):
                 # TASK-2154.9 (FR-02): name the steps the tracker will show
                 # (Welcome is this one; Provider, Model and Summary follow)
                 # so the "Step 1 of 4" count is not a surprise after picking
@@ -6859,8 +6913,56 @@ class _ProviderSaveStatus(Static):
     can_focus = True
 
 
+class SetupWizardNavigation(WizardNavigation):
+    """Footer where Tab reaches Next before the abandon action (UAT N-2).
+
+    TASK-21142: Textual's focus order is VISUAL order — siblings sort by
+    ``_focus_sort_key`` = (y, x), not DOM order — so with the stock
+    layout (Cancel far left) Tab from step content always landed on the
+    abandon action first, and a web-form "Tab, Enter" reflex opened the
+    exit dialog. A DOM reorder alone changes nothing (measured: the chain
+    stayed Cancel-first). The fix is the Windows-wizard footer
+    convention: progress text docked left, and a right-aligned
+    [← Back] [Next →] [Exit] cluster — visually conventional, and the
+    (y, x) sort then yields Back → Next → Exit, with Next as the first
+    enabled stop after step content. Layout lives in the
+    ``.setup-navigation`` rules in _wizards.tcss; BaseWizard stays
+    unmodified per this module's house rule.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="wizard-progress", classes="wizard-progress-text")
+        yield Button("← Back", id="wizard-back", variant="default", disabled=True)
+        yield Button("Next →", id="wizard-next", variant="default", disabled=True)
+        yield Button("Cancel", id="wizard-cancel", variant="error")
+
+
 class SetupWizardContainer(WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
+
+    # TASK-21142 (UAT N-1): Enter advances whenever the focused widget does
+    # not consume it (Buttons press, OptionLists select, Inputs submit —
+    # see _advance_on_input_submit; SetupRadioSet requests an advance).
+    # Merges with WizardContainer's escape/ctrl+b/ctrl+n bindings.
+    BINDINGS = [Binding("enter", "next", "Next step", show=False)]
+
+    @on(SetupRadioSet.AdvanceRequested)
+    def _on_radio_advance_requested(
+        self, event: SetupRadioSet.AdvanceRequested
+    ) -> None:
+        event.stop()
+        self.action_next()
+
+    @on(Input.Submitted)
+    def _advance_on_input_submit(self, event: Input.Submitted) -> None:
+        """Enter in a step Input means "continue" (UAT N-1) — with one
+        exception: the provider key field, where Enter launches the
+        credential probe (TASK-1506's live-but-never-blocking check).
+        """
+        if event.input.id == "setup-provider-api-key":
+            return
+        event.stop()
+        self.action_next()
 
     def __init__(
         self,
@@ -7599,7 +7701,7 @@ class SetupWizardContainer(WizardContainer):
             classes="setup-step-error hidden",
             markup=False,
         )
-        yield WizardNavigation(classes="wizard-navigation")
+        yield SetupWizardNavigation(classes="wizard-navigation setup-navigation")
 
     def _post_mount_hook(self) -> None:
         """Refresh the initial active track after all steps have composed.
@@ -7653,13 +7755,13 @@ class SetupWizardContainer(WizardContainer):
                 "Close setup and stop showing it at launch. You can rerun it "
                 "from Settings ▸ Diagnostics."
             )
-            hints.update("Ctrl+N next · Ctrl+B back · Esc skip setup")
+            hints.update("Enter / Ctrl+N next · Ctrl+B back · Esc skip setup")
         else:
             cancel.label = "Exit setup"
             cancel.tooltip = (
                 "Save completed steps and continue later from Settings ▸ Diagnostics."
             )
-            hints.update("Ctrl+N next · Ctrl+B back · Esc exit setup")
+            hints.update("Enter / Ctrl+N next · Ctrl+B back · Esc exit setup")
 
     def _restore_resume_target(self) -> None:
         """Show a validated resume target and clear its marker after paint."""
@@ -9325,7 +9427,7 @@ class FirstRunSetupWizard(WizardScreen):
         # TASK-1505: the wizard's keys are otherwise undiscoverable — one
         # quiet, always-visible line names them.
         yield Static(
-            "Ctrl+N next · Ctrl+B back · Esc skip setup",
+            "Enter / Ctrl+N next · Ctrl+B back · Esc skip setup",
             id="setup-key-hints",
             classes="setup-key-hints",
         )

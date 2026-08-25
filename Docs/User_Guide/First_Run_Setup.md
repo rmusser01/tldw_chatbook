@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-08 (TASK-21140: pinned step-error surface).
+> Verified against: first-run wizard implementation, 2026-08 (TASK-21142: keyboard model — Enter advances, arrows select, Next-first footer).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 every step can be skipped (Next moves on without configuring it), Escape asks
@@ -9,6 +9,16 @@ Settings.
 
 If a step can't save what you entered, the reason appears just above the
 navigation buttons — fix it and press Next again, or go Back.
+
+## Keyboard
+
+- **Enter** continues to the next step (from a choice list or a text field;
+  in the API-key field it first tests the key). **Ctrl+N** / **Ctrl+B** also
+  move next/back, and **Escape** asks before leaving setup.
+- **Arrow keys select** as they move through a choice list — what you land on
+  is what you get; no extra keypress needed.
+- **Tab** moves from a step's content to **Next** first; the footer runs
+  progress · Back · Next · Skip/Exit, left to right.
 
 ## The two tracks
 

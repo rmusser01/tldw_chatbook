@@ -3223,3 +3223,110 @@ async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
             await _wait_until(
                 pilot, lambda: not isinstance(app.screen, PasswordDialog)
             )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21142 (UAT N-1/N-2/N-8): the wizard keyboard model.
+#   N-8 — arrowing a wizard radio group SELECTS (selection follows
+#         highlight); "Down then Next" must never silently keep Quick.
+#   N-1 — Enter advances: from a radio group, and from step Inputs (except
+#         the provider key field, whose Enter launches the probe).
+#   N-2 — Tab from step content reaches Next before any abandon action.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_arrow_selection_follows_highlight_on_track_radio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            radio = app.screen.query_one("#setup-track-choice")
+            radio.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            welcome = container.steps[0]
+            assert welcome.chosen_track() == TRACK_FULL, (
+                "Down must select, not merely highlight (UAT N-8)"
+            )
+            await pilot.press("up")
+            await pilot.pause()
+            assert welcome.chosen_track() == TRACK_QUICK
+
+
+@pytest.mark.asyncio
+async def test_enter_advances_from_track_radio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            app.screen.query_one("#setup-track-choice").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+
+
+@pytest.mark.asyncio
+async def test_tab_from_step_content_reaches_next_before_cancel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            next_button = app.screen.query_one("#wizard-next", Button)
+            await _wait_until(pilot, lambda: not next_button.disabled)
+            app.screen.query_one("#setup-track-choice").focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app.focused is not None and app.focused.id == "wizard-next", (
+                f"Tab landed on {app.focused!r} — the abandon action must not "
+                "be the first stop after step content (UAT N-2)"
+            )
+
+
+@pytest.mark.asyncio
+async def test_enter_in_model_fallback_input_advances(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Input as _Input
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            for expected in (STEP_PROVIDER, STEP_MODEL):
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda expected=expected: _current_step_id(container) == expected,
+                )
+            fallback = app.screen.query_one("#setup-model-custom", _Input)
+            fallback.focus()
+            await pilot.pause()
+            fallback.value = "some-model"
+            await pilot.press("enter")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_VOICE
+            )
