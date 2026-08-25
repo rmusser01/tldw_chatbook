@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Markdown, Static
 
 from Tests.Chat.test_console_agent_bridge import _bridge, _fence, _test_resolution
@@ -48,6 +49,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleTranscript,
 )
+from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+    ConsoleAssistantTurnWidget,
+)
 
 
 class _ActivityHarness(ConsolidatedCSSApp):
@@ -65,7 +69,13 @@ def _rendered_row_text(transcript: ConsoleTranscript, message_id: str) -> str:
     reading the transcript's message model.
     """
     row = transcript.query_one(f"#console-message-{message_id}")
-    parts = [str(static.renderable) for static in row.query(Static)]
+    try:
+        visible_row = transcript.query_one(
+            f"#console-assistant-turn-{message_id}", ConsoleAssistantTurnWidget
+        )
+    except NoMatches:
+        visible_row = row
+    parts = [str(static.renderable) for static in visible_row.query(Static)]
     if isinstance(row, ConsoleMarkdownMessage):
         parts.append(row.query_one(Markdown).source)
     if not parts:
@@ -379,7 +389,7 @@ async def test_a_ticking_line_repaints_only_its_own_row():
             for key in before_signatures
             if before_signatures[key] != after_signatures.get(key)
         }
-        assert moved == {"message:a1"}, moved
+        assert moved == {"assistant-turn:a1"}, moved
         for message_id in ("u0", "a0", "u1"):
             assert after_computes[message_id] == before_computes[message_id], message_id
         assert after_computes["a1"] > before_computes["a1"]

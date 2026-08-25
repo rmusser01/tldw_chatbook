@@ -768,6 +768,9 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
         probe_calls = []
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(status="done")
 
@@ -998,6 +1001,13 @@ async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
 
             def subagent_runs(self, conversation_id):
                 return list(self._RUNS)
+
+            def subagent_counts(self, conversation_ids):
+                return {
+                    conversation_id: len(self._RUNS)
+                    for conversation_id in conversation_ids
+                    if conversation_id == "conv-A"
+                }
 
             def subagent_run(self, run_id):
                 return next((r for r in self._RUNS if r["id"] == run_id), None)

@@ -609,10 +609,13 @@ class ConsoleInspectorSectionRow(Vertical):
             markup=False,
         )
 
-    def _on_click(self, event: events.Click) -> None:
-        if not self.clickable:
-            return
-        self.post_message(ConsoleInspectorSection.RowActivated(self.section_id, self.row_id))
+    def on_mouse_down(self, _event: events.MouseDown) -> None:
+        """Activate before an owning rail can reflow the row under the pointer."""
+
+        if _event.button == 1 and self.clickable:
+            self.post_message(
+                ConsoleInspectorSection.RowActivated(self.section_id, self.row_id)
+            )
 
     def action_activate_row(self) -> None:
         if not self.clickable:

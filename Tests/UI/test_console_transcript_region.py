@@ -193,8 +193,11 @@ async def _seed_transcript(console, pilot):
         )
         selected_message_id = message.id
     await console._sync_native_console_chat_ui()
-    await pilot.pause()
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    for _ in range(40):
+        if transcript.max_scroll_y > 0:
+            break
+        await pilot.pause(0.05)
     assert transcript.max_scroll_y > 0
     transcript.select_message(selected_message_id)
     return transcript, selected_message_id

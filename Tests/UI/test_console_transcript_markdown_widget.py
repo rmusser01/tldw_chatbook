@@ -33,6 +33,19 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     _resolve_textual_roleplay_blocks,
     get_console_assistant_markdown,
 )
+from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+    ConsoleAssistantTurnWidget,
+)
+
+
+def _assistant_header(
+    transcript: ConsoleTranscript, message_id: str
+) -> ConsoleMessageHeader:
+    """Return the header owned by an Assistant turn's composite shell."""
+    turn = transcript.query_one(
+        f"#console-assistant-turn-{message_id}", ConsoleAssistantTurnWidget
+    )
+    return turn.query_one(".console-markdown-header", ConsoleMessageHeader)
 
 
 class MarkdownHarness(App):
@@ -193,7 +206,7 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
 
         row = transcript.query_one("#console-message-a1", ConsoleMarkdownMessage)
         markdown = row.query_one(ConsoleRoleplayMarkdown)
-        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        header = _assistant_header(transcript, "a1")
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert label.renderable.plain == "Alraune"
 
@@ -284,7 +297,7 @@ async def test_assistant_rows_render_markdown_and_other_roles_stay_plain():
         )
         row = transcript.query_one("#console-message-a1")
         assert isinstance(row, ConsoleMarkdownMessage)
-        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        header = _assistant_header(transcript, "a1")
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert "Generating…" in label.renderable.plain
         # Empty message: footer hidden.
@@ -384,7 +397,7 @@ async def test_streaming_appends_without_reparse(monkeypatch):
         await pilot.pause()
         assert len(append_calls) == 1
         assert not update_calls
-        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        header = _assistant_header(transcript, "a1")
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert "[streaming]" not in label.renderable.plain
 
@@ -527,7 +540,9 @@ async def test_roleplay_markdown_row_uses_literal_named_label_and_updates_in_pla
         row = transcript.query_one("#console-message-a-roleplay")
         assert isinstance(row, ConsoleMarkdownMessage)
         markdown = row.query_one(ConsoleRoleplayMarkdown)
-        label = row.query_one(".console-transcript-speaker-label")
+        label = _assistant_header(transcript, "a-roleplay").query_one(
+            ".console-transcript-speaker-label"
+        )
         assert label.renderable.plain == "Alraune [bold red]"
         assert "console-transcript-roleplay-character-label" in label.classes
         assert "console-transcript-message-roleplay-character" in row.classes

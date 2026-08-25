@@ -78,6 +78,14 @@ class _SteeringFleetBridge:
             return []
         return self.coordinator.snapshot()
 
+    def subagent_counts(self, conversation_ids):
+        count = len(self.coordinator.snapshot())
+        return {
+            conversation_id: count
+            for conversation_id in conversation_ids
+            if conversation_id == self._conversation_id
+        }
+
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         if conversation_id != self._conversation_id:
             return AgentLiveSnapshot()

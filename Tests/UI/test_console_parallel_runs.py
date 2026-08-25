@@ -1050,6 +1050,9 @@ class _TallStepsFleetBridge:
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         return self.live_snapshot(conversation_id)
 
+    def subagent_counts(self, conversation_ids):
+        return {conversation_id: 1 for conversation_id in conversation_ids}
+
     def subagent_run(self, run_id: str):
         return None
 
