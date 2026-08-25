@@ -13664,15 +13664,6 @@ UPDATE db_schema_version
             FROM keywords_fts fts
             JOIN keywords main ON fts.rowid = main.id
             WHERE fts.keyword MATCH ? AND main.deleted = 0
-              AND NOT (
-                  length(main.keyword) = length('research-receipt-proof:') + 64
-                  AND substr(main.keyword, 1, length('research-receipt-proof:'))
-                      = 'research-receipt-proof:' COLLATE BINARY
-                  AND trim(
-                      substr(main.keyword, length('research-receipt-proof:') + 1),
-                      '0123456789abcdef'
-                  ) = ''
-              )
             ORDER BY rank
             LIMIT ?
             """,

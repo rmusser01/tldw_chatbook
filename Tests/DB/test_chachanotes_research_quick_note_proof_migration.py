@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
@@ -24,6 +25,7 @@ ORDINARY_NEAR_PROOF_TAGS = (
     LEGACY_PROOF_PREFIX + "2" * 63 + "g",
     LEGACY_PROOF_PREFIX + "project-alpha",
 )
+MIGRATION_SEED = ConsoleLibraryMigrationSeed(auto_retrieve_on_send=False)
 
 
 def _version(connection: sqlite3.Connection) -> int:
@@ -81,10 +83,14 @@ async def test_v42_to_v43_purges_only_exact_proof_and_preserves_near_prefix_tags
     path = tmp_path / "proof-migration.sqlite"
     note_id, conversation_id = _seed_v42_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="migration-test")
+    db = CharactersRAGDB(
+        path,
+        client_id="migration-test",
+        console_library_migration_seed=MIGRATION_SEED,
+    )
     connection = db.get_connection()
 
-    assert _version(connection) == 43
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert (
         connection.execute(
             "SELECT title FROM notes WHERE id = ?", (note_id,)
@@ -284,8 +290,8 @@ def test_fresh_schema_contains_private_proof_table_without_sync_triggers(
     db = CharactersRAGDB(tmp_path / "proof-fresh.sqlite", client_id="proof-test")
     connection = db.get_connection()
 
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 43
-    assert _version(connection) == 43
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 43
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert (
         connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
