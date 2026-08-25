@@ -7,6 +7,8 @@ from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
 class FakeLocalWatchlists:
+    CREATE_FORM_SOURCE_TYPES = ("rss", "atom", "url")
+
     def __init__(self):
         self.calls = []
 
@@ -95,6 +97,8 @@ class FakeExecutableLocalWatchlists(FakeLocalWatchlists):
 
 
 class FakeServerWatchlists:
+    CREATE_FORM_SOURCE_TYPES = ("rss", "site", "forum")
+
     def __init__(self):
         self.calls = []
 
@@ -169,6 +173,27 @@ class FakeServerWatchlists:
     async def delete_alert_rule(self, rule_id):
         self.calls.append(("delete_alert_rule", rule_id))
         return {"deleted": True, "id": f"server:watchlist_alert_rule:{rule_id}"}
+
+
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected"),
+    [
+        (None, FakeLocalWatchlists.CREATE_FORM_SOURCE_TYPES),
+        ("local", FakeLocalWatchlists.CREATE_FORM_SOURCE_TYPES),
+        ("server", FakeServerWatchlists.CREATE_FORM_SOURCE_TYPES),
+    ],
+)
+def test_scope_service_returns_active_create_form_source_types(
+    runtime_backend, expected
+):
+    scope = WatchlistScopeService(
+        local_service=FakeLocalWatchlists(),
+        server_service=FakeServerWatchlists(),
+    )
+
+    assert (
+        scope.create_form_source_types(runtime_backend=runtime_backend) == expected
+    )
 
 
 @pytest.mark.asyncio

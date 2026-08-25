@@ -5,11 +5,43 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import Wa
 
 
 class FakeScopeService:
+    def __init__(self):
+        self.calls = []
+
+    def create_form_source_types(self, *, runtime_backend):
+        self.calls.append(("create_form_source_types", runtime_backend))
+        if runtime_backend == "server":
+            return ("rss", "site", "forum")
+        return ("rss", "atom", "url")
+
     async def list_watch_items(self, *, runtime_backend, **kwargs):
         return [{"id": 1, "title": "Source"}]
 
     async def create_watch_item(self, *, runtime_backend, payload):
         return {"id": 1, **payload}
+
+
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected_backend", "expected_types"),
+    [
+        (None, "local", ("rss", "atom", "url")),
+        (" SERVER ", "server", ("rss", "site", "forum")),
+    ],
+)
+def test_create_form_source_types_routes_to_normalized_backend(
+    runtime_backend, expected_backend, expected_types
+):
+    scope = FakeScopeService()
+    ctrl = WatchlistsBackendController(
+        app_instance=None,
+        scope_service=scope,
+        server_service=None,
+    )
+
+    assert (
+        ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
+    )
+    assert scope.calls == [("create_form_source_types", expected_backend)]
 
 
 def test_controller_normalizes_backend():

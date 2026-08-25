@@ -1014,7 +1014,57 @@ def test_mutation_generation_is_stable_across_pure_reads(tmp_path: Path) -> None
     service.get_active_workspace()
     service.get_workspace(DEFAULT_WORKSPACE_ID)
     service.list_workspaces()
+    service.list_runtime_bindings(DEFAULT_WORKSPACE_ID)
+    service.list_workspace_memberships(DEFAULT_WORKSPACE_ID)
     # ensure with an active workspace already resting on Default and no
     # stale bindings changes nothing -- and must therefore bump nothing.
     service.ensure_default_workspace()
+    assert service.mutation_generation == generation
+
+
+def test_mutation_generation_bumps_on_binding_and_membership_mutators(
+    tmp_path: Path,
+) -> None:
+    """Binding and membership mutators must advance `mutation_generation`.
+
+    TASK-22201 widened the generation contract to the Console context
+    build's whole display read set: the run tick serves
+    `list_runtime_bindings` / `list_workspace_memberships` from a
+    generation-keyed view, so a binding or membership write that forgot to
+    bump would leave the Console rail's runtime/handoff rows STALE until
+    the next unrelated workspace mutation.
+    """
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+
+    generation = service.mutation_generation
+    service.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="ws-a",
+            binding_id="binding-1",
+            binding_kind=RuntimeBindingKind.GIT_WORKTREE,
+            label="Repo",
+            locator="/tmp/repo",
+            status=RuntimeBindingStatus.INSPECT_ONLY,
+            metadata={"branch": "dev"},
+        )
+    )
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conversation-1",
+        title="Linked conversation",
+    )
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.remove_runtime_binding("binding-1")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.remove_runtime_binding("binding-1")  # already gone
     assert service.mutation_generation == generation

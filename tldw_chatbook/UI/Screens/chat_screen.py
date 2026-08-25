@@ -10933,7 +10933,12 @@ class ChatScreen(BaseAppScreen):
         available_columns: int | None = None,
         inspector_state: ConsoleInspectorState | None = None,
     ) -> ConsoleRailState:
-        """Build the current effective rail state from mounted Console context."""
+        """Build the current effective rail state from mounted Console context.
+
+        Inside a run tick's `tick_workspace_build_scope` (TASK-22201) the
+        workspace-context build below is served from the tick's shared,
+        fingerprint-validated build; every other caller builds live.
+        """
         resolved_available_columns = (
             available_columns
             if available_columns is not None
@@ -15234,18 +15239,32 @@ class ChatScreen(BaseAppScreen):
             # fresh post-await state (PR #660 review caught the reuse as a
             # staleness regression — the one-tuple-per-tick dedupe is
             # withdrawn for the visibility half).
-            rail_state = self._current_console_rail_state()
-            self._sync_console_control_bar(rail_state)
-            self._sync_console_settings_summary()
-            self._sync_console_mode_bar()
-            await self._sync_console_native_session_tabs()
-            self._dispatch_active_console_roleplay_refresh()
-            self._sync_console_workspace_context()
-            project_instruction_ui.sync_project_instruction_status_for_screen(self)
-            await self._sync_native_console_transcript()
-            self._sync_console_rail_visibility_if_changed(
-                self._current_console_rail_state()
-            )
+            #
+            # TASK-22201: the workspace-context builds of one tick (the rail
+            # states here, the workspace-context push, the control bar's and
+            # agent section's inspector legs — six per tick, measured) share
+            # ONE fingerprint-validated build through this scope. The PR
+            # #660 ruling is kept by MECHANISM rather than by always
+            # rebuilding: a session created/activated across the awaits
+            # changes the store fingerprint and the later reads rebuild,
+            # while a settled tick pays for one build. Task-scoped: only
+            # THIS coroutine's task reads the cache — workers and handlers
+            # interleaving during the awaits keep building live.
+            with self._workspace.tick_workspace_build_scope():
+                rail_state = self._current_console_rail_state()
+                self._sync_console_control_bar(rail_state)
+                self._sync_console_settings_summary()
+                self._sync_console_mode_bar()
+                await self._sync_console_native_session_tabs()
+                self._dispatch_active_console_roleplay_refresh()
+                self._sync_console_workspace_context()
+                project_instruction_ui.sync_project_instruction_status_for_screen(
+                    self
+                )
+                await self._sync_native_console_transcript()
+                self._sync_console_rail_visibility_if_changed(
+                    self._current_console_rail_state()
+                )
             self._dispatch_console_rail_preference_prune()
         except Exception:
             # Teardown-scoped ONLY. A tick that was mid-flight when the
@@ -17794,9 +17813,27 @@ class ChatScreen(BaseAppScreen):
                     active_id,
                     composer_collapsed=composer.collapsed,
                 )
+                # TASK-22000 (owner decision, 2026-08-24): for a session with
+                # a live queue projection the PRESENTATION is the authority on
+                # whether Send accepts a draft -- not the raw run state. That
+                # was ADR-046's original shape (an assignment here, not an
+                # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
+                # alongside the new recovery predicate, and since
+                # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
+                # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
+                # presentation` already reads as `occupies_slot`, the only
+                # thing that `or` could still change was the one state ADR-046
+                # exists for: an ACCEPTED live turn, which must read "Queue"
+                # and admit a FIFO follow-up. It rendered as a greyed-out
+                # button labelled "Queue" for the whole duration of every run.
+                #
+                # Nothing is lost by deferring: before acceptance the same
+                # projection returns "Preparing..." with `send_enabled=False`,
+                # so an unaccepted live run still refuses. The recovery
+                # predicate stays in the `or` and still refuses for a genuinely
+                # unresolved owner (see `dispatch_recovery_blocks_submission`).
                 send_blocked = (
-                    send_blocked
-                    or not queue_presentation.send_enabled
+                    not queue_presentation.send_enabled
                     or controller.store.dispatch_recovery_blocks_submission(active_id)
                 )
                 try:

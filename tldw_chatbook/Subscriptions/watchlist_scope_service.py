@@ -124,6 +124,28 @@ class WatchlistScopeService:
             raise ValueError("Server watchlists backend is unavailable.")
         return self.server_service
 
+    def create_form_source_types(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> tuple[str, ...]:
+        """Return the active backend's ordered create-form source types.
+
+        Args:
+            runtime_backend: Backend contract to inspect. ``None`` selects
+                the local backend.
+
+        Returns:
+            Ordered source-type identifiers supported by that backend's
+            create form.
+
+        Raises:
+            ValueError: If the backend is invalid or unavailable.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        service = self._service_for_backend(backend)
+        return service.CREATE_FORM_SOURCE_TYPES
+
     def _get_run_executor(self) -> Any:
         local_service = self.local_service
         if local_service is None:

@@ -1,0 +1,19 @@
+{
+  "items_open": true,
+  "items_region": {
+    "height": 41,
+    "width": 52,
+    "x": 9,
+    "y": 6
+  },
+  "library_open": false,
+  "library_restore_name": "Expand Library pane",
+  "row_region": {
+    "height": 2,
+    "width": 51,
+    "x": 9,
+    "y": 13
+  },
+  "stored_items_width": 40,
+  "svg": "conversations-160x50-library-collapsed.svg"
+}

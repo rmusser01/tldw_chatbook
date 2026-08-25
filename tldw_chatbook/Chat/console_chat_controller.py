@@ -4774,11 +4774,11 @@ class ConsoleChatController:
             in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
         )
         if durable_turn and not callable(durable_commit):
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Durable turn acceptance is unavailable; the provider was not called.",
-                session_id=session.id,
+            # TASK-22030: a refusal the user cannot see is indistinguishable
+            # from a broken app. `_block_undurable_turn` writes the run state,
+            # the transcript row, and the toast that `56db75386` dropped.
+            return self._block_undurable_turn(
+                session.id,
                 origin=origin,
                 queue_entry_id=queue_entry_id,
             )
@@ -12353,6 +12353,74 @@ class ConsoleChatController:
             accepted=False,
             should_clear_draft=False,
             visible_copy=visible_copy,
+        )
+
+    def _notify_app(self, message: str, *, severity: str = "warning") -> None:
+        """Raise one best-effort toast through the app, never raising.
+
+        Mirrors ``_notify_detached_approval``'s defensive shape: an app double
+        whose ``notify`` takes the message alone, or no app at all, must not
+        turn a refusal into an exception on the send path.
+        """
+
+        app = self.app
+        notify = getattr(app, "notify", None) if app is not None else None
+        if not callable(notify):
+            return
+        try:
+            notify(message, severity=severity)
+        except TypeError:
+            try:
+                notify(message)
+            except Exception:  # noqa: BLE001 -- surfacing is best-effort
+                logger.debug("Console send refusal notice could not be delivered")
+        except Exception as exc:  # noqa: BLE001 -- surfacing is best-effort
+            logger.debug(
+                "Console send refusal notice raised (exception_type={})",
+                type(exc).__name__,
+            )
+
+    def _block_undurable_turn(
+        self,
+        session_id: str,
+        *,
+        origin: ConsoleSubmissionOrigin,
+        queue_entry_id: str | None,
+    ) -> ConsoleSubmitResult:
+        """Refuse a durable turn nothing can commit -- visibly (TASK-22030).
+
+        `56db75386` turned this refusal into a bare ``ConsoleSubmitResult``:
+        no run state, no transcript row, no toast. With an unopenable
+        ChaChaNotes database that made Send do *nothing at all* -- the draft
+        stayed put and the app looked like it had ignored the keypress, which
+        reads as "the app is broken" rather than "your database is broken".
+
+        The refusal itself is correct and stays (a turn that cannot be
+        committed must not reach the provider), but it now names its real
+        cause, keeps the draft, and points at the one thing that still works.
+        """
+
+        persistence = self.store.persistence
+        if persistence is None or getattr(persistence, "db", None) is None:
+            visible_copy = (
+                "Not sent: your conversation database could not be opened, so "
+                "this message could not be saved. Restart Chatbook, and check "
+                "the app log for the database error if it keeps happening. "
+                "Your draft was kept; a temporary chat still sends."
+            )
+        else:
+            visible_copy = (
+                "Not sent: this conversation cannot be saved right now, so the "
+                "message was not sent to the provider. Your draft was kept; a "
+                "temporary chat still sends."
+            )
+        blocked = self._block(session_id, visible_copy)
+        self._notify_app(visible_copy, severity="error")
+        return replace(
+            blocked,
+            session_id=session_id,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
         )
 
     async def _capture_rag_context(

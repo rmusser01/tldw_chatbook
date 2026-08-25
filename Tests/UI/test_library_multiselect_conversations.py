@@ -2,6 +2,7 @@ import dataclasses
 from types import SimpleNamespace
 
 import pytest
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -17,6 +18,10 @@ from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
     LibraryConversationRow,
     build_library_conversations_state,
+)
+from tldw_chatbook.Library.library_conversation_reader_state import (
+    ConversationMessageView,
+    ConversationReaderState,
 )
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
@@ -36,7 +41,10 @@ from Tests.UI.test_library_shell import (
 
 
 def _fake(select_mode):
-    return SimpleNamespace(
+    loaded_message = ConversationMessageView(
+        "message-1", "user", "now", "revision-1", 5, "hello"
+    )
+    fake = SimpleNamespace(
         _library_conversation_freshness="fresh",
         _library_conversations_select_mode=select_mode,
         _library_conversations_row_selection=RowSelection("conversations"),
@@ -45,7 +53,26 @@ def _fake(select_mode):
         _acknowledge_library_destination_change=lambda: None,
         _refreshed=0,
         _opened=[],
+        _reader_synced=0,
+        _reader_started=[],
+        _library_conversation_reader_state=ConversationReaderState(
+            selected_id="c1",
+            selected_version=1,
+            loaded_id="c1",
+            loaded_version=1,
+            loaded_generation=1,
+            generation=1,
+            messages=(loaded_message,),
+            message_total=1,
+            complete=True,
+        ),
+        _sync_library_conversation_reader=lambda: None,
+        _start_library_conversation_reader_selection=lambda conversation_id: None,
     )
+    fake._library_conversation_loaded_preview_selected = lambda: (
+        LibraryScreen._library_conversation_loaded_preview_selected(fake)
+    )
+    return fake
 
 
 def test_convo_row_select_mode_toggles():
@@ -58,6 +85,11 @@ def test_convo_row_select_mode_toggles():
     assert fake._library_conversations_row_selection.is_selected("c5")
     assert fake._selected_conversation_id == ""  # did NOT open/select the detail
     assert fake._refreshed == 1
+    assert fake._library_conversation_reader_state.bulk_selected_count == 1
+    assert fake._library_conversation_reader_state.loaded_id == "c1"
+    assert fake._library_conversation_reader_state.messages[0].text == "hello"
+    assert fake._library_conversation_reader_state.bulk_loaded_preview_selected is False
+    assert fake._library_conversation_reader_state.loaded_actions_eligible is False
 
 
 def test_convo_row_normal_mode_selects():
@@ -188,7 +220,10 @@ async def test_conversations_fresh_zero_distills_to_one_recovery_action(
         assert action in pilot.app.screen.focus_chain
         assert bool(pilot.app.query("#library-conversations-filter")) is filter_visible
         if filter_visible:
-            assert pilot.app.query_one("#library-conversations-filter", Input).value == query
+            assert (
+                pilot.app.query_one("#library-conversations-filter", Input).value
+                == query
+            )
         assert "No conversations" in str(
             pilot.app.query_one("#library-conversations-status", Static).renderable
         )
@@ -247,8 +282,8 @@ def test_conversations_empty_clear_filter_requests_unfiltered_page_one():
     calls = []
     fake = SimpleNamespace(
         _library_conversation_loading=False,
-        _start_library_conversation_page_request=lambda page, query, **kwargs: calls.append(
-            (page, query, kwargs)
+        _start_library_conversation_page_request=lambda page, query, **kwargs: (
+            calls.append((page, query, kwargs))
         ),
     )
 
@@ -320,14 +355,70 @@ async def test_conversations_toolbar_count_static_stays_bounded_width_with_real_
         # NOT the ~1700-column runaway the unbounded-width bug produced.
         assert count_static.region.width < 30
 
-        select_all_btn = screen.query_one(
-            "#library-conversations-select-all", Button
-        )
+        select_all_btn = screen.query_one("#library-conversations-select-all", Button)
         # Genuinely on-screen (within the simulated terminal's own
         # width), not pushed past the visible viewport the way the
         # unbounded Static's sibling Buttons were before the fix.
         assert 0 < select_all_btn.region.x < LIBRARY_TEST_SIZE[0]
         assert select_all_btn.region.width > 0
+
+
+@pytest.mark.asyncio
+async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        loaded_message = ConversationMessageView(
+            "message-loaded", "user", "now", "revision-loaded", 5, "hello"
+        )
+        screen._library_conversation_reader_state = ConversationReaderState(
+            selected_id="chat-1",
+            selected_version=1,
+            loaded_id="chat-1",
+            loaded_version=1,
+            loaded_generation=5,
+            generation=5,
+            messages=(loaded_message,),
+            message_total=1,
+            complete=True,
+        )
+        screen._sync_library_conversation_reader()
+        await pilot.pause()
+        transcript = screen._library_conversation_reader_state.messages
+        open_console = screen.query_one("#library-conversation-open-console", Button)
+        assert not open_console.disabled
+
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        await pilot.pause()
+        state = screen._library_conversation_reader_state
+        assert state.bulk_active and state.bulk_selected_count == 0
+        assert not state.loaded_actions_eligible and open_console.disabled
+        assert state.messages == transcript
+
+        screen.query_one("#library-conversation-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversations_row_selection.count == 1,
+            message="Conversation checkbox did not settle.",
+        )
+        screen.query_one("#library-conversations-select-clear", Button).press()
+        await pilot.pause()
+        state = screen._library_conversation_reader_state
+        assert state.bulk_active and state.bulk_selected_count == 0
+        assert not state.loaded_actions_eligible and open_console.disabled
+        assert state.messages == transcript
+
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        await pilot.pause()
+        state = screen._library_conversation_reader_state
+        assert not state.bulk_active and state.loaded_actions_eligible
+        assert not open_console.disabled
 
 
 @pytest.mark.asyncio
@@ -344,10 +435,12 @@ async def test_library_conversation_selection_clears_on_page_exit_and_cannot_exp
         screen.query_one("#library-conversations-select-toggle", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversations_select_mode
-            and any(
-                str(row.label).startswith("☐")
-                for row in screen.query("#library-conversation-row-0")
+            lambda: (
+                screen._library_conversations_select_mode
+                and any(
+                    str(row.label).startswith("☐")
+                    for row in screen.query("#library-conversation-row-0")
+                )
             ),
             message="Conversation select-mode rows never recomposed.",
         )

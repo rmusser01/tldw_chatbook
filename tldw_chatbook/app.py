@@ -9491,11 +9491,29 @@ class TldwCli(
         On an up-to-date database the loop's first chunk finds nothing and
         the whole call is one indexed scan -- cheap, and it doubles as
         self-healing for any run interrupted before completion.
+
+        task-22200: the driver paces itself (inter-chunk sleep + backoff on
+        lock-queue timeouts) so this run yields the write lock to foreground
+        UI writes instead of convoying against them for the whole first
+        post-upgrade session. The worker's own cancellation flag is passed
+        through as ``should_abort`` -- pacing makes the run longer, and a
+        thread worker that never polls ``is_cancelled`` would make shutdown
+        wait out every remaining pause; the driver polls it between chunks
+        and inside every sleep, and stopping is safe because the resume
+        frontier lives in the database.
         """
+        from textual.worker import NoActiveWorker, get_current_worker
+
         from tldw_chatbook.DB.chachanotes_fts_backfill import (
             ChaChaNotesFTSBackfillError,
             backfill_chachanotes_messages_fts,
         )
+
+        try:
+            worker = get_current_worker()
+        except NoActiveWorker:
+            worker = None  # direct calls in tests/harnesses run un-cancellable
+        should_abort = (lambda: worker.is_cancelled) if worker is not None else None
 
         try:
             db = get_chachanotes_db_lazy()
@@ -9504,7 +9522,7 @@ class TldwCli(
                     "ChaChaNotes messages FTS backfill skipped: no database instance."
                 )
                 return
-            backfill_chachanotes_messages_fts(db)
+            backfill_chachanotes_messages_fts(db, should_abort=should_abort)
         except ChaChaNotesFTSBackfillError as exc:
             logger.opt(exception=True).error(
                 "ChaChaNotes messages FTS backfill failed after indexing {} "

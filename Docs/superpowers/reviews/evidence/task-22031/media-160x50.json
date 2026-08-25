@@ -1,0 +1,70 @@
+{
+  "effective": {
+    "items_open": true,
+    "library_open": true,
+    "priority_pane": null
+  },
+  "focused_control": {
+    "has_focus": true,
+    "id": "library-media-items-grip",
+    "paint_owner_id": "library-media-items-grip",
+    "region": {
+      "height": 43,
+      "width": 5,
+      "x": 75,
+      "y": 5
+    }
+  },
+  "grip_names": [
+    "Collapse Library pane",
+    "Collapse Items pane"
+  ],
+  "grip_widths": [
+    5,
+    5
+  ],
+  "regions": {
+    "items": {
+      "height": 43,
+      "width": 40,
+      "x": 35,
+      "y": 5
+    },
+    "items_grip": {
+      "height": 43,
+      "width": 5,
+      "x": 75,
+      "y": 5
+    },
+    "library": {
+      "height": 43,
+      "width": 28,
+      "x": 2,
+      "y": 5
+    },
+    "library_grip": {
+      "height": 43,
+      "width": 5,
+      "x": 30,
+      "y": 5
+    },
+    "shell": {
+      "height": 43,
+      "width": 156,
+      "x": 2,
+      "y": 5
+    },
+    "work": {
+      "height": 43,
+      "width": 78,
+      "x": 80,
+      "y": 5
+    }
+  },
+  "size": [
+    160,
+    50
+  ],
+  "svg": "media-160x50.svg",
+  "work_mounted": true
+}

@@ -731,26 +731,44 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         return accepted
 
     def _paint_frame(self) -> None:
+        """Repaint the pet frame surface.
+
+        TASK-21595: every ``update`` here passes ``layout=False``. This runs on
+        two clocks -- the 0.1 s snapshot poll (``refresh_from_controller``) and
+        the self-rearming ``advance_frame`` timer, which ticks at the visual's
+        own frame duration -- so with ``Static.update``'s ``layout=True``
+        default a visible buddy armed a full screen layout pass at >= 10 Hz
+        forever. The frame's box cannot be sized by its content:
+        ``_apply_geometry`` sets ``frame.styles.width/height = "100%"``
+        *inline* -- which beats every sheet -- and ``BUNDLED_CSS`` says the
+        same, so the box is container-driven and no frame (empty, alert copy,
+        or a multi-row pet renderable) can resize it. The class toggles below
+        are colour-only (``persona-buddy-alert`` sets ``color``/``text-style``).
+        ``Tests/UI/test_timer_path_layout_cost.py`` pins the geometry
+        equivalence as an A/B against the real layout engine rather than by
+        inspection; mutating that inline pin to ``auto`` turns it red on all
+        eight content shapes.
+        """
         if not self.is_attached:
             return
         target = self.query_one("#persona-buddy-frame", Static)
         if self.has_class("persona-buddy-compact"):
             target.set_class(False, "persona-buddy-alert")
-            target.update("")
+            target.update("", layout=False)
             return
         alert = _ACTIONABLE_ALERTS.get(getattr(self._snapshot, "state", None))
         target.set_class(alert is not None, "persona-buddy-alert")
         if alert is not None:
-            target.update(alert)
+            target.update(alert, layout=False)
             return
         accepted = self._accepted_render_for_paint()
         visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         if frames:
             self.frame_index = min(self.frame_index, len(frames) - 1)
-            target.update(frames[self.frame_index].renderable)
+            target.update(frames[self.frame_index].renderable, layout=False)
             return
-        target.update("")
+        target.update("", layout=False)
 
     def _sync_compact_state(self, collapsed: bool) -> None:
         compact = self._compact_presentation_for_geometry(

@@ -326,4 +326,8 @@ Transcript:
 Composer geometry, history recall, and ghost text re-verified against
 dev @ b6036515e — 2026-08-18 (task-17662: keys checked against the
 composer's key handling; geometry against the bottom-stack programme's
-painted probes).*
+painted probes). The Send→Queue behaviour described above was re-verified
+live against dev @ a71e62e4b — 2026-08-24 (TASK-22000: the page was
+correct and the app was not; mid-run the button now reads **Queue**, is
+enabled with a draft, and admits a FIFO follow-up that drains after the
+current turn).*

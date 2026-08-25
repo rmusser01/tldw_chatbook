@@ -18,6 +18,7 @@ DOM or reach through sibling controllers.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any, Optional, TYPE_CHECKING
@@ -174,6 +175,177 @@ def _normalized_console_workspace_id(workspace_id: str | None) -> str:
     if not normalized or normalized == CONSOLE_GLOBAL_WORKSPACE_ID:
         return DEFAULT_WORKSPACE_ID
     return normalized
+
+
+class _ConsoleRegistryDisplayReads:
+    """Generation-keyed read-through view over the workspace registry.
+
+    TASK-22201 (extending the TASK-21118 memo pattern): the Console run tick
+    rebuilt its workspace context state up to six times per 0.2 s (see
+    :class:`ConsoleTickWorkspaceBuilds`), and each build performed the
+    registry's whole display read set as synchronous SQLite on the event
+    loop -- measured at ~80 WorkspaceDB round-trips per settled tick. Every one of those reads is a pure function of registry
+    tables that ``mutation_generation`` versions, so this view serves them
+    from a cache revalidated against (service identity, generation) and every
+    registry mutation anywhere in the app -- create, rename, archive,
+    set-active, binding and membership writes -- invalidates it on the very
+    next read.
+
+    Contract details:
+
+    * Only the four display reads are intercepted (``get_active_workspace``,
+      ``list_workspaces``, ``list_runtime_bindings``,
+      ``list_workspace_memberships``); every other attribute delegates to the
+      wrapped service, so this object can stand in for it inside
+      ``build_console_workspace_state``.
+    * A raised read is never cached -- callers keep their existing degraded
+      paths, and the next read retries live.
+    * Doubles without a real ``int`` generation are never cached (a
+      MagicMock's auto-attribute compares equal to itself forever and would
+      freeze the view -- the TASK-21118 lesson), so reduced test doubles stay
+      on live reads.
+    * ADR-028 is preserved by construction: only the SQL is cached.
+      ``display_state._safe_runtime_bindings`` still recomputes filesystem
+      binding status straight from disk on every build.
+    """
+
+    __slots__ = ("_service", "_generation", "_cache")
+
+    def __init__(self, service: Any) -> None:
+        self._service = service
+        self._generation: int | None = None
+        self._cache: dict[tuple, Any] = {}
+
+    @property
+    def service(self) -> Any:
+        """The wrapped registry service (identity checks by the owner)."""
+        return self._service
+
+    def _cacheable(self) -> bool:
+        """Revalidate the cache against the service's mutation generation."""
+        generation = getattr(self._service, "mutation_generation", None)
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            self._cache.clear()
+            self._generation = None
+            return False
+        if generation != self._generation:
+            self._cache.clear()
+            self._generation = generation
+        return True
+
+    def _read(self, key: tuple, method_name: str, *args: Any) -> Any:
+        cacheable = self._cacheable()
+        if cacheable and key in self._cache:
+            return self._cache[key]
+        value = getattr(self._service, method_name)(*args)
+        if cacheable:
+            self._cache[key] = value
+        return value
+
+    def get_active_workspace(self) -> Any:
+        return self._read(("active",), "get_active_workspace")
+
+    def list_workspaces(self, *, include_archived: bool = False) -> Any:
+        if include_archived:
+            # Rare (Settings archive lists); not worth a cache slot.
+            return self._service.list_workspaces(include_archived=True)
+        return self._read(("workspaces",), "list_workspaces")
+
+    def list_runtime_bindings(self, workspace_id: str) -> Any:
+        return self._read(
+            ("bindings", str(workspace_id)), "list_runtime_bindings", workspace_id
+        )
+
+    def list_workspace_memberships(self, workspace_id: str) -> Any:
+        return self._read(
+            ("memberships", str(workspace_id)),
+            "list_workspace_memberships",
+            workspace_id,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        # Private names never delegate: with ``__slots__`` a not-yet-bound
+        # ``_service`` would otherwise recurse straight back through here.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._service, name)
+
+
+class ConsoleTickWorkspaceBuilds:
+    """One run tick's shared workspace-context build (TASK-22201).
+
+    ``_sync_native_console_chat_ui`` used to build
+    ``_build_console_workspace_context_state()`` SIX times per 0.2 s tick
+    (measured with a stack probe): the two rail-state legs, the
+    workspace-context push, the control bar's and the agent section's
+    inspector legs, and the settings summary's rail read. This object is
+    created fresh for ONE tick by ``tick_workspace_build_scope`` and serves
+    every build the tick's own task performs; each read revalidates the
+    controller's volatile-input fingerprint, so:
+
+    * a settled tick pays for exactly one build;
+    * the PR #660 freshness ruling holds -- a session created/activated by
+      ``_sync_console_native_session_tabs`` mid-tick changes the store
+      fingerprint, and the workspace-context push and the visibility check
+      rebuild rather than reuse the pre-await snapshot;
+    * a ``None`` fingerprint (reduced doubles, any component failure) means
+      every read builds live, exactly the pre-cache behavior.
+
+    Task-scoped and never shared across ticks: ``accepts_current_task``
+    admits only the coroutine task that opened the scope, so workers,
+    message handlers, and search settles interleaving during the tick's
+    awaits keep building live -- a mutation followed by a push can never be
+    masked. Inputs outside the fingerprint changing DURING one tick are
+    repainted by the next tick, at most 0.2 s later -- the same cadence
+    every other tick-driven surface repaints at.
+    """
+
+    __slots__ = ("_controller", "_task", "_fingerprint", "_state", "_building")
+
+    def __init__(self, controller: "ConsoleWorkspaceController") -> None:
+        self._controller = controller
+        try:
+            self._task = asyncio.current_task()
+        except RuntimeError:
+            self._task = None
+        self._fingerprint: tuple | None = None
+        self._state: Any = None
+        self._building = False
+
+    def accepts_current_task(self) -> bool:
+        """Whether the calling context is the tick task that owns this cache.
+
+        Also False while the shared build itself is running (re-entrancy
+        guard) and when the scope was opened outside any asyncio task.
+        """
+        if self._building or self._task is None:
+            return False
+        try:
+            return asyncio.current_task() is self._task
+        except RuntimeError:
+            return False
+
+    def state(self) -> Any:
+        """Return the current context state, rebuilding when inputs changed."""
+        controller = self._controller
+        fingerprint = controller._console_workspace_build_fingerprint()
+        if (
+            self._state is not None
+            and fingerprint is not None
+            and fingerprint == self._fingerprint
+        ):
+            return self._state
+        self._building = True
+        try:
+            state = controller._build_console_workspace_context_state()
+        finally:
+            self._building = False
+        # Recomputed AFTER the build: building advances canonical-owner
+        # bookkeeping some fingerprint components include, and the stored
+        # token must describe the state actually cached.
+        self._fingerprint = controller._console_workspace_build_fingerprint()
+        self._state = state
+        return state
 
 
 class ConsoleWorkspaceController:
@@ -1522,11 +1694,13 @@ class ConsoleWorkspaceController:
         )
         attempt.membership_unknown = True
 
-    def workspace_tree_projection(
-        self,
-        rows: Iterable[ConsoleConversationBrowserInputRow] = (),
-    ) -> tuple[WorkspaceTreeWorkspace, ...]:
-        """Return the current immutable named-workspace projection."""
+    def _prune_stale_workspace_page_attempts(self) -> tuple[WorkspaceRecord, ...]:
+        """Drop page attempts for workspaces gone from the registry.
+
+        Returns:
+            Live named-workspace records (non-archived, excluding the
+            built-in Default), the set the workspace tree renders.
+        """
         all_records = tuple(
             record
             for record in self._console_browser_workspace_records()
@@ -1542,6 +1716,27 @@ class ConsoleWorkspaceController:
         for workspace_id in tuple(self._workspace_page_attempts):
             if workspace_id not in workspace_ids:
                 self._workspace_page_attempts.pop(workspace_id, None)
+        return records
+
+    def workspace_tree_projection(
+        self,
+        rows: Iterable[ConsoleConversationBrowserInputRow] = (),
+        *,
+        prepared_rows: tuple[ConsoleConversationBrowserInputRow, ...] | None = None,
+    ) -> tuple[WorkspaceTreeWorkspace, ...]:
+        """Return the current immutable named-workspace projection.
+
+        Args:
+            rows: Browser input rows to merge with the page-attempt rows on
+                the no-query path.
+            prepared_rows: The state build's already merged + canonical-owner
+                + overlay processed union of browser and page-attempt rows
+                (TASK-22201). When provided and no tree query is active, the
+                merge/canonical/overlay pipeline is NOT re-run here -- the
+                build already ran it once over the identical input set.
+                Standalone callers omit it and keep the self-contained path.
+        """
+        records = self._prune_stale_workspace_page_attempts()
         workspace_lane = self._workspace_tree_search
         projection_query = (
             workspace_lane.settled_query
@@ -1554,13 +1749,17 @@ class ConsoleWorkspaceController:
                 if workspace_lane.error
                 else workspace_lane.rows
             )
+            source_rows = self._rows_with_latest_canonical_owner(source_rows)
+            source_rows = self._overlay_current_console_browser_markers(source_rows)
+        elif prepared_rows is not None:
+            source_rows = prepared_rows
         else:
             source_rows = self._merge_console_browser_rows(
                 rows,
                 *(attempt.rows for attempt in self._workspace_page_attempts.values()),
             )
-        source_rows = self._rows_with_latest_canonical_owner(source_rows)
-        source_rows = self._overlay_current_console_browser_markers(source_rows)
+            source_rows = self._rows_with_latest_canonical_owner(source_rows)
+            source_rows = self._overlay_current_console_browser_markers(source_rows)
         return build_workspace_tree_state(
             workspaces=(
                 (str(record.workspace_id), str(record.name or record.workspace_id))
@@ -2673,9 +2872,32 @@ class ConsoleWorkspaceController:
                 workspace_labels=canonical_labels,
                 canonical_rows=canonical_rows,
             )
-        rows = self._rows_with_latest_canonical_owner(rows)
-        rows = self._overlay_current_console_browser_markers(
-            rows, current_conversation_id
+        # TASK-22201: ONE canonical-owner + overlay pass per build. The
+        # browser rows and the workspace tree's no-query source (browser
+        # rows + surviving page-attempt rows) used to run this pipeline
+        # separately -- twice per build, up to six times per run tick. Both
+        # passes are per-row (the canonical filter and every overlay marker
+        # depend only on the row itself plus controller/store state), so one
+        # pass over the merged union, partitioned back out by display
+        # identity, is exactly equivalent. Stale page attempts are pruned
+        # FIRST -- the projection used to do that before its own merge, and
+        # a just-deleted workspace's rows must not ride in via the union.
+        self._prune_stale_workspace_page_attempts()
+        browser_identities = {
+            self._console_browser_display_identity(row) for row in rows
+        }
+        union_rows = self._merge_console_browser_rows(
+            rows,
+            *(attempt.rows for attempt in self._workspace_page_attempts.values()),
+        )
+        union_rows = self._rows_with_latest_canonical_owner(union_rows)
+        union_rows = self._overlay_current_console_browser_markers(
+            union_rows, current_conversation_id
+        )
+        rows = tuple(
+            row
+            for row in union_rows
+            if self._console_browser_display_identity(row) in browser_identities
         )
         if not projection_query.strip() and not self._flat_conversation_search.error:
             ordinary_rows = tuple(
@@ -2705,7 +2927,9 @@ class ConsoleWorkspaceController:
             state,
             conversation_browser=browser,
             conversation_section=legacy_state.conversation_section,
-            workspace_tree=self.workspace_tree_projection(rows),
+            workspace_tree=self.workspace_tree_projection(
+                rows, prepared_rows=union_rows
+            ),
             workspace_query=self._workspace_tree_search.query,
             workspace_loading=self._workspace_tree_search.request_key is not None,
             workspace_error=str(self._workspace_tree_search.error or ""),
@@ -3792,12 +4016,49 @@ class ConsoleWorkspaceController:
 
     # -- Workspace context state / grouped conversation rows -----------------
 
+    #: The open run tick's shared build cache, or ``None`` outside a tick
+    #: (TASK-22201). A CLASS attribute default, matching the screen's memo
+    #: conventions, so hand-built fixtures that skip ``__init__`` still
+    #: read a defined value.
+    _console_tick_builds: "ConsoleTickWorkspaceBuilds | None" = None
+
+    @contextmanager
+    def tick_workspace_build_scope(self):
+        """Share ONE fingerprint-validated context build across a run tick.
+
+        Opened by ``_sync_native_console_chat_ui`` around its sync body
+        (TASK-22201): every ``_build_console_workspace_context_state`` call
+        the tick's own asyncio task performs -- directly or through the
+        inspector/control-bar/agent-section legs -- is served from one
+        :class:`ConsoleTickWorkspaceBuilds` cache. Deliberately opt-in and
+        scoped, like the screen's ``_console_derivation_scope``
+        (task-15452): outside a ``with`` block, and for any OTHER task
+        interleaving during the tick's awaits, every build is live exactly
+        as before. Re-entrant (an inner scope keeps the outer cache) and
+        always torn down, so a raising tick cannot leave a stale build
+        cached for the next one.
+        """
+        if getattr(self, "_console_tick_builds", None) is not None:
+            yield
+            return
+        self._console_tick_builds = ConsoleTickWorkspaceBuilds(self)
+        try:
+            yield
+        finally:
+            self._console_tick_builds = None
+
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
+        builds = getattr(self, "_console_tick_builds", None)
+        if builds is not None and builds.accepts_current_task():
+            return builds.state()
         current_conversation = self._current_console_conversation_id()
+        # The generation-keyed display-read view stands in for the raw
+        # service (TASK-22201): the builder's read set (active workspace,
+        # workspaces, runtime bindings, memberships) is served without SQL
+        # while the registry is unchanged. ADR-028's from-disk binding
+        # status recompute still runs per build inside the builder.
         state = build_console_workspace_state(
-            registry_service=getattr(
-                self.app_instance, "workspace_registry_service", None
-            ),
+            registry_service=self._console_registry_reads_view(),
             current_conversation=current_conversation,
             conversations=(),
             server_adapter_state=getattr(
@@ -3816,6 +4077,111 @@ class ConsoleWorkspaceController:
             state,
             current_conversation_id=current_conversation,
         )
+
+    def _console_workspace_build_fingerprint(self) -> tuple | None:
+        """Cheap change token over the context build's volatile inputs.
+
+        Serves the run tick's build cache (TASK-22201): identical
+        fingerprints between two reads WITHIN ONE TICK mean the cached
+        build may be reused. Covered inputs -- registry identity +
+        ``mutation_generation``, current conversation, store sessions
+        (identity, title, timestamps, persistence, workspace) + active
+        session, run status + per-session queued counts, canonical
+        membership revision, persisted-rows cache token, both search
+        lanes' generations/queries/errors, and the page-attempt shape --
+        are exactly the ones the PR #660 / task-280 freshness rulings care
+        about across the tick's awaits (session create/activate/persist).
+        Deliberately NOT exhaustive: long-tail inputs (stars, unseen
+        markers, collapse preferences) change only through paths that
+        rebuild and push OUTSIDE the tick cache's lifetime, so a miss is
+        bounded by one 0.2 s tick. Returns ``None`` (never reuse) when the
+        registry lacks a real ``int`` generation or any component read
+        fails.
+        """
+        try:
+            registry_service = getattr(
+                self.app_instance, "workspace_registry_service", None
+            )
+            generation = getattr(registry_service, "mutation_generation", None)
+            if registry_service is not None and (
+                isinstance(generation, bool) or not isinstance(generation, int)
+            ):
+                return None
+            store = self._console_chat_store
+            controller = self._console_chat_controller
+            sessions_token: tuple = ()
+            active_session_id = None
+            queued_token: tuple = ()
+            if store is not None:
+                active_session_id = store.active_session_id
+                sessions = tuple(store.sessions())
+                sessions_token = tuple(
+                    (
+                        session.id,
+                        str(session.title or ""),
+                        str(session.updated_at or ""),
+                        str(session.persisted_conversation_id or ""),
+                        str(session.workspace_id or ""),
+                    )
+                    for session in sessions
+                )
+                if controller is not None:
+                    queued_token = tuple(
+                        controller.activity_for(session.id).queued_count
+                        for session in sessions
+                    )
+            run_status = (
+                controller.run_state.status if controller is not None else None
+            )
+            flat_lane = self._flat_conversation_search
+            workspace_lane = self._workspace_tree_search
+            attempts_token = tuple(
+                (
+                    workspace_id,
+                    attempt.generation,
+                    len(attempt.rows),
+                    attempt.loading,
+                    attempt.error,
+                    attempt.next_cursor,
+                    attempt.retry_cursor,
+                    attempt.membership_unknown,
+                )
+                for workspace_id, attempt in self._workspace_page_attempts.items()
+            )
+            return (
+                id(registry_service),
+                generation,
+                self._current_console_conversation_id(),
+                active_session_id,
+                sessions_token,
+                queued_token,
+                run_status,
+                self._canonical_membership_revision,
+                self._console_persisted_rows_cache_token,
+                self._console_conversation_browser_query,
+                (
+                    flat_lane.generation,
+                    flat_lane.query,
+                    flat_lane.error,
+                    flat_lane.settled_query,
+                    flat_lane.request_key,
+                ),
+                (
+                    workspace_lane.generation,
+                    workspace_lane.query,
+                    workspace_lane.error,
+                    workspace_lane.settled_query,
+                    workspace_lane.request_key,
+                ),
+                attempts_token,
+                getattr(self.app_instance, "workspace_server_adapter_state", None),
+                getattr(self.app_instance, "workspace_acp_handoff_state", None),
+            )
+        except Exception:
+            logger.debug(
+                "Console workspace build fingerprint unavailable; building live"
+            )
+            return None
 
     @staticmethod
     def _console_workspace_row_key(row: ConsoleWorkspaceConversationRow) -> str:
@@ -3862,20 +4228,48 @@ class ConsoleWorkspaceController:
                 "Unable to activate Console workspace for browser row",
             )
 
-    def _console_browser_workspace_records(self) -> tuple[WorkspaceRecord, ...]:
-        """Return all local workspace records visible to the Console browser."""
+    #: Generation-keyed display-read view over the app's registry service,
+    #: or ``None`` before the first read (TASK-22201). A CLASS attribute
+    #: default, matching the screen's memo conventions, so hand-built
+    #: fixtures that skip ``__init__`` still read a defined value.
+    _console_registry_display_reads: "_ConsoleRegistryDisplayReads | None" = None
+
+    def _console_registry_reads_view(self) -> "_ConsoleRegistryDisplayReads | None":
+        """Return the display-read view bound to the CURRENT service instance.
+
+        Rebound (dropping its cache) whenever the app swaps its registry
+        service, mirroring the identity check in the TASK-21118 memo.
+        """
         service = getattr(self.app_instance, "workspace_registry_service", None)
         if service is None:
+            return None
+        view = getattr(self, "_console_registry_display_reads", None)
+        if view is None or view.service is not service:
+            view = _ConsoleRegistryDisplayReads(service)
+            self._console_registry_display_reads = view
+        return view
+
+    def _console_browser_workspace_records(self) -> tuple[WorkspaceRecord, ...]:
+        """Return all local workspace records visible to the Console browser.
+
+        Served from the generation-keyed display-read view (TASK-22201):
+        the run tick reaches this method many times per 0.2 s (browser
+        labels, the workspace tree projection, page-row labels), and each
+        call used to run ``ensure_default_workspace()`` -- a write-capable
+        REPAIR (SELECT + bindings probe + occasional DELETE transaction) --
+        plus ``list_workspaces()``, synchronously on the event loop. The
+        repair does not belong on a display path and was never this path's
+        responsibility alone: boot wiring (``app.py``
+        ``_wire_workspace_registry_services``), ``archive_workspace``,
+        ``set_active_workspace``'s switch-to-Default repair, and
+        ``_set_active_workspace_for_console_session``'s global branch all
+        keep the registry resting on an active workspace. Display reads a
+        degraded registry as degraded and repairs nothing.
+        """
+        view = self._console_registry_reads_view()
+        if view is None:
             return ()
-        ensure_default = getattr(service, "ensure_default_workspace", None)
-        if callable(ensure_default):
-            try:
-                ensure_default()
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Unable to ensure default workspace for Console browser"
-                )
-        list_workspaces = getattr(service, "list_workspaces", None)
+        list_workspaces = getattr(view, "list_workspaces", None)
         if not callable(list_workspaces):
             return ()
         try:

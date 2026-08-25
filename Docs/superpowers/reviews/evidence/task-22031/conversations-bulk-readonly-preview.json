@@ -1,0 +1,12 @@
+{
+  "bulk_active": true,
+  "bulk_selected_count": 0,
+  "info_disabled": false,
+  "message_epoch": "epoch-chat-a",
+  "open_console_disabled": true,
+  "preview_message_count": 1,
+  "read_disabled": false,
+  "status": "Bulk selection: 0 conversations. The retained transcript is not included and remains read-only.",
+  "svg": "conversations-bulk-readonly-preview.svg",
+  "transcript_preserved": true
+}

@@ -8,6 +8,7 @@ from rich.color import Color
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
@@ -162,13 +163,20 @@ class LibraryMediaViewer(Vertical):
                 markup=False,
             )
             return
-        if self.loading:
-            yield Static(
-                self.loading_message,
-                id="library-media-viewer-loading",
-                classes="destination-purpose",
-                markup=False,
-            )
+        # task-22207: the pending banner is a PERSISTENT, display-gated
+        # widget rather than a conditional child. Traversal keystrokes flip
+        # only the loading state, and rebuilding the whole viewer (with a
+        # fresh full-document body) just to add/remove this one Static was
+        # the dominant per-keystroke cost. ``sync_loading_state`` patches
+        # its copy and visibility in place.
+        banner = Static(
+            self.loading_message,
+            id="library-media-viewer-loading",
+            classes="destination-purpose",
+            markup=False,
+        )
+        banner.display = self.loading
+        yield banner
         yield Static(
             "Server item · not in local Media list"
             if self.external_detail
@@ -373,6 +381,50 @@ class LibraryMediaViewer(Vertical):
             )
             raw_button.set_class(raw_selected, "-selected")
             yield raw_button
+
+    def sync_loading_state(self, *, loading: bool, message: str) -> None:
+        """Patch the mounted loading placeholder without rebuilding the body.
+
+        task-22207: a traversal keystroke flips only the pending-request
+        state; recomposing the viewer for that re-parses the full document
+        being LEFT purely to paint "Loading…". This patches the persistent
+        banner (or the empty-reader placeholder) in place instead.
+        Display-gating a widget composed once -- rather than mounting and
+        unmounting it here -- is deliberate: an async mount seam on this
+        surface is the TASK-21116 M3 ``DuplicateIds`` race class.
+
+        Args:
+            loading: Whether a detail request is pending without error.
+            message: Banner copy for the pending request.
+
+        Returns:
+            None.
+        """
+        self.loading = loading
+        self.loading_message = message
+        if not self.viewer.media_id:
+            try:
+                empty = self.query_one("#library-media-reader-empty", Static)
+            except (NoMatches, QueryError):
+                # Not composed yet -- compose() reads the attributes above.
+                return
+            copy = (
+                "Loading media…"
+                if loading
+                else "Select a media item to read it here."
+            )
+            if str(empty.content) != copy:
+                empty.update(copy)
+            return
+        try:
+            banner = self.query_one("#library-media-viewer-loading", Static)
+        except (NoMatches, QueryError):
+            # Not composed yet -- compose() reads the attributes above.
+            return
+        if loading and str(banner.content) != message:
+            banner.update(message)
+        if banner.display != loading:
+            banner.display = loading
 
     def sync_query_state(
         self, *, query: str, matches: tuple[int, ...], match_index: int

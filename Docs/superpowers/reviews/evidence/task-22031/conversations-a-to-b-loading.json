@@ -1,0 +1,10 @@
+{
+  "loaded_id": "chat-a",
+  "loaded_version": 4,
+  "loading": true,
+  "message_epoch": "epoch-chat-a",
+  "selected_id": "chat-b",
+  "selected_version": 7,
+  "status": "Loading Beta review (chat-b); showing Alpha planning (chat-a) until ready.",
+  "svg": "conversations-a-to-b-loading.svg"
+}

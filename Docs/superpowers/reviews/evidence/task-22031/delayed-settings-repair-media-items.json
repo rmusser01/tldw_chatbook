@@ -1,0 +1,28 @@
+{
+  "authority": "media_items",
+  "config_value": true,
+  "destination": "media",
+  "disk_value": true,
+  "durable_value": true,
+  "mounted_effective_value": true,
+  "pane": "items",
+  "preference_value": true,
+  "schedule": [
+    "settings_true_committed",
+    "stale_grip_false_exited",
+    "settings_refresh_callback"
+  ],
+  "svg": "delayed-settings-repair-media-items.svg",
+  "writes": [
+    [
+      "library.media_reader",
+      "items_open",
+      false
+    ],
+    [
+      "library.media_reader",
+      "items_open",
+      true
+    ]
+  ]
+}

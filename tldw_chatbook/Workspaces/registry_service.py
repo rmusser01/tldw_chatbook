@@ -286,18 +286,30 @@ class LocalWorkspaceRegistryService:
 
     @property
     def mutation_generation(self) -> int:
-        """Monotonic count of workspace-record mutations (TASK-21118).
+        """Monotonic count of registry display-read mutations (TASK-21118).
 
         Bumped by every mutator that can change what a workspace-record
         read (``get_active_workspace``, ``get_workspace``,
         ``list_workspaces``) returns: create, rename, archive, unarchive,
         set-active, clear-active, and the built-in Default restore.
         ``ensure_default_workspace`` bumps through those same legs when
-        (and only when) it actually changed something.
+        (and only when) it actually changed something. TASK-22201 widened
+        the contract to the Console context build's whole display read set:
+        runtime-binding mutators (``save_runtime_binding`` — which
+        ``add_folder_binding`` and ``set_folder_binding_access`` route
+        through — ``remove_runtime_binding``, and the Default stale-binding
+        repair) and ``link_membership`` now bump too, so
+        ``list_runtime_bindings`` / ``list_workspace_memberships`` results
+        are also safe to cache against this value.
+        ``set_workspace_scope`` / ``set_change_review_enabled`` write
+        tables outside that read set and deliberately do not bump.
 
         This is the invalidation subscription point for read caches: the
         Console keystroke path memoizes its active-workspace resolution
-        against this value instead of re-reading SQLite ~1.25x per key.
+        against this value instead of re-reading SQLite ~1.25x per key,
+        and the Console run tick serves its registry display reads from a
+        generation-keyed view instead of ~80 SQLite round-trips per 0.2 s
+        tick (TASK-22201).
         Every UI seam that changes the active workspace (Console switcher,
         browser-row open, session switch, Settings "Set active", Library's
         create modal, archive flows) funnels through these mutators on the
@@ -755,6 +767,11 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        # Membership rows feed the Console context build's display reads,
+        # so generation-keyed caches (TASK-22201) must revalidate. INSERT OR
+        # IGNORE may have been a no-op; the occasional spurious bump merely
+        # costs one re-read.
+        self._bump_mutation_generation()
         try:
             with self.db.connection() as conn:
                 row = conn.execute(
@@ -2030,6 +2047,7 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
         stored = self.get_runtime_binding(safe_binding.binding_id)
         if stored is None:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
@@ -2125,6 +2143,7 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         if cursor.rowcount == 0:
             raise BindingNotFound(safe_binding_id)
+        self._bump_mutation_generation()
 
     def set_folder_binding_access(
         self, binding_id: str, *, allow_write: bool
@@ -2614,6 +2633,9 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        # A binding row changed, so generation-keyed display-read caches
+        # (TASK-22201) must revalidate; only reached when rows were deleted.
+        self._bump_mutation_generation()
 
     def _restore_default_workspace(self) -> None:
         """Restore the built-in Default workspace when it is the only safe active fallback."""

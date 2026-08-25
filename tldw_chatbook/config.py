@@ -1803,15 +1803,68 @@ def _load_settings_uncached(
 
     # Lazy import avoids pulling the Library package through config's module
     # initialization path while still sharing the canonical normalization.
-    from tldw_chatbook.Library.library_media_reader_state import (
-        normalize_media_reader_preferences,
+    from tldw_chatbook.Library.library_adaptive_reader_state import (
+        normalize_adaptive_reader_preferences,
     )
 
-    media_reader_preferences = normalize_media_reader_preferences(
+    legacy_media_reader = (
         library_section.get("media_reader", {})
         if isinstance(library_section.get("media_reader"), Mapping)
         else {}
     )
+    raw_reader = (
+        library_section.get("reader", {})
+        if isinstance(library_section.get("reader"), Mapping)
+        else {}
+    )
+    shared_raw = {
+        key: os.getenv(
+            f"TLDW_LIBRARY_READER_{key.upper()}",
+            raw_reader.get(key, legacy_media_reader.get(key)),
+        )
+        for key in ("library_open", "custom_widths_enabled", "library_width")
+    }
+    shared_preferences = normalize_adaptive_reader_preferences(shared_raw)
+    shared_width = normalize_adaptive_reader_preferences(
+        {**shared_raw, "custom_widths_enabled": True}
+    ).library_width
+    normalized_reader = {
+        **copy.deepcopy(raw_reader),
+        "library_open": shared_preferences.library_open,
+        "custom_widths_enabled": shared_preferences.custom_widths_enabled,
+        "library_width": shared_width,
+    }
+    normalized_destination_readers: dict[str, dict[str, Any]] = {}
+    for section_name in (
+        "media_reader",
+        "conversations_reader",
+        "notes_reader",
+        "prompts_reader",
+        "skills_reader",
+    ):
+        raw_destination = (
+            library_section.get(section_name, {})
+            if isinstance(library_section.get(section_name), Mapping)
+            else {}
+        )
+        destination_preferences = normalize_adaptive_reader_preferences(
+            {
+                "custom_widths_enabled": True,
+                "items_open": os.getenv(
+                    f"TLDW_LIBRARY_{section_name.upper()}_ITEMS_OPEN",
+                    raw_destination.get("items_open"),
+                ),
+                "items_width": os.getenv(
+                    f"TLDW_LIBRARY_{section_name.upper()}_ITEMS_WIDTH",
+                    raw_destination.get("items_width"),
+                ),
+            }
+        )
+        normalized_destination_readers[section_name] = {
+            **copy.deepcopy(raw_destination),
+            "items_open": destination_preferences.items_open,
+            "items_width": destination_preferences.items_width,
+        }
     config_dict = {
         # General App
         "APP_MODE_STR": single_user_mode_str,
@@ -2811,13 +2864,8 @@ def _load_settings_uncached(
             "ingest_options": library_section.get("ingest_options", {})
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
-            "media_reader": {
-                "library_open": media_reader_preferences.library_open,
-                "items_open": media_reader_preferences.items_open,
-                "custom_widths_enabled": media_reader_preferences.custom_widths_enabled,
-                "library_width": media_reader_preferences.library_width,
-                "items_width": media_reader_preferences.items_width,
-            },
+            "reader": normalized_reader,
+            **normalized_destination_readers,
         },
         "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
         "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
@@ -3197,14 +3245,40 @@ ingest_url_preflight_probe = false
 # out past this cap to fill the remaining pool workers. Default: 1.
 # ingest_heavy_lane_max_workers = 1
 
+[library.reader]
+# Shared Library-pane visibility and width are written here by Settings and
+# Library pane toggles. Older configs may omit these keys; each missing key
+# independently falls back to its legacy value under [library.media_reader].
+# Environment overrides use TLDW_LIBRARY_READER_<KEY>.
+
 [library.media_reader]
-# Preferred manual pane state. Responsive collapse is session-only and never
-# overwrites these values.
+# Destination Items-pane preferences. The three shared keys below remain as
+# read-only compatibility fallbacks for older config files.
+# Items environment overrides use TLDW_LIBRARY_MEDIA_READER_<KEY>.
 library_open = true
 items_open = true
-# Fixed targets (28/40) are the default. Enable custom widths explicitly.
 custom_widths_enabled = false
 library_width = 28
+items_width = 40
+
+[library.conversations_reader]
+# Environment overrides use TLDW_LIBRARY_CONVERSATIONS_READER_<KEY>.
+items_open = true
+items_width = 40
+
+[library.notes_reader]
+# Environment overrides use TLDW_LIBRARY_NOTES_READER_<KEY>.
+items_open = true
+items_width = 40
+
+[library.prompts_reader]
+# Environment overrides use TLDW_LIBRARY_PROMPTS_READER_<KEY>.
+items_open = true
+items_width = 40
+
+[library.skills_reader]
+# Environment overrides use TLDW_LIBRARY_SKILLS_READER_<KEY>.
+items_open = true
 items_width = 40
 
 # Per-type ingestion options are persisted here by the Library ingest canvas.

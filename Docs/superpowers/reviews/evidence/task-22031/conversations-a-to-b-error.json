@@ -1,0 +1,11 @@
+{
+  "error": "Conversation detail was invalid. Try again.",
+  "loaded_id": "chat-a",
+  "loaded_version": 4,
+  "message_epoch": "epoch-chat-a",
+  "open_console_disabled": true,
+  "selected_id": "chat-b",
+  "selected_version": 7,
+  "status": "Conversation detail was invalid. Try again. Selected Beta review (chat-b). Showing Alpha planning (chat-a).",
+  "svg": "conversations-a-to-b-error.svg"
+}

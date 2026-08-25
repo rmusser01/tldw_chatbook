@@ -215,6 +215,20 @@ results. Loading the bundled stylesheet in the mounted shape matrix made the
 failure deterministic; sharing the mosaic grid calculation made graphics and
 mosaic settle to the same exact cell box.
 
+**Recurred, TASK-21595, 2026-08-25 — and this time the app bundle itself was
+not enough.** A geometry A/B for `PersonaBuddyWidget` used a plain `App` with
+`CSS_PATH = css/tldw_cli_modular.tcss`, i.e. the whole app bundle. The test
+passed, and so did the mutation that made the widget content-sized. The
+bundle contains **zero** `#persona-buddy-frame` rules: consolidated widget CSS
+(TASK-15450) lives in the generated `widget_defaults_{self,scoped}.tcss`, which
+the app registers via `_get_default_css` and only
+`Tests.UI.consolidated_css.ConsolidatedCSSApp` reproduces. The widget was
+mounting unstyled, so the probe was measuring nothing at all. **"I loaded the
+app bundle" is not the same as "I loaded what production loads"** — for any
+widget whose CSS was consolidated, inherit `ConsolidatedCSSApp`. The tell was
+the surviving mutant, not the failing test: a green geometry assertion under a
+harness that cannot see the rule looks identical to a correct one.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test
@@ -441,6 +455,25 @@ the local boundary and green with it.
 disabled or bypass mode of the surviving owner and test that owner's boundary in
 each mode. Consolidate only after evidence shows the remaining guard preserves
 the contract there.
+
+---
+
+## A mixed sync/async interface needs an explicit, complete test double
+
+**TASK-2510 final review, 2026-08-24.** The Watchlists backend controller gained
+the synchronous `create_form_source_types` contract alongside its existing async
+operations. Four collections-screen controller doubles were blanket
+`AsyncMock` instances, so backend switching turned that synchronous call into a
+coroutine and the Reader recovery path failed with `TypeError: 'coroutine' object
+is not iterable`. Correcting all four doubles to provide a synchronous `Mock` for
+that seam restored all 88 collections-screen tests and the 155-test focused
+Task-2510 suite.
+
+**What to do.** When an interface mixes synchronous and asynchronous methods,
+model every seam explicitly with the correct call shape; do not use a blanket
+`AsyncMock` as a complete interface double. Exercise the double through a real
+integration path that crosses the synchronous seam, not by asserting that the
+mock exists.
 
 ---
 
@@ -8546,3 +8579,52 @@ back to hand-rolled SQL in the test. Resist it: that trades a loud failure for
 a silent one. (Writing that hand-rolled INSERT is also harder than it looks —
 the first attempt at one in this task died on a `NOT NULL` column the writer
 fills for you.)
+
+## Count the calls with a stack probe before wiring a shared-state fix at the call sites you know about (TASK-22201, 2026-08-25)
+
+The perf review said the Console run tick builds
+`_build_console_workspace_context_state()` **three** times (two rail-state
+legs + the workspace-context push), so the first fix threaded one prebuilt
+state through exactly those three call sites. The build-once gate test then
+failed with `count == 6`: a stack-capturing probe showed the other three
+builds arriving through call chains the review never named — the inspector
+rows leg (`_selected_console_conversation_inspector_rows`) builds the
+workspace state inside BOTH rail-state calls, the control bar's own inspector
+build, and the agent section's payload lambda. Parameter-threading at the
+named sites would have shipped "fixed" while leaving 4 of 6 builds in place —
+and only the gate asserting on the COUNT, not on the three known sites,
+caught it.
+
+Two rules. **Measure the call multiplicity with a stack probe (wrap the
+function, record `traceback.extract_stack`) before designing the fix** — a
+finding's count is a lower bound from the paths its author traced. And when
+the calls converge on one function from many sites, **share at the converged
+function (here: an opt-in, asyncio-task-scoped cache consulted inside the
+build itself), not by threading state through each caller** — the callers you
+did not know about are exactly the ones a threading fix misses.
+
+---
+
+## A programmatic `.focus()` is not the user's keystroke — Library focus semantics gate on the INPUT that moved focus
+
+**TASK-22207, 2026-08-25.** The red-first probe for "arrow-keying the Media
+Items list must not rebuild the Reader body" drove the traversal with
+`row.focus()` + `pilot.pause()` — and the Reader silently ignored every one
+of them: no selection, no pending request, and the settled-row wait died on
+"Detail call did not start". Nothing was broken. `LibraryScreen.
+on_descendant_focus` deliberately treats a focus change as user intent only
+when a real input event could own it: `on_resize` arms
+`_library_notes_resize_settling` (True from the mount resize onward in a
+Pilot harness), and only real input handlers (`on_key`, `on_mouse_down`,
+wheel) clear it via `_mark_library_notes_user_interaction()`. A programmatic
+`.focus()` fires `DescendantFocus` without any of those, so the screen
+classifies it as resize/restore noise — exactly as designed, to stop
+background recomposes from yanking focus.
+
+**What to do.** In a mounted-screen test, drive the gesture, not the state:
+`await pilot.press("down")` (which routes through `on_key`, clears the
+suppression, and moves row focus via `_move_library_list_row_focus`) is the
+traversal; `row.focus()` is only the framework's half of it. If a
+focus-driven behavior mysteriously does not fire in a Pilot harness, check
+which interaction-intent flags the screen consults before dispatching —
+and prefer the input event that a user would actually produce.
