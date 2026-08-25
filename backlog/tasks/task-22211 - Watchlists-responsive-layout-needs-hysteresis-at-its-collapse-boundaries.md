@@ -6,7 +6,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-24'
-updated_date: '2026-08-25 17:19'
+updated_date: '2026-08-25 19:50'
 labels:
   - performance
   - watchlists
@@ -53,3 +53,9 @@ ADR required: no
 ADR path: backlog/decisions/042-watchlists-reader-first-ia.md
 Reason: bounded stabilization of ADR-042 responsive policy using the existing Library hysteresis precedent; no new storage, ownership, dependency, or long-lived pane architecture.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented pure four-column resolver hysteresis using the Library precedent, with positive screen width as the invariant width source and a separate responsive baseline. Added a mode-local priority lease that parks across sections, remains separate from Article Focus, clears only in its origin mode past the dead band, and is restored with the full baseline on token-correlated manual-apply rollback; failed section swaps also restore the rendered responsive baseline. Equal effective requests return before focus capture or token allocation. Verification: targeted Watchlists changed-functionality suite passed 75 tests with 111 deselected and 2 dependency warnings; Ruff passed for all modified Python and test files; git diff --check passed. Modified implementation and coverage: tldw_chatbook/UI/Watchlists_Modules/region_layout.py, tldw_chatbook/UI/Screens/watchlists_collections_screen.py, Tests/Watchlists/test_watchlists_responsive_layout.py, Tests/Watchlists/test_watchlists_collections_screen.py, Tests/Watchlists/test_watchlists_cold_open_layout.py, and Tests/Watchlists/test_watchlists_scoped_rebuilds.py. Supporting design, plan, critique, and this task record were updated. ADR required: no; existing ADR 042 governs the reader-first responsive policy.
+<!-- SECTION:NOTES:END -->
