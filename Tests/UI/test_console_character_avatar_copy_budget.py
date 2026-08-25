@@ -16,6 +16,8 @@ edges, mirroring ``Tests/UI/test_console_character_controller.py``.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -95,6 +97,7 @@ def _avatar_controller(
     is_mounted=lambda: True,
     actor_scope_accessor=None,
     resolve_visual_identity=None,
+    app_config_accessor=lambda: {},
 ) -> ConsoleCharacterController:
     """Real controller wired for the avatar paint path with recording edges."""
 
@@ -123,7 +126,7 @@ def _avatar_controller(
         painted.append(spec)
 
     dependencies: dict[str, Any] = {
-        "app_config_accessor": lambda: {},
+        "app_config_accessor": app_config_accessor,
         "chat_store_accessor": lambda: store,
         "active_native_session_accessor": lambda: None,
         "current_conversation_id_accessor": lambda: None,
@@ -231,6 +234,56 @@ async def test_mid_teardown_tick_never_paints_and_never_raises() -> None:
     await controller._refresh_active_character_avatar_if_scope_changed()
 
     assert painted == []
+
+
+@pytest.mark.asyncio
+async def test_paint_in_flight_when_avatar_hidden_never_applies() -> None:
+    """A paint racing a hide toggle must drop (review probe, TASK-22204).
+
+    The avatar-hidden early return in `_refresh_avatar_request` never
+    rebuilds `_latest_built_request`, so ONLY its explicit baseline clear
+    fences a paint that was already resolving when the avatar was hidden.
+    Deleting that clear lets the stale paint apply a spec (and repaint the
+    DOM edge) while `show_character_avatar` is off -- this test reds then.
+    """
+
+    store, session_id = _streaming_store()
+    config = {"chat": {"images": {"show_character_avatar": True}}}
+    painted: list[dict | None] = []
+    started = threading.Event()
+    release = threading.Event()
+    first = {"blocked": False}
+    resolution = _operational_resolution()
+
+    def blocking_resolve(_scope, _state, _manual):
+        if not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            assert release.wait(timeout=5)
+        return resolution
+
+    controller = _avatar_controller(
+        store,
+        session_id,
+        painted=painted,
+        resolve_visual_identity=blocking_resolve,
+        app_config_accessor=lambda: config,
+    )
+
+    stale = asyncio.create_task(
+        controller._refresh_active_character_avatar_if_scope_changed(force=True)
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    # The user hides the avatar while that paint is still resolving; the
+    # next tick observes hidden, clears state, and takes the early return.
+    config["chat"]["images"]["show_character_avatar"] = False
+    await controller._refresh_active_character_avatar_if_scope_changed()
+    assert controller._active_character_avatar is None
+    release.set()
+    await stale
+
+    assert painted == []
+    assert controller._active_character_avatar is None
 
 
 @pytest.mark.asyncio
