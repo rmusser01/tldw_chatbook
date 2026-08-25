@@ -184,8 +184,8 @@ class EvalsDB:
         (the held-connection rule in ``Library_Ingest_Jobs_DB.py``'s module
         docstring, the store template). Every write path in this file relies
         on Python's implicit transactions via ``with conn:`` bodies, several
-        of them multi-statement (e.g. ``update_run_status``'s paired UPDATEs,
-        and ``delete_task``, whose cascade into
+        of them multi-statement (e.g. ``store_result``'s result INSERT plus
+        its completed-samples UPDATE, and ``delete_task``, whose cascade into
         ``delete_probe_annotations_for_run_groups`` deliberately NESTS
         ``with conn:`` blocks to share one implicit transaction -- explicit
         BEGIN cannot nest); there is no explicit-BEGIN transaction
