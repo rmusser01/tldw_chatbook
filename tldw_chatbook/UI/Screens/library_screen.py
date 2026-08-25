@@ -97,7 +97,7 @@ from ...Library.library_conversations_state import (
     build_library_conversations_state,
     validate_library_conversation_page,
 )
-from ...Library.library_adaptive_reader_state import (
+from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     AdaptiveReaderLayoutProfile,

@@ -42,6 +42,9 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Utils.adaptive_reader_state import (
+    normalize_adaptive_reader_preferences,
+)
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
@@ -1797,12 +1800,15 @@ def _load_settings_uncached(
             f"Darwin platform-preferred STT provider resolved to: {default_stt_provider}"
         )
 
-    # Lazy import avoids pulling the Library package through config's module
-    # initialization path while still sharing the canonical normalization.
-    from tldw_chatbook.Library.library_adaptive_reader_state import (
-        normalize_adaptive_reader_preferences,
-    )
-
+    # TASK-22223: `normalize_adaptive_reader_preferences` comes from the
+    # stdlib-only leaf `Utils/adaptive_reader_state.py` (module-top import).
+    # This function runs at config-module import (`load_settings()` at module
+    # scope), so NOTHING here may import a feature package -- a previous
+    # `Library.library_adaptive_reader_state` import claimed to be lazy but
+    # executed the whole Library `__init__` service stack on every config
+    # import and closed a live cycle through `runtime_policy.bootstrap`.
+    # Guarded by `Tests/Packaging/test_config_import_closure.py`; share logic
+    # with features through config-safe leaf modules only.
     legacy_media_reader = (
         library_section.get("media_reader", {})
         if isinstance(library_section.get("media_reader"), Mapping)

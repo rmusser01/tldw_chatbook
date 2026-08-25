@@ -12,7 +12,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     normalize_console_transcript_style,
 )
-from tldw_chatbook.Library.library_adaptive_reader_state import (
+from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
     ITEMS_TARGET_WIDTH,
