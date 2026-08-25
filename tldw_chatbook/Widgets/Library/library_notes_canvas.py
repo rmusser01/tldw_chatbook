@@ -134,6 +134,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         create_status: str = "",
         load_state: str = "loading",
         load_message: str = "",
+        authority_id: str = "library-notes-authority",
         **kwargs: Any,
     ) -> None:
         """Initialize one list, editor, create, sync, or import canvas.
@@ -176,6 +177,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.create_status = create_status
         self.load_state = load_state
         self.load_message = load_message
+        self.authority_id = authority_id
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -199,7 +201,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def compose(self) -> ComposeResult:
         yield Static(
             self._authority_copy(),
-            id="library-notes-authority",
+            id=self.authority_id,
             markup=False,
         )
         if self.mode == "loading":
@@ -378,7 +380,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and import_snapshot is not None
             and import_canvases
         ):
-            authority = self.query("#library-notes-authority")
+            authority = self.query(f"#{self.authority_id}")
             if authority:
                 authority.first(Static).update(self._authority_copy())
             child = import_canvases.first(LibraryNoteImportCanvas)
@@ -397,7 +399,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and lasting_sync_snapshot is not None
             and lasting_canvases
         ):
-            authority = self.query("#library-notes-authority")
+            authority = self.query(f"#{self.authority_id}")
             if authority:
                 authority.first(Static).update(self._authority_copy())
             lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
@@ -1262,7 +1264,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
-        authority = self.query_one("#library-notes-authority", Static)
+        authority = self.query_one(f"#{self.authority_id}", Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)

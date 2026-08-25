@@ -30,7 +30,7 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanva
 
 
 def _fake(select_mode):
-    return SimpleNamespace(
+    fake = SimpleNamespace(
         _library_notes_select_mode=select_mode,
         _library_notes_row_selection=RowSelection("notes"),
         _selected_note_id="",
@@ -42,6 +42,8 @@ def _fake(select_mode):
         # task-15790: production gained this in-flight guard; stale double.
         _library_notes_mutation_in_flight=False,
     )
+    fake._library_notes_mutation_fenced = lambda: False
+    return fake
 
 
 @pytest.mark.asyncio
