@@ -1,19 +1,6 @@
 BEGIN IMMEDIATE;
 
-DELETE FROM workspace_memberships AS pending
-WHERE pending.item_type = 'note'
-  AND pending.role = 'note_pending'
-  AND EXISTS (
-      SELECT 1
-      FROM workspace_memberships AS visible
-      WHERE visible.workspace_id = pending.workspace_id
-        AND visible.item_type = pending.item_type
-        AND visible.item_id = pending.item_id
-        AND visible.role = 'note'
-  );
-
-UPDATE workspace_memberships
-SET role = 'note'
+DELETE FROM workspace_memberships
 WHERE item_type = 'note' AND role = 'note_pending';
 
 CREATE TABLE research_quick_note_receipts (

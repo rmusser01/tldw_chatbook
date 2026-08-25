@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import base64
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
+from secrets import token_urlsafe
 import sqlite3
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
 from loguru import logger
 
@@ -37,6 +41,60 @@ from .models import (
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
+_QUICK_NOTE_LEASE_SECONDS = 30
+_QUICK_NOTE_MAX_FAILURES = 3
+_QUICK_NOTE_FAILURE_REASONS = {
+    "proof_mismatch",
+    "owner_conflict",
+    "owner_unavailable",
+    "registry_failure",
+}
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _future_timestamp(value: str, seconds: int) -> str:
+    return (_parse_utc_timestamp(value) + timedelta(seconds=seconds)).isoformat()
+
+
+def _monotonic_timestamp(previous: str, candidate: str) -> str:
+    return previous if _parse_utc_timestamp(previous) >= _parse_utc_timestamp(candidate) else candidate
+
+
+def _length_prefixed_identity(*axes: str) -> str:
+    payload = bytearray()
+    for axis in axes:
+        encoded = axis.encode("utf-8")
+        payload.extend(len(encoded).to_bytes(4, "big"))
+        payload.extend(encoded)
+    return base64.urlsafe_b64encode(bytes(payload)).decode("ascii")
+
+
+def _validate_quick_note_operation_token(value: str) -> None:
+    if not value.startswith("research-note-") or len(value) != 46:
+        raise ValueError("operation_token is not an app-minted Quick Note token")
+    try:
+        operation_uuid = UUID(hex=value.removeprefix("research-note-"))
+    except ValueError as exc:
+        raise ValueError(
+            "operation_token is not an app-minted Quick Note token"
+        ) from exc
+    if (
+        operation_uuid.version != 4
+        or operation_uuid.variant != RFC_4122
+        or value != f"research-note-{operation_uuid.hex}"
+    ):
+        raise ValueError("operation_token is not an app-minted Quick Note token")
+
+
+def _opaque_receipt_token(factory: Callable[[], str], field_name: str) -> str:
+    raw = _normalize_required_text(factory(), field_name)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _filesystem_binding_missing(locator: str) -> bool:
@@ -199,11 +257,15 @@ class LocalWorkspaceRegistryService:
         *,
         id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
+        receipt_token_factory: Callable[[], str] | None = None,
     ) -> None:
         self.db = db
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or utc_now_iso
         self._mutation_generation = 0
+        self._receipt_token_factory = receipt_token_factory or (
+            lambda: token_urlsafe(32)
+        )
 
     @property
     def mutation_generation(self) -> int:
@@ -917,13 +979,27 @@ class LocalWorkspaceRegistryService:
 
     @staticmethod
     def _quick_note_identity(
-        *, workspace_id: str, local_user_id: str, operation_token: str, kind: str
+        *,
+        workspace_id: str,
+        local_user_id: str,
+        operation_token: str,
+        kind: str,
+        data_source: str = "local",
+        server_profile_id: str = "",
+        principal_id: str = "",
     ) -> tuple[str, str]:
-        seed = "|".join(
-            ("chatbook-quick-note-v1", workspace_id, local_user_id, operation_token)
+        seed = _length_prefixed_identity(
+            "chatbook-quick-note-v2",
+            data_source,
+            server_profile_id,
+            principal_id,
+            workspace_id,
+            local_user_id,
+            operation_token,
         )
         canonical_note_id = f"research-note-{uuid5(NAMESPACE_URL, seed).hex}"
-        receipt_id = f"quick-note-receipt-{uuid5(NAMESPACE_URL, seed + '|' + kind).hex}"
+        receipt_seed = _length_prefixed_identity(seed, kind)
+        receipt_id = f"quick-note-receipt-{uuid5(NAMESPACE_URL, receipt_seed).hex}"
         return receipt_id, canonical_note_id
 
     def claim_quick_note_create(
@@ -938,6 +1014,7 @@ class LocalWorkspaceRegistryService:
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
         safe_token = _normalize_required_text(operation_token, "operation_token")
+        _validate_quick_note_operation_token(safe_token)
         if self.get_workspace(safe_workspace_id) is None:
             raise WorkspaceNotFound(safe_workspace_id)
         receipt_id, note_id = self._quick_note_identity(
@@ -947,16 +1024,26 @@ class LocalWorkspaceRegistryService:
             kind="create",
         )
         now = self._now_factory()
+        owner_proof = _opaque_receipt_token(
+            self._receipt_token_factory, "owner_proof"
+        )
+        lease_token = _opaque_receipt_token(
+            self._receipt_token_factory, "lease_token"
+        )
+        lease_expires_at = _future_timestamp(now, _QUICK_NOTE_LEASE_SECONDS)
         try:
             with self.db.transaction(immediate=True) as conn:
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO research_quick_note_receipts (
-                        receipt_id, data_source, workspace_id, local_user_id,
+                        receipt_id, data_source, server_profile_id, principal_id,
+                        workspace_id, local_user_id,
                         operation_token, operation_kind, canonical_note_id,
-                        expected_version, state, revision, created_at, updated_at
-                    ) VALUES (?, 'local', ?, ?, ?, 'create', ?, NULL,
-                              'pending', 1, ?, ?)
+                        owner_proof, lease_token, lease_expires_at,
+                        expected_version, state, revision, failure_count,
+                        next_retry_at, blocked_reason_code, created_at, updated_at
+                    ) VALUES (?, 'local', '', '', ?, ?, ?, 'create', ?, ?, ?, ?,
+                              NULL, 'pending', 1, 0, ?, '', ?, ?)
                     """,
                     (
                         receipt_id,
@@ -964,6 +1051,10 @@ class LocalWorkspaceRegistryService:
                         safe_user_id,
                         safe_token,
                         note_id,
+                        owner_proof,
+                        lease_token,
+                        lease_expires_at,
+                        now,
                         now,
                         now,
                     ),
@@ -972,6 +1063,34 @@ class LocalWorkspaceRegistryService:
                     "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
                     (receipt_id,),
                 ).fetchone()
+                if (
+                    row is not None
+                    and row["state"] == "pending"
+                    and _parse_utc_timestamp(str(row["lease_expires_at"]))
+                    <= _parse_utc_timestamp(now)
+                    and _parse_utc_timestamp(str(row["next_retry_at"]))
+                    <= _parse_utc_timestamp(now)
+                ):
+                    updated_at = _monotonic_timestamp(str(row["updated_at"]), now)
+                    conn.execute(
+                        """
+                        UPDATE research_quick_note_receipts
+                        SET lease_token = ?, lease_expires_at = ?,
+                            revision = revision + 1, updated_at = ?
+                        WHERE receipt_id = ? AND state = 'pending' AND revision = ?
+                        """,
+                        (
+                            lease_token,
+                            lease_expires_at,
+                            updated_at,
+                            receipt_id,
+                            int(row["revision"]),
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM research_quick_note_receipts WHERE receipt_id = ?",
+                        (receipt_id,),
+                    ).fetchone()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         if row is None:
@@ -1002,17 +1121,18 @@ class LocalWorkspaceRegistryService:
         safe_note_id = _normalize_required_text(canonical_note_id, "canonical_note_id")
         if type(expected_version) is not int or expected_version < 1:
             raise ValueError("expected_version must be a positive integer")
+        delete_seed = _length_prefixed_identity(
+            "chatbook-quick-note-delete-v2",
+            "local",
+            "",
+            "",
+            safe_workspace_id,
+            safe_user_id,
+            safe_note_id,
+            str(expected_version),
+        )
         operation_token = "research-note-delete-" + uuid5(
-            NAMESPACE_URL,
-            "|".join(
-                (
-                    "chatbook-quick-note-delete-v1",
-                    safe_workspace_id,
-                    safe_user_id,
-                    safe_note_id,
-                    str(expected_version),
-                )
-            ),
+            NAMESPACE_URL, delete_seed
         ).hex
         receipt_id, _ = self._quick_note_identity(
             workspace_id=safe_workspace_id,
@@ -1021,16 +1141,26 @@ class LocalWorkspaceRegistryService:
             kind="delete",
         )
         now = self._now_factory()
+        owner_proof = _opaque_receipt_token(
+            self._receipt_token_factory, "owner_proof"
+        )
+        lease_token = _opaque_receipt_token(
+            self._receipt_token_factory, "lease_token"
+        )
+        lease_expires_at = _future_timestamp(now, _QUICK_NOTE_LEASE_SECONDS)
         try:
             with self.db.transaction(immediate=True) as conn:
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO research_quick_note_receipts (
-                        receipt_id, data_source, workspace_id, local_user_id,
+                        receipt_id, data_source, server_profile_id, principal_id,
+                        workspace_id, local_user_id,
                         operation_token, operation_kind, canonical_note_id,
-                        expected_version, state, revision, created_at, updated_at
-                    ) VALUES (?, 'local', ?, ?, ?, 'delete', ?, ?,
-                              'pending', 1, ?, ?)
+                        owner_proof, lease_token, lease_expires_at,
+                        expected_version, state, revision, failure_count,
+                        next_retry_at, blocked_reason_code, created_at, updated_at
+                    ) VALUES (?, 'local', '', '', ?, ?, ?, 'delete', ?, ?, ?, ?,
+                              ?, 'pending', 1, 0, ?, '', ?, ?)
                     """,
                     (
                         receipt_id,
@@ -1038,7 +1168,11 @@ class LocalWorkspaceRegistryService:
                         safe_user_id,
                         operation_token,
                         safe_note_id,
+                        owner_proof,
+                        lease_token,
+                        lease_expires_at,
                         expected_version,
+                        now,
                         now,
                         now,
                     ),
@@ -1068,6 +1202,7 @@ class LocalWorkspaceRegistryService:
         *,
         workspace_id: str | None = None,
         operation_kind: str | None = None,
+        include_blocked: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[tuple[ResearchQuickNoteReceipt, ...], int]:
@@ -1081,37 +1216,50 @@ class LocalWorkspaceRegistryService:
         )
         if operation_kind is not None and operation_kind not in {"create", "delete"}:
             raise ValueError("operation_kind is invalid")
+        if type(include_blocked) is not bool:
+            raise TypeError("include_blocked must be a bool")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         if type(offset) is not int or not 0 <= offset <= 10_000:
             raise ValueError("offset must be between 0 and 10000")
-        params = (
+        now = self._now_factory()
+        params: tuple[object, ...] = (
             safe_user_id,
             safe_workspace_id,
             safe_workspace_id,
             operation_kind,
             operation_kind,
         )
+        actionable_sql = ""
+        if not include_blocked:
+            actionable_sql = """
+              AND state <> 'blocked'
+              AND next_retry_at <= ?
+              AND (state = 'owner_committed' OR lease_expires_at <= ?)
+            """
+            params += (now, now)
         try:
             with self.db.connection() as conn:
                 total = int(
                     conn.execute(
-                        """
+                        f"""
                         SELECT COUNT(*) FROM research_quick_note_receipts
                         WHERE local_user_id = ?
                           AND (? IS NULL OR workspace_id = ?)
                           AND (? IS NULL OR operation_kind = ?)
+                          {actionable_sql}
                         """,
                         params,
                     ).fetchone()[0]
                 )
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT * FROM research_quick_note_receipts
                     WHERE local_user_id = ?
                       AND (? IS NULL OR workspace_id = ?)
                       AND (? IS NULL OR operation_kind = ?)
-                    ORDER BY updated_at ASC, receipt_id ASC
+                      {actionable_sql}
+                    ORDER BY next_retry_at ASC, updated_at ASC, receipt_id ASC
                     LIMIT ? OFFSET ?
                     """,
                     params + (limit, offset),
@@ -1132,15 +1280,33 @@ class LocalWorkspaceRegistryService:
         now = self._now_factory()
         try:
             with self.db.transaction(immediate=True) as conn:
+                current = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                    """,
+                    (safe_receipt_id, safe_user_id),
+                ).fetchone()
+                if current is None:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                updated_at = _monotonic_timestamp(str(current["updated_at"]), now)
                 cursor = conn.execute(
                     """
                     UPDATE research_quick_note_receipts
                     SET state = 'owner_committed', revision = revision + 1,
-                        updated_at = ?
+                        next_retry_at = ?, blocked_reason_code = '', updated_at = ?
                     WHERE receipt_id = ? AND local_user_id = ?
                       AND state = 'pending' AND revision = ?
                     """,
-                    (now, safe_receipt_id, safe_user_id, expected_revision),
+                    (
+                        updated_at,
+                        updated_at,
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                    ),
                 )
                 row = conn.execute(
                     """
@@ -1183,6 +1349,81 @@ class LocalWorkspaceRegistryService:
                 return cursor.rowcount > 0
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def record_quick_note_failure(
+        self,
+        receipt_id: str,
+        local_user_id: str,
+        *,
+        expected_revision: int,
+        reason_code: str,
+        permanent: bool = False,
+    ) -> ResearchQuickNoteReceipt:
+        """Record one sanitized failure with bounded backoff and CAS fencing."""
+
+        safe_receipt_id = _normalize_required_text(receipt_id, "receipt_id")
+        safe_user_id = _normalize_required_text(local_user_id, "local_user_id")
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+        if reason_code not in _QUICK_NOTE_FAILURE_REASONS:
+            raise ValueError("reason_code is invalid")
+        if type(permanent) is not bool:
+            raise TypeError("permanent must be a bool")
+        now = self._now_factory()
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                current = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                      AND revision = ?
+                    """,
+                    (safe_receipt_id, safe_user_id, expected_revision),
+                ).fetchone()
+                if current is None:
+                    raise WorkspaceRegistryServiceError(
+                        "Quick Note receipt changed; reload and retry."
+                    )
+                failure_count = min(
+                    _QUICK_NOTE_MAX_FAILURES, int(current["failure_count"]) + 1
+                )
+                blocked = permanent or failure_count >= _QUICK_NOTE_MAX_FAILURES
+                state = "blocked" if blocked else str(current["state"])
+                updated_at = _monotonic_timestamp(str(current["updated_at"]), now)
+                next_retry_at = _future_timestamp(
+                    updated_at, min(300, 2**failure_count)
+                )
+                conn.execute(
+                    """
+                    UPDATE research_quick_note_receipts
+                    SET state = ?, revision = revision + 1,
+                        failure_count = ?, next_retry_at = ?,
+                        blocked_reason_code = ?, updated_at = ?
+                    WHERE receipt_id = ? AND local_user_id = ? AND revision = ?
+                    """,
+                    (
+                        state,
+                        failure_count,
+                        next_retry_at,
+                        reason_code,
+                        updated_at,
+                        safe_receipt_id,
+                        safe_user_id,
+                        expected_revision,
+                    ),
+                )
+                row = conn.execute(
+                    """
+                    SELECT * FROM research_quick_note_receipts
+                    WHERE receipt_id = ? AND local_user_id = ?
+                    """,
+                    (safe_receipt_id, safe_user_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE)
+        return _quick_note_receipt_from_row(row)
 
     def complete_quick_note_create(
         self,
@@ -1304,8 +1545,11 @@ class LocalWorkspaceRegistryService:
                         ),
                     )
                 conn.execute(
-                    "DELETE FROM research_quick_note_receipts WHERE receipt_id = ?",
-                    (safe_receipt_id,),
+                    """
+                    DELETE FROM research_quick_note_receipts
+                    WHERE local_user_id = ? AND canonical_note_id = ?
+                    """,
+                    (safe_user_id, note_id),
                 )
                 return True
         except sqlite3.Error as exc:
@@ -2003,14 +2247,22 @@ def _quick_note_receipt_from_row(row: sqlite3.Row) -> ResearchQuickNoteReceipt:
     return ResearchQuickNoteReceipt(
         receipt_id=row["receipt_id"],
         data_source=row["data_source"],
+        server_profile_id=row["server_profile_id"],
+        principal_id=row["principal_id"],
         workspace_id=row["workspace_id"],
         local_user_id=row["local_user_id"],
         operation_token=row["operation_token"],
         operation_kind=row["operation_kind"],
         canonical_note_id=row["canonical_note_id"],
+        owner_proof=row["owner_proof"],
+        lease_token=row["lease_token"],
+        lease_expires_at=row["lease_expires_at"],
         expected_version=row["expected_version"],
         state=row["state"],
         revision=int(row["revision"]),
+        failure_count=int(row["failure_count"]),
+        next_retry_at=row["next_retry_at"],
+        blocked_reason_code=row["blocked_reason_code"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

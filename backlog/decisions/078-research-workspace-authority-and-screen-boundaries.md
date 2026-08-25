@@ -143,36 +143,60 @@ Local Quick Note creation is the narrow exception to create-then-associate
 ordering because Notes and the workspace registry are independent SQLite
 owners with no shared transaction. Before the canonical Notes write, WorkspaceDB
 claims a row in the dedicated `research_quick_note_receipts` ledger. The
-payload-free row binds the Local workspace ID, canonical Notes user/client,
-app-minted operation token, operation kind, deterministic owner-qualified Note
-UUID, state, revision, and timestamps. It never enters `workspace_memberships`,
-Console context, or RAG scope, and it stores no title, body, tags, provenance,
-path, or URL. Consequently, identical operation tokens cannot associate one
-user's or workspace's Note with another owner.
+payload-free row binds every qualified authority axis, the Local workspace ID,
+canonical Notes user/client, a strictly validated app-minted UUID-v4 operation
+token, operation kind, deterministic owner-qualified Note UUID, random
+owner-minted proof, lease/claim token and expiry, expected delete version,
+monotonic revision/timestamps, and bounded sanitized retry state. Identity axes
+use an unambiguous length-prefixed encoding rather than delimiter joining. The
+row never enters `workspace_memberships`, Console context, or RAG scope, and it
+stores no title, body, tags, provenance, path, or URL. Consequently, identical
+tokens or delimiter-shaped identities cannot associate one user's or
+workspace's Note with another owner.
 
-The canonical Notes row and its keywords commit in one Notes-owner transaction.
-Create retry verifies the exact canonical title, body, tags, and provenance
-before advancing the receipt from `pending` to `owner_committed`; only that
-state may atomically add the authoritative `WorkspaceMembership(role="note")`
-and consume the receipt. On restart, existence of the exact owner-qualified,
-app-minted canonical UUID is proof that the atomic Notes transaction committed,
-so reconciliation may advance and promote it without copying its payload into
-the receipt. A pending create with no owner row is safe to clear; an identity or
-payload mismatch observed during an explicit retry is never promoted. Startup
-processes one bounded owner-filtered global page, and workspace listing also
-reconciles one bounded page. Age orders recovery work but never expires a
-receipt that could represent live canonical work.
+The canonical Notes row, user keywords/provenance, and an internal receipt-proof
+keyword commit in one Notes-owner transaction. Ordinary Notes keyword reads and
+Research tags hide that proof; recovery can request it through the narrow
+internal owner seam. Create retry verifies the exact canonical title, body,
+tags, provenance, qualified identity, and proof before advancing the receipt
+from `pending` to `owner_committed`; only that state may atomically add the
+authoritative `WorkspaceMembership(role="note")` and consume the receipt.
+Deterministic UUID existence or a caller token alone is never proof of owner
+commit. Restart promotion requires the exact qualified receipt plus its random
+proof marker and canonical owner invariants.
+
+A pending create carries a durable lease and revision fence. Reconciliation
+does not inspect or clear it while the lease is live. Once expired, a missing
+owner row may be cleared only by revision-guarded compare-and-swap; a matching
+proved owner row may resume promotion. Each receipt is isolated. Transient
+failures record only a bounded reason code, failure count, and exponential
+retry time; blocked/backoff rows are filtered before the bounded SQL limit so a
+poison row cannot starve later work. Startup processes one bounded
+owner-filtered global page, and workspace listing also reconciles one bounded
+page. The proof, lease token, note payload, tags, and provenance never enter
+logs, overlay state, or recovery copy.
 
 Local Quick Note deletion records a durable receipt before the optimistic Notes
-soft delete. Once the canonical owner is absent or tombstoned, one WorkspaceDB
-transaction removes every membership role for that Note across all workspaces,
-removes matching Note items from every stored RAG scope, and consumes the
-receipt. This preserves the existing canonical-delete semantics: a Local Note
-is one shared general-Library record, so deleting it invalidates every workspace
-projection rather than pretending one workspace owns a private copy. An
-interrupted cleanup resumes at startup even when the Note no longer appears in
-the UI. This protocol avoids both duplicate canonical Notes after create
-failure and dangling workspace/RAG projections after delete failure.
+soft delete and binds its expected owner version. Reconciliation inspects the
+canonical owner before projection cleanup: an active row at the exact expected
+version is deleted again through the versioned owner; a changed or restored
+active row blocks as a conflict and retains every projection; only an absent or
+tombstoned owner permits cleanup. One WorkspaceDB transaction then removes
+every membership role for that Note across all workspaces, removes matching
+Note items from every stored RAG scope, and consumes all receipts for that
+canonical owner. This ABA-safe rule preserves the existing canonical-delete
+semantics: a Local Note is one shared general-Library record, so deleting it
+invalidates every workspace projection rather than pretending one workspace
+owns a private copy. An interrupted cleanup resumes at startup even when the
+Note no longer appears in the UI.
+
+WorkspaceDB schema v5 fails closed for unverifiable legacy `note_pending`
+projections and remediates the unreleased proof-less v4 receipt format rather
+than promoting phantoms. Migration cannot consult the independent Notes owner,
+so it drops those hidden/blank development projections and receipts; no
+unverified row becomes visible in Console, membership, or RAG surfaces. The
+current-schema remediation identifies only blank deterministic Research Note
+IDs, preserving unrelated blank-title Note memberships.
 
 ### 5. Server folders and annotations are explicit device-only overlays
 

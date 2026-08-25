@@ -374,7 +374,9 @@ async def test_dirty_authority_switch_is_blocked_then_retries_exact_captured_own
         screen.query_one("#research-data-source-server", Button).press()
         for _ in range(30):
             await pilot.pause(0.02)
-            if app.screen.id == "research-note-switch-recovery-modal":
+            if app.screen.id == "research-note-switch-recovery-modal" and len(
+                app.screen.query("#research-note-switch-cancel")
+            ):
                 break
 
         assert controller.selected_ref == LOCAL_REF
@@ -389,7 +391,9 @@ async def test_dirty_authority_switch_is_blocked_then_retries_exact_captured_own
         screen.query_one("#research-data-source-server", Button).press()
         for _ in range(30):
             await pilot.pause(0.02)
-            if app.screen.id == "research-note-switch-recovery-modal":
+            if app.screen.id == "research-note-switch-recovery-modal" and len(
+                app.screen.query("#research-note-switch-retry")
+            ):
                 break
         local.conflict = False
         app.screen.query_one("#research-note-switch-retry", Button).press()

@@ -1763,21 +1763,31 @@ class NotesScopeService:
         scope: ScopeType | str,
         note_id: Any,
         user_id: Optional[str] = None,
+        include_internal: bool = False,
     ) -> list[str]:
-        """Return canonical Local Note keyword text for one editor load."""
+        """Return canonical Local Note keywords, hiding owner-internal markers."""
 
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope != ScopeType.LOCAL_NOTE:
             raise ValueError("Direct note keyword reads are Local Notes only.")
+        if type(include_internal) is not bool:
+            raise TypeError("include_internal must be a bool")
         rows = self.local_notes_service.get_keywords_for_note(
             self._require_user_id(user_id), str(note_id)
         )
         if not isinstance(rows, list):
             raise ValueError("Local Notes returned invalid keywords.")
-        return [
+        keywords = [
             str(row.get("keyword") or "").strip()
             for row in rows
             if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
+        ]
+        if include_internal:
+            return keywords
+        return [
+            keyword
+            for keyword in keywords
+            if not keyword.startswith("research-receipt-proof:")
         ]
 
     async def load_workspace_context(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -229,20 +230,25 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
 
 
 @pytest.mark.asyncio
-async def test_app_startup_reconciliation_globally_clears_absent_owner_receipt(
+async def test_app_startup_reconciliation_clears_absent_owner_after_lease_expiry(
     tmp_path: Path,
 ) -> None:
     class MissingNotes:
         async def get_note_detail(self, **_kwargs):
             return None
 
+    current = datetime(2026, 8, 24, tzinfo=timezone.utc)
+
+    def now() -> str:
+        return current.isoformat()
+
     registry_db = WorkspaceDB(tmp_path / "startup-receipt.sqlite")
-    registry = LocalWorkspaceRegistryService(registry_db)
+    registry = LocalWorkspaceRegistryService(registry_db, now_factory=now)
     registry.create_workspace(workspace_id="workspace-startup", name="Startup")
     registry.claim_quick_note_create(
         "workspace-startup",
         local_user_id="startup-user",
-        operation_token="research-note-cccccccccccccccccccccccccccccccc",
+        operation_token="research-note-123e4567e89b42d3a456426614174000",
     )
     app = TldwCli.__new__(TldwCli)
     app.workspace_registry_service = registry
@@ -250,8 +256,13 @@ async def test_app_startup_reconciliation_globally_clears_absent_owner_receipt(
     app.notes_user_id = "startup-user"
     try:
         await app._reconcile_research_quick_notes_startup()
+        assert registry.list_quick_note_receipts(
+            "startup-user", include_blocked=True, limit=100
+        )[1] == 1
+        current += timedelta(seconds=31)
+        await app._reconcile_research_quick_notes_startup()
         receipts, total = registry.list_quick_note_receipts(
-            "startup-user", limit=100
+            "startup-user", include_blocked=True, limit=100
         )
         assert receipts == () and total == 0
     finally:

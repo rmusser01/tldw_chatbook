@@ -108,17 +108,45 @@ _OPERATION_COLUMNS = {
 _QUICK_NOTE_RECEIPT_COLUMNS = {
     "receipt_id",
     "data_source",
+    "server_profile_id",
+    "principal_id",
     "workspace_id",
     "local_user_id",
     "operation_token",
     "operation_kind",
     "canonical_note_id",
+    "owner_proof",
+    "lease_token",
+    "lease_expires_at",
     "expected_version",
     "state",
     "revision",
+    "failure_count",
+    "next_retry_at",
+    "blocked_reason_code",
     "created_at",
     "updated_at",
 }
+
+_EARLY_V4_RECEIPT_SCHEMA = """
+CREATE TABLE research_quick_note_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL DEFAULT 'local',
+    workspace_id TEXT NOT NULL,
+    local_user_id TEXT NOT NULL,
+    operation_token TEXT NOT NULL,
+    operation_kind TEXT NOT NULL,
+    canonical_note_id TEXT NOT NULL,
+    expected_version INTEGER DEFAULT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_research_quick_note_receipts_reconcile
+ON research_quick_note_receipts (local_user_id, state, updated_at, receipt_id);
+INSERT INTO schema_version (version) VALUES (4);
+"""
 
 
 def _create_genuine_v3_database(path: Path) -> None:
@@ -136,11 +164,63 @@ def _create_genuine_v3_database(path: Path) -> None:
             "legacy-pending",
             "local-kept",
             "note",
-            "legacy-note",
+            "research-note-legacy",
             "note_pending",
             "reference",
             "",
             "2026-08-24T00:00:00Z",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def _create_early_branch_v4_database(path: Path) -> None:
+    _create_genuine_v3_database(path)
+    connection = sqlite3.connect(path)
+    connection.executescript(_EARLY_V4_RECEIPT_SCHEMA)
+    connection.execute(
+        "UPDATE workspace_memberships SET role = 'note' WHERE role = 'note_pending'"
+    )
+    connection.execute(
+        """
+        INSERT INTO workspace_memberships
+          (membership_id, workspace_id, item_type, item_id, role,
+           transfer_policy, title, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "legitimate-blank-note",
+            "local-kept",
+            "note",
+            "ordinary-note",
+            "note",
+            "reference",
+            "",
+            "2026-08-24T00:00:00Z",
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO research_quick_note_receipts
+          (receipt_id, data_source, workspace_id, local_user_id,
+           operation_token, operation_kind, canonical_note_id,
+           expected_version, state, revision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "unsafe-early-receipt",
+            "local",
+            "local-kept",
+            "notes-user",
+            "research-note-123e4567e89b42d3a456426614174000",
+            "create",
+            "unsafe-note",
+            None,
+            "pending",
+            1,
+            "2026-08-24T00:00:00+00:00",
+            "2026-08-24T00:00:00+00:00",
         ),
     )
     connection.commit()
@@ -246,7 +326,7 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == [1, 2, 3, 4]
+        assert [row[0] for row in versions] == [1, 2, 3, 4, 5]
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
@@ -317,7 +397,7 @@ def test_workspace_v3_inline_migration_matches_packaged_sql_byte_for_byte() -> N
     )
 
 
-def test_genuine_v3_upgrade_adds_payload_free_quick_note_receipts_and_hides_legacy_role(
+def test_genuine_v3_upgrade_adds_payload_free_receipts_and_drops_unverifiable_legacy_role(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "historical-v3.sqlite"
@@ -325,7 +405,7 @@ def test_genuine_v3_upgrade_adds_payload_free_quick_note_receipts_and_hides_lega
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 4
+    assert db.get_schema_version() == 5
     with db.connection() as connection:
         columns = {
             row[1]
@@ -352,7 +432,7 @@ def test_genuine_v3_upgrade_adds_payload_free_quick_note_receipts_and_hides_lega
             SELECT role FROM workspace_memberships
             WHERE membership_id = 'legacy-pending'
             """
-        ).fetchone()[0] == "note"
+        ).fetchone() is None
     db.close()
 
 
@@ -387,6 +467,68 @@ def test_workspace_v4_inline_migration_matches_packaged_sql_and_rolls_back(
     connection.close()
 
 
+def test_early_branch_v4_upgrade_quarantines_unsafe_receipts_and_phantom_links(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "early-v4.sqlite"
+    _create_early_branch_v4_database(path)
+
+    db = WorkspaceDB(path)
+
+    assert db.get_schema_version() == 5
+    migration_path = (
+        Path(__file__).parents[2]
+        / "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql"
+    )
+    assert migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V4_TO_V5_SQL
+    with db.connection() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM research_quick_note_receipts WHERE receipt_id = ?",
+            ("unsafe-early-receipt",),
+        ).fetchone() is None
+        assert connection.execute(
+            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+            ("legacy-pending",),
+        ).fetchone() is None
+        assert connection.execute(
+            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+            ("legitimate-blank-note",),
+        ).fetchone() is not None
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(research_quick_note_receipts)"
+            )
+        }
+        assert columns == _QUICK_NOTE_RECEIPT_COLUMNS
+    db.close()
+
+
+def test_workspace_v5_remediation_rolls_back_early_v4_atomically(tmp_path: Path) -> None:
+    path = tmp_path / "early-v4-rollback.sqlite"
+    _create_early_branch_v4_database(path)
+
+    class BrokenV5WorkspaceDB(WorkspaceDB):
+        _MIGRATE_V4_TO_V5_SQL = WorkspaceDB._MIGRATE_V4_TO_V5_SQL.replace(
+            "COMMIT;", "INSERT INTO missing_v5_table VALUES (1);\n\nCOMMIT;"
+        )
+
+    with pytest.raises(sqlite3.Error):
+        BrokenV5WorkspaceDB(path)
+
+    connection = sqlite3.connect(path)
+    assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
+    assert connection.execute(
+        "SELECT 1 FROM research_quick_note_receipts WHERE receipt_id = ?",
+        ("unsafe-early-receipt",),
+    ).fetchone() is not None
+    assert connection.execute(
+        "SELECT role FROM workspace_memberships WHERE membership_id = ?",
+        ("legacy-pending",),
+    ).fetchone()[0] == "note"
+    connection.close()
+
+
 @pytest.mark.parametrize(
     ("overrides"),
     [
@@ -395,9 +537,12 @@ def test_workspace_v4_inline_migration_matches_packaged_sql_and_rolls_back(
         {"state": "done"},
         {"revision": 0},
         {"state": "owner_committed", "revision": 1},
+        {"state": "blocked", "revision": 2, "blocked_reason_code": ""},
         {"local_user_id": ""},
         {"created_at": ""},
         {"updated_at": ""},
+        {"lease_expires_at": "not-a-timestamp"},
+        {"updated_at": "2026-08-23T00:00:00Z"},
         {"operation_kind": "create", "expected_version": 1},
         {"operation_kind": "delete", "expected_version": None},
     ],
@@ -414,14 +559,22 @@ def test_quick_note_receipt_table_rejects_invalid_owner_state_and_version_guards
     values: dict[str, object] = {
         "receipt_id": "receipt-1",
         "data_source": "local",
+        "server_profile_id": "",
+        "principal_id": "",
         "workspace_id": "workspace-1",
         "local_user_id": "notes-user",
-        "operation_token": "research-note-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation_token": "research-note-123e4567e89b42d3a456426614174000",
         "operation_kind": "delete",
         "canonical_note_id": "note-1",
+        "owner_proof": "owner-proof-1234567890abcdef1234567890abcdef",
+        "lease_token": "lease-token-1234567890abcdef1234567890abcdef",
+        "lease_expires_at": "2026-08-24T00:00:30+00:00",
         "expected_version": 1,
         "state": "pending",
         "revision": 1,
+        "failure_count": 0,
+        "next_retry_at": "2026-08-24T00:00:00+00:00",
+        "blocked_reason_code": "",
         "created_at": "2026-08-24T00:00:00Z",
         "updated_at": "2026-08-24T00:00:00Z",
     }

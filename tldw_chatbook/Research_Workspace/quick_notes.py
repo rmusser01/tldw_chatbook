@@ -5,9 +5,10 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping
 from dataclasses import dataclass
+import hmac
 import re
 from typing import Any
-from uuid import uuid4
+from uuid import RFC_4122, UUID, uuid4
 
 from .contracts import BoundedPageResult, QualifiedWorkspaceRef, WorkspaceDataSource
 
@@ -88,6 +89,9 @@ class ResearchNoteSaveRequest:
             ),
         )
         if re.fullmatch(r"research-note-[0-9a-f]{32}", self.operation_id) is None:
+            raise ValueError("operation_id is not an app-minted Quick Note token")
+        operation_uuid = UUID(hex=self.operation_id.removeprefix("research-note-"))
+        if operation_uuid.version != 4 or operation_uuid.variant != RFC_4122:
             raise ValueError("operation_id is not an app-minted Quick Note token")
         object.__setattr__(self, "note_id", note_id)
         object.__setattr__(self, "tags", tags)
@@ -212,6 +216,7 @@ _PROVENANCE_PREFIXES = {
     "message": "research-message-id:",
     "source": "research-source-id:",
 }
+_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
 
 
 def _required_text(value: object, field_name: str, *, max_chars: int) -> str:
@@ -241,7 +246,30 @@ def _bounded_values(
 
 
 def _is_provenance_keyword(value: str) -> bool:
-    return any(value.startswith(prefix) for prefix in _PROVENANCE_PREFIXES.values())
+    return value.startswith(_RECEIPT_PROOF_PREFIX) or any(
+        value.startswith(prefix) for prefix in _PROVENANCE_PREFIXES.values()
+    )
+
+
+def encode_receipt_proof(owner_proof: str) -> str:
+    """Encode the private receipt proof as an owner-internal keyword."""
+
+    proof = _required_text(owner_proof, "owner_proof", max_chars=256)
+    if len(proof) < 32:
+        raise ValueError("owner_proof is invalid")
+    return _RECEIPT_PROOF_PREFIX + proof
+
+
+def note_has_receipt_proof(values: object, owner_proof: str) -> bool:
+    """Return whether canonical owner keywords contain the exact private proof."""
+
+    if not isinstance(values, (list, tuple)):
+        return False
+    expected = encode_receipt_proof(owner_proof)
+    return any(
+        isinstance(value, str) and hmac.compare_digest(value.strip(), expected)
+        for value in values[:171]
+    )
 
 
 def encode_note_keywords(request: ResearchNoteSaveRequest) -> list[str]:
@@ -285,6 +313,8 @@ def split_note_keywords(
             )
             if decoded:
                 sources.append(decoded)
+        elif value.startswith(_RECEIPT_PROOF_PREFIX):
+            continue
         elif value and len(value) <= 200:
             tags.append(value)
     return (

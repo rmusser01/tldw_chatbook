@@ -9,12 +9,13 @@ from typing import Any
 from uuid import uuid4
 
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
-from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.models import WorkspaceRecord
 from tldw_chatbook.Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
+    WorkspaceRegistryServiceError,
     next_local_workspace_identity,
 )
 
@@ -41,6 +42,8 @@ from .quick_notes import (
     ResearchNoteSaveRequest,
     ResearchQuickNote,
     encode_note_keywords,
+    encode_receipt_proof,
+    note_has_receipt_proof,
     split_note_keywords,
 )
 from .source_operations import (
@@ -409,9 +412,11 @@ class LocalResearchWorkspaceAdapter:
             local_user_id=self._notes_user_id,
             operation_token=request.operation_id,
         )
+        if receipt.state == "blocked":
+            raise ResearchNoteConflictError(ref, receipt.canonical_note_id)
         note_id = receipt.canonical_note_id
-        note = await self._load_local_note(notes, ref, note_id)
-        if note is None:
+        row = await self._load_local_note_row(notes, note_id)
+        if row is None:
             try:
                 row = await notes.save_note(
                     scope="local_note",
@@ -419,26 +424,49 @@ class LocalResearchWorkspaceAdapter:
                     create_note_id=note_id,
                     title=request.title,
                     content=request.content,
-                    keywords=encode_note_keywords(request),
+                    keywords=[
+                        *encode_note_keywords(request),
+                        encode_receipt_proof(receipt.owner_proof),
+                    ],
                     version=None,
                     user_id=self._notes_user_id,
                 )
             except ConflictError:
-                note = await self._load_local_note(notes, ref, note_id)
-                if note is None:
+                row = await self._load_local_note_row(notes, note_id)
+                if row is None:
                     raise
-            else:
-                if not isinstance(row, Mapping):
-                    raise ValueError("Local Notes returned an invalid saved note")
-                note = self._note_from_row(ref, row)
+        if not isinstance(row, Mapping):
+            raise ValueError("Local Notes returned an invalid saved note")
+        note = self._note_from_row(ref, row)
         if note.note_id != note_id:
             raise ValueError("Local Notes returned a mismatched canonical note id")
-        if not self._note_matches_request(note, request):
+        if await self._is_workspace_note(ref, note_id):
+            if not self._note_matches_request(note, request):
+                await asyncio.to_thread(
+                    self._service.record_quick_note_failure,
+                    receipt.receipt_id,
+                    self._notes_user_id,
+                    expected_revision=receipt.revision,
+                    reason_code="owner_conflict",
+                    permanent=True,
+                )
+                raise ResearchNoteConflictError(ref, note_id)
             await asyncio.to_thread(
                 self._service.discard_quick_note_receipt,
                 receipt.receipt_id,
                 self._notes_user_id,
                 expected_revision=receipt.revision,
+            )
+            return note
+        has_proof = note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
+        if not has_proof or not self._note_matches_request(note, request):
+            await asyncio.to_thread(
+                self._service.record_quick_note_failure,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+                reason_code=("proof_mismatch" if not has_proof else "owner_conflict"),
+                permanent=True,
             )
             raise ResearchNoteConflictError(ref, note_id)
         if receipt.state == "pending":
@@ -465,6 +493,7 @@ class LocalResearchWorkspaceAdapter:
     ) -> None:
         """Resume a bounded receipt page without reading content from registry state."""
 
+        first_conflict: ResearchNoteConflictError | None = None
         for operation_kind in ("delete", "create"):
             receipts, _ = await asyncio.to_thread(
                 self._service.list_quick_note_receipts,
@@ -478,71 +507,176 @@ class LocalResearchWorkspaceAdapter:
                 receipt_ref = QualifiedWorkspaceRef(
                     WorkspaceDataSource.LOCAL, receipt.workspace_id
                 )
-                note = await self._load_local_note(
-                    notes, receipt_ref, receipt.canonical_note_id
-                )
-                if receipt.operation_kind == "create":
-                    if receipt.state == "pending":
-                        if note is None:
-                            await asyncio.to_thread(
-                                self._service.discard_quick_note_receipt,
-                                receipt.receipt_id,
-                                self._notes_user_id,
-                                expected_revision=receipt.revision,
-                            )
-                            continue
-                        receipt = await asyncio.to_thread(
-                            self._service.mark_quick_note_owner_committed,
-                            receipt.receipt_id,
-                            self._notes_user_id,
-                            expected_revision=receipt.revision,
+                try:
+                    row = await self._load_local_note_row(
+                        notes, receipt.canonical_note_id
+                    )
+                    if receipt.operation_kind == "create":
+                        await self._reconcile_quick_note_create(
+                            receipt, receipt_ref, row
                         )
-                    if note is None:
-                        await asyncio.to_thread(
-                            self._service.discard_quick_note_receipt,
-                            receipt.receipt_id,
-                            self._notes_user_id,
-                            expected_revision=receipt.revision,
+                    else:
+                        await self._reconcile_quick_note_delete(
+                            notes, receipt, receipt_ref, row
                         )
-                        continue
+                except ResearchNoteConflictError as exc:
+                    first_conflict = first_conflict or exc
+                except CharactersRAGDBError:
                     await asyncio.to_thread(
-                        self._service.complete_quick_note_create,
+                        self._service.record_quick_note_failure,
                         receipt.receipt_id,
                         self._notes_user_id,
                         expected_revision=receipt.revision,
-                        title=note.title,
+                        reason_code="owner_unavailable",
                     )
-                    continue
-
-                if receipt.state == "pending" and note is not None:
+                except WorkspaceRegistryServiceError:
                     try:
-                        await notes.delete_note(
-                            scope="local_note",
-                            note_id=receipt.canonical_note_id,
-                            version=receipt.expected_version,
-                            user_id=self._notes_user_id,
-                        )
-                    except ConflictError:
                         await asyncio.to_thread(
-                            self._service.discard_quick_note_receipt,
+                            self._service.record_quick_note_failure,
                             receipt.receipt_id,
                             self._notes_user_id,
                             expected_revision=receipt.revision,
+                            reason_code="registry_failure",
                         )
+                    except WorkspaceRegistryServiceError:
+                        # A concurrent reconciler may already have advanced it.
                         continue
-                if receipt.state == "pending":
-                    receipt = await asyncio.to_thread(
-                        self._service.mark_quick_note_owner_committed,
-                        receipt.receipt_id,
-                        self._notes_user_id,
-                        expected_revision=receipt.revision,
-                    )
+        if first_conflict is None:
+            receipts, _ = await asyncio.to_thread(
+                self._service.list_quick_note_receipts,
+                self._notes_user_id,
+                workspace_id=workspace_id,
+                include_blocked=True,
+                limit=100,
+                offset=0,
+            )
+            blocked = next(
+                (
+                    receipt
+                    for receipt in receipts
+                    if receipt.state == "blocked"
+                    and receipt.blocked_reason_code
+                    in {"proof_mismatch", "owner_conflict"}
+                ),
+                None,
+            )
+            if blocked is not None:
+                first_conflict = ResearchNoteConflictError(
+                    QualifiedWorkspaceRef(
+                        WorkspaceDataSource.LOCAL, blocked.workspace_id
+                    ),
+                    blocked.canonical_note_id,
+                )
+        if first_conflict is not None:
+            raise first_conflict
+
+    async def _reconcile_quick_note_create(
+        self,
+        receipt: Any,
+        ref: QualifiedWorkspaceRef,
+        row: Mapping[str, Any] | None,
+    ) -> None:
+        if receipt.state == "pending" and row is None:
+            await asyncio.to_thread(
+                self._service.discard_quick_note_receipt,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+            )
+            return
+        if row is None:
+            await asyncio.to_thread(
+                self._service.discard_quick_note_receipt,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+            )
+            return
+        owner_complete = (
+            str(row.get("id") or "") == receipt.canonical_note_id
+            and note_has_receipt_proof(row.get("keywords"), receipt.owner_proof)
+        )
+        if not owner_complete:
+            await asyncio.to_thread(
+                self._service.record_quick_note_failure,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+                reason_code="proof_mismatch",
+                permanent=True,
+            )
+            raise ResearchNoteConflictError(ref, receipt.canonical_note_id)
+        if receipt.state == "pending":
+            receipt = await asyncio.to_thread(
+                self._service.mark_quick_note_owner_committed,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+            )
+        note = self._note_from_row(ref, row)
+        await asyncio.to_thread(
+            self._service.complete_quick_note_create,
+            receipt.receipt_id,
+            self._notes_user_id,
+            expected_revision=receipt.revision,
+            title=note.title,
+        )
+
+    async def _reconcile_quick_note_delete(
+        self,
+        notes: Any,
+        receipt: Any,
+        ref: QualifiedWorkspaceRef,
+        row: Mapping[str, Any] | None,
+    ) -> None:
+        if row is not None:
+            owner_version = int(row.get("version") or 0)
+            if owner_version != receipt.expected_version:
                 await asyncio.to_thread(
-                    self._service.complete_quick_note_delete,
+                    self._service.record_quick_note_failure,
                     receipt.receipt_id,
                     self._notes_user_id,
                     expected_revision=receipt.revision,
+                    reason_code="owner_conflict",
+                    permanent=True,
                 )
+                raise ResearchNoteConflictError(ref, receipt.canonical_note_id)
+
+            try:
+                deleted = await notes.delete_note(
+                    scope="local_note",
+                    note_id=receipt.canonical_note_id,
+                    version=receipt.expected_version,
+                    user_id=self._notes_user_id,
+                )
+            except ConflictError as exc:
+                await asyncio.to_thread(
+                    self._service.record_quick_note_failure,
+                    receipt.receipt_id,
+                    self._notes_user_id,
+                    expected_revision=receipt.revision,
+                    reason_code="owner_conflict",
+                    permanent=True,
+                )
+                raise ResearchNoteConflictError(ref, receipt.canonical_note_id) from exc
+            if type(deleted) is not bool:
+                raise CharactersRAGDBError("Local Notes returned an invalid delete result")
+            row = await self._load_local_note_row(notes, receipt.canonical_note_id)
+            if row is not None:
+                raise CharactersRAGDBError("Local Notes delete did not settle")
+        if receipt.state == "pending":
+            receipt = await asyncio.to_thread(
+                self._service.mark_quick_note_owner_committed,
+                receipt.receipt_id,
+                self._notes_user_id,
+                expected_revision=receipt.revision,
+            )
+        await asyncio.to_thread(
+            self._service.complete_quick_note_delete,
+            receipt.receipt_id,
+            self._notes_user_id,
+            expected_revision=receipt.revision,
+        )
 
     async def delete_note(
         self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
@@ -1028,6 +1162,14 @@ class LocalResearchWorkspaceAdapter:
     async def _load_local_note(
         self, notes: Any, ref: QualifiedWorkspaceRef, note_id: str
     ) -> ResearchQuickNote | None:
+        row = await self._load_local_note_row(notes, note_id)
+        return None if row is None else self._note_from_row(ref, row)
+
+    async def _load_local_note_row(
+        self, notes: Any, note_id: str
+    ) -> Mapping[str, Any] | None:
+        """Load one canonical owner row including internal keywords."""
+
         row = await notes.get_note_detail(
             scope="local_note", note_id=note_id, user_id=self._notes_user_id
         )
@@ -1039,10 +1181,13 @@ class LocalResearchWorkspaceAdapter:
         get_keywords = getattr(notes, "get_note_keywords", None)
         if not isinstance(keywords, (list, tuple)) and callable(get_keywords):
             keywords = await get_keywords(
-                scope="local_note", note_id=note_id, user_id=self._notes_user_id
+                scope="local_note",
+                note_id=note_id,
+                user_id=self._notes_user_id,
+                include_internal=True,
             )
             row = {**row, "keywords": keywords}
-        return self._note_from_row(ref, row)
+        return row
 
     async def _is_workspace_note(
         self, ref: QualifiedWorkspaceRef, note_id: str
