@@ -1,9 +1,11 @@
 ---
 id: TASK-22032
 title: Migrate Library Notes to the adaptive reader shell
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-24 23:25'
+updated_date: '2026-08-25 14:57'
 labels:
   - library
   - ui
@@ -31,3 +33,16 @@ Move Database Notes into the shared Library adaptive reader structure while pres
 - [ ] #6 No multi-item draft registry or new Notes authority is introduced
 - [ ] #7 Automated list editor conflict geometry focus and capability tests pass with a representative live TUI walkthrough
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Inventory Notes capabilities and draft authority
+2. Add presentation-only reader state with test-first identity and mode contracts
+3. Split the persistent list and permanent work pane without changing Notes authority
+4. Verify workflows, geometry, focus, and capability preservation
+
+ADR required: yes
+ADR path: backlog/decisions/086-library-adaptive-reader-shell.md
+Reason: consumes the accepted Library structural boundary without changing Notes authority.
+<!-- SECTION:PLAN:END -->
