@@ -541,6 +541,16 @@ mechanism, not your feature.
   as a no-op long before a human reaches the button — a pure test-speed artifact. Fix:
   the harness stops the pending debounce before the action under test.
 
+- TASK-21591 (2026-08-25), a third instance in a different domain: deleting
+  `SplashScreen.on_mount`'s own `self.focus()` left **all four** new tests green.
+  The second writer was Textual itself — `App.AUTO_FOCUS = "*"` auto-focuses the
+  first focusable widget on screen mount, so setting `can_focus = True` was
+  sufficient in the harness and the widget's own focus call was never exercised.
+  Fix: the test host sets `AUTO_FOCUS = None`, so the shipped mechanism is the only
+  path and the mutant reds. **Framework defaults are second writers too** — for any
+  feature built on focus, selection, or auto-anything, find the classvar that does
+  it for free and turn it off in the harness.
+
 **What to do.** When a mutant survives, instrument for the *second writer* (wrap the
 seam, record call stacks) before touching the assertion. Then either perturb the state
 so only the code under test can restore it, or silence the background mechanism in the
@@ -8498,3 +8508,33 @@ traversal; `row.focus()` is only the framework's half of it. If a
 focus-driven behavior mysteriously does not fire in a Pilot harness, check
 which interaction-intent flags the screen consults before dispatching —
 and prefer the input event that a user would actually produce.
+---
+
+## tracemalloc taxes the arm you are trying to indict — never take the timing and the allocation in the same run (TASK-21532, 2026-08-25)
+
+**What happened.** Comparing a full `list_bindings` hydration against a narrow
+`binding_id` projection, the first harness wrapped each arm in
+`tracemalloc.start()` / `take_snapshot()` and read the wall clock inside that
+window. At 1,000 bindings it reported **92.4 ms** for the read-all and 0.81 ms
+for the projection — a 114x win, and a number that would have gone straight
+into the task file. Re-running the identical arms with tracemalloc off gave
+**15.3 ms vs 0.30 ms**. The read-all had not got faster; tracemalloc charges
+per *allocation*, and the whole point of the arm under test is that it
+allocates a dataclass, a nested profile and an enum per row. The profiler was
+taxing exactly the thing being measured, in proportion to the thing being
+measured, and inflating the reported win six-fold. (15.3 ms is also the number
+TASK-21129 measured on the same read, which is how the error was caught: the
+92 ms did not reconcile with the prior art.)
+
+The same first harness got the allocation half wrong too, in the opposite
+direction. It diffed `take_snapshot()` before and after the call, but the call
+*returns* only the projected ids — the hydrated tuple is already freed by the
+time the second snapshot is taken, so the diff measured what survived rather
+than what was allocated, and reported 265,960 B where the peak was 1,058,854 B.
+
+**What to do.** Two separate loops, always: wall time with the profiler
+**off**, allocation with `tracemalloc.start()` +
+`tracemalloc.reset_peak()` + `get_traced_memory()[1]` — the **peak**, not a
+snapshot diff, whenever the allocation you care about is transient. And when a
+new measurement of an old subject disagrees with the prior art by an order of
+magnitude, suspect the harness before you believe the win.
