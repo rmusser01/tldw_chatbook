@@ -3002,7 +3002,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "37d8b96b231f14728a28",
+      "diagnostic_digest": "3540424b35856f30621a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/db_status_manager.py",
       "reason": "remaining Chatbook production diagnostic owner"
