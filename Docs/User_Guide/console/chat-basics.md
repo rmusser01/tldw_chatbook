@@ -105,6 +105,46 @@ tool, code, and link styling keeps priority over immersive coloring.
   collapsed. Click **"Expand ▴"** (or
   press **Esc**) to restore it; the caret returns to your draft.
 
+### Improving the current draft
+
+With a nonblank unsent message, open **Menu** and choose **Improve current
+draft…** to enter the Prompt Workbench directly. **Analyze and user review
+(Recommended)** receives initial keyboard focus; no provider request starts
+until you choose an improvement path. The workbench captures the current
+Console provider and model. **Let the improver read the current System prompt**
+is optional analysis context only; it never changes the session. When the
+session has no current System prompt, the choice is unavailable and the
+workbench analyzes only the unsent message. **Build a reusable prompt** opens
+the Recipe path without making a model request. Choose **Outcome-first** for a
+guided format, **Saved Recipe** to reuse a format from **Library > Prompts**, or
+**Blank** to start with empty System and User lanes. Outcome-first begins with
+Goal, Context and evidence, Constraints, and Output; **Show 5 optional blocks**
+reveals Role, Personality, Collaboration style, Success criteria, and Stop
+rules without discarding edits. If model improvement is unavailable, use
+**Configure provider / model** from the same surface. Choose **Browse Prompt
+Library…** instead when you want a saved Prompt or Recipe; that destination
+remains available when the composer is empty.
+Choosing **Replace draft automatically** returns to the composer with a
+**Draft improved** row. Use **Undo** to restore the exact original draft, or
+**Review changes** to compare the original and replacement before keeping or
+restoring it. These recovery actions expire when you edit or send the draft,
+or switch its session context.
+
+In the structured Prompt/Recipe editor, **Apply** is the primary action and
+keeps **User** on and **System** off by default. **Save…** contains only the
+persistence choices valid for the current source and working copy: save as a
+new Prompt, save as a reusable Recipe, or update the original when guarded
+version updates are supported. Use `Ctrl+Enter` for Apply or `Ctrl+S` to open
+the Save menu; every choice is keyboard operable. **Replace this session's
+System prompt** is an independent, off-by-default Apply choice. System content
+changes only when that choice is selected and you activate **Apply** in the
+active session; it is separate from the earlier analysis-context permission.
+After saving a Recipe, use **Open Library** in the confirmation to jump directly
+to that first-class Recipe in **Library > Prompts**, where it can be renamed,
+edited, versioned, and reused in Console. Select **Include current text as
+starter content** when the Recipe should retain example or starter text as well
+as its block format.
+
 ### Large pastes
 
 Pasting more than 50 characters (configurable) collapses the paste into a

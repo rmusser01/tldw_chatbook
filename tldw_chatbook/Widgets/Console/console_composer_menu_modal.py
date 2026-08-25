@@ -38,6 +38,7 @@ ACTION_ATTACH_CONTEXT = "attach-context"
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
 ACTION_PROMPTS = "prompts"
+ACTION_IMPROVE_CURRENT_DRAFT = "improve-current-draft"
 ACTION_UNDO_PROMPT_IMPROVEMENT = "undo-prompt-improvement"
 
 
@@ -56,6 +57,7 @@ def build_composer_menu_entries(
     attachment_kind: str = "none",
     ephemeral: bool = False,
     can_save_chatbook: bool = False,
+    draft_available: bool = False,
     improvement_undo_available: bool = False,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
@@ -79,6 +81,7 @@ def build_composer_menu_entries(
         attachment_kind: ``"image"``, ``"other"``, or ``"none"``.
         ephemeral: Whether the active session is temporary.
         can_save_chatbook: Whether a Chatbook artifact is available to save.
+        draft_available: Whether a nonblank unsent message can be improved.
 
     Returns:
         The menu entries in display order.
@@ -99,10 +102,21 @@ def build_composer_menu_entries(
         else "No Chatbook artifact is available to save yet"
     )
     entries = (
+        *(
+            (
+                ComposerMenuEntry(
+                    ACTION_IMPROVE_CURRENT_DRAFT,
+                    "Improve current draft…",
+                    "Improve the unsent message with the current provider and model",
+                ),
+            )
+            if draft_available
+            else ()
+        ),
         ComposerMenuEntry(
             ACTION_PROMPTS,
-            "Prompts",
-            "Browse, improve, or build reusable prompts",
+            "Browse Prompt Library…",
+            "Browse saved Prompts and Recipes",
         ),
         ComposerMenuEntry(
             # CN-03 (TASK-2154.13): this entry opens the file picker
@@ -206,6 +220,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
         attachment_kind: str = "none",
         ephemeral: bool = False,
         can_save_chatbook: bool = False,
+        draft_available: bool = False,
         improvement_undo_available: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -219,6 +234,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
                 decides whether "Save this chat" is offered at all.
             can_save_chatbook: Whether a Chatbook artifact is available,
                 which decides whether the Save as Chatbook row is actionable.
+            draft_available: Whether the active composer has a nonblank draft.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -226,6 +242,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             attachment_kind=attachment_kind,
             ephemeral=ephemeral,
             can_save_chatbook=can_save_chatbook,
+            draft_available=draft_available,
             improvement_undo_available=improvement_undo_available,
         )
 

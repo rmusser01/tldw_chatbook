@@ -514,10 +514,15 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
+    ACTION_IMPROVE_CURRENT_DRAFT,
     ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
+)
+from ...Widgets.Console.console_prompt_comparison_modal import (
+    ConsolePromptComparisonModal,
+    PromptComparisonResult,
 )
 from ...Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
@@ -6308,6 +6313,9 @@ class ChatScreen(BaseAppScreen):
                 # Same input the action-row button read before it moved here,
                 # so Save Chatbook's available/unavailable copy is unchanged.
                 can_save_chatbook=self._console_chatbook_action_available(),
+                draft_available=bool(
+                    composer is not None and composer.draft_text().strip()
+                ),
                 improvement_undo_available=bool(
                     composer is not None and composer.improvement_undo_available
                 ),
@@ -6354,15 +6362,11 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_PROMPTS:
             self._open_console_prompts_modal()
             return
+        if action_id == ACTION_IMPROVE_CURRENT_DRAFT:
+            self._open_console_prompts_modal(initial_mode="improve")
+            return
         if action_id == ACTION_UNDO_PROMPT_IMPROVEMENT:
-            composer = self._console_composer_or_none()
-            if composer is None or not composer.undo_improvement():
-                return
-            store = self._ensure_console_chat_store()
-            session_id = store.active_session_id
-            if session_id is not None:
-                store.set_session_draft(session_id, composer.draft_text())
-            self._focus_console_composer_if_needed(force=True)
+            self._undo_console_prompt_improvement()
             return
         # Attach and Save Chatbook moved out of the width-bounded action row
         # into this menu. Both route to the SAME handlers their buttons used,
@@ -6387,9 +6391,45 @@ class ChatScreen(BaseAppScreen):
                 group="console-impersonate",
             )
 
-    def _open_console_prompts_modal(self) -> None:
+    def _undo_console_prompt_improvement(self) -> bool:
+        """Restore the exact pre-improvement draft and persist it for this tab."""
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.undo_improvement():
+            return False
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is not None:
+            store.set_session_draft(session_id, composer.draft_text())
+        self._focus_console_composer_if_needed(force=True)
+        return True
+
+    def _open_console_prompt_comparison(self) -> None:
+        """Open the safe before/after view for the current improvement Undo."""
+        composer = self._console_composer_or_none()
+        comparison = composer.improvement_comparison() if composer is not None else None
+        if comparison is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        before, after = comparison
+        self.app.push_screen(
+            ConsolePromptComparisonModal(before=before, after=after),
+            callback=self._handle_console_prompt_comparison_result,
+        )
+
+    def _handle_console_prompt_comparison_result(
+        self, result: PromptComparisonResult | None
+    ) -> None:
+        """Keep the improved draft or consume Undo to restore the original."""
+        if result == "restore":
+            self._undo_console_prompt_improvement()
+            return
+        self._focus_console_composer_if_needed(force=True)
+
+    def _open_console_prompts_modal(
+        self, *, initial_mode: Literal["browse", "improve"] = "browse"
+    ) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
-        self._prompts._open_console_prompts_modal()
+        self._prompts._open_console_prompts_modal(initial_mode=initial_mode)
 
     @on(ConsoleTemporaryChip.SaveRequested)
     def on_console_temporary_chip_save(
@@ -19553,6 +19593,14 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-composer-menu":
             event.stop()
             await self._open_console_composer_menu()
+            return
+        if button_id == "console-prompt-improvement-undo":
+            event.stop()
+            self._undo_console_prompt_improvement()
+            return
+        if button_id == "console-prompt-improvement-review":
+            event.stop()
+            self._open_console_prompt_comparison()
             return
         if button_id == "console-send-message":
             await self.handle_console_send_message(event)

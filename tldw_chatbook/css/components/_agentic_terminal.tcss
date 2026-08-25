@@ -4122,7 +4122,7 @@ ConsoleBoundedSection {
        footer below. Not the TASK-17650 phantom: both rows are pinned by the
        single-separator contract test. Compact mode drops them. */
     margin: 1 0;
-    layout: horizontal;
+    layout: vertical;
     align: left middle;
     border: none;
     border-left: solid $ds-control-edge;
@@ -4158,6 +4158,35 @@ ConsoleBoundedSection {
     min-height: 1;
     layout: horizontal;
     align: left middle;
+}
+
+#console-prompt-improvement-recovery {
+    display: none;
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: right middle;
+}
+
+#console-prompt-improvement-status {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    color: $ds-status-ready;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+#console-prompt-improvement-undo {
+    width: 8;
+    min-width: 8;
+}
+
+#console-prompt-improvement-review {
+    width: 16;
+    min-width: 16;
 }
 
 #console-native-composer.console-composer-collapsed {
@@ -8400,6 +8429,14 @@ ConsolePromptsModal {
     min-height: 0;
 }
 
+/* The editor follows a host status row inside a bounded Vertical. Use the
+   remaining fraction instead of its standalone 100% height so its actions
+   stay above the modal footer. */
+#console-prompts-editor {
+    height: 1fr;
+    min-height: 0;
+}
+
 /* The legacy app-wide Checkbox rule fixes every checkbox at width: 100% and
    height: 2, leaving no content row inside Textual's tall border. Keep the
    shared Prompt editor's lane choices intrinsic and paintable. */
@@ -8576,9 +8613,39 @@ PromptBlockEditor #prompt-editor-lane-options Checkbox {
     min-height: 0;
 }
 
-#console-prompts-improve-mode Button {
+#console-prompts-improve-mode Button,
+#console-prompts-recipe-mode Button {
     width: 100%;
     margin: 1 0 0 0;
+}
+
+#console-prompts-recipe-outcome-description,
+#console-prompts-recipe-saved-description,
+#console-prompts-recipe-blank-description {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#console-prompts-recipe-save-confirmation-panel {
+    display: none;
+    width: 100%;
+    height: auto;
+    padding: 0 1 1 1;
+    border: round $ds-status-ready;
+    background: $ds-status-ready 8%;
+}
+
+#console-prompts-recipe-save-confirmation {
+    width: 100%;
+    height: auto;
+    color: $ds-text-primary;
+}
+
+#console-prompts-open-saved-recipe {
+    width: 100%;
+    height: 3;
 }
 
 ConsolePromptsModal.-narrow #console-prompts-modal {
