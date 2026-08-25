@@ -8538,3 +8538,42 @@ than what was allocated, and reported 265,960 B where the peak was 1,058,854 B.
 snapshot diff, whenever the allocation you care about is transient. And when a
 new measurement of an old subject disagrees with the prior art by an order of
 magnitude, suspect the harness before you believe the win.
+
+
+---
+
+## Making an early step faster can UN-swallow a request whose guard is checked at handle time (TASK-21591, 2026-08-25)
+
+**What happened.** Fixing the splash's dead `skip_on_keypress` made a keypress
+dismiss the splash immediately instead of at its 1.5 s timer. The first version
+let the key keep bubbling, so app-level bindings would still work during the
+splash — reasoned about carefully, documented, mutation-tested, and green
+across four splash suites *and* two real-terminal arms. A wider sweep then
+red-lined `test_navigation_keypress_during_splash_is_safely_ignored`
+(task-1339's crash lock, in `Tests/UI/test_screen_navigation.py` — a file that
+does not mention the splash): **F9 mid-splash now landed the user on
+Settings.**
+
+The mechanism is invisible at the call site. `action_shell_destination` does
+not navigate; it **posts** a `NavigateToScreen`, and the "initial screen not
+yet mounted" guard lives in the *handler*. Message order on the App queue is
+`Key` → `Closed` → (the key's binding posts) `NavigateToScreen`. While the
+splash closed on a timer, `Closed` arrived long after the navigation had been
+handled and swallowed. Once the splash closed on the key, `Closed` was already
+queued ahead of the navigation, so the initial screen had been pushed by the
+time the guard ran and the guard correctly did nothing. Nothing about the guard
+changed; **the latency it implicitly depended on did.**
+
+**What to do.** Two things.
+
+1. When a guard reads state that some *other* in-flight message will set, it is
+   a race with an ordering you did not write down. Before speeding up any step
+   in a startup or teardown sequence, enumerate what is queued behind it and
+   ask which guards are relying on the old arrival order. A "post, then check
+   on handle" action is the tell: the check is not where the action is.
+2. A change to **input routing** — focus, `event.stop()`, key handlers,
+   bindings — must be run against the **navigation** suite, not just the
+   feature's own. Here the feature's four suites, its five purpose-built tests
+   and two live tmux arms all passed the version that had to be withdrawn; the
+   only thing that caught it was 506 unrelated navigation tests, and it cost
+   5 minutes to run.
