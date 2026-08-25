@@ -9,9 +9,10 @@ Supports both initial password setup and password entry for decryption.
 from typing import Optional, Callable, Literal
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal
+from textual.binding import Binding
+from textual.containers import Container, Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, Static
+from textual.widgets import Button, Checkbox, Label, Input, Static
 from textual.validation import Length
 from loguru import logger
 
@@ -31,6 +32,10 @@ COMMENT_LOSS_WARNING = (
 class PasswordDialog(ModalScreen):
     """Dialog for entering master password for config encryption."""
 
+    # TASK-21141 (UAT K-2): keyboard users need a way out. Escape follows
+    # the same path as the Cancel button.
+    BINDINGS = [Binding("escape", "cancel_dialog", "Cancel", show=False)]
+
     DEFAULT_CSS = """
     PasswordDialog {
         align: center middle;
@@ -42,7 +47,7 @@ class PasswordDialog(ModalScreen):
         padding: 1 2;
         width: 60;
         height: auto;
-        max-height: 25;
+        max-height: 32;
     }
     
     PasswordDialog .dialog-title {
@@ -62,14 +67,23 @@ class PasswordDialog(ModalScreen):
         width: 100%;
     }
     
-    PasswordDialog .error-message {
+    /* TASK-21141 (UAT K-3): a dialog-scoped class. The app-wide
+       .error-message rule (border: round + padding + margin in
+       _wizards.tcss) inflated the one-line error to ~7 rows and pushed
+       the Cancel/Submit row past this container's max-height clip — the
+       buttons stayed functional but invisible after a failed submit. */
+    PasswordDialog .password-dialog-error {
         color: $error;
         margin-bottom: 1;
         display: none;
     }
-    
-    PasswordDialog .error-message.visible {
+
+    PasswordDialog .password-dialog-error.visible {
         display: block;
+    }
+
+    PasswordDialog .show-password-toggle {
+        margin-bottom: 1;
     }
     
     PasswordDialog .button-container {
@@ -127,18 +141,27 @@ class PasswordDialog(ModalScreen):
         self.on_submit_callback = on_submit
         self.on_cancel_callback = on_cancel
 
-        # Set default titles and messages based on mode
+        # Set default titles and messages based on mode.
+        # TASK-21141 (UAT K-5): sentence case, "set up" as the verb.
         if not self.custom_title:
             if mode == "setup":
-                self.custom_title = "Setup Master Password"
+                self.custom_title = "Set up master password"
             elif mode == "unlock":
-                self.custom_title = "Enter Master Password"
+                self.custom_title = "Enter master password"
             elif mode == "change":
-                self.custom_title = "Change Master Password"
+                self.custom_title = "Change master password"
 
         if not self.custom_message:
             if mode == "setup":
-                self.custom_message = "Create a master password to encrypt your API keys and sensitive configuration data."
+                # TASK-21141 (UAT K-1/K-4): requirements and the
+                # forgotten-password consequence stated BEFORE first submit,
+                # not discovered through a failed attempt.
+                self.custom_message = (
+                    "Create a master password to encrypt your API keys and "
+                    "sensitive configuration data. At least 8 characters. "
+                    "If you forget it, the encrypted keys cannot be "
+                    "recovered — you'll need to re-enter them."
+                )
             elif mode == "unlock":
                 self.custom_message = (
                     "Enter your master password to decrypt the configuration file."
@@ -149,7 +172,10 @@ class PasswordDialog(ModalScreen):
     def compose(self) -> ComposeResult:
         """Create the dialog layout."""
         with Container():
-            with Vertical():
+            # TASK-21141 (UAT K-3): scrollable so the button row stays
+            # reachable even when a short terminal clips the container —
+            # focus movement scrolls it into view.
+            with VerticalScroll():
                 yield Label(self.custom_title, classes="dialog-title")
                 yield Static(self.custom_message, classes="dialog-message")
 
@@ -181,8 +207,16 @@ class PasswordDialog(ModalScreen):
                         "", id="strength-indicator", classes="strength-indicator"
                     )
 
-                # Error message container
-                yield Static("", id="error-message", classes="error-message")
+                # TASK-21141 (UAT K-6): let the user see what they typed.
+                yield Checkbox(
+                    "Show password",
+                    id="show-password-toggle",
+                    classes="show-password-toggle",
+                )
+
+                # Error message container (dialog-scoped class; see the
+                # DEFAULT_CSS comment for why not .error-message).
+                yield Static("", id="error-message", classes="password-dialog-error")
 
                 # Buttons
                 with Horizontal(classes="button-container"):
@@ -212,6 +246,17 @@ class PasswordDialog(ModalScreen):
             return "strength-medium", "Medium strength"
         else:
             return "strength-strong", "Strong password"
+
+    @on(Checkbox.Changed, "#show-password-toggle")
+    def on_show_password_toggled(self, event: Checkbox.Changed) -> None:
+        """Reveal or mask both password fields (UAT K-6)."""
+        for field in self.query(".password-input").results(Input):
+            field.password = not event.value
+
+    @on(Input.Changed)
+    def on_any_input_changed(self, event: Input.Changed) -> None:
+        """A stale error must not outlive the input it described (UAT K-3)."""
+        self.hide_error()
 
     @on(Input.Changed, "#password-input")
     def on_password_changed(self, event: Input.Changed) -> None:
@@ -282,6 +327,10 @@ class PasswordDialog(ModalScreen):
         if self.on_cancel_callback:
             self.on_cancel_callback()
         self.dismiss(None)
+
+    def action_cancel_dialog(self) -> None:
+        """Escape follows the exact Cancel-button path (UAT K-2)."""
+        self.on_cancel()
 
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:

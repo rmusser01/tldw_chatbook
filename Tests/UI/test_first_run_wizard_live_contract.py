@@ -3167,3 +3167,59 @@ async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
             )
             assert strip.has_class("hidden")
             assert str(strip.renderable) == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-21141 (UAT K-3): the app-wide .error-message blanket rule
+# (border: round + padding + margin in _wizards.tcss) must never reach the
+# password dialog's error line. In the real app it inflated the error to ~7
+# rows and pushed Cancel/Submit past the container clip — functional but
+# invisible buttons. Widget-level tests can't catch this (no app
+# stylesheet), so this pins it against the real app.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Input as _Input
+
+    from tldw_chatbook.Widgets.password_dialog import PasswordDialog
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            app.push_screen(PasswordDialog(mode="setup"))
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, PasswordDialog)
+                and bool(app.screen.query("#password-input")),
+            )
+            dialog = app.screen
+            dialog.query_one("#password-input", _Input).value = "a"
+            dialog.query_one("#confirm-input", _Input).value = "a"
+            dialog.query_one("#submit-button", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: dialog.query_one("#error-message", Static).has_class(
+                    "visible"
+                ),
+            )
+            error = dialog.query_one("#error-message", Static)
+            # With the real stylesheet loaded, the error must stay one line —
+            # the blanket rule's border/padding is what ate the buttons.
+            assert error.region.height <= 2, (
+                f"error inflated to {error.region.height} rows — blanket "
+                ".error-message rule reached the dialog again"
+            )
+            for button_id in ("#cancel-button", "#submit-button"):
+                button = dialog.query_one(button_id, Button)
+                assert button.region.height > 0, f"{button_id} clipped (K-3)"
+            await pilot.press("escape")
+            await _wait_until(
+                pilot, lambda: not isinstance(app.screen, PasswordDialog)
+            )
