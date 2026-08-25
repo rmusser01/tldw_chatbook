@@ -126,6 +126,10 @@ Result: **Verified on commit `1a3ca3ad80e90f02fb39f09c27e8aced646d114d`.** The
 pre-registered Media and Conversations obligations above are satisfied. The independent final
 review found no Critical or Important issue.
 
+Notes was subsequently verified on implementation commit
+`8b45fcebff59e71a0c18bb9b057e692bf23a556c`, rebased onto `origin/dev` at `1b21f5339`.
+The Notes-specific final review found no remaining actionable issue.
+
 | Obligation group | Result | Evidence |
 | --- | --- | --- |
 | Shared shell boundary, permanent Work pane, independent Library/Items grips, requested-versus-effective geometry, comfort expansion, focus evacuation, and preference compatibility | Verified | `Tests/UI/test_library_media_reader_shell.py`; `Tests/Library/test_library_media_reader_state.py`; `Tests/Library/test_library_adaptive_reader_state.py`; `Tests/test_config_library_defaults.py`; live `conversations-160x50-{expanded,library-collapsed,both-collapsed,focus-footer}.svg` and the complete 160x50 / 120x35 / 100x30 / 80x24 matrix for both destinations |
@@ -134,6 +138,9 @@ review found no Critical or Important issue.
 | Conversations list query, paging, export, select/export-only bulk mode, empty recovery, stale/error recovery, service order, exact identity, and semantic focus | Preserved | `Tests/UI/test_library_multiselect_conversations.py`; `Tests/UI/test_library_conversation_reader.py`; `Tests/UI/test_library_shell.py`; `Tests/Library/test_library_conversations_state.py`; final narrow gate (101 passed) |
 | Complete progressively mounted transcript, complete-only Find, Read/Info, Open in Console, selected-versus-loaded identity, pending/error/retry/deletion states, revision/message-epoch fences, and bulk read-only preview | Added and verified | `Tests/UI/test_library_conversation_reader.py`; `Tests/Library/test_library_conversation_reader_state.py`; `Tests/Chat/test_chat_conversation_service.py`; live `conversations-progressive-{first-page,find-complete}.svg`, `conversations-a-to-b-{loading,error,retry}.svg`, `conversations-b-deleted.svg`, and `conversations-bulk-readonly-preview.svg` |
 | Concurrent/delayed preference writes, Settings refresh reconciliation, exact serialized TOML rollback truth, canonical/legacy/default precedence, and Select-mode Find/Retry fence | Verified after review hardening | Final narrow gate (101 passed); live `shared-library-*.svg`, `settings-repair-*.svg`, `delayed-settings-repair-*.svg`, `conversations-select-{find,retry}-fenced.svg`, and `summary.json` |
+| Notes retained list/work topology, independent Items collapse, comfort expansion, compact allocation, focus evacuation, and zero data/preference work on resize | Added and verified | `Tests/UI/test_library_notes_reader.py`; `Tests/Library/test_library_adaptive_reader_state.py`; `Tests/Library/test_library_notes_reader_state.py`; `Tests/UI/test_library_shell.py -k library_note` (133 passed); live walkthroughs at 170x48 and 90x30 |
+| Notes list/tree identity, Edit/Preview/Info, current-draft preview, selected-versus-loaded fencing, conflict/retry, single delete/Undo, and labelled read-only bulk preview | Preserved and verified | `Tests/UI/test_library_notes_reader.py`; `Tests/UI/test_library_multiselect_notes.py`; `Tests/UI/test_library_shell.py -k library_note`; final reviewer verification of bulk Back/Save/Escape gates |
+| Notes Create/templates, import, lasting sync/recovery, exact placement identity, dirty navigation veto, and separate File Notes source | Preserved and verified | `Tests/UI/test_library_notes_files_sync_journey.py` (29 passed, one unchanged baseline case deselected); `Tests/UI/test_library_notes_folder_navigator.py`; branch-versus-`dev` comparison with no branch-only failures |
 
 The production-shaped evidence bundle and exact commands are documented in
 [`evidence/task-22031/README.md`](evidence/task-22031/README.md). It contains 105 artifacts,
