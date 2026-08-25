@@ -1748,9 +1748,43 @@ class ConsoleChatStore:
         return recovery
 
     def dispatch_recovery_blocks_submission(self, session_id: str | None) -> bool:
-        """Return whether one source-local owner owns the next response slot."""
+        """Return whether one UNRESOLVED source-local owner blocks the next send.
 
-        recovery = self.dispatch_recovery_for_session(session_id)
+        TASK-22000 (owner decision, 2026-08-24): this reads the *presentation*
+        owner, not the raw one. Only an owner the user is actually being shown
+        a recovery card for can refuse a send -- a healthy in-flight run
+        (``runtime_active=True, recovery_needed=False``) never does.
+
+        The original TASK-19900.3 predicate keyed on ``kind`` alone, so the
+        app's own live durable turn refused submission for its whole duration.
+        ADR-046 / TASK-14808 say the opposite: an accepted live turn re-labels
+        Send to "Queue" and admits the draft as a FIFO follow-up. The user got
+        a button labelled "Queue" that was greyed out. Reading the presentation
+        owner makes the two agree by construction: nothing invisible refuses.
+
+        What the gate was actually guarding is untouched, because every one of
+        those states carries ``recovery_needed=True``:
+
+        * a checkpoint restored from a previous app run
+          (``_hydrate_dispatch_recovery`` stores an owner only when it needs
+          recovery), which would otherwise hit the repository's
+          "active dispatch checkpoint" refusal on the next send;
+        * a live owner whose terminal settlement failed
+          (``mark_dispatch_recovery_needed`` /
+          ``_restore_dispatch_recovery_after_settlement_failure``) -- note its
+          run state is ``BLOCKED``, which ``is_send_allowed`` *permits*, so
+          this gate is the only thing standing between the user and a raw
+          ``RuntimeError`` from a second durable owner;
+        * ``QUARANTINED`` ownership that could not be read at all.
+
+        A healthy in-flight owner needs no gate here: its run state is
+        VALIDATING/STREAMING, so ``_active_run_rejection`` already refuses a
+        second manual turn, and a queued follow-up is only *submitted* from
+        ``_drain_waiting``, which runs after the previous turn reaches a
+        terminal status -- by which point settlement has popped this owner.
+        """
+
+        recovery = self.dispatch_recovery_for_presentation(session_id)
         return recovery is not None and recovery.kind in {
             ConsoleDispatchRecoveryKind.ACCEPTED,
             ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
