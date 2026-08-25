@@ -10309,8 +10309,20 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
         await pilot.pause(0.1)
 
         def _first_focusable(step):
-            # Mirrors production: hidden (display:none / .hidden) widgets must
-            # never be focus targets (TASK-1496/1498).
+            # Mirrors production: preferred_focus() wins when displayed
+            # (TASK-21146: Summary prefers its primary exit button), then
+            # hidden (display:none / .hidden) widgets must never be focus
+            # targets (TASK-1496/1498).
+            preferred = (
+                step.preferred_focus() if isinstance(step, SetupStep) else None
+            )
+            if (
+                preferred is not None
+                and preferred.focusable
+                and preferred.display
+                and not preferred.has_class("hidden")
+            ):
+                return preferred
             return next(
                 (
                     w
@@ -12656,3 +12668,108 @@ async def test_summary_overlays_probe_failure_and_flips_primary():
         assert "✓ Provider" not in rendered
         primary = step.query_one("#setup-exit-chat", Button)
         assert str(primary.label) == "Review provider setup"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21146 (UAT H-1): the online model-list consent lives in the wizard
+# Summary (default OFF, shown only while unanswered) and persists through
+# the exact [model_catalog] contract the Console modal writes — so a
+# completed wizard never hands the user a surprise consent modal, while
+# skipping the wizard keeps the existing Console flow.
+# ---------------------------------------------------------------------------
+
+
+def _summary_wizard_mock():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    return SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+        wizard_data={"welcome": {"track": "quick"}},
+        provider_probe_failure=lambda: "",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_summary_consent_checkbox_persists_answer_on_commit(allowed):
+    from textual.widgets import Checkbox
+
+    wizard = _summary_wizard_mock()
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        box = step.query_one("#setup-summary-model-catalog-consent", Checkbox)
+        assert not box.has_class("hidden"), "unanswered consent must be offered"
+        assert box.value is False, "consent defaults to OFF (deny-by-default)"
+        box.value = allowed
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        expected = {"refresh_consent_recorded": True}
+        if not allowed:
+            expected["auto_refresh_enabled"] = False
+        assert committed == {"model_catalog": expected}
+
+
+@pytest.mark.asyncio
+async def test_summary_consent_not_reoffered_once_recorded():
+    from textual.widgets import Checkbox
+
+    wizard = _summary_wizard_mock()
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+            "model_catalog": {"refresh_consent_recorded": True},
+        },
+        rag_deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        box = step.query_one("#setup-summary-model-catalog-consent", Checkbox)
+        assert box.has_class("hidden"), "an answered consent must never re-ask"
+        ok, error = await step.commit()
+        assert ok, error
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_setup_checkbox_glyphs_differ_structurally():
+    """Mirror of the SetupRadioButton TASK-1497 pin: checked state must
+    survive a monochrome capture (live UAT read the unchecked consent box
+    as checked because stock Checkbox renders a constant X)."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupCheckbox
+
+    class Host(App):
+        def compose(self):
+            yield SetupCheckbox("x", id="box")
+
+    app = Host()
+    async with app.run_test(size=(40, 10)):
+        box = app.query_one("#box", SetupCheckbox)
+        box._button
+        unchecked = box.BUTTON_INNER
+        box.value = True
+        box._button
+        checked = box.BUTTON_INNER
+        assert unchecked != checked
+        assert checked == "✓"

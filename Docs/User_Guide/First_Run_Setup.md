@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-08 (TASK-21143: probe outcomes reach tracker, gate, and summary).
+> Verified against: first-run wizard implementation, 2026-08 (TASK-21146: online model-list consent lives on the Summary step).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 every step can be skipped (Next moves on without configuring it), Escape asks
@@ -45,7 +45,12 @@ The final summary shows a ✓/✗ line per area, read back from what was actuall
 saved — and if the connection check failed while you were setting up (a
 rejected API key, an unreachable local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
-past the model step asks for an explicit "Continue anyway". Local servers (Ollama, llama.cpp) are auto-detected on localhost; no
+past the model step asks for an explicit "Continue anyway".
+
+The Summary also asks — once, default off — whether chatbook may check your
+configured providers' model lists online at startup. Whatever you choose is
+final until you change it in Settings; finishing setup never hands you a
+separate consent pop-up afterwards. Local servers (Ollama, llama.cpp) are auto-detected on localhost; no
 probe traffic leaves your machine without your action.
 
 ## Running it again

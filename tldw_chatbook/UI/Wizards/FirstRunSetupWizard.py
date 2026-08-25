@@ -147,6 +147,21 @@ class SetupRadioButton(RadioButton):
         return super()._button
 
 
+class SetupCheckbox(Checkbox):
+    """Checkbox whose checked state is structural, not color-only.
+
+    TASK-21146 follow-on to TASK-1497 (SetupRadioButton): stock
+    ToggleButton renders a constant "X" glyph and conveys on/off purely
+    through color — in live UAT the UNCHECKED consent box read as checked
+    (▐X▌). The inner glyph itself switches: ✓ checked, blank unchecked.
+    """
+
+    @property
+    def _button(self):
+        self.BUTTON_INNER = "✓" if self.value else " "
+        return super()._button
+
+
 class SetupRadioSet(RadioSet):
     """Wizard radio group with WAI-ARIA radio semantics (TASK-21142).
 
@@ -4080,7 +4095,7 @@ class VoiceSetupStep(SetupStep):
             )
             add_key.display = False
             yield add_key
-            yield Checkbox(
+            yield SetupCheckbox(
                 "Use as default",
                 id="setup-voice-default",
                 value=False,
@@ -6811,6 +6826,19 @@ class SummaryStep(SetupStep):
             # literal "[...]" -- Static.update() otherwise parses that as Rich
             # markup and silently drops it from the rendered text.
             yield Static("", id="setup-summary-rows", markup=False)
+            # TASK-21146 (UAT H-1): the online model-list consent belongs in
+            # setup, not as a surprise modal the moment "Start chatting"
+            # lands in Console. Default OFF (deny-by-default, same privacy
+            # posture as the modal); shown only while no consent answer is
+            # recorded (see _render_rows), so re-runs never re-ask. The
+            # answer persists on completion (commit) via the exact
+            # [model_catalog] contract _handle_model_catalog_consent writes.
+            yield SetupCheckbox(
+                "Keep model lists fresh — checks your configured providers "
+                "online at startup",
+                id="setup-summary-model-catalog-consent",
+                classes="hidden",
+            )
             yield Static(
                 "", id="setup-summary-footer", classes="setup-subtitle", markup=False
             )
@@ -6908,6 +6936,27 @@ class SummaryStep(SetupStep):
             None, speech_runtime_check
         )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
+
+        # TASK-21146 (UAT H-1): offer the model-list consent only while no
+        # answer is recorded — a rerun after any answer never re-asks.
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                load_model_catalog_settings,
+            )
+
+            consent_recorded = load_model_catalog_settings(
+                config
+            ).refresh_consent_recorded
+        except Exception:
+            consent_recorded = True  # fail closed: never re-ask on a bad read
+        try:
+            consent_box = self.query_one(
+                "#setup-summary-model-catalog-consent", Checkbox
+            )
+            consent_box.set_class(consent_recorded, "hidden")
+            self._model_catalog_consent_offered = not consent_recorded
+        except NoMatches:
+            self._model_catalog_consent_offered = False
 
         rows = build_summary_rows(
             config,
@@ -7035,6 +7084,42 @@ class SummaryStep(SetupStep):
         # programmatic exit path, so the dispatch semantics for the actual
         # Next button are unchanged.
         self.wizard.advance_programmatically()
+
+    def preferred_focus(self) -> Optional[Widget]:
+        """Land on the primary exit so Enter finishes setup (TASK-21146).
+
+        Without this, whichever widget the async row-render reveals first
+        (the consent checkbox) would race the step-change focus fix.
+        """
+        try:
+            return self.query_one("#setup-exit-chat", Button)
+        except NoMatches:
+            return None
+
+    async def commit(self) -> tuple[bool, str]:
+        """Persist the model-list consent answer, when it was offered.
+
+        TASK-21146 (UAT H-1): mirrors _handle_model_catalog_consent's exact
+        [model_catalog] contract — the answer is recorded either way, and
+        an unchecked box (the default) also disables auto refresh, so the
+        Console modal never fires after a completed wizard while the
+        skip-the-wizard path keeps the existing consent flow untouched.
+        """
+        if not getattr(self, "_model_catalog_consent_offered", False):
+            return True, ""
+        try:
+            allowed = self.query_one(
+                "#setup-summary-model-catalog-consent", Checkbox
+            ).value
+        except NoMatches:
+            return True, ""
+        section: Dict[str, Any] = {"refresh_consent_recorded": True}
+        if not allowed:
+            section["auto_refresh_enabled"] = False
+        ok = await self.wizard.commit_config({"model_catalog": section})
+        if not ok:
+            return False, "Saving the model-list preference failed."
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"exit_route": self.exit_route}

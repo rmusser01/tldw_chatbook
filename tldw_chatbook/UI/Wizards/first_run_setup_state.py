@@ -1160,6 +1160,10 @@ WIZARD_OWNED_SECTIONS = frozenset(
         "tools",
         "notes",
         "general",
+        # TASK-21146 (UAT H-1): the Summary step records the online
+        # model-list consent answer through the exact [model_catalog]
+        # contract the Console consent modal writes.
+        "model_catalog",
         "splash_screen",
         "transcription",
         "provider_setup.confirmed",
