@@ -4828,8 +4828,18 @@ class LibraryFileNotesWorkspace(Vertical):
         self._apply_opened_document(reloaded)
 
     def _start_poll(self) -> None:
+        # TASK-22219: skip the filesystem walk while this widget's screen is
+        # not the top of the stack (covered by a modal/pushed screen, or the
+        # Library screen is otherwise inactive). The timer itself keeps
+        # ticking -- a no-op fire every interval costs nothing, and it IS the
+        # resume path: the first tick after the screen is active again runs
+        # the catch-up reconcile, so no pause/resume bookkeeping can rot.
+        # Same gate as UI/Navigation/main_navigation.py's overflow tick;
+        # Textual 8.2.8 `Screen.is_active` is `app.screen is self`.
         if (
             not self._active
+            or not self.is_attached
+            or not self.screen.is_active
             or self._root_transitioning
             or self._path_transitioning
             or self._service is None
