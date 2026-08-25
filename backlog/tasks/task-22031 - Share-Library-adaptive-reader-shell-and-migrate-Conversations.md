@@ -13,7 +13,7 @@ dependencies: []
 references:
   - >-
     Docs/superpowers/specs/2026-08-24-library-destinations-adaptive-reader-design.md
-  - backlog/decisions/085-library-adaptive-reader-shell.md
+  - backlog/decisions/086-library-adaptive-reader-shell.md
 ---
 
 ## Description
@@ -29,7 +29,7 @@ Extract the shipped Media reader structure into the Library-local adaptive shell
 - [ ] #3 Collapsing Library expands the destination list toward its comfort cap without changing saved widths
 - [ ] #4 Conversations exposes the complete saved transcript with Read and Info modes Find and Open in Console
 - [ ] #5 Selected and loaded conversation identity stay truthful under rapid traversal stale workers deletion and retry
-- [ ] #6 Shared Library preferences and Media legacy fallback follow ADR-085 without responsive preference writes
+- [ ] #6 Shared Library preferences and Media legacy fallback follow ADR-086 without responsive preference writes
 - [ ] #7 Automated geometry race capability and Media regression tests pass with a live TUI walkthrough at representative terminal sizes
 <!-- AC:END -->
 
@@ -43,6 +43,6 @@ Extract the shipped Media reader structure into the Library-local adaptive shell
 5. Run automated and live verification
 
 ADR required: yes
-ADR path: backlog/decisions/085-library-adaptive-reader-shell.md
+ADR path: backlog/decisions/086-library-adaptive-reader-shell.md
 Reason: implements the accepted Library structural boundary.
 <!-- SECTION:PLAN:END -->

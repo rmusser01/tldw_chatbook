@@ -10,7 +10,7 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/085-library-adaptive-reader-shell.md`
+**ADR path:** `backlog/decisions/086-library-adaptive-reader-shell.md`
 
 **Reason:** The programme establishes a durable Library-wide structural boundary, preference owner, and cross-destination interface.
 
@@ -19,7 +19,7 @@
 ## Source documents and PR topology
 
 - Specification: `Docs/superpowers/specs/2026-08-24-library-destinations-adaptive-reader-design.md`
-- Architecture: `backlog/decisions/085-library-adaptive-reader-shell.md`
+- Architecture: `backlog/decisions/086-library-adaptive-reader-shell.md`
 - Media precedent: `Docs/superpowers/specs/2026-08-23-library-media-netnewswire-reader-design.md`
 - Compose-once constraint: `Docs/superpowers/specs/2026-08-13-library-compose-once-design.md`
 - Testing lessons: `backlog/docs/lessons-testing-evidence.md`
@@ -127,7 +127,7 @@ gh pr list --repo rmusser01/tldw_chatbook --state open --search '22031 adaptive 
 backlog task 22031 --plain
 ```
 
-Expected: TASK-22031 is `To Do`; no competing implementation PR exists; ADR-085 and the spec are
+Expected: TASK-22031 is `To Do`; no competing implementation PR exists; ADR-086 and the spec are
 present in the base.
 
 - [ ] **Step 2: Put TASK-22031 in progress and add its Backlog implementation plan**
@@ -136,7 +136,7 @@ Run:
 
 ```bash
 backlog task edit 22031 -s 'In Progress' -a @codex
-backlog task edit 22031 --plan $'1. Inventory Media and Conversations capabilities\n2. Extract and prove the shared shell\n3. Migrate shared preferences and adaptive geometry\n4. Add the fenced Conversations reader\n5. Run automated and live verification\n\nADR required: yes\nADR path: backlog/decisions/085-library-adaptive-reader-shell.md\nReason: implements the accepted Library structural boundary.'
+backlog task edit 22031 --plan $'1. Inventory Media and Conversations capabilities\n2. Extract and prove the shared shell\n3. Migrate shared preferences and adaptive geometry\n4. Add the fenced Conversations reader\n5. Run automated and live verification\n\nADR required: yes\nADR path: backlog/decisions/086-library-adaptive-reader-shell.md\nReason: implements the accepted Library structural boundary.'
 ```
 
 Expected: the task contains an Implementation Plan but no Implementation Notes yet.
@@ -579,7 +579,7 @@ the branch adds no new failure; do not silently reduce the gate to focused tests
 - [ ] **Step 4: Draft closeout evidence while keeping the task In Progress**
 
 Append the after inventory and draft concise Implementation Notes with files, tradeoffs, focused and
-repository-wide commands, live evidence, ADR-085, and any generalized lesson actually learned. Do
+repository-wide commands, live evidence, ADR-086, and any generalized lesson actually learned. Do
 not check final ACs or mark the task Done yet.
 
 - [ ] **Step 5: Request review, address findings, rebase, and repeat the gates**
@@ -593,7 +593,7 @@ remains In Progress until this final verification is green.
 Only now check every TASK-22031 AC, finalize Implementation Notes, and mark Done:
 
 ```bash
-backlog task edit 22031 -s Done --notes 'Implemented the shared Library adaptive shell and permanent Conversations reader; see PR verification and capability inventory. ADR: backlog/decisions/085-library-adaptive-reader-shell.md.'
+backlog task edit 22031 -s Done --notes 'Implemented the shared Library adaptive shell and permanent Conversations reader; see PR verification and capability inventory. ADR: backlog/decisions/086-library-adaptive-reader-shell.md.'
 git add 'backlog/tasks/task-22031 - Share-Library-adaptive-reader-shell-and-migrate-Conversations.md' Docs/superpowers/reviews/2026-08-24-library-adaptive-reader-capability-inventory.md
 git commit -m 'docs(library): close adaptive Conversations migration'
 git diff --check origin/dev...HEAD
@@ -626,7 +626,7 @@ dependency before branching.
 
 ```bash
 backlog task edit 22032 -s 'In Progress' -a @codex
-backlog task edit 22032 --plan $'1. Inventory Notes capabilities and draft authority\n2. Add presentation-only reader state\n3. Split the persistent list and work pane\n4. Verify workflows, geometry, and focus\n\nADR required: yes\nADR path: backlog/decisions/085-library-adaptive-reader-shell.md\nReason: consumes the accepted Library structural boundary without changing Notes authority.'
+backlog task edit 22032 --plan $'1. Inventory Notes capabilities and draft authority\n2. Add presentation-only reader state\n3. Split the persistent list and work pane\n4. Verify workflows, geometry, and focus\n\nADR required: yes\nADR path: backlog/decisions/086-library-adaptive-reader-shell.md\nReason: consumes the accepted Library structural boundary without changing Notes authority.'
 ```
 
 - [ ] **Step 3: Append the before inventory**
@@ -781,7 +781,7 @@ sync, both restore controls, focus continuity, and no clipped editor actions. Ca
 - [ ] **Step 3: Draft task and inventory closeout without marking Done**
 
 Append the after inventory and draft Implementation Notes with focused/full-suite commands, live
-evidence and ADR-085. Keep TASK-22032 In Progress and its ACs unchecked until review completes.
+evidence and ADR-086. Keep TASK-22032 In Progress and its ACs unchecked until review completes.
 
 - [ ] **Step 4: Review, rebase, and repeat the gates**
 
@@ -793,7 +793,7 @@ Steps 1–2 exactly.
 Check every AC and finalize notes only after final review/rebase verification:
 
 ```bash
-backlog task edit 22032 -s Done --notes 'Migrated Database Notes to the shared adaptive reader while retaining the existing draft, sync, conflict, and recovery authorities. ADR: backlog/decisions/085-library-adaptive-reader-shell.md.'
+backlog task edit 22032 -s Done --notes 'Migrated Database Notes to the shared adaptive reader while retaining the existing draft, sync, conflict, and recovery authorities. ADR: backlog/decisions/086-library-adaptive-reader-shell.md.'
 git add 'backlog/tasks/task-22032 - Migrate-Library-Notes-to-the-adaptive-reader-shell.md' Docs/superpowers/reviews/2026-08-24-library-adaptive-reader-capability-inventory.md
 git commit -m 'docs(library): close adaptive Notes migration'
 git diff --check origin/dev...HEAD
@@ -819,7 +819,7 @@ competing implementation.
 
 ```bash
 backlog task edit 22033 -s 'In Progress' -a @codex
-backlog task edit 22033 --plan $'1. Inventory Prompt capabilities and draft authority\n2. Add one lossless reader projection\n3. Split persistent list and work pane\n4. Verify hidden fields, workflows, geometry, and focus\n\nADR required: yes\nADR path: backlog/decisions/085-library-adaptive-reader-shell.md\nReason: consumes the accepted Library structural boundary without changing Prompt authority.'
+backlog task edit 22033 --plan $'1. Inventory Prompt capabilities and draft authority\n2. Add one lossless reader projection\n3. Split persistent list and work pane\n4. Verify hidden fields, workflows, geometry, and focus\n\nADR required: yes\nADR path: backlog/decisions/086-library-adaptive-reader-shell.md\nReason: consumes the accepted Library structural boundary without changing Prompt authority.'
 ```
 
 - [ ] **Step 3: Inventory and commit**
@@ -975,7 +975,7 @@ Fetch `origin/dev`, verify the PR 3 merge SHA is an ancestor, query open PRs for
 
 ```bash
 backlog task edit 22034 -s 'In Progress' -a @codex
-backlog task edit 22034 --plan $'1. Inventory Skills and trust/file authority\n2. Add revision-aware reader presentation state\n3. Split persistent list and work pane\n4. Verify trust, files, geometry, and focus\n\nADR required: yes\nADR path: backlog/decisions/085-library-adaptive-reader-shell.md\nReason: consumes the accepted Library structural boundary without changing Skills trust authority.'
+backlog task edit 22034 --plan $'1. Inventory Skills and trust/file authority\n2. Add revision-aware reader presentation state\n3. Split persistent list and work pane\n4. Verify trust, files, geometry, and focus\n\nADR required: yes\nADR path: backlog/decisions/086-library-adaptive-reader-shell.md\nReason: consumes the accepted Library structural boundary without changing Skills trust authority.'
 ```
 
 - [ ] **Step 3: Inventory and commit**

@@ -12,7 +12,7 @@ dependencies:
 references:
   - >-
     Docs/superpowers/specs/2026-08-24-library-destinations-adaptive-reader-design.md
-  - backlog/decisions/085-library-adaptive-reader-shell.md
+  - backlog/decisions/086-library-adaptive-reader-shell.md
 ---
 
 ## Description

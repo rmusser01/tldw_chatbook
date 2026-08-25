@@ -1,4 +1,4 @@
-# ADR-085: Share an adaptive reader shell within Library destinations
+# ADR-086: Share an adaptive reader shell within Library destinations
 
 Status: Accepted
 Date: 2026-08-24

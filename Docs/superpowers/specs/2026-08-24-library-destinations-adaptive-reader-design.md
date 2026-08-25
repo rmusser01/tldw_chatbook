@@ -4,7 +4,7 @@ Date: 2026-08-24
 
 Status: Approved
 
-ADR: [ADR-085](../../../backlog/decisions/085-library-adaptive-reader-shell.md)
+ADR: [ADR-086](../../../backlog/decisions/086-library-adaptive-reader-shell.md)
 
 Related: [Library Media NetNewsWire reader design](2026-08-23-library-media-netnewswire-reader-design.md), [ADR-084](../../../backlog/decisions/084-library-media-reader-ia.md), [Library compose-once design](2026-08-13-library-compose-once-design.md)
 
