@@ -1168,7 +1168,10 @@ async def test_decode_completion_live_fences_every_avatar_request_input(
     original_store = controller.store
     state = {"value": "thinking"}
 
-    def expression_state(store, _session_id, *, react_enabled):
+    def expression_state(store, _session_id, *, react_enabled, messages=None):
+        # `messages` mirrors the TASK-22204 shared-snapshot kwarg the
+        # production caller now passes; this stub keys off the store/flag
+        # like before and ignores the snapshot.
         if not react_enabled:
             return "idle"
         if store is not original_store:

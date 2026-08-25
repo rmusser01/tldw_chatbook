@@ -186,6 +186,52 @@ def test_complete_message_returns_final_immutable_history_identity_only():
     )
 
 
+def test_prefetched_snapshot_bypasses_the_store_fetch():
+    """TASK-22204: a passed ``messages`` snapshot must never re-consult the store."""
+
+    class ExplodingStore:
+        def messages_for_session(self, session_id):
+            raise AssertionError("the shared snapshot must not be re-fetched")
+
+    snapshot = [_Msg(_FakeRole.ASSISTANT, "streaming")]
+
+    selection = resolve_console_expression_selection(
+        ExplodingStore(), "s1", react_enabled=True, messages=snapshot
+    )
+    assert selection.state == "speaking"
+    assert selection.source == "operational"
+    assert (
+        resolve_console_expression_state(
+            ExplodingStore(), "s1", react_enabled=True, messages=snapshot
+        )
+        == "speaking"
+    )
+
+
+def test_prefetched_snapshot_matches_store_fetch_for_every_status():
+    """The snapshot path resolves identically to the fetch path (TASK-22204)."""
+
+    for status in ("pending", "streaming", "complete", "stopped", "failed"):
+        messages = [_Msg(_FakeRole.USER, "complete"), _Msg(_FakeRole.ASSISTANT, status)]
+        store = _FakeStore({"s1": messages})
+        fetched = resolve_console_expression_selection(store, "s1", react_enabled=True)
+        shared = resolve_console_expression_selection(
+            store, "s1", react_enabled=True, messages=messages
+        )
+        assert shared == fetched
+
+
+def test_react_disabled_pins_idle_even_with_a_snapshot():
+    snapshot = [_Msg(_FakeRole.ASSISTANT, "streaming")]
+    store = _FakeStore({})
+    assert (
+        resolve_console_expression_state(
+            store, "s1", react_enabled=False, messages=snapshot
+        )
+        == "idle"
+    )
+
+
 def test_react_config_helper_defaults_true():
     assert resolve_react_character_expressions({}) is True
     cfg = {"chat": {"images": {"react_character_expressions": False}}}
