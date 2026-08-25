@@ -364,6 +364,25 @@ the contract there.
 
 ---
 
+## A mixed sync/async interface needs an explicit, complete test double
+
+**TASK-2510 final review, 2026-08-24.** The Watchlists backend controller gained
+the synchronous `create_form_source_types` contract alongside its existing async
+operations. Four collections-screen controller doubles were blanket
+`AsyncMock` instances, so backend switching turned that synchronous call into a
+coroutine and the Reader recovery path failed with `TypeError: 'coroutine' object
+is not iterable`. Correcting all four doubles to provide a synchronous `Mock` for
+that seam restored all 88 collections-screen tests and the 155-test focused
+Task-2510 suite.
+
+**What to do.** When an interface mixes synchronous and asynchronous methods,
+model every seam explicitly with the correct call shape; do not use a blanket
+`AsyncMock` as a complete interface double. Exercise the double through a real
+integration path that crosses the synchronous seam, not by asserting that the
+mock exists.
+
+---
+
 ## A fake written to match your call site validates the mistake
 
 **The trap.** You write a test double to match how you are calling the real thing. If

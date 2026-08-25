@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05'
-updated_date: '2026-08-25 00:44'
+updated_date: '2026-08-25 01:06'
 labels:
   - watchlists
   - bug
@@ -84,18 +84,28 @@ contract, dependency, or long-lived application structure.
   `Tests/Subscriptions/test_watchlist_scope_service.py`,
   `Tests/Watchlists/test_watchlists_backend_controller.py`,
   `Tests/Watchlists/test_watchlists_sources_pane.py`,
+  `Tests/Watchlists/test_watchlists_collections_screen.py`,
   `Tests/UI/full_app_destination_context.py`, and
   `Tests/UI/test_watchlists_source_create_form.py`.
 - Geometry/tab-order verification for Local RSS, Local Web page, and Server RSS
   at `(160, 42)` and `(235, 52)`: **12 passed, 22 deselected**. No CSS change
   or bundle regeneration was necessary.
-- Complete user-authorized focused verification set: **155 passed, 2 warnings**
-  in 155.97 seconds. The warnings were an environment dependency-version
-  warning and Python's `audioop` deprecation; pytest also reported unrelated
-  permission warnings while cleaning pre-existing temporary test garbage.
-- Scoped Ruff over every source/test file modified by this task: **passed**.
-  `git diff --check dacfca199..6450d0055`: **passed**. The implementation
-  range contains only the 13 source/test files listed above.
+- Final review exposed an incomplete test double in the collections-screen
+  integration coverage: blanket `AsyncMock` controllers turned the new
+  synchronous `create_form_source_types` seam into a coroutine during backend
+  watcher execution. The exact Reader recovery test failed red with
+  `TypeError: 'coroutine' object is not iterable`; all four controller doubles
+  in that module now share the real mixed sync/async API shape.
+- Expanded user-authorized focused verification: the originally failing
+  Reader recovery test is **1 passed, 2 warnings**; the complete related
+  collections-screen module is **88 passed, 2 warnings**; and the prior
+  six-module Task-2510 suite is **155 passed, 2 warnings**. The warnings were
+  an environment dependency-version warning and Python's `audioop`
+  deprecation; pytest also reported unrelated permission warnings while
+  cleaning pre-existing temporary test garbage.
+- Scoped Ruff over all 14 Task-2510 source/test files, including the corrected
+  collections-screen integration tests: **passed**. `git diff --check`:
+  **passed**.
 - Self-review found every acceptance criterion satisfied: filter options are
   unchanged; Local's broader persistence types remain accepted; Server sends
   no cadence/noise keys; specialized copy is limited to pane pre-dispatch
@@ -106,8 +116,10 @@ contract, dependency, or long-lived application structure.
   `Docs/superpowers/specs/2026-08-24-watchlists-backend-source-types-design.md`.
 - ADR required: no. ADR path: N/A. Reason: bounded correction inside the
   existing Watchlists local/server routing boundary.
-- Lessons assessment: no new reusable testing or runtime incident surfaced;
-  no lessons file was changed.
+- Lessons assessment: the final-review regression demonstrated that blanket
+  async controller doubles become incomplete when a controller gains a
+  synchronous seam. The incident, evidence, and explicit mixed-interface-double
+  rule are recorded in `backlog/docs/lessons-testing-evidence.md`.
 - Verification was intentionally scoped to modified Watchlists functionality,
   per explicit user direction. No repository-wide suite, performance,
   licence, or unrelated static checks were run or claimed.

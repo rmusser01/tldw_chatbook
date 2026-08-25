@@ -46,6 +46,19 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeSc
 from tldw_chatbook.Utils.input_validation import validate_url as real_validate_url
 
 
+def _controller_double() -> AsyncMock:
+    """Return a controller double with the production sync/async API shape."""
+    controller = AsyncMock()
+    controller.create_form_source_types = Mock(
+        side_effect=lambda *, runtime_backend=None: (
+            ("rss", "site", "forum")
+            if runtime_backend == "server"
+            else ("rss", "atom", "url")
+        )
+    )
+    return controller
+
+
 def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
     assert hasattr(collections_module, "ManualLayoutRollback")
     assert hasattr(collections_module, "SectionViewIntent")
@@ -55,7 +68,7 @@ def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
 
 @pytest.fixture
 def fake_controller():
-    controller = AsyncMock()
+    controller = _controller_double()
     controller.preview_source = AsyncMock(
         return_value={"items": [{"title": "Post"}], "log_text": "ok"}
     )
@@ -397,7 +410,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
     """Server-labelled Read never leaks local rows or local Reader queries."""
     import asyncio
 
-    controller = AsyncMock()
+    controller = _controller_double()
     controller.get_overview_data = AsyncMock(return_value={})
     local_rows = [
         {
@@ -532,7 +545,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
 
 @pytest.mark.asyncio
 async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
-    controller = AsyncMock()
+    controller = _controller_double()
     controller.get_overview_data = AsyncMock(return_value={})
     local_row = {
         "id": "local:watchlist_item:9",
@@ -616,7 +629,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
 async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
     monkeypatch,
 ) -> None:
-    controller = AsyncMock()
+    controller = _controller_double()
     controller.get_overview_data = AsyncMock(return_value={})
     local_row = {
         "id": "local:watchlist_item:8",
