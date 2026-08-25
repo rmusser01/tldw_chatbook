@@ -49,6 +49,7 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 from Tests.console_provider_doubles import with_destination
+from Tests.console_provider_doubles import persisted_console_store
 
 
 SENTINEL = "AGENTS_AUTOMATIC_CHANNEL_SENTINEL_71f584"
@@ -884,7 +885,7 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
     (tmp_path / "AGENTS.md").write_text(SENTINEL)
     binding = _binding(tmp_path)
     registry = _BindingRegistry([binding])
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     session = store.create_session(workspace_id="w1")
     notices = []
     owning_loop_calls = []
@@ -966,7 +967,7 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 async def test_folderless_session_skips_optional_project_instructions_and_runs(
     tmp_path,
 ):
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     session = store.create_session(workspace_id="workspace-default")
     bridge_calls = []
     setup_calls = []
@@ -1053,7 +1054,7 @@ def test_disabled_session_does_not_consult_registry(tmp_path):
 async def test_project_instruction_disable_terminalizes_and_allows_retry():
     """Disabling unavailable instructions must not strand the Console run."""
 
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     session = store.create_session(workspace_id="w1")
     store.set_session_project_instruction_state(
         session.id,

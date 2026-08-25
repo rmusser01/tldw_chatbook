@@ -37,6 +37,8 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.local_skills_service import ScriptPlan
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
+from Tests.console_provider_doubles import persisted_console_store
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -94,7 +96,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     made: list[ConsoleChatController] = []
 
     def _make() -> ConsoleChatController:
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         controller = ConsoleChatController(store=store, provider_gateway=object())
         controller.app = _FakeApp()
         controller.pending_skill_script_payloads = []
@@ -264,7 +266,7 @@ def _capture_run_skill_script_tool(
     )
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
@@ -880,7 +882,9 @@ class _StubGateway:
     invoked directly -- no real streaming ever happens in these tests."""
 
     async def resolve_for_send(self, selection):
-        return _StubResolution()
+        # See `provider_resolution`: a ready resolution must carry the typed
+        # destination `_resolved_destination_for_context` requires.
+        return provider_resolution(provider="llama_cpp")
 
     async def stream_chat(self, resolution, messages, **kwargs):  # pragma: no cover
         yield "unused"
@@ -901,7 +905,7 @@ def _capturing_run_reply(captured: list[dict[str, Any]]):
 
 def _bridged_controller(tmp_path) -> tuple[ConsoleChatController, list[dict[str, Any]]]:
     gateway = _StubGateway()
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -1086,7 +1090,7 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
     """
     from tldw_chatbook.Agents.run_context import use_run_id
 
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=object())
     controller.app = _FakeApp()
     controller.skill_script_confirm_timeout_seconds = lambda: 30.0
