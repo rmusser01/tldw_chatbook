@@ -14741,10 +14741,16 @@ UPDATE db_schema_version
         """Project one message row into the text-only windowed shape."""
         text = row["text"] or ""
         total_chars = row["total_chars"] or 0
+        raw_timestamp = row["timestamp"]
+        timestamp = (
+            raw_timestamp
+            if isinstance(raw_timestamp, str)
+            else raw_timestamp.isoformat().replace("+00:00", "Z")
+        )
         return {
             "id": row["id"],
             "sender": row["sender"],
-            "timestamp": row["timestamp"],
+            "timestamp": timestamp,
             "revision": self._library_message_revision(row["version"], total_chars),
             "total_chars": total_chars,
             "char_start": char_start,
@@ -14810,6 +14816,18 @@ UPDATE db_schema_version
                     "WHERE conversation_id = ? AND deleted = 0",
                     (conversation_id,),
                 ).fetchone()["count"]
+                # Message rows are append/tombstone authority: production
+                # mutations never physically delete them, start at v1, and
+                # advance version for every reader-visible edit/tombstone.
+                # Local-only usage/metadata writes deliberately do neither.
+                epoch_row = conn.execute(
+                    "SELECT COUNT(*) AS count, COALESCE(SUM(version), 0) AS versions "
+                    "FROM messages WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                message_epoch = hashlib.sha256(
+                    f"{epoch_row['count']}:{epoch_row['versions']}".encode("utf-8")
+                ).hexdigest()
                 if message_id is not None:
                     cursor = conn.execute(
                         """
@@ -14853,6 +14871,7 @@ UPDATE db_schema_version
                 "id": conversation["id"],
                 "title": conversation["title"],
                 "version": conversation["version"],
+                "message_epoch": message_epoch,
                 "message_total": message_total,
                 "message_offset": 0 if message_id is not None else message_offset,
                 "returned_message_count": len(messages),

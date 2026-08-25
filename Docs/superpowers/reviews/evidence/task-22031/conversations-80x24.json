@@ -1,0 +1,78 @@
+{
+  "effective": {
+    "items_open": false,
+    "library_open": false,
+    "priority_pane": null
+  },
+  "focused_control": {
+    "has_focus": true,
+    "id": "library-conversations-items-grip",
+    "paint_owner_id": "library-conversations-items-grip",
+    "region": {
+      "height": 17,
+      "width": 5,
+      "x": 7,
+      "y": 5
+    }
+  },
+  "grip_names": [
+    "Expand Library pane",
+    "Expand Items pane"
+  ],
+  "grip_widths": [
+    5,
+    5
+  ],
+  "message_epoch": "epoch-chat-a",
+  "reader_complete": true,
+  "regions": {
+    "first_row": {
+      "height": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "items": {
+      "height": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "items_grip": {
+      "height": 17,
+      "width": 5,
+      "x": 7,
+      "y": 5
+    },
+    "library": {
+      "height": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "library_grip": {
+      "height": 17,
+      "width": 5,
+      "x": 2,
+      "y": 5
+    },
+    "shell": {
+      "height": 17,
+      "width": 76,
+      "x": 2,
+      "y": 5
+    },
+    "work": {
+      "height": 17,
+      "width": 66,
+      "x": 12,
+      "y": 5
+    }
+  },
+  "size": [
+    80,
+    24
+  ],
+  "svg": "conversations-80x24.svg",
+  "work_mounted": true
+}

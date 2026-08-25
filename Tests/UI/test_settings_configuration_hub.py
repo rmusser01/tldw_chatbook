@@ -1426,16 +1426,29 @@ async def test_settings_appearance_save_signals_live_console_refresh(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_media_layout_controls_reset_and_save(monkeypatch):
+async def test_settings_appearance_library_reader_controls_round_trip_all_destinations(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["library"] = {
         "search": {"history": ["keep-me"]},
-        "media_reader": {
+        "reader": {
             "library_open": False,
-            "items_open": True,
             "custom_widths_enabled": True,
             "library_width": 34,
+            "future_shared": "keep",
+        },
+        "media_reader": {
+            "items_open": True,
             "items_width": 52,
+        },
+        "conversations_reader": {"items_open": False, "items_width": 48},
+        "notes_reader": {"items_open": True, "items_width": 56},
+        "prompts_reader": {"items_open": False, "items_width": 60},
+        "skills_reader": {
+            "items_open": True,
+            "items_width": 64,
+            "future_skills": "keep",
         },
     }
     saved = []
@@ -1473,12 +1486,37 @@ async def test_settings_appearance_media_layout_controls_reset_and_save(monkeypa
             ).value
             == "34"
         )
-        assert (
-            screen.query_one(
-                "#settings-appearance-library-media-items-width", Input
-            ).value
-            == "52"
+        for destination, expected_open, expected_width in (
+            ("media", "Open", "52"),
+            ("conversations", "Collapsed", "48"),
+            ("notes", "Open", "56"),
+            ("prompts", "Collapsed", "60"),
+            ("skills", "Open", "64"),
+        ):
+            assert expected_open in str(
+                screen.query_one(
+                    f"#settings-appearance-library-{destination}-items-open",
+                    Button,
+                ).label
+            )
+            assert (
+                screen.query_one(
+                    f"#settings-appearance-library-{destination}-items-width",
+                    Input,
+                ).value
+                == expected_width
+            )
+
+        screen._active_settings_field_id = (
+            "settings-appearance-library-media-library-open"
         )
+        guide_text = "\n".join(
+            f"{label}: {value}"
+            for label, value in screen._appearance_field_guidance_rows()
+        )
+        assert "Shared Library reader geometry" in guide_text
+        assert "library.reader" in guide_text
+        assert "library.<destination>_reader" in guide_text
 
         await pilot.click("#settings-appearance-library-media-reset")
         await pilot.pause()
@@ -1505,15 +1543,26 @@ async def test_settings_appearance_media_layout_controls_reset_and_save(monkeypa
 
     assert saved[-1]["library"] == {
         "search": {"history": ["keep-me"]},
-        "media_reader": {
+        "reader": {
+            "future_shared": "keep",
             "library_open": True,
-            "items_open": True,
             "custom_widths_enabled": False,
             "library_width": 28,
+        },
+        "media_reader": {
+            "items_open": True,
+            "items_width": 40,
+        },
+        "conversations_reader": {"items_open": True, "items_width": 40},
+        "notes_reader": {"items_open": True, "items_width": 40},
+        "prompts_reader": {"items_open": True, "items_width": 40},
+        "skills_reader": {
+            "future_skills": "keep",
+            "items_open": True,
             "items_width": 40,
         },
     }
-    assert app._library_media_layout_refresh_generation == 1
+    assert app._library_reader_layout_refresh_generation == 1
 
 
 @pytest.mark.asyncio

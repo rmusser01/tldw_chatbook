@@ -1,0 +1,25 @@
+{
+  "calls": [
+    {
+      "conversation_id": "chat-a",
+      "max_chars": 8000,
+      "message_limit": 20,
+      "message_offset": 0
+    },
+    {
+      "conversation_id": "chat-a",
+      "max_chars": 8000,
+      "message_limit": 20,
+      "message_offset": 20
+    }
+  ],
+  "complete": true,
+  "find_complete": true,
+  "find_count": 1,
+  "focused": "message-20",
+  "message_count": 21,
+  "message_epoch": "epoch-chat-a",
+  "message_total": 21,
+  "status": "Loaded chat-a \u00b7 21 of 21 messages \u00b7 complete. \u00b7 Find: 1 exact match.",
+  "svg": "conversations-progressive-find-complete.svg"
+}

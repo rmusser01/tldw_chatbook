@@ -1,0 +1,28 @@
+{
+  "authority": "conversations_items",
+  "config_value": true,
+  "destination": "conversations",
+  "disk_value": true,
+  "durable_value": true,
+  "mounted_effective_value": true,
+  "pane": "items",
+  "preference_value": true,
+  "schedule": [
+    "settings_true_committed",
+    "stale_grip_false_exited",
+    "settings_refresh_callback"
+  ],
+  "svg": "delayed-settings-repair-conversations-items.svg",
+  "writes": [
+    [
+      "library.conversations_reader",
+      "items_open",
+      false
+    ],
+    [
+      "library.conversations_reader",
+      "items_open",
+      true
+    ]
+  ]
+}

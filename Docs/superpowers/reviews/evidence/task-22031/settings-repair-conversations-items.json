@@ -1,0 +1,25 @@
+{
+  "authority": "conversations_items",
+  "config_value": true,
+  "destination": "conversations",
+  "disk_value": true,
+  "durable_value": true,
+  "generation_after_repair": 2,
+  "generation_before_refresh": 1,
+  "mounted_effective_value": true,
+  "pane": "items",
+  "preference_value": true,
+  "svg": "settings-repair-conversations-items.svg",
+  "writes": [
+    [
+      "library.conversations_reader",
+      "items_open",
+      false
+    ],
+    [
+      "library.conversations_reader",
+      "items_open",
+      true
+    ]
+  ]
+}

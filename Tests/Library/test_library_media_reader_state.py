@@ -12,10 +12,12 @@ from tldw_chatbook.Library.library_media_reader_state import (
     LIBRARY_MAX_WIDTH,
     LIBRARY_MIN_WIDTH,
     LIBRARY_TARGET_WIDTH,
+    MEDIA_READER_LAYOUT_PROFILE,
     PANE_GRIP_WIDTH,
     READER_COMFORT_WIDTH,
     SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
+    MediaReaderEffectiveLayout,
     MediaReaderLayoutPreferences,
     begin_selection,
     enter_external_detail,
@@ -26,6 +28,13 @@ from tldw_chatbook.Library.library_media_reader_state import (
     settle_failure,
     settle_success,
 )
+
+
+def test_media_layout_public_names_remain_importable() -> None:
+    preferences = MediaReaderLayoutPreferences()
+    layout = resolve_media_reader_layout(160, preferences)
+
+    assert isinstance(layout, MediaReaderEffectiveLayout)
 
 
 def test_default_preferences_are_both_open_and_fixed() -> None:
@@ -186,10 +195,20 @@ def test_explicit_open_priority_survives_narrow_resize_resolution() -> None:
 
 def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
     preferences = normalize_media_reader_preferences({})
-    collapsed = resolve_media_reader_layout(121, preferences)
-    boundary = resolve_media_reader_layout(122, preferences, previous=collapsed)
+    nominal_width = (
+        2 * PANE_GRIP_WIDTH
+        + LIBRARY_TARGET_WIDTH
+        + ITEMS_TARGET_WIDTH
+        + MEDIA_READER_LAYOUT_PROFILE.work_min_width
+    )
+    collapsed = resolve_media_reader_layout(nominal_width - 1, preferences)
+    boundary = resolve_media_reader_layout(
+        nominal_width,
+        preferences,
+        previous=collapsed,
+    )
     reopened = resolve_media_reader_layout(
-        122 + LAYOUT_HYSTERESIS_WIDTH,
+        nominal_width + LAYOUT_HYSTERESIS_WIDTH,
         preferences,
         previous=boundary,
     )
