@@ -1,5 +1,5 @@
 ---
-id: TASK-21503
+id: TASK-22131
 title: 'Console: clarify System prompt read and replace controls'
 status: Done
 assignee:
@@ -59,3 +59,15 @@ Reason: this is copy and interaction-state clarification within the existing saf
 - Added production-stylesheet assertions and visually inspected responsive captures at 140x40, 100x30, and 80x24; shortened the Apply explanation so it remains fully painted at the narrowest size.
 - Verified the complete Console modal test module (120 passed), the focused shared-editor/native responsive tests (29 passed), responsive QA, Ruff, and compilation. ADR-040 continues to govern the transaction boundary; no new ADR was required.
 <!-- SECTION:PLAN:END -->
+
+## Renumbering provenance
+
+This task was originally filed as `TASK-21503`. During the final rebase for PR #2053,
+add-commit provenance showed that the unrelated Library Media reader-shell task reached
+`dev` first in `d99fb4a9c`; this prompt-workbench task arrived later in `5a3b53802`
+(rebased as `64a1fda25`). Per the TASK-19601 older-arrival rule, the older task keeps
+`TASK-21503` and this task moves to `TASK-22131`, selected after sweeping all current
+local and remote refs.
+
+No inbound reference identified this task by its old ID, so no dependency, code, test,
+or documentation reference required renumbering.
