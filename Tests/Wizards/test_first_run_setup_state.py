@@ -2332,3 +2332,53 @@ class TestProviderTrustChain:
             attention_ids=frozenset({setup_state.STEP_PROVIDER}),
         )
         assert [item.state for item in items] == ["complete", "active"]
+
+
+class TestEnvKeyFirstRunNotice:
+    """TASK-21147 (UAT E-1): name the env vars that silenced the wizard
+    offer, exactly once, and only on genuinely fresh env-key installs."""
+
+    def _config(self, first_run=None, api_key=None, env_var="OPENAI_API_KEY"):
+        cfg = {
+            "api_settings": {
+                "openai": {"api_key_env_var": env_var}
+                | ({"api_key": api_key} if api_key else {})
+            }
+        }
+        if first_run is not None:
+            cfg["first_run"] = first_run
+        return cfg
+
+    def test_fresh_install_with_env_key_names_the_var(self):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(), {"OPENAI_API_KEY": "sk-live-abc123456789"}
+        )
+        assert names == ("OPENAI_API_KEY",)
+
+    def test_no_env_value_means_no_notice(self):
+        assert (
+            setup_state.env_keys_that_silenced_first_run(self._config(), {})
+            == ()
+        )
+
+    def test_inline_config_key_means_no_notice(self):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(api_key="sk-live-abc123456789"),
+            {"OPENAI_API_KEY": "sk-live-abc123456789"},
+        )
+        assert names == ()
+
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            {"setup_started": True},
+            {"setup_completed": True},
+            {setup_state.ENV_KEY_NOTICE_KEY: True},
+        ],
+    )
+    def test_any_recorded_state_suppresses_the_notice(self, flags):
+        names = setup_state.env_keys_that_silenced_first_run(
+            self._config(first_run=flags),
+            {"OPENAI_API_KEY": "sk-live-abc123456789"},
+        )
+        assert names == ()

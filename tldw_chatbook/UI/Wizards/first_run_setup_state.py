@@ -821,6 +821,52 @@ def should_offer_wizard(
     return not any_provider_configured(app_config, environ)
 
 
+#: TASK-21147 (UAT E-1): one-time acknowledgement flag for env-key installs.
+ENV_KEY_NOTICE_KEY = "env_key_notice_shown"
+
+
+def env_keys_that_silenced_first_run(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Env var names whose keys made a fresh install skip the wizard offer.
+
+    TASK-21147 (UAT E-1): with a provider env var exported — the standard
+    developer pattern — a fresh install boots straight to Console with no
+    acknowledgement at all: no mention the key was found, no hint the
+    setup wizard (voice, tools, key encryption) exists. This names the
+    vars so the app can say so exactly once.
+
+    Returns:
+        The env var names (deduplicated, config order) to mention, or ()
+        when no notice is due: setup was started/completed, the notice was
+        already shown, an INLINE config key exists (that user actively
+        configured the app), or no env credential is present.
+    """
+    if _wizard_flag(app_config, SETUP_STARTED_KEY):
+        return ()
+    if _wizard_flag(app_config, SETUP_COMPLETED_KEY):
+        return ()
+    if _wizard_flag(app_config, ENV_KEY_NOTICE_KEY):
+        return ()
+    api_settings = app_config.get("api_settings")
+    if not isinstance(api_settings, Mapping):
+        return ()
+    names: list[str] = []
+    for settings in api_settings.values():
+        if not isinstance(settings, Mapping):
+            continue
+        if _is_real_provider_api_key(settings.get("api_key")):
+            return ()
+        env_var = settings.get("api_key_env_var")
+        if (
+            isinstance(env_var, str)
+            and env_var.strip()
+            and _is_real_provider_api_key(environ.get(env_var.strip()))
+        ):
+            names.append(env_var.strip())
+    return tuple(dict.fromkeys(names))
+
+
 def should_show_resume_toast(
     app_config: Mapping[str, object], environ: Mapping[str, str]
 ) -> bool:

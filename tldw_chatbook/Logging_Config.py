@@ -469,7 +469,10 @@ def configure_application_logging(app_instance):
     # This message will go to Loguru's sink (which forwards to std logging,
     # but std logging has no handlers yet, so it might hit Python's "last resort" stderr).
     # Or, better, print to stderr just for this one-off setup message if needed, then rely on proper handlers.
-    if initial_handlers_removed_count > 0:
+    from tldw_chatbook.Utils.startup_logging import startup_stderr_is_quiet
+
+    quiet_startup = startup_stderr_is_quiet()
+    if initial_handlers_removed_count > 0 and not quiet_startup:
         # Using print here because logging state is actively being changed.
         # This should be one of the last messages to hit raw stderr if setup is correct.
         print(
@@ -485,10 +488,11 @@ def configure_application_logging(app_instance):
     initial_log_level = getattr(logging, initial_log_level_str, logging.INFO)
     root_logger.setLevel(initial_log_level)
     # (A temporary print to confirm, as logging to root_logger now might go to "last resort" until a handler is added)
-    print(
-        f"INFO: _setup_logging: Root logger level set to {logging.getLevelName(root_logger.level)}",
-        file=sys.stderr,
-    )
+    if not quiet_startup:
+        print(
+            f"INFO: _setup_logging: Root logger level set to {logging.getLevelName(root_logger.level)}",
+            file=sys.stderr,
+        )
 
     # --- Add TextualHandler (to standard logging) ---
     # (Your existing TextualHandler setup code is fine)
@@ -499,7 +503,17 @@ def configure_application_logging(app_instance):
     )
     if not has_textual_handler:
         textual_console_handler = TextualHandler()
-        textual_console_handler.setLevel(initial_log_level)  # Respects app_config
+        # TASK-21147 (UAT G-7): pre-mount, TextualHandler falls back to
+        # printing on stderr — the cold-start "wall of INFO" (DB migrations
+        # etc.) a first-time user sees before the TUI takes over. Under the
+        # default quiet startup it is capped at WARNING; the file and
+        # RichLog handlers keep the configured level, and
+        # TLDW_VERBOSE_STARTUP=1 restores the historical behavior.
+        textual_console_handler.setLevel(
+            max(initial_log_level, logging.WARNING)
+            if quiet_startup
+            else initial_log_level
+        )
         console_formatter = logging.Formatter(
             "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",

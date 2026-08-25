@@ -47,6 +47,17 @@ if __name__ == "__mp_main__" or _early_multiprocessing.parent_process() is not N
     except Exception:
         pass
 
+# TASK-21147 (UAT G-7): when this module IS the entry point
+# (``python -m tldw_chatbook.app``), cap terminal logging at WARNING
+# before the heavy import chain below emits its DEBUG/INFO wall — a cold
+# start's first paint must not be internal debug spew. The packaged CLI
+# entry (tldw_chatbook.cli) makes the same call before importing us;
+# TLDW_VERBOSE_STARTUP=1 restores the historical verbose startup.
+if __name__ == "__main__":
+    from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+
+    quiet_startup_stderr()
+
 # Imports
 import argparse
 import concurrent.futures
@@ -12635,6 +12646,7 @@ class TldwCli(
             return False
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+                env_keys_that_silenced_first_run,
                 setup_recovery_action,
                 should_show_resume_toast,
             )
@@ -12658,6 +12670,25 @@ class TldwCli(
                     severity="information",
                     timeout=8,
                 )
+            elif action == "none" and (
+                env_key_names := env_keys_that_silenced_first_run(
+                    self.app_config, os.environ
+                )
+            ):
+                # TASK-21147 (UAT E-1): the env-key install skipped the
+                # wizard silently — say so exactly once, and where the
+                # wizard's other value (voice, tools, encryption) lives.
+                shown = ", ".join(env_key_names[:2]) + (
+                    " (and more)" if len(env_key_names) > 2 else ""
+                )
+                self.notify(
+                    f"Found {shown} — you're ready to chat. Run setup any "
+                    "time: Settings ▸ Diagnostics ▸ Run setup wizard.",
+                    title="Provider key detected",
+                    severity="information",
+                    timeout=10,
+                )
+                self._persist_env_key_notice_flag()
         except Exception as exc:
             logger.error(
                 "First-run startup action failed (error_type={})",
@@ -12720,6 +12751,43 @@ class TldwCli(
             title="Profile already open",
             severity="warning",
             timeout=10,
+        )
+
+    def _persist_env_key_notice_flag(self) -> None:
+        """Record the one-time env-key notice (TASK-21147, UAT E-1)."""
+
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            ENV_KEY_NOTICE_KEY,
+            WIZARD_STATE_SECTION,
+        )
+
+        app_config = self.app_config
+        if isinstance(app_config, dict):
+            app_config.setdefault(WIZARD_STATE_SECTION, {})[
+                ENV_KEY_NOTICE_KEY
+            ] = True
+
+        def _write() -> None:
+            from tldw_chatbook.config import save_settings_to_cli_config
+
+            try:
+                saved = save_settings_to_cli_config(
+                    {WIZARD_STATE_SECTION: {ENV_KEY_NOTICE_KEY: True}}
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist env-key notice flag "
+                    f"(category=persistence, error_type={type(exc).__name__})"
+                )
+                return
+            if not saved:
+                logger.warning(
+                    "Failed to persist env-key notice flag "
+                    "(category=persistence, error_type=save_returned_false)"
+                )
+
+        self.run_worker(
+            _write, thread=True, group="first-run-env-key-notice-flag"
         )
 
     def _push_first_run_wizard(self) -> None:
