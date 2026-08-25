@@ -652,6 +652,45 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
 
 
 @pytest.mark.asyncio
+async def test_server_to_local_submit_before_recompose_uses_saved_frequency():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        pane.query_one("#sources-create-name", Input).value = "Draft source"
+        pane.query_one("#sources-create-url", Input).value = "https://example.com"
+        pane.query_one("#sources-create-frequency", Select).value = 86_400
+        await pilot.pause()
+
+        pane.configure_create_backend("server", ("rss", "site", "forum"))
+        await pilot.pause()
+        assert not pane.query("#sources-create-frequency")
+
+        pane.configure_create_backend("local", ("rss", "atom", "url"))
+        pane._submit_create_form()
+        await pilot.pause()
+
+        assert app.captured_messages == [
+            (
+                "create_source_requested",
+                "local",
+                {
+                    "name": "Draft source",
+                    "url": "https://example.com",
+                    "source_type": "rss",
+                    "active": True,
+                    "tags": [],
+                    "watchlist_id": None,
+                    "check_frequency": 86_400,
+                    "ignore_selectors": "",
+                },
+            )
+        ]
+
+
+@pytest.mark.asyncio
 async def test_server_payload_omits_local_fields_and_captures_backend():
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:

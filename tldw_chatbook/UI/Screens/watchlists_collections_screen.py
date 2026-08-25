@@ -193,6 +193,7 @@ from ..Watchlists_Modules.sources_pane import (
     CreateFormDraftChanged,
     CreateFormVisibilityChanged,
     CreateSourceRequested,
+    DEFAULT_SOURCE_FREQUENCY_SECONDS,
     ExportOpmlRequested,
     ImportOpmlRequested,
     SourceSelected,
@@ -932,7 +933,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._source_create_form_open = False
         self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
         self._source_create_draft_active = True
-        self._source_create_draft_frequency = 3600
+        self._source_create_draft_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
         # The create form's noise-selector text, mirrored for the same reason
         # as the three fields above (TASK-1362). Held separately, and `None`
         # rather than `""` when untouched, because its empty state is not its
@@ -5434,7 +5435,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._source_create_form_open = False
         self._source_create_draft = {"name": "", "url": "", "tags": ""}
         self._source_create_draft_active = True
-        self._source_create_draft_frequency = 3600
+        self._source_create_draft_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
         # Back to "untouched", so the next create form is prefilled again
         # rather than inheriting the selectors of the source just submitted.
         self._source_create_draft_selectors = None

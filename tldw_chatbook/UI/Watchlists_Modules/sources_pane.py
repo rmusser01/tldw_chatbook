@@ -25,6 +25,9 @@ from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
 
+DEFAULT_SOURCE_FREQUENCY_SECONDS = 3600
+
+
 class SourceSelected(Message):
     """Posted when the user selects a source in the sources table."""
 
@@ -283,12 +286,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: leaving the control alone reproduces the database default (TASK-1210).
     _FREQUENCY_OPTIONS = [
         ("Every 15m", 900),
-        ("Every 1h", 3600),
+        ("Every 1h", DEFAULT_SOURCE_FREQUENCY_SECONDS),
         ("Every 6h", 21_600),
         ("Every 24h", 86_400),
     ]
-    _DEFAULT_FREQUENCY_SECONDS = 3600
-    create_draft_frequency = reactive(_DEFAULT_FREQUENCY_SECONDS)
+    create_draft_frequency = reactive(DEFAULT_SOURCE_FREQUENCY_SECONDS)
 
     #: Which create-form control `recompose()` should focus once it has
     #: remounted this pane's children. See `recompose` for why focus has to
@@ -959,7 +961,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self.create_draft_url = ""
         self.create_draft_tags = ""
         self.create_draft_active = True
-        self.create_draft_frequency = self._DEFAULT_FREQUENCY_SECONDS
+        self.create_draft_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
         # Back to the pane's defaults, not to whatever was just submitted:
         # the next form is a NEW source, which starts at the scope the user
         # is looking at (TASK-2302) and at the default feed type.
@@ -1307,11 +1309,16 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             try:
                 self.create_draft_frequency = int(event.value)
             except (TypeError, ValueError):
-                self.create_draft_frequency = self._DEFAULT_FREQUENCY_SECONDS
+                self.create_draft_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
             self._post_create_draft_changed()
         event.stop()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Mirror the Active switch into the durable create-form draft.
+
+        Args:
+            event: The switch-change event emitted by the create form.
+        """
         if event.switch.id == "sources-create-active":
             self.create_draft_active = event.value
             self._post_create_draft_changed()
@@ -1415,8 +1422,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 check_frequency = int(
                     self.query_one("#sources-create-frequency", Select).value
                 )
+            except NoMatches:
+                # Backend changes recompose asynchronously. If the user
+                # submits before the Local-only control remounts, preserve
+                # the frequency already held by the durable form draft.
+                check_frequency = self.create_draft_frequency
             except (TypeError, ValueError):
-                check_frequency = self._DEFAULT_FREQUENCY_SECONDS
+                check_frequency = DEFAULT_SOURCE_FREQUENCY_SECONDS
             # Read selectors only when the Local control is mounted. Empty is
             # a deliberate request to watch every part of the page.
             if self.query("#sources-create-ignore-selectors"):

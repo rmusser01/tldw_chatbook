@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-05'
-updated_date: '2026-08-25 01:06'
+updated_date: '2026-08-25 15:05'
 labels:
   - watchlists
   - bug
@@ -48,6 +48,10 @@ Detailed plan: `Docs/superpowers/plans/2026-08-24-watchlists-backend-source-type
    confirmation.
 4. Extend full-shell focus/geometry coverage, run only focused Watchlists
    tests and scoped static checks, then record evidence and close the task.
+5. Verify Qodo review findings against the mounted-form lifecycle, add a
+   regression for immediate Server-to-Local submission, apply bounded
+   maintenance fixes, document any rejected architectural suggestions, and
+   rerun the focused merge gate.
 
 ADR required: no
 ADR path: N/A
@@ -103,6 +107,23 @@ contract, dependency, or long-lived application structure.
   an environment dependency-version warning and Python's `audioop`
   deprecation; pytest also reported unrelated permission warnings while
   cleaning pre-existing temporary test garbage.
+- Qodo follow-up identified a real Server-to-Local submit/recompose race. A
+  regression first reproduced `NoMatches` when Create was pressed before the
+  Local-only cadence control remounted; submission now falls back to the
+  preserved draft cadence. The follow-up also centralizes the one-hour
+  default and documents the Active-switch handler.
+- Qodo's generic-validator and Pydantic-payload suggestions were deliberately
+  not applied: the create type is a controlled Select backed by each service's
+  published contract and is validated again by the selected service, while
+  Watchlists messages/controllers consistently use dictionary payloads.
+  Either suggestion would duplicate backend validation or introduce a new
+  cross-module model boundary outside this bounded task and its approved
+  design.
+- Post-review focused merge gate: **244 passed, 2 warnings** across the three
+  services, backend controller, Sources pane, full-shell create form, and
+  collections screen. The new exact race regression is also independently
+  **1 passed, 1 warning**; the full Sources pane module is **40 passed, 1
+  warning**.
 - Scoped Ruff over all 14 Task-2510 source/test files, including the corrected
   collections-screen integration tests: **passed**. `git diff --check`:
   **passed**.
