@@ -8449,3 +8449,26 @@ back to hand-rolled SQL in the test. Resist it: that trades a loud failure for
 a silent one. (Writing that hand-rolled INSERT is also harder than it looks —
 the first attempt at one in this task died on a `NOT NULL` column the writer
 fills for you.)
+
+## Count the calls with a stack probe before wiring a shared-state fix at the call sites you know about (TASK-22201, 2026-08-25)
+
+The perf review said the Console run tick builds
+`_build_console_workspace_context_state()` **three** times (two rail-state
+legs + the workspace-context push), so the first fix threaded one prebuilt
+state through exactly those three call sites. The build-once gate test then
+failed with `count == 6`: a stack-capturing probe showed the other three
+builds arriving through call chains the review never named — the inspector
+rows leg (`_selected_console_conversation_inspector_rows`) builds the
+workspace state inside BOTH rail-state calls, the control bar's own inspector
+build, and the agent section's payload lambda. Parameter-threading at the
+named sites would have shipped "fixed" while leaving 4 of 6 builds in place —
+and only the gate asserting on the COUNT, not on the three known sites,
+caught it.
+
+Two rules. **Measure the call multiplicity with a stack probe (wrap the
+function, record `traceback.extract_stack`) before designing the fix** — a
+finding's count is a lower bound from the paths its author traced. And when
+the calls converge on one function from many sites, **share at the converged
+function (here: an opt-in, asyncio-task-scoped cache consulted inside the
+build itself), not by threading state through each caller** — the callers you
+did not know about are exactly the ones a threading fix misses.
