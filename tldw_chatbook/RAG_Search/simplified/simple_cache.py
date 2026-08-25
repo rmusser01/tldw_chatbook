@@ -3,6 +3,15 @@ Simple cache implementation for the RAG service.
 
 This provides a lightweight caching solution for search results,
 replacing the complex cache service from the old implementation.
+
+Diagnostics here name a query by ``query_fp`` (a ``content_fingerprint``) and
+by ``key`` (this cache's own index), never by its text. TASK-21700: every
+cache diagnostic used to interpolate ``query[:50]`` -- the user's own words --
+and the prefix was strictly *less* useful than either handle, since two long
+queries sharing a prefix printed identically. ``key`` answers "did these two
+lines hit the same cache entry"; ``query_fp`` is stable across the whole
+RAG tree, so a hit logged in ``rag_service`` can be traced to the entry
+logged here.
 """
 
 import hashlib
@@ -33,6 +42,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
     log_gauge,
     timeit,
 )
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 
 
 # The keyword leg's pre-TASK-15400 MATCH construction. A key built with
@@ -387,7 +397,9 @@ class SimpleRAGCache:
             if key not in self._cache:
                 self._misses += 1
                 log_counter("cache_miss", labels={"type": search_type})
-                logger.debug(f"Cache miss for query: '{query[:50]}...'")
+                logger.debug(
+                    f"Cache miss (query_fp={content_fingerprint(query)}, key={key})"
+                )
                 return None
 
             entry = self._cache[key]
@@ -402,7 +414,8 @@ class SimpleRAGCache:
                 log_counter("cache_expired", labels={"type": search_type})
                 log_histogram("cache_entry_expired_age_seconds", age)
                 logger.debug(
-                    f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s, ttl: {ttl}s)"
+                    f"Cache entry expired (query_fp={content_fingerprint(query)}, "
+                    f"key={key}, age: {age:.1f}s, ttl: {ttl}s)"
                 )
                 return None
 
@@ -424,7 +437,8 @@ class SimpleRAGCache:
             log_gauge("cache_hit_rate", hit_rate)
 
             logger.debug(
-                f"Cache hit for query: '{query[:50]}...' (age: {age:.1f}s, accesses: {entry.access_count})"
+                f"Cache hit (query_fp={content_fingerprint(query)}, key={key}, "
+                f"age: {age:.1f}s, accesses: {entry.access_count})"
             )
 
             return entry.value
@@ -543,7 +557,9 @@ class SimpleRAGCache:
             if key not in self._cache:
                 self._misses += 1
                 log_counter("cache_miss", labels={"type": search_type})
-                logger.debug(f"Cache miss for query: '{query[:50]}...'")
+                logger.debug(
+                    f"Cache miss (query_fp={content_fingerprint(query)}, key={key})"
+                )
                 return None
 
             entry = self._cache[key]
@@ -555,7 +571,9 @@ class SimpleRAGCache:
             if time.time() - entry.timestamp > ttl:
                 self._misses += 1
                 log_counter("cache_expired", labels={"type": search_type})
-                logger.debug(f"Cache expired for query: '{query[:50]}...'")
+                logger.debug(
+                    f"Cache expired (query_fp={content_fingerprint(query)}, key={key})"
+                )
                 del self._cache[key]
                 self._update_memory_sync()
                 return None
@@ -568,7 +586,9 @@ class SimpleRAGCache:
 
             self._hits += 1
             log_counter("cache_hit", labels={"type": search_type})
-            logger.debug(f"Cache hit for query: '{query[:50]}...'")
+            logger.debug(
+                f"Cache hit (query_fp={content_fingerprint(query)}, key={key})"
+            )
 
             # Check for corrupted entry (None value)
             if entry.value is None:
@@ -710,7 +730,9 @@ class SimpleRAGCache:
             log_histogram("cache_entry_size_mb", entry_memory / 1024 / 1024)
 
             logger.debug(
-                f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_memory / 1024 / 1024:.1f}MB)"
+                f"Cached results (query_fp={content_fingerprint(query)}, "
+                f"key={key}, {len(results)} results, "
+                f"{entry_memory / 1024 / 1024:.1f}MB)"
             )
 
     def put(
@@ -843,7 +865,9 @@ class SimpleRAGCache:
             log_gauge("cache_memory_mb", self._current_memory_bytes / 1024 / 1024)
 
             logger.debug(
-                f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_memory / 1024 / 1024:.1f}MB)"
+                f"Cached results (query_fp={content_fingerprint(query)}, "
+                f"key={key}, {len(results)} results, "
+                f"{entry_memory / 1024 / 1024:.1f}MB)"
             )
 
     async def clear_async(self) -> None:

@@ -5,6 +5,7 @@ This module provides functions to scrub API keys, passwords, and other
 sensitive information from log messages.
 """
 
+import hashlib
 import os
 import re
 from functools import lru_cache
@@ -15,6 +16,16 @@ from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 
 REDACTION_MARKER = "***REDACTED***"
+#: Hex characters kept from a content fingerprint. Twelve gives ~2e-8 collision
+#: probability across a thousand distinct values in one debugging session --
+#: far beyond what a maintainer reading a log needs -- while staying short
+#: enough to scan by eye when correlating two lines.
+CONTENT_FINGERPRINT_CHARS = 12
+#: What ``content_fingerprint`` returns for an empty or missing value. A
+#: fingerprint of "" is a valid digest, and printing it would make "the user
+#: searched for nothing" indistinguishable from a real query at a glance;
+#: an explicit token keeps that difference visible.
+EMPTY_FINGERPRINT = "empty"
 #: Labels that name a secret in a LOG LINE but are not config keys, so they
 #: are deliberately not added to ``sensitive_config_keys`` (that predicate
 #: also drives config encryption and the Privacy & Security protected-field
@@ -350,6 +361,50 @@ def redact_user_paths(text: str) -> str:
     result = pattern.sub("~", text) if pattern is not None else text
     result = _HOME_ROOTS_POSIX.sub("~", result)
     return _HOME_ROOTS_WINDOWS.sub("~", result)
+
+
+def content_fingerprint(
+    value: object, *, chars: int = CONTENT_FINGERPRINT_CHARS
+) -> str:
+    """Return a stable, plaintext-free handle for a value too sensitive to log.
+
+    A search query, a prompt, or a model response is user content, so a
+    diagnostic must not carry its words. But the thing a maintainer actually
+    reads such a diagnostic *for* is identity -- "is this the same query that
+    failed a minute ago?", "did every result come back with the same malformed
+    body?" -- and identity survives hashing. Truncating the value instead (the
+    ``value[:50]`` idiom this function replaces, TASK-21700) keeps the words
+    and loses the identity: two different long queries that share a prefix
+    print identically, so the one property the line was read for is the one
+    truncation destroys.
+
+    Scope of the guarantee, stated plainly so it is not over-read: this
+    removes plaintext from the line. It is **not** a secrecy mechanism against
+    an adversary who already holds the log -- an unsalted digest of a short,
+    guessable string can be recovered by trying candidates. It is not salted
+    per process on purpose: a per-run salt would break exactly the
+    across-restart correlation the fingerprint exists to provide, and the
+    values it covers here never reach a persistent sink in the first place
+    (``PersistentDiagnosticFilter`` admits only schema-validated metadata
+    records). The honest claim is "a maintainer reading this log cannot read
+    the user's words", not "this value is protected".
+
+    Args:
+        value: Any value; non-strings are rendered with ``str`` first.
+        chars: Hex characters to keep. Defaults to
+            ``CONTENT_FINGERPRINT_CHARS``.
+
+    Returns:
+        A lowercase hex digest prefix, or ``EMPTY_FINGERPRINT`` when the value
+        is ``None`` or renders empty.
+    """
+    if value is None:
+        return EMPTY_FINGERPRINT
+    text = value if isinstance(value, str) else str(value)
+    if not text:
+        return EMPTY_FINGERPRINT
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    return digest[: max(1, chars)]
 
 
 def redact_log_line(text: str, max_length: int = MAX_REDACTED_LINE_CHARS) -> str:
