@@ -53,6 +53,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     is_fts5_stopword,
     quote_fts5_token,
 )
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Metrics.metrics_logger import (
     log_counter,
     log_histogram,
@@ -1337,8 +1338,16 @@ class RAGService:
             if cached_result is not None:
                 results, context = cached_result
                 log_counter("rag_search_cache_hit", labels={"type": search_type})
+                # TASK-21700. The query used to be interpolated here as
+                # `query[:50]` -- the user's own words, at INFO, on every
+                # cached search. A cache hit returns immediately, so this is
+                # the ONLY line emitted for that search and it does need a
+                # handle for the query; the fingerprint is that handle, and it
+                # matches the one `SearchCache` prints for the same query, so
+                # a hit can still be traced from here into the cache module.
                 logger.info(
-                    f"[{correlation_id}] Cache hit for query: '{query[:50]}...'"
+                    f"[{correlation_id}] Cache hit for {search_type} query "
+                    f"(query_fp={content_fingerprint(query)}, chars={len(query)})"
                 )
                 return results
             log_counter("rag_search_cache_miss", labels={"type": search_type})
@@ -4199,7 +4208,21 @@ class RAGService:
                             }
                         )
             except Exception as e:
-                logger.error(f"FTS5 search failed for query '{query}': {e}")
+                # TASK-21700. This used to print the raw query in full, at
+                # ERROR -- the widest user-content interpolation in this tree.
+                # `{e}` is kept: what actually fails here is the database
+                # call, and the sqlite exception is the diagnostic. The query
+                # itself was never the diagnostic -- what reaches SQLite is
+                # `escaped_query`, per-token quoted by
+                # `_build_fts5_match_expression` and pinned by
+                # Tests/RAG_Search/test_fts5_query_escaping.py -- so the
+                # fingerprint and length carry what a maintainer reads this
+                # line for (is it always the same query? how long was it?).
+                logger.error(
+                    f"FTS5 search failed "
+                    f"(query_fp={content_fingerprint(query)}, "
+                    f"chars={len(query)}): {e}"
+                )
                 # Re-raise with more context
                 raise RuntimeError(f"Database search failed: {str(e)}") from e
 
