@@ -1048,6 +1048,67 @@ async def test_character_dispatch_shares_active_pack_prompt_and_capture_snapshot
         db.close_connection()
 
 
+def test_emote_snapshot_projection_normalizes_each_asset_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-22227: the per-send snapshot build is O(assets), not O(assets^2).
+
+    The retired implementation re-projected a singleton tuple per state
+    against every raw asset (~1,700 regex-bearing normalize calls for a
+    40-asset pack); the lookup now normalizes each asset exactly once.
+    """
+
+    import tldw_chatbook.Character_Chat.emote_directives as emote_directives_module
+
+    calls = {"count": 0}
+    real_normalize_state = emote_directives_module.normalize_character_emote_state
+    real_normalize_key = emote_directives_module.normalize_expression_key
+
+    def counting_state(value):
+        calls["count"] += 1
+        return real_normalize_state(value)
+
+    def counting_key(value):
+        calls["count"] += 1
+        return real_normalize_key(value)
+
+    monkeypatch.setattr(
+        emote_directives_module, "normalize_character_emote_state", counting_state
+    )
+    monkeypatch.setattr(
+        emote_directives_module, "normalize_expression_key", counting_key
+    )
+
+    asset_count = 40
+    graph = {
+        "pack": {"id": 11},
+        "version": {"id": 13},
+        "assets": [
+            {"expression_key": f"custom:state_{index:02d}", "id": index + 1}
+            for index in range(asset_count)
+        ],
+    }
+    authority = controller_module._CharacterEmoteAuthority(
+        identity_revision=1,
+        runtime_backend="direct",
+        assistant_id="7",
+        assistant_authority_id="7",
+        local_character_id=7,
+    )
+
+    snapshot = ConsoleChatController._build_character_emote_snapshot(
+        authority, graph, fallback_reason="no_active_pack"
+    )
+
+    assert snapshot.states == tuple(
+        f"state_{index:02d}" for index in range(asset_count)
+    )
+    assert [asset.asset_id for asset in snapshot.assets] == list(
+        range(1, asset_count + 1)
+    )
+    assert calls["count"] <= 2 * asset_count + 8
+
+
 @pytest.mark.asyncio
 async def test_server_character_without_local_pack_still_sanitizes_controls():
     store = ConsoleChatStore()

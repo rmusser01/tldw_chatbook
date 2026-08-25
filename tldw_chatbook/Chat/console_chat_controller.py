@@ -36,7 +36,7 @@ from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
     append_character_emote_prompt_instruction,
-    project_character_emote_states,
+    project_character_emote_assets,
 )
 from tldw_chatbook.Chat.attachment_core import (
     PendingAttachment,
@@ -16260,17 +16260,11 @@ class ConsoleChatController:
             pack_version_id = int(version["id"])
             if pack_id < 1 or pack_version_id < 1:
                 raise ValueError
-            states = project_character_emote_states(raw_assets)
+            # TASK-22227: one O(assets) pass replaces the per-state singleton
+            # re-projection (which was O(assets^2) regex evaluations per send).
+            sources = project_character_emote_assets(raw_assets)
             assets: list[CharacterEmoteAssetReference] = []
-            for state in states:
-                source = next(
-                    (
-                        asset
-                        for asset in raw_assets
-                        if project_character_emote_states((asset,)) == (state,)
-                    ),
-                    None,
-                )
+            for state, source in sources.items():
                 if not isinstance(source, Mapping):
                     continue
                 asset_id = source.get("id")
