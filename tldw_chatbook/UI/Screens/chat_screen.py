@@ -332,9 +332,12 @@ from ...Chat.console_paste_attach import (
 from ...Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
+    CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
-    ConsoleRailPreferences,
+    CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+    ConsoleRailPreferenceKey,
     ConsoleRailState,
     build_console_rail_preference_key,
     build_console_rail_state,
@@ -343,8 +346,10 @@ from ...Chat.console_rail_state import (
     console_context_reveal_preferences,
     console_rail_left_open_explicit,
     console_rail_width_band,
+    normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
     serialize_console_rail_preferences,
+    serialize_console_rail_stored_preferences,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -406,6 +411,7 @@ from ...Widgets.Console import (
     ConsoleRailHandle,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
+    ConsoleSendAuthoritySummary,
     ConsoleSessionSurface,
     ConsoleSettingsModal,
     ConsoleSettingsSummary,
@@ -414,6 +420,7 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
     WorkspaceTreeConversationSelected,
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeLoadMoreRequested,
@@ -582,6 +589,7 @@ NATIVE_CONSOLE_STATE_VERSION = "1.0"
 # for the native Console send-path applier (`_console_chat_dictionary_applier`).
 _CHATDICT_MAX_TOKENS = 500
 _CHATDICT_STRATEGY = "sorted_evenly"
+_CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
@@ -2481,6 +2489,22 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._set_console_rail_preference(right_open=True)
 
+    @on(ConsoleRunInspector.MoreToggled)
+    def on_console_inspector_more_toggled(
+        self, event: ConsoleRunInspector.MoreToggled
+    ) -> None:
+        """Persist a deliberate Inspector More disclosure change.
+
+        Args:
+            event: The disclosure event carrying the requested open state.
+        """
+
+        event.stop()
+        self._set_console_rail_preference(
+            section_updates={CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID: event.open},
+            notify_on_failure=False,
+        )
+
     @on(Button.Pressed, "#console-inspector-dictionaries-attach")
     def on_console_inspector_dictionaries_attach(self, event: Button.Pressed) -> None:
         """Open the attach-dictionary picker for the active Console conversation."""
@@ -3148,6 +3172,55 @@ class ChatScreen(BaseAppScreen):
             shortcut_groups = (
                 *shortcut_groups,
                 ("Inspector", (("n / p", "next / previous section"),)),
+            )
+        focused = self.app.focused
+        if isinstance(focused, Widget):
+            authority_summary = next(
+                (
+                    candidate
+                    for candidate in focused.ancestors_with_self
+                    if isinstance(candidate, ConsoleSendAuthoritySummary)
+                ),
+                None,
+            )
+            if authority_summary is not None:
+                authority_rows = tuple(
+                    (escape_markup(label), escape_markup(value))
+                    for label, value in authority_summary.contextual_help_rows()
+                )
+                shortcut_groups = (
+                    *shortcut_groups,
+                    (
+                        "What happens if I send now?",
+                        authority_rows,
+                    ),
+                )
+        if isinstance(self.app.focused, ConsoleWorkspaceTree):
+            try:
+                tray = self.query_one(
+                    "#console-workspaces-context", ConsoleWorkspaceContextTray
+                )
+            except (NoMatches, QueryError):
+                context_data = None
+            else:
+                context_data = getattr(tray, "_workspace_tree_context_data", None)
+            label = escape_markup(
+                str(getattr(context_data, "raw_label", "") or "Workspace tree")
+            )
+            shortcut_groups = (
+                *shortcut_groups,
+                (
+                    "Workspaces",
+                    (
+                        ("Selected", label),
+                        ("Single click", "select row; expand a collapsed workspace"),
+                        ("Double-click", "open the selected workspace or conversation"),
+                        ("Enter", "open the selected row"),
+                        ("Space", "toggle workspace disclosure"),
+                        ("Left", "collapse or move to the parent workspace"),
+                        ("Right", "expand or move to the first child"),
+                    ),
+                ),
             )
         self.app.push_screen(
             WorkbenchHelpPanel(
@@ -10191,43 +10264,6 @@ class ChatScreen(BaseAppScreen):
             console_config["rail_state"] = rail_state_config
         return rail_state_config
 
-    def _stored_console_rail_preferences(
-        self,
-        key: str,
-        fallback_key: str | None,
-    ) -> Any:
-        """Read stored Console rail preferences without writing persistence."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return None
-        console_config = app_config.get("console")
-        if not isinstance(console_config, dict):
-            return None
-        rail_state_config = console_config.get("rail_state")
-        if not isinstance(rail_state_config, dict):
-            return None
-        if key in rail_state_config:
-            return rail_state_config[key]
-        if fallback_key and fallback_key in rail_state_config:
-            return rail_state_config[fallback_key]
-        return None
-
-    def _persist_console_rail_preferences(
-        self,
-        key: str,
-        preferences: ConsoleRailPreferences,
-        *,
-        notify_on_failure: bool = False,
-    ) -> bool:
-        """Queue best-effort persistence for an already-updated in-memory preference."""
-        serialized = serialize_console_rail_preferences(preferences)
-        self._save_console_rail_preferences(
-            key,
-            serialized,
-            notify_on_failure=notify_on_failure,
-        )
-        return True
-
     @work(thread=True)
     def _save_console_rail_preferences(
         self,
@@ -10237,25 +10273,30 @@ class ChatScreen(BaseAppScreen):
         notify_on_failure: bool = False,
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
-        try:
-            saved = save_setting_to_cli_config(
-                "console.rail_state",
-                key,
-                serialized,
-            )
-        except Exception as exc:
-            logger.warning("Failed to persist Console rail preference: {}", exc)
-            saved = False
+        with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
+            latest: Any = serialized
+            app_config = getattr(self.app_instance, "app_config", None)
+            if isinstance(app_config, Mapping):
+                console_config = app_config.get("console")
+                if isinstance(console_config, Mapping):
+                    rail_state_config = console_config.get("rail_state")
+                    if (
+                        isinstance(rail_state_config, Mapping)
+                        and key in rail_state_config
+                    ):
+                        latest = rail_state_config[key]
+            latest_serialized = serialize_console_rail_stored_preferences(latest)
+            try:
+                saved = save_setting_to_cli_config(
+                    "console.rail_state",
+                    key,
+                    latest_serialized,
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist Console rail preference: {}", exc)
+                saved = False
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
-
-    @work(thread=True)
-    def _delete_console_rail_preference_keys(self, keys: list[str]) -> None:
-        """Remove superseded/orphaned rail preference keys off the UI thread."""
-        try:
-            delete_settings_from_cli_config("console.rail_state", keys)
-        except Exception as exc:
-            logger.warning("Failed to prune Console rail preference keys: {}", exc)
 
     def _dispatch_console_rail_preference_prune(self) -> None:
         """Queue the one-shot orphaned rail-preference cleanup after mount."""
@@ -10504,36 +10545,41 @@ class ChatScreen(BaseAppScreen):
         except Exception as exc:
             logger.warning("Failed to persist Console fleet coach-mark flag: {}", exc)
 
-    def _migrate_console_rail_fallback_preferences(
+    def _ensure_console_rail_scope_seed(
         self,
-        key: str,
-        fallback_key: str | None,
-    ) -> None:
-        """Copy temporary session rail preferences to a durable key when needed."""
-        if not fallback_key:
-            return
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        console_config = app_config.get("console")
-        if not isinstance(console_config, dict):
-            return
-        rail_state_config = console_config.get("rail_state")
-        if not isinstance(rail_state_config, dict):
-            return
-        if key in rail_state_config or fallback_key not in rail_state_config:
-            return
-        preferences = coerce_console_rail_preferences(rail_state_config[fallback_key])
-        rail_state_config[key] = serialize_console_rail_preferences(preferences)
-        self._persist_console_rail_preferences(
-            key,
-            preferences,
-            notify_on_failure=False,
+        selected_key: ConsoleRailPreferenceKey,
+        workspace_key: ConsoleRailPreferenceKey,
+        *,
+        persist: bool = True,
+    ) -> Any:
+        """Seed one absent layout scope without overwriting or deleting sources."""
+        rail_state_config = self._console_rail_state_config()
+        if selected_key.value in rail_state_config:
+            return rail_state_config[selected_key.value]
+
+        shared_key = build_console_rail_preference_key(layout_scope="global")
+        candidates = (
+            (workspace_key.value, workspace_key.fallback_value)
+            if selected_key.scope_id == CONSOLE_RAIL_SHARED_LAYOUT_SCOPE
+            else (workspace_key.fallback_value, shared_key.value)
         )
-        # The session-scoped fallback is superseded by the durable key; drop
-        # it so migrations stop leaving permanent orphan sections behind.
-        rail_state_config.pop(fallback_key, None)
-        self._delete_console_rail_preference_keys([fallback_key])
+        source = next(
+            (
+                rail_state_config[key]
+                for key in candidates
+                if key and key in rail_state_config
+            ),
+            None,
+        )
+        serialized = serialize_console_rail_stored_preferences(source)
+        rail_state_config[selected_key.value] = serialized
+        if persist:
+            self._save_console_rail_preferences(
+                selected_key.value,
+                serialized,
+                notify_on_failure=False,
+            )
+        return serialized
 
     def _console_active_session_is_ephemeral(self) -> bool:
         """Return whether the active Console session is temporary.
@@ -10627,18 +10673,21 @@ class ChatScreen(BaseAppScreen):
                 if session.id == active_session_id:
                     active_session = session
                     break
-        preference_key = build_console_rail_preference_key(
+        workspace_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
             conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
         )
-        self._migrate_console_rail_fallback_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
         )
-        stored_preferences = self._stored_console_rail_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        stored_preferences = self._ensure_console_rail_scope_seed(
+            preference_key,
+            workspace_key,
         )
         resolved_available_columns = (
             available_columns
@@ -10743,6 +10792,14 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             left_rail.sync_sections(rail_state)
+        try:
+            inspector = self.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            inspector.set_more_open(rail_state.inspector_more_open)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -10829,7 +10886,10 @@ class ChatScreen(BaseAppScreen):
             child.styles.display = "none"
 
     def _current_console_rail_state(
-        self, *, available_columns: int | None = None
+        self,
+        *,
+        available_columns: int | None = None,
+        inspector_state: ConsoleInspectorState | None = None,
     ) -> ConsoleRailState:
         """Build the current effective rail state from mounted Console context."""
         resolved_available_columns = (
@@ -10839,7 +10899,8 @@ class ChatScreen(BaseAppScreen):
         )
         pending_launch = self._pending_console_launch_context
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        inspector_state = self._build_console_inspector_state(pending_launch)
+        if inspector_state is None:
+            inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = (
             self._workspace._build_console_workspace_context_state()
         )
@@ -10871,16 +10932,25 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
         workspace_context = self._workspace._current_console_workspace_context()
-        preference_key = build_console_rail_preference_key(
+        workspace_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
             conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
         )
-        self._migrate_console_rail_fallback_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
         )
         rail_state_config = self._console_rail_state_config()
+        target_missing = preference_key.value not in rail_state_config
+        self._ensure_console_rail_scope_seed(
+            preference_key,
+            workspace_key,
+            persist=False,
+        )
         prior_stored = rail_state_config.get(preference_key.value)
         current = coerce_console_rail_preferences(prior_stored)
         changes: dict[str, bool] = {}
@@ -10889,7 +10959,7 @@ class ChatScreen(BaseAppScreen):
         if right_open is not None:
             changes["right_open"] = bool(right_open)
         for section_id, section_open in (section_updates or {}).items():
-            if section_id in CONSOLE_RAIL_SECTION_IDS:
+            if section_id in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
         # TASK-2154.2 (LY-11, ADR-043): an explicit rail toggle writes
@@ -10897,19 +10967,25 @@ class ChatScreen(BaseAppScreen):
         # the left rail" below 100 cols persisted nothing -- the default is
         # already left_open=True -- and the force-collapse rule (see
         # build_console_rail_state) kept the rail hidden: the exact silent
-        # no-op this task removes. Because every write serializes the FULL
-        # payload, the left rail's explicitness cannot be read back from
-        # key presence; a dedicated marker records the gesture (the right
-        # rail's closed default is distinguishable by value, so it needs
-        # none). The marker is also preserved across later writes that did
-        # not touch the left rail (e.g. a section toggle re-serializing the
-        # payload). The augmented dict goes to both the in-memory config
-        # and the persisted file so the two never disagree.
+        # no-op this task removes. Ordinary writes serialize the preference
+        # payload, so the left rail's explicitness cannot be read back from
+        # key presence; a dedicated marker records the gesture. The marker
+        # is also preserved across later writes that did not touch the left
+        # rail (e.g. a section toggle). The right-open key is omitted when a
+        # seed source omitted it so the 118-128-column auto-open band remains
+        # distinguishable. The augmented dict goes to both the in-memory
+        # config and the persisted file so the two never disagree.
         explicit_rail_toggle = left_open is not None or right_open is not None
-        if next_preferences != current or explicit_rail_toggle:
+        if next_preferences != current or explicit_rail_toggle or target_missing:
             serialized = serialize_console_rail_preferences(next_preferences)
             if left_open is not None or console_rail_left_open_explicit(prior_stored):
                 serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+            if (
+                right_open is None
+                and isinstance(prior_stored, Mapping)
+                and "right_open" not in prior_stored
+            ):
+                serialized.pop("right_open")
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
                 preference_key.value,
@@ -11230,6 +11306,7 @@ class ChatScreen(BaseAppScreen):
                 else False
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
+            staged_source_count=console_staged_source_count(pending_launch),
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
         if setup_blocker_copy:
@@ -13349,6 +13426,7 @@ class ChatScreen(BaseAppScreen):
                             else self._build_console_live_work_source_readiness_card()
                         )
                     ),
+                    inspector_more_open=rail_state.inspector_more_open,
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
@@ -17261,12 +17339,21 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             inspector = None
+        try:
+            authority_summary = self.query_one(
+                "#console-send-authority-summary", ConsoleSendAuthoritySummary
+            )
+        except QueryError:
+            authority_summary = None
         inspector_state = self._build_console_inspector_state(
             self._pending_console_launch_context
         )
         if inspector is not None:
-            # The child owns all group-body and rail invalidation.
+            # Strict ownership validates the complete snapshot before the
+            # resilient pinned projection publishes any part of it.
             inspector.sync_state(inspector_state)
+        if authority_summary is not None:
+            authority_summary.sync_state(inspector_state)
         # TASK-18060 Task 5: same in-place sync shape as the run inspector
         # immediately above -- reads only the cached summary, never the
         # DB/git (the guard-gated recompute lives in
@@ -17278,7 +17365,9 @@ class ChatScreen(BaseAppScreen):
             and self._console_chatbook_action_available()
         )
         if rail_state is None:
-            rail_state = self._current_console_rail_state()
+            rail_state = self._current_console_rail_state(
+                inspector_state=inspector_state
+            )
         self._sync_console_rail_visibility_if_changed(rail_state)
         # Cost-ticker PR3 (task-5): deliberately OUTSIDE the
         # `control_state_changed or workbench_state_changed` guard above
@@ -17630,9 +17719,7 @@ class ChatScreen(BaseAppScreen):
                 send_blocked = (
                     send_blocked
                     or not queue_presentation.send_enabled
-                    or controller.store.dispatch_recovery_blocks_submission(
-                        active_id
-                    )
+                    or controller.store.dispatch_recovery_blocks_submission(active_id)
                 )
                 try:
                     queue_region = self.query_one(
@@ -17656,9 +17743,7 @@ class ChatScreen(BaseAppScreen):
                 else:
                     recovery_region.sync_recovery(
                         active_id,
-                        controller.store.dispatch_recovery_for_presentation(
-                            active_id
-                        )
+                        controller.store.dispatch_recovery_for_presentation(active_id),
                     )
         # task-3401.5: an in-flight video generation shows the same Stop
         # affordance (it sets the adapter's cooperative cancel event).

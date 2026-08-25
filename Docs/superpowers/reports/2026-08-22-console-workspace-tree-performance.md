@@ -22,8 +22,8 @@ Capture command:
 ../../.venv/bin/python -B -m pytest Tests/UI/test_console_workspace_tree_performance.py::test_old_projection_baseline_is_reproducible -q -s
 ```
 
-Frozen-baseline validation result: `1 passed, 1 warning in 2.58s`
-(measurement call: 1.54s). The warning was the environment's existing
+Frozen-baseline validation result: `1 passed, 1 warning in 3.06s`
+(slowest setup: 1.06s). The warning was the environment's existing
 Requests dependency-version warning. The frozen summary and raw samples follow
 the new-path comparison section below.
 
@@ -54,9 +54,11 @@ SHA-256 `8b3a04b4af657e6419a4fb0d72df83c501acad75a5ba2b9abe97655ffecc177c`,
 and JSON SHA-256
 `140db572a9284b4cb6871483eab0ed720a2f2b417fb6a3d3ed08e1f26c909f34`.
 
-The working-tree source for this capture is branch HEAD
-`c9dfaac284bcdc47ee9e362546c10c791fa406cd` plus the uncommitted Task 6 changes;
-the commit alone does not contain the complete captured implementation.
+The source for this capture is clean branch HEAD
+`25be0541956745896b9e86a3d07bdbc5a5948c04`, a descendant of the merged
+TASK-20937 implementation commit `a581f28e0`. The subsequent closeout commits
+change only tests and evidence records, not the benchmark harness or measured
+product path, so this remains the source-equivalent mounted capture.
 
 Capture command:
 
@@ -64,17 +66,17 @@ Capture command:
 ../../.venv/bin/python -B -m pytest Tests/UI/test_console_workspace_tree_performance.py::test_new_workspace_tree_benchmark_is_deterministic -q -s
 ```
 
-Result: `1 passed, 1 warning in 17.27s`; the measured test was the slowest call
-at 15.96s. The warning was the environment's existing Requests
+Result: `1 passed, 1 warning in 17.11s`; the measured test was the slowest call
+at 14.42s. The warning was the environment's existing Requests
 dependency-version warning.
 
 ### New-path summary
 
 | Dataset | Service records | Ordinary materialized Tree nodes | Reconciles / recomposes | Native node refreshes I / M / S / Sel | Initial median / p95 ms | Marker median / p95 ms | Search apply+clear median / p95 ms | Selection median / p95 ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Small | 16 | 9 | 100 / 0 | 0 / 20 / 0 / 40 | 47.777938 / 116.413167 | 23.319625 / 42.398209 | 69.209709 / 73.932167 | 23.377479 / 23.968583 |
-| Representative | 164 | 57 | 100 / 0 | 0 / 40 / 0 / 40 | 49.450541 / 126.136667 | 23.317833 / 24.467792 | 72.452062 / 74.626583 | 23.644042 / 43.788333 |
-| Stress | 3,825 | 840 | 100 / 0 | 0 / 760 / 0 / 40 | 109.209438 / 227.922625 | 29.390938 / 51.514458 | 113.008688 / 258.748417 | 26.553896 / 28.154583 |
+| Small | 16 | 9 | 100 / 0 | 0 / 20 / 0 / 40 | 47.313167 / 113.149250 | 22.332459 / 22.866916 | 67.205062 / 67.860000 | 21.999354 / 22.735417 |
+| Representative | 164 | 57 | 100 / 0 | 0 / 40 / 0 / 40 | 48.020354 / 111.726291 | 22.668396 / 23.051042 | 70.492230 / 71.849750 | 22.166125 / 22.741875 |
+| Stress | 3,825 | 840 | 100 / 0 | 0 / 760 / 0 / 40 | 102.561104 / 213.959750 | 27.032916 / 47.017875 | 84.449458 / 208.919625 | 25.780792 / 26.179667 |
 
 The instrumented 100 reconciles per dataset are five calls per measured
 iteration: one initial, one marker, search apply and clear, and one selection.
@@ -88,10 +90,10 @@ dataset.
 
 | Operation | Frozen projection-only median ms | Mounted/settled new median ms | Diagnostic change |
 | --- | ---: | ---: | ---: |
-| Initial projection/mount | 0.524375 | 49.450541 | +9,330.4% |
-| 5% marker update | 0.535958 | 23.317833 | +4,250.7% |
-| Search apply/clear | 0.955604 | 72.452062 | +7,481.8% |
-| Active-row selection | 0.531958 | 23.644042 | +4,344.7% |
+| Initial projection/mount | 0.524375 | 48.020354 | +9,057.6% |
+| 5% marker update | 0.535958 | 22.668396 | +4,129.5% |
+| Search apply/clear | 0.955604 | 70.492230 | +7,276.7% |
+| Active-row selection | 0.531958 | 22.166125 | +4,066.9% |
 
 Every representative operation exceeds the 20% investigation threshold. The
 mounted/settled new path is deliberately not like-for-like with the frozen
@@ -106,9 +108,9 @@ The investigation also confirms the ordinary new projection is bounded to
 expanded-workspace children rather than materializing all 3,825 stress records,
 and that the observed update work uses native node refreshes without Textual
 recomposition. Under AC3, the representative diagnostic differences are
-explicitly accepted with mounted/settled medians of 49.451 ms for initial
-projection/mount, 23.318 ms for the 5% marker update, 72.452 ms for search
-apply/clear, and 23.644 ms for active-row selection. No claim that either path
+explicitly accepted with mounted/settled medians of 48.020 ms for initial
+projection/mount, 22.668 ms for the 5% marker update, 70.492 ms for search
+apply/clear, and 22.166 ms for active-row selection. No claim that either path
 is faster is made.
 
 ### New-path raw samples (milliseconds)
@@ -119,22 +121,22 @@ three preceding warmups per dataset were intentionally not reported.
 ```json
 {
   "small": {
-    "initial_projection_mount": [46.447333, 45.840125, 47.48475, 46.400708, 47.984291, 116.413167, 54.60475, 37.886542, 35.092666, 65.83, 46.251041, 66.036208, 48.0205, 47.028666, 48.845209, 123.189875, 45.183667, 65.559333, 49.42125, 47.571584],
-    "marker_update_5_percent": [23.676708, 23.328333, 23.530583, 24.032167, 23.985292, 43.573417, 23.322333, 42.398209, 23.630333, 23.316917, 23.111667, 22.9665, 22.474209, 22.881625, 23.108041, 23.248834, 23.263583, 22.880583, 23.906083, 22.762],
-    "search_apply_clear": [68.475292, 70.77675, 71.145375, 71.53425, 70.837958, 68.578459, 74.584333, 56.204959, 73.932167, 55.413625, 69.240167, 69.17925, 68.475625, 68.086458, 70.784458, 50.090084, 70.392, 68.501542, 68.781459, 69.988],
-    "active_row_selection": [23.559041, 23.679041, 23.968583, 23.65, 23.195917, 24.024875, 23.939667, 23.806458, 23.588833, 23.65175, 22.974625, 21.436291, 22.118167, 23.713667, 22.728417, 22.117708, 22.950333, 21.576917, 21.251584, 22.371042]
+    "initial_projection_mount": [64.66525, 45.749209, 64.55475, 45.396917, 113.14925, 46.946333, 64.506333, 47.362125, 42.896375, 45.567458, 64.45, 46.591291, 64.30625, 46.066666, 114.275334, 46.202625, 64.363083, 45.896417, 64.039292, 47.264208],
+    "marker_update_5_percent": [21.262542, 22.343708, 22.304833, 22.397833, 22.313625, 22.490875, 22.94475, 22.08375, 22.327125, 21.471583, 22.506083, 22.429584, 22.276542, 22.514416, 22.329792, 21.834584, 22.452792, 22.335125, 22.313542, 22.866916],
+    "search_apply_clear": [66.811459, 67.729458, 67.061, 67.545417, 48.6285, 67.302833, 67.181959, 67.831875, 49.5275, 67.19775, 67.86, 67.274666, 67.165083, 66.617375, 48.914834, 67.212375, 68.764375, 66.908209, 67.850958, 67.480291],
+    "active_row_selection": [21.231417, 22.637334, 21.160083, 22.5185, 22.041334, 22.735417, 21.319166, 22.011083, 21.987625, 22.452, 21.393833, 21.973958, 20.980125, 22.338459, 21.369333, 22.657875, 21.138083, 22.750125, 21.389166, 22.142584]
   },
   "representative": {
-    "initial_projection_mount": [59.417583, 126.136667, 34.251834, 53.301667, 68.998958, 52.307833, 49.456833, 48.974625, 47.523458, 50.500375, 52.603167, 48.368, 49.23275, 34.98375, 47.648166, 157.688834, 49.44425, 36.911125, 70.18075, 49.228792],
-    "marker_update_5_percent": [24.467792, 42.62675, 23.364875, 22.7235, 22.939667, 22.91, 23.4135, 23.33425, 24.46775, 23.301417, 22.952, 23.44, 23.185209, 23.409416, 23.13375, 23.168208, 23.279791, 23.218708, 23.748125, 24.1065],
-    "search_apply_clear": [59.441708, 58.075959, 71.705917, 73.772625, 73.70575, 72.658459, 74.626583, 193.801208, 72.425208, 71.9085, 74.331875, 73.209125, 72.478917, 71.411125, 72.279291, 56.218958, 72.586666, 71.467667, 73.866167, 56.869292],
-    "active_row_selection": [23.348625, 23.255792, 24.175125, 23.757375, 43.788333, 23.530709, 21.800708, 24.035042, 23.840833, 23.797666, 22.365666, 22.807208, 23.885334, 23.126125, 23.290959, 22.489083, 24.128167, 24.528875, 23.461625, 44.303791]
+    "initial_projection_mount": [65.124958, 47.64275, 48.063917, 47.383375, 48.657459, 64.382375, 46.879042, 125.352083, 65.593041, 47.231583, 46.838333, 49.74, 45.763167, 65.177375, 47.536667, 111.726291, 47.976791, 65.38225, 47.939917, 47.539334],
+    "marker_update_5_percent": [22.681125, 22.796625, 22.948792, 22.043542, 22.380334, 22.575042, 22.535584, 21.926334, 22.952333, 22.228875, 22.632334, 22.877416, 22.811083, 23.051042, 22.585209, 21.570792, 22.848459, 22.88775, 23.08625, 22.655666],
+    "search_apply_clear": [71.350834, 71.84975, 71.884375, 70.258292, 69.423083, 69.177291, 69.9655, 69.550292, 70.40875, 71.20975, 70.608625, 68.8355, 68.592375, 71.793042, 70.746625, 53.09775, 70.575709, 70.336166, 70.983333, 70.675625],
+    "active_row_selection": [22.309333, 21.633209, 21.396708, 22.145833, 21.9785, 22.268583, 22.245459, 22.741875, 22.085625, 21.932625, 22.4235, 22.944417, 22.186417, 22.301291, 21.396, 22.110125, 22.690708, 22.494042, 21.866583, 22.035959]
   },
   "stress": {
-    "initial_projection_mount": [110.127792, 87.589125, 54.33, 132.623333, 219.585667, 94.034625, 216.618166, 117.731375, 110.444167, 109.022875, 106.121375, 227.922625, 92.962, 116.430167, 108.986542, 107.590458, 242.42625, 109.396, 90.396166, 88.110583],
-    "marker_update_5_percent": [28.383292, 48.485792, 52.150208, 28.622208, 33.762333, 49.62625, 51.344584, 29.737042, 31.686458, 29.515667, 28.150458, 50.8515, 28.738541, 29.266209, 27.213584, 28.066917, 51.514458, 28.663416, 28.379333, 28.604333],
-    "search_apply_clear": [133.973041, 229.561792, 112.59, 121.410375, 128.476583, 147.770583, 98.323083, 103.946042, 253.510167, 112.306542, 113.427375, 90.6655, 116.618458, 261.347333, 104.851417, 103.898333, 109.3005, 90.407583, 258.748417, 110.444208],
-    "active_row_selection": [26.882208, 26.017, 28.061375, 26.486791, 28.154583, 27.084, 32.401375, 27.791333, 26.462625, 26.526458, 26.603542, 26.458792, 25.89525, 26.566, 26.541792, 26.473208, 27.16975, 26.358125, 26.230667, 26.6305]
+    "initial_projection_mount": [48.207959, 82.633459, 48.234042, 103.145084, 161.934042, 103.031333, 102.874333, 102.628375, 102.493833, 213.95975, 82.075667, 84.960666, 49.753125, 104.249583, 82.565708, 104.304375, 83.727333, 103.017625, 85.368792, 220.519167],
+    "marker_update_5_percent": [45.655958, 25.497542, 46.5895, 27.015041, 27.95925, 26.552833, 26.756958, 26.889833, 26.6045, 26.942375, 26.225125, 156.271375, 47.017875, 27.759333, 27.344125, 27.050791, 25.773625, 27.488291, 26.2185, 29.926792],
+    "search_apply_clear": [79.976375, 184.336875, 83.733292, 82.555791, 81.326958, 96.420292, 191.596583, 96.543542, 82.820208, 82.286917, 83.081458, 83.394542, 85.376708, 234.214458, 84.904042, 98.059083, 208.919625, 85.2195, 83.359958, 83.994875],
+    "active_row_selection": [25.595834, 24.79775, 25.027125, 25.26525, 25.439125, 26.179667, 25.532917, 26.241584, 25.3425, 25.054792, 26.062542, 26.026333, 25.997208, 26.050334, 26.135333, 25.893709, 25.811625, 25.999875, 25.749959, 25.420292]
   }
 }
 ```

@@ -6,9 +6,12 @@ from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
+from textual import events, on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -29,10 +32,146 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 )
 
 _ACTION_GROUPS = ACTION_GROUPS
+_CONDITIONAL_OWNERS = ("Tools", "Approvals", "Artifacts")
+_DUPLICATE_PINNED_LABELS = {"Selected conversation", "Workspace"}
+
+
+def inspector_group_is_actionable(owner: str, owned: InspectorOwnedContent) -> bool:
+    """Return owner-specific actionability for a conditional Inspector group.
+
+    Args:
+        owner: The conditional group name.
+        owned: The classified Inspector content.
+
+    Returns:
+        True when the group should be promoted above More.
+
+    Raises:
+        ValueError: If ``owner`` is not a conditional group.
+    """
+
+    if owner not in _CONDITIONAL_OWNERS:
+        raise ValueError(owner)
+    actions = owned.actions_for(owner)
+    if any(action.enabled for action in actions):
+        return True
+    rows = owned.rows_for(owner)
+    values = {str(entry.row.value).strip().lower() for entry in rows}
+    if owner == "Tools":
+        return any(value not in {"", "—", "0", "0 ready"} for value in values)
+    if owner == "Approvals":
+        return any(entry.row.status == "blocked" for entry in rows)
+    return any(
+        value not in {"", "—", "none", "unavailable", "not available for this item"}
+        for value in values
+    )
+
+
+class ConsoleInspectorMoreButton(Button):
+    """Native Button press path with terminal Space parity."""
+
+    def action_press(self) -> None:
+        """Allow consecutive keyboard toggles during Button's paint effect."""
+
+        self.press()
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "space":
+            event.stop()
+            event.prevent_default()
+            self.press()
+            return
+        await super()._on_key(event)
+
+
+class ConsoleInspectorMore(Vertical):
+    """Disclosure boundary for non-actionable conditional groups."""
+
+    BINDINGS = [
+        Binding("left", "collapse", "Collapse", show=False),
+        Binding("right", "expand", "Expand", show=False),
+    ]
+
+    class Toggled(Message):
+        def __init__(self, open: bool) -> None:
+            super().__init__()
+            self.open = open
+
+    def __init__(self, *children: Widget, open: bool) -> None:
+        self.open = open
+        toggle = ConsoleInspectorMoreButton(
+            "More", id="console-inspector-more-toggle", compact=True
+        )
+        body = Vertical(*children, id="console-inspector-more-body")
+        body.display = open
+        body.styles.display = "block" if open else "none"
+        super().__init__(toggle, body, id="console-inspector-more")
+        self.styles.height = "auto" if open else 2
+
+    def on_mount(self) -> None:
+        """Apply the initial disclosure state after mounting."""
+
+        self._apply_open()
+
+    def _apply_open(self) -> None:
+        body = self.query_one("#console-inspector-more-body", Vertical)
+        body.display = self.open
+        body.styles.display = "block" if self.open else "none"
+        self.styles.height = "auto" if self.open else 2
+        for heading in body.query(".console-inspector-group-heading"):
+            heading.can_focus = self.open
+
+    def set_open(self, open: bool, *, notify: bool = False) -> None:
+        """Apply a disclosure state and optionally announce a user change.
+
+        Args:
+            open: Whether the conditional groups should be visible.
+            notify: Whether to post a ``Toggled`` message.
+        """
+
+        if open == self.open:
+            return
+        focused = self.app.focused if self.is_mounted else None
+        ancestor = focused
+        focus_was_inside = False
+        while isinstance(ancestor, Widget):
+            if ancestor is self:
+                focus_was_inside = True
+                break
+            ancestor = ancestor.parent
+        self.open = open
+        if self.is_mounted:
+            self._apply_open()
+            if not open and focus_was_inside:
+                self.query_one("#console-inspector-more-toggle", Button).focus()
+        if notify:
+            self.post_message(self.Toggled(open))
+
+    @on(Button.Pressed, "#console-inspector-more-toggle")
+    def _toggle(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.set_open(not self.open, notify=True)
+
+    def action_collapse(self) -> None:
+        """Collapse More and announce the deliberate action."""
+
+        self.set_open(False, notify=True)
+
+    def action_expand(self) -> None:
+        """Expand More and announce the deliberate action."""
+
+        self.set_open(True, notify=True)
 
 
 class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     """Render Console run readiness, recovery, and action affordances."""
+
+    class MoreToggled(Message):
+        """A deliberate user change to the local More disclosure."""
+
+        def __init__(self, open: bool) -> None:
+            super().__init__()
+            self.open = open
 
     def __init__(
         self,
@@ -41,6 +180,8 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         ownership_policy: InspectorOwnershipPolicy = InspectorOwnershipPolicy.STRICT,
         reported_unknown_fingerprints: set[tuple[str, ...]] | None = None,
         on_reconcile: Callable[[], None] | None = None,
+        on_more_focus_removed: Callable[[str | None], None] | None = None,
+        more_open: bool = False,
         **kwargs: Any,
     ) -> None:
         ownership = classify_inspector_content(state, ownership_policy)
@@ -54,6 +195,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             else set()
         )
         self._on_reconcile = on_reconcile
+        self._on_more_focus_removed = on_more_focus_removed
+        self._more_open = more_open
+        self._pending_conditional_focus: tuple[str, str | None] | None = None
+        self._pending_more_focus_recovery = False
+        self._pending_more_focus_section_id: str | None = None
         self._report_unowned_content(ownership)
         self.styles.height = "auto"
         self.styles.min_height = 0
@@ -80,21 +226,64 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self.state = state
         self._ownership = ownership
         self._report_unowned_content(ownership)
+        structural_change = self._structural_key(
+            previous, previous_ownership
+        ) != self._structural_key(state, ownership)
+        _previous_promoted, previous_more = self._group_projection(previous_ownership)
+        _promoted, more = self._group_projection(ownership)
+        focused = self.app.focused if self.is_mounted else None
+        recover_removed_more_focus = False
+        more_focus_section_id = None
+        if (
+            structural_change
+            and previous_more
+            and not more
+            and isinstance(focused, Widget)
+            and focused.id == "console-inspector-more-toggle"
+            and self._on_more_focus_removed is not None
+        ):
+            recover_removed_more_focus = True
+            more_focus_section_id = self._next_ordinary_section_after_more(ownership)
+        focus_snapshot = (
+            self._conditional_focus_snapshot(previous_ownership)
+            if structural_change
+            else None
+        )
         if (
             not self.is_mounted
-            or self._structural_key(previous, previous_ownership)
-            != self._structural_key(state, ownership)
+            or structural_change
             or not self._apply_row_updates(previous, previous_ownership)
         ):
+            self._pending_conditional_focus = focus_snapshot
+            self._pending_more_focus_recovery = recover_removed_more_focus
+            self._pending_more_focus_section_id = more_focus_section_id
             self.recompose_count += 1
             self.refresh(recompose=True)
-            self.call_after_refresh(self._request_sections_reconcile)
             return
         # Deferred to match the recompose path's timing: a wholesale
         # recompose lands on the NEXT refresh cycle, i.e. after any rail
         # cascade the owning screen applies later in the same sync tick.
         self.call_after_refresh(self._restore_rail_cascade_visibility)
         self.call_after_refresh(self._request_sections_reconcile)
+
+    async def recompose(self) -> None:
+        """Reconcile the replacement sections after their DOM is committed."""
+
+        await super().recompose()
+        self._request_sections_reconcile()
+        focus_snapshot = self._pending_conditional_focus
+        recover_removed_more_focus = self._pending_more_focus_recovery
+        more_focus_section_id = self._pending_more_focus_section_id
+        self._pending_conditional_focus = None
+        self._pending_more_focus_recovery = False
+        self._pending_more_focus_section_id = None
+        if recover_removed_more_focus and self._on_more_focus_removed is not None:
+            self.call_after_refresh(
+                self._on_more_focus_removed,
+                more_focus_section_id,
+            )
+        if focus_snapshot is not None:
+            self.call_after_refresh(self._recover_conditional_focus, *focus_snapshot)
 
     def _report_unowned_content(self, ownership: InspectorOwnedContent) -> None:
         """Log one privacy-safe diagnostic for each unknown fingerprint."""
@@ -125,6 +314,33 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             delattr(child, "_console_rail_prior_display")
 
     @classmethod
+    def _group_projection(
+        cls, ownership: InspectorOwnedContent
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        present = tuple(
+            owner
+            for owner in _CONDITIONAL_OWNERS
+            if ownership.rows_for(owner) or ownership.actions_for(owner)
+        )
+        promoted = tuple(
+            owner
+            for owner in present
+            if inspector_group_is_actionable(owner, ownership)
+        )
+        return promoted, tuple(owner for owner in present if owner not in promoted)
+
+    @staticmethod
+    def _rows_for(ownership: InspectorOwnedContent, owner: str) -> tuple:
+        rows = ownership.rows_for(owner)
+        if owner == "Selected Conversation":
+            rows = tuple(
+                entry
+                for entry in rows
+                if entry.row.label not in _DUPLICATE_PINNED_LABELS
+            )
+        return rows
+
+    @classmethod
     def _rendered_row_entries(
         cls,
         state: ConsoleInspectorState,
@@ -144,8 +360,19 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         owned = ownership or classify_inspector_content(
             state, InspectorOwnershipPolicy.STRICT
         )
+        promoted, more = cls._group_projection(owned)
+        ordinary = tuple(
+            owner
+            for owner, _heading_id, _labels in _ROW_GROUPS
+            if owner not in _CONDITIONAL_OWNERS
+        )
+        ordered_owners = ordinary[:2] + promoted + more + ordinary[2:]
         projected_rows = (
-            *owned.rows,
+            *(
+                entry
+                for owner in ordered_owners
+                for entry in cls._rows_for(owned, owner)
+            ),
             *owned.dictionary_rows,
             *owned.world_book_rows,
         )
@@ -186,12 +413,107 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         owned = ownership or classify_inspector_content(
             state, InspectorOwnershipPolicy.STRICT
         )
+        promoted, more = cls._group_projection(owned)
         return (
             tuple(entry[0] for entry in cls._rendered_row_entries(state, owned)),
+            promoted,
+            more,
+            bool(more),
             tuple(_action_key(action) for action in owned.known_actions),
             tuple(_action_key(entry.action) for entry in owned.dictionary_actions),
             tuple(_action_key(entry.action) for entry in owned.world_book_actions),
         )
+
+    def _conditional_focus_snapshot(
+        self, ownership: InspectorOwnedContent
+    ) -> tuple[str, str | None] | None:
+        focused = self.app.focused if self.is_mounted else None
+        if not isinstance(focused, Widget):
+            return None
+        focused_id = focused.id
+        for owner in _CONDITIONAL_OWNERS:
+            ids = {
+                *(entry.widget_id for entry in ownership.rows_for(owner)),
+                *(action.widget_id for action in ownership.actions_for(owner)),
+                f"console-inspector-{owner.lower()}-heading",
+            }
+            if focused_id in ids:
+                return owner, focused_id
+        return None
+
+    @staticmethod
+    def _focusable(widget: Widget) -> bool:
+        return bool(
+            widget.can_focus
+            and not widget.disabled
+            and widget.display
+            and widget.styles.display != "none"
+        )
+
+    def _recover_conditional_focus(self, owner: str, focused_id: str | None) -> None:
+        if not self.is_mounted:
+            return
+        current = self.app.focused
+        if (
+            isinstance(current, Widget)
+            and current.is_mounted
+            and self not in current.ancestors
+            and self._focusable(current)
+        ):
+            return
+        promoted, more = self._group_projection(self._ownership)
+        if focused_id and owner in promoted:
+            try:
+                same = self.query_one(f"#{focused_id}", Widget)
+            except (NoMatches, QueryError):
+                same = None
+            if same is not None and self._focusable(same):
+                same.focus()
+                return
+        if self._more_open and owner in more:
+            if focused_id:
+                try:
+                    same = self.query_one(f"#{focused_id}", Widget)
+                except (NoMatches, QueryError):
+                    same = None
+                if same is not None and self._focusable(same):
+                    same.focus()
+                    return
+            try:
+                heading = self.query_one(
+                    f"#console-inspector-{owner.lower()}-heading", Widget
+                )
+            except (NoMatches, QueryError):
+                heading = None
+            if heading is not None and self._focusable(heading):
+                heading.focus()
+                return
+        try:
+            self.query_one("#console-inspector-more-toggle", Button).focus()
+        except (NoMatches, QueryError):
+            return
+
+    def set_more_open(self, open: bool) -> None:
+        """Apply persisted disclosure state without posting a user event.
+
+        Args:
+            open: Whether the conditional More groups should be visible.
+        """
+
+        self._more_open = open
+        if not self.is_mounted:
+            return
+        try:
+            more = self.query_one("#console-inspector-more", ConsoleInspectorMore)
+        except (NoMatches, QueryError):
+            return
+        more.set_open(open)
+
+    @on(ConsoleInspectorMore.Toggled)
+    def _more_toggled(self, event: ConsoleInspectorMore.Toggled) -> None:
+        event.stop()
+        self._more_open = event.open
+        self.post_message(self.MoreToggled(event.open))
 
     def _apply_row_updates(
         self,
@@ -207,15 +529,6 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             True when all changed rows were updated in place; False when a
             target widget was missing (caller falls back to recompose).
         """
-        new_summary = self._status_summary()
-        if new_summary != self._status_summary(previous, previous_ownership):
-            try:
-                summary = self.query_one(
-                    "#console-inspector-run-status-summary", Static
-                )
-            except (NoMatches, QueryError):
-                return False
-            summary.update(new_summary)
         old_entries = self._rendered_row_entries(previous, previous_ownership)
         for (widget_id, text, status), (_old_id, old_text, old_status) in zip(
             self._rendered_row_entries(self.state, self._ownership), old_entries
@@ -272,9 +585,62 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             widgets.append(reason)
         return widgets
 
+    def _group_widgets(self, owner: str, *, conditional_more: bool) -> list[Widget]:
+        heading_id = next(
+            heading_id
+            for heading, heading_id, _labels in _ROW_GROUPS
+            if heading == owner
+        )
+        group_rows = self._rows_for(self._ownership, owner)
+        group_actions = self._ownership.actions_for(owner)
+        if not group_rows and not any(action.enabled for action in group_actions):
+            return []
+        heading = Static(
+            owner,
+            id=heading_id,
+            classes="console-inspector-group-heading destination-section",
+        )
+        heading.can_focus = conditional_more and self._more_open
+        body: list[Widget] = []
+        for entry in group_rows:
+            body.append(
+                Static(
+                    entry.row.text,
+                    id=entry.widget_id,
+                    classes=(
+                        "console-inspector-row "
+                        f"console-inspector-row-{entry.row.status}"
+                    ),
+                    markup=False,
+                )
+            )
+        for action in group_actions:
+            body.extend(self._widgets_for_action(action))
+        return [
+            heading,
+            ConsoleBoundedSection(*body, section_id=self._section_id(owner)),
+        ]
+
     @staticmethod
     def _section_id(owner: str) -> str:
         return owner.lower().replace(" ", "-")
+
+    @classmethod
+    def _next_ordinary_section_after_more(
+        cls, ownership: InspectorOwnedContent
+    ) -> str | None:
+        after_conditional_block = False
+        for owner, _heading_id, _labels in _ROW_GROUPS:
+            if owner == "Source Readiness":
+                after_conditional_block = True
+                continue
+            if not after_conditional_block or owner in _CONDITIONAL_OWNERS:
+                continue
+            if cls._rows_for(ownership, owner) or any(
+                action.enabled for action in ownership.actions_for(owner)
+            ):
+                return cls._section_id(owner)
+        return None
 
     def _request_sections_reconcile(self) -> None:
         """Settle every changed local body before invalidating the rail owner."""
@@ -284,74 +650,33 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         if self._on_reconcile is not None:
             self._on_reconcile()
 
-    def _status_summary(
-        self,
-        state: ConsoleInspectorState | None = None,
-        ownership: InspectorOwnedContent | None = None,
-    ) -> str:
-        """Return the primary run-inspector state in one scannable row.
-
-        Args:
-            state: Snapshot to summarize; defaults to the current state.
-        """
-        owned = ownership or self._ownership
-        if owned.incomplete:
-            return "Status: Inspector data incomplete"
-        rows = {entry.row.label: entry.row for entry in owned.rows}
-        provider = rows.get("Provider")
-        approvals = rows.get("Approvals")
-        rag_source = rows.get("Sources") or rows.get("RAG/source")
-        if provider is not None and provider.status == "blocked":
-            return "Status: Blocked"
-        if approvals is not None and approvals.status == "blocked":
-            return "Status: Needs approval"
-        if rag_source is not None and rag_source.status == "blocked":
-            return "Status: Source blocked"
-        # TASK-347: a live generation must not read "Ready" — but a mid-run
-        # block / pending approval above is still the more important signal.
-        if getattr(state or self.state, "run_active", False):
-            return "Status: Generating…"
-        return "Status: Ready"
-
     def compose(self) -> ComposeResult:
-        yield Static(
-            self._status_summary(),
-            id="console-inspector-run-status-summary",
-            classes="console-inspector-status-summary",
-        )
-        for heading, heading_id, _labels in _ROW_GROUPS:
-            group_rows = self._ownership.rows_for(heading)
-            group_actions = self._ownership.actions_for(heading)
-            if not group_rows and not group_actions:
-                continue
-            if not group_rows and not any(action.enabled for action in group_actions):
-                continue
+        """Compose ordinary, promoted, and More-owned Inspector groups.
 
-            yield Static(
-                heading,
-                id=heading_id,
-                classes="console-inspector-group-heading destination-section",
-            )
-            body: list[Widget] = []
-            for entry in group_rows:
-                body.append(
-                    Static(
-                        entry.row.text,
-                        id=entry.widget_id,
-                        classes=(
-                            "console-inspector-row "
-                            f"console-inspector-row-{entry.row.status}"
-                        ),
-                        markup=False,
+        Returns:
+            The current Inspector group widgets in visual order.
+        """
+
+        promoted, more = self._group_projection(self._ownership)
+        for owner, _heading_id, _labels in _ROW_GROUPS:
+            if owner in _CONDITIONAL_OWNERS:
+                continue
+            yield from self._group_widgets(owner, conditional_more=False)
+            if owner == "Source Readiness":
+                for promoted_owner in promoted:
+                    yield from self._group_widgets(
+                        promoted_owner, conditional_more=False
                     )
-                )
-
-            for action in group_actions:
-                body.extend(self._widgets_for_action(action))
-            yield ConsoleBoundedSection(
-                *body,
-                section_id=self._section_id(heading),
-            )
+                more_widgets = [
+                    widget
+                    for more_owner in more
+                    for widget in self._group_widgets(more_owner, conditional_more=True)
+                ]
+                if more_widgets:
+                    yield ConsoleInspectorMore(
+                        *more_widgets,
+                        open=self._more_open,
+                    )
 
         dict_rows = self._ownership.dictionary_rows
         dict_actions = self._ownership.dictionary_actions

@@ -54,3 +54,18 @@ ADR required: yes
 ADR path: `backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md`
 Reason: ADR-083 records the long-lived rail edge ownership, per-section vertical policy, exclusive workspace conversation ownership, native Tree/focus exception, split async lanes, and Character contain boundary.
 <!-- SECTION:PLAN:END -->
+
+## Closeout Status (2026-08-23)
+
+The refreshed same-commit benchmark explicitly accepts all representative
+diagnostic differences over 20%: the mounted/settled Tree path includes native
+mount, deferred layout/paint, compositor rendering, and full-scope search nodes,
+whereas the frozen baseline is projection-only. Representative medians are
+48.020 ms initial mount, 22.668 ms marker update, 70.492 ms search apply/clear,
+and 22.166 ms selection. These measurements do not support a relative speed
+claim, and none is made.
+
+TASK-20937 remains In Progress. The exact focused gate passes all 488 tests, but
+neither the iTerm2 nor same-commit/equivalent-cell Windows Terminal operator
+checklist and captures have been supplied. The exact remaining capture checklist
+is recorded in TASK-20937.6.

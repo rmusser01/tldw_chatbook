@@ -799,10 +799,16 @@ class ConsoleLeftRail(Vertical):
                 self._ensure_focus_recovery(section_id)
             elif section_id not in self._pending_focus_recoveries:
                 self._record_section_focus(section_id, target)
+            # The Tree captured a stable key before focus-triggered reflow, so
+            # unlike ordinary controls this press is safe to reveal immediately.
+            stable_tree_press = (
+                isinstance(target, ConsoleWorkspaceTree)
+                and target._pressed_node_key is not None
+            )
             self.activate_section(
                 section_id,
-                request_reconcile=False,
-                deliberate_reveal=False,
+                request_reconcile=stable_tree_press,
+                deliberate_reveal=stable_tree_press,
             )
             self.call_after_refresh(
                 self._finish_focus_activation,
@@ -863,10 +869,16 @@ class ConsoleLeftRail(Vertical):
             isinstance(ancestor, DestinationRailSectionHeader)
             for ancestor in target.ancestors
         )
+        # Preserve the same early-reveal contract when MouseDown reaches the
+        # rail before Textual's descendant-focus notification.
+        stable_tree_press = (
+            isinstance(target, ConsoleWorkspaceTree)
+            and target._pressed_node_key is not None
+        )
         self.activate_section(
             section_id,
-            request_reconcile=False,
-            deliberate_reveal=False,
+            request_reconcile=stable_tree_press,
+            deliberate_reveal=stable_tree_press,
         )
 
     def on_mouse_up(self, event: MouseUp) -> None:
@@ -1015,6 +1027,7 @@ class ConsoleLeftRail(Vertical):
                 needs_outer_hint=needs_outer_hint,
             )
             self._queue_pending_active_reveal()
+            self._refresh_workspace_tree_after_reflow()
         except (NoMatches, QueryError):
             # Recompose may briefly remove one member of the complete snapshot.
             return
@@ -1200,6 +1213,17 @@ class ConsoleLeftRail(Vertical):
         self._last_allocation_state = complete_state
         self._update_outer_hint()
 
+    def _refresh_workspace_tree_after_reflow(self) -> None:
+        """Clear stale hover identity and recompute truncation after rail motion."""
+
+        try:
+            tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except (NoMatches, QueryError):
+            return
+        if tree.hover_line >= 0:
+            tree.hover_line = -1
+        tree._update_tooltip()
+
     @staticmethod
     def _present_header_title(
         title: Static,
@@ -1341,6 +1365,7 @@ class ConsoleLeftRail(Vertical):
             force=True,
         )
         self._update_outer_hint()
+        self._refresh_workspace_tree_after_reflow()
 
     def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
         """Push one context snapshot into every scoped rail projection.

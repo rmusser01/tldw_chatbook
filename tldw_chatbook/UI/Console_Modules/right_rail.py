@@ -79,6 +79,7 @@ from ...Widgets.Console import (
     ConsoleProjectInstructionStatusRow,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
+    ConsoleSendAuthoritySummary,
     ConsoleSettingsSummary,
     ConsoleStagedContextTray,
 )
@@ -229,6 +230,7 @@ class ConsoleInspectorRail(Vertical):
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
         ownership_policy: InspectorOwnershipPolicy | None = None,
+        inspector_more_open: bool = False,
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -293,6 +295,7 @@ class ConsoleInspectorRail(Vertical):
         self._ownership_policy = (
             ownership_policy or _resolve_inspector_ownership_policy()
         )
+        self._inspector_more_open = inspector_more_open
         self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
         self._outer_reconcile_scheduled = False
         self._outer_reconcile_dirty = False
@@ -914,6 +917,21 @@ class ConsoleInspectorRail(Vertical):
             self._pending_focus_recoveries.pop(section_id, None)
             self._recover_focus_incident(section_id, incident)
 
+    def _recover_keyed_boundary_focus(self, section_id: str | None) -> None:
+        """Focus a captured boundary after Textual commits recompose fallback."""
+
+        focused = self.app.focused
+        if (
+            isinstance(focused, Widget)
+            and self._is_enabled_focus_target(focused)
+            and not self.inspector_active(focused)
+        ):
+            return
+        self._recover_focus_incident(
+            section_id or "",
+            _FocusRecoveryIncident(target_id=None, target_index=None),
+        )
+
     def _paint_scroll_owner(self, focused: Widget | None) -> None:
         active_header: Widget | None = None
         outer_active = bool(
@@ -1050,7 +1068,9 @@ class ConsoleInspectorRail(Vertical):
             session settings summary, and the live-work status card, in
             mount order.
         """
-        right_rail_header = Horizontal(classes="console-rail-header")
+        right_rail_header = Horizontal(
+            id="console-inspector-rail-header", classes="console-rail-header"
+        )
         right_rail_header.styles.height = 1
         right_rail_header.styles.min_height = 1
         right_rail_header.styles.max_height = 1
@@ -1069,17 +1089,19 @@ class ConsoleInspectorRail(Vertical):
             collapse_button.styles.content_align = ("left", "middle")
             yield collapse_button
 
+        project_instruction_row = ConsoleProjectInstructionStatusRow(
+            self._project_instruction_state
+        )
+        project_instruction_row.styles.width = "100%"
+        project_instruction_row.styles.height = 1
+        yield project_instruction_row
+
+        yield ConsoleSendAuthoritySummary(self._inspector_state)
+
         with _InspectorOuterBody(
             on_geometry_changed=self._request_outer_geometry_reconcile,
             on_scrolled=self._handle_outer_scrolled,
         ):
-            project_instruction_row = ConsoleProjectInstructionStatusRow(
-                self._project_instruction_state
-            )
-            project_instruction_row.styles.width = "100%"
-            project_instruction_row.styles.height = 1
-            yield project_instruction_row
-
             # Context (staged sources) section -- moved here from the left
             # rail (task-400). Pinned to the TOP of the Inspector body so it
             # is visible without scrolling and reads above the run
@@ -1148,6 +1170,8 @@ class ConsoleInspectorRail(Vertical):
                     ownership_policy=self._ownership_policy,
                     reported_unknown_fingerprints=(self._reported_unknown_fingerprints),
                     on_reconcile=self.request_outer_reconcile,
+                    on_more_focus_removed=self._recover_keyed_boundary_focus,
+                    more_open=self._inspector_more_open,
                     id="console-run-inspector-state",
                 )
                 settings_summary = ConsoleSettingsSummary(

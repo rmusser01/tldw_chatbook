@@ -1092,6 +1092,10 @@ class ConsoleInspectorState:
     #: streaming) — the status-summary/Live-work surfaces read this so they
     #: stop claiming "Ready" mid-run.
     run_active: bool = False
+    staged_source_count: int = 0
+    pending_approval_count: int = 0
+    scope_item_count: int | None = None
+    ephemeral: bool = False
 
     @classmethod
     def from_values(
@@ -1117,6 +1121,7 @@ class ConsoleInspectorState:
         run_active: bool = False,
         ephemeral: bool = False,
         change_review_available: bool = False,
+        staged_source_count: int = 0,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         # F2 (task-9 review): the inspector's Save Chatbook action is a
@@ -1230,6 +1235,10 @@ class ConsoleInspectorState:
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
             run_active=run_active,
+            staged_source_count=coerce_non_negative_int(staged_source_count),
+            pending_approval_count=normalized_approval_count,
+            scope_item_count=scope_item_count,
+            ephemeral=ephemeral,
         )
 
     def to_plain_text(self) -> str:

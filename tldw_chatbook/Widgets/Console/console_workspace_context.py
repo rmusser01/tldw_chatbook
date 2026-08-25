@@ -558,6 +558,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
+        self.call_after_refresh(self._update_workspace_tree_selection_context)
 
     def on_resize(self, event: Any) -> None:
         """Refit wrapped status rows when the rail width changes.
@@ -570,6 +571,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
+        self.call_after_refresh(self._update_workspace_tree_selection_context)
 
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace context tray from new display state.
@@ -1268,6 +1270,15 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
         context_data = self._workspace_tree_context_data
+        selection_copy = self._workspace_tree_selection_copy(context_data)
+        yield self._record_composed_node(
+            Static(
+                selection_copy,
+                id="console-workspace-tree-selection-context",
+                classes="console-workspace-tree-selection-context",
+                markup=False,
+            )
+        )
         context_is_markable = self._workspace_tree_context_is_markable(context_data)
         context_action_row = Horizontal(
             id="console-workspace-context-action-row",
@@ -1353,7 +1364,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # A width relabel removes these controls before recomposing them. Keep
         # the latest cursor truth even in that transient NoMatches window so
         # compose cannot rebuild Star for the conversation the cursor left.
-        self._workspace_tree_context_data = data if is_conversation else None
+        self._workspace_tree_context_data = data
+        self._update_workspace_tree_selection_context()
         try:
             button = self.query_one("#console-workspace-tree-star", Button)
             action_row = self.query_one(
@@ -1392,6 +1404,34 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
         button.starred = starred
         return visibility_changed
+
+    def _workspace_tree_selection_copy(self, data: Any | None) -> str:
+        """Return the stable one-row copy for the current Tree cursor."""
+
+        raw_label = str(getattr(data, "raw_label", "") or "")
+        rows = raw_label.splitlines()
+        label = rows[0] if rows else ""
+        if not label:
+            label = self.state.workspace_name or self._workspace_selector_label()
+        if not label:
+            label = "Workspace tree"
+        return f"Selected: {label} · Enter open"
+
+    def _update_workspace_tree_selection_context(self) -> None:
+        """Patch selected copy and expose the full value only when clipped."""
+
+        if not self.is_mounted:
+            return
+        try:
+            context = self.query_one(
+                "#console-workspace-tree-selection-context", Static
+            )
+        except NoMatches:
+            return
+        copy = self._workspace_tree_selection_copy(self._workspace_tree_context_data)
+        context.update(copy)
+        width = max(0, context.content_region.width)
+        context.tooltip = Text(copy) if width and cell_len(copy) > width else None
 
     def _workspace_tree_context_is_markable(self, data: Any | None) -> bool:
         """Return whether ``data`` may expose the contextual star action."""

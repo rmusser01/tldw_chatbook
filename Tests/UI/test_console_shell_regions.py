@@ -63,6 +63,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_rail_state import build_console_rail_preference_key
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
@@ -506,6 +507,10 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         "left_open": stored_left_open,
         "right_open": stored_right_open,
     }
+    shared_key = build_console_rail_preference_key(layout_scope="global")
+    app.app_config.setdefault("console", {})["rail_state"] = {
+        shared_key.value: stored_preferences
+    }
     save_spy = Mock()
     pre_sync_observations = []
     queued_first_sync_states = []
@@ -536,11 +541,6 @@ async def test_exact_100_workspace_state_matrix_is_contained(
             screen.call_after_refresh(assert_first_paint_then_delegate_sync)
         return None
 
-    monkeypatch.setattr(
-        ChatScreen,
-        "_stored_console_rail_preferences",
-        lambda _self, _key, _fallback_key: stored_preferences,
-    )
     monkeypatch.setattr(ChatScreen, "_save_console_rail_preferences", save_spy)
     monkeypatch.setattr(
         ChatScreen,

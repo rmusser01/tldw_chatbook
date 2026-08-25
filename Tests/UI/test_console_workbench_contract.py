@@ -633,14 +633,22 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert not list(rail.query("#console-staged-context-tray"))
 
         # Project-instruction status is the one-line Inspector preamble;
-        # staged context follows it and remains above Source Readiness.
+        # staged context starts the scroll body below pinned authority.
         tray = console.query_one("#console-staged-context-tray")
         project_status = console.query_one("#console-project-instruction-status")
+        inspector_rail = console.query_one("#console-right-rail")
         rail_body = console.query_one("#console-inspector-rail-body")
+        assert tuple(child.id for child in inspector_rail.children) == (
+            "console-inspector-rail-header",
+            "console-project-instruction-status",
+            "console-send-authority-summary",
+            "console-inspector-rail-body",
+            "console-inspector-outer-scroll-hint",
+        )
+        assert project_status.parent is inspector_rail
         assert tray.parent is rail_body
         children = list(rail_body.children)
-        assert children.index(project_status) == 0
-        assert children.index(tray) == children.index(project_status) + 1
+        assert children[0] is tray
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work_section = console.query_one("#console-live-work-section")
         assert live_work_section in readiness.ancestors
@@ -663,20 +671,21 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
         inspector = console.query_one("#console-run-inspector-state")
         ordered_ids = _children_in_display_order(inspector)
 
-        status_index = ordered_ids.index("console-inspector-run-status-summary")
+        run_recipe_index = ordered_ids.index("console-inspector-run-recipe")
         approval_action_index = ordered_ids.index("console-inspector-review-approval")
         save_action_index = ordered_ids.index("console-inspector-save-chatbook")
         first_secondary_heading_index = ordered_ids.index(
             "console-inspector-selected-conversation-heading"
         )
 
-        assert status_index < approval_action_index < first_secondary_heading_index
+        assert run_recipe_index < approval_action_index < first_secondary_heading_index
         # TASK-1843 removed `console-inspector-review-tool-call`: it gated on
         # a counter nothing ever assigned, so it was permanently disabled
         # while permanently claiming a reason, and its handler was a notify()
         # stub. It must stay gone rather than be re-added as a stub.
         assert "console-inspector-review-tool-call" not in ordered_ids
-        assert status_index < save_action_index < first_secondary_heading_index
+        assert run_recipe_index < save_action_index < first_secondary_heading_index
+        assert "console-inspector-run-status-summary" not in ordered_ids
         assert console.query_one("#console-inspector-review-approval").disabled is False
         assert console.query_one("#console-inspector-save-chatbook").disabled is False
 
@@ -727,6 +736,24 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
         )
         assert "Run recipe" in text
         assert "Sources" in text
+        assert "More" in text
+        assert "Tools" not in text
+        assert "Approvals" not in text
+        assert "Artifacts" not in text
+
+        more_body = inspector.query_one("#console-inspector-more-body")
+        for owner in ("tools", "approvals", "artifacts"):
+            heading = inspector.query_one(f"#console-inspector-{owner}-heading")
+            assert more_body in heading.ancestors
+
+        more_toggle = inspector.query_one("#console-inspector-more-toggle")
+        more_toggle.focus()
+        await pilot.press("enter")
+        text = " ".join(
+            _widget_text(child)
+            for child in inspector.walk_children()
+            if _is_displayed(child)
+        )
         assert "Tools" in text
         assert "Approvals" in text
         assert "Artifacts" in text

@@ -36,9 +36,9 @@ INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
 STAGED_ONE_ROW_TEST_CSS = """
 #console-right-rail {
-    height: 13;
-    min-height: 13;
-    max-height: 13;
+    height: 19;
+    min-height: 19;
+    max-height: 19;
 }
 #console-inspector-rail-body {
     height: 1fr;
@@ -173,12 +173,14 @@ def _staged_state(row_count: int) -> ConsoleStagedContextState:
 
 
 @pytest.mark.asyncio
-async def test_outer_hint_is_pinned_third_child_with_exact_nonfocusable_copy():
+async def test_outer_hint_is_pinned_last_child_with_exact_nonfocusable_copy():
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
-        header, body, hint = rail.children
+        header, project, summary, body, hint = rail.children
 
-        assert header.id is None
+        assert header.id == "console-inspector-rail-header"
+        assert project.id == "console-project-instruction-status"
+        assert summary.id == "console-send-authority-summary"
         assert body.id == "console-inspector-rail-body"
         assert hint.id == INSPECTOR_OUTER_HINT_ID
         assert str(hint.renderable) in ("", INSPECTOR_OUTER_HINT)
@@ -372,6 +374,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
         ten_row_demand = tray.query_one(
             "#console-bounded-section-sources", ConsoleBoundedSection
         ).desired_content_lines
+        assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 11, 0)
 
         tray.sync_state(_staged_state(11))
         await _wait_for_right_rail_condition(
@@ -393,6 +396,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
         await pilot.pause()
         assert hint.display is True
         assert outer.virtual_size.height > outer.content_region.height
+        assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 10, 1)
         assert rail._outer_owner_reconcile_count == overflow_count
         outer.scroll_end(animate=False, immediate=True)
         await _wait_for_right_rail_condition(
@@ -415,6 +419,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
             ),
             description="ten-source owner shrink removing slot and clamping",
         )
+        assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 11, 0)
 
 
 @pytest.mark.asyncio
@@ -454,8 +459,9 @@ async def test_scroll_owner_cue_preserves_bold_and_clears_without_stale_underlin
             lambda: (
                 collapse.get_visual_style().bold
                 and collapse.get_visual_style().underline
+                and not source_title.get_visual_style().underline
             ),
-            description="collapse focus declarative bold underline",
+            description="completed collapse focus repaint",
         )
         assert not source_title.get_visual_style().underline
 
@@ -625,15 +631,8 @@ async def test_navigation_from_scope_uses_first_following_boundary():
             description="Scope navigating exactly to outer body for inert Run",
         )
 
-        run_status = rail.query_one("#console-inspector-run-status-summary")
-        run_status.can_focus = True
-        run_status.focus()
-        await pilot.press("p")
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: pilot.app.focused is sources.viewport,
-            description="run-status compact row navigating backward",
-        )
+        assert not list(rail.query("#console-inspector-run-status-summary"))
+        assert rail.query_one("#console-inspector-run-recipe")
 
 
 @pytest.mark.asyncio
@@ -961,7 +960,7 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
     (
         ("header", "#console-inspector-approvals-heading"),
         ("body", f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}"),
-        ("none", "#console-inspector-rail-body"),
+        ("none", f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}"),
     ),
 )
 async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
@@ -1053,7 +1052,8 @@ async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
             description=f"{target_mode} target-local focus priority",
         )
 
-        assert pilot.app.focused is not artifacts
+        if target_mode != "none":
+            assert pilot.app.focused is not artifacts
         if target_mode != "none":
             await pilot.press("p")
             await _wait_for_right_rail_condition(
