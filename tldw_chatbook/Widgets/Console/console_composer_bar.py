@@ -587,6 +587,15 @@ class ConsoleComposerBar(Horizontal):
         self._draft_selection_range: tuple[int, int] | None = None
         self._cursor_visible = True
         self._cursor_blink_timer: Any | None = None
+        #: TASK-22218: render memo for the visible-draft Static -- one entry,
+        #: ``(key, {blink_phase: Text})``, keyed on every input that shapes
+        #: the renderable (see `_visible_render_memo_key`). Lets a blink tick
+        #: with an unchanged draft/width/history reuse the built renderable
+        #: instead of re-running the full-draft cell wrap and the history
+        #: prefix scan ~1.89x/s forever.
+        self._visible_render_cache: (
+            tuple[tuple[Any, ...], dict[bool, Text]] | None
+        ) = None
         #: TASK-1364: shared JSONL prompt-history store, injected by the
         #: owning screen (`set_prompt_history`). Drives fish-shell-style
         #: ghost text (most-recent prefix match) and Up/Down recall. None
@@ -2899,7 +2908,76 @@ class ConsoleComposerBar(Horizontal):
         self._prune_orphaned_generated_boundaries()
         self._clamp_cursor()
 
+    def _visible_render_memo_key(self, draft: str, width: int) -> tuple[Any, ...]:
+        """Return the invalidation key for the visible-draft render memo.
+
+        Every input that shapes `_build_visible_draft_renderable`'s output
+        (except the blink phase, which selects the per-key slot) appears
+        here, so a stale hit is impossible by construction rather than by
+        remembering to clear the cache at each mutation site:
+
+        * draft display text + wrap width -- the wrapped content itself;
+        * focus, segment-model initialization, canonical + display caret
+          offsets -- caret splice position and ghost gating;
+        * canonical text -- `_ghost_suffix` matches history against the
+          CANONICAL draft, and two different canonical drafts can render the
+          same display text (equal-length collapsed paste tokens);
+        * style ranges + selection state -- paste-token/selection styling
+          (selection also gates the ghost);
+        * history identity/revision + recall index -- the ghost suffix is
+          part of the memoized OUTPUT, so a history record while the
+          composer idles must invalidate via `PromptHistory.revision`
+          (`id(history)` guards a whole-store swap, whose fresh revision
+          counter could collide with the old store's).
+
+        The two O(len(draft)) joins here (display text is joined by the
+        caller, canonical here) are the price of self-validating keys:
+        ~microseconds against the multi-millisecond wrap they gate.
+        """
+        history = self._prompt_history
+        return (
+            draft,
+            width,
+            self.has_focus_within,
+            self._segments_initialized,
+            self._cursor_index,
+            self._cursor_display_index() if self._segments_initialized else None,
+            self._canonical_draft_text() if self._segments_initialized else draft,
+            tuple(self._display_draft_style_ranges()),
+            self._draft_selection_all,
+            self._draft_selection_range,
+            self._history_index,
+            None if history is None else (id(history), history.revision),
+        )
+
     def _current_visible_draft_renderable(self, draft: str, width: int) -> Text:
+        """Return the Text renderable for the current draft/placeholder state.
+
+        TASK-22218: memoized per blink phase. The 0.53 s caret blink calls
+        this ~1.89x/s for as long as the composer holds focus; before the
+        memo, every tick re-ran the grapheme-aware cell wrap of the ENTIRE
+        draft plus `_ghost_suffix`'s linear scan over up to 1000 history
+        entries -- measured 1.58 ms/tick with a 20 KB draft -- just to flip
+        one caret cell. A tick with an unchanged key is now a dict hit; the
+        two phases are cached separately because the caret cell (glyph vs
+        space) participates in the word wrap, so their wrapped output is not
+        derivable from one another by substitution.
+        """
+        phase = bool(getattr(self, "_cursor_visible", True))
+        memo_key = self._visible_render_memo_key(draft, width)
+        cache = self._visible_render_cache
+        if cache is not None and cache[0] == memo_key:
+            cached = cache[1].get(phase)
+            if cached is not None:
+                return cached
+        else:
+            cache = (memo_key, {})
+            self._visible_render_cache = cache
+        renderable = self._build_visible_draft_renderable(draft, width)
+        cache[1][phase] = renderable
+        return renderable
+
+    def _build_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
         if draft:
             focused = self.has_focus_within
@@ -2916,8 +2994,9 @@ class ConsoleComposerBar(Horizontal):
                 ),
                 # Ghost text only shows while focused (the caret it trails is
                 # focus-only too) and `_ghost_suffix` self-gates on caret-at-
-                # end/selection/live-draft, so this recomputes cleanly on
-                # every blink tick and edit.
+                # end/selection/live-draft. Recomputed on every memo MISS;
+                # history changes while the draft idles reach the next tick
+                # through the history revision in the memo key.
                 ghost_suffix=self._ghost_suffix() if focused else "",
             )
         return self._placeholder_renderable(width=width)
@@ -2948,6 +3027,11 @@ class ConsoleComposerBar(Horizontal):
           (``_refresh_visible_draft``, resize, collapse) still goes through
           with ``layout=True``. The blink tick changes no state those paths
           read.
+
+        TASK-22218 fixed the COMPUTE half: `_current_visible_draft_
+        renderable` is memoized per blink phase, so a tick with an unchanged
+        draft/width/history reuses the built renderable instead of re-running
+        the full-draft cell wrap and the history ghost scan.
         """
         try:
             draft = self._display_draft_text()
@@ -2980,7 +3064,31 @@ class ConsoleComposerBar(Horizontal):
             return
 
     def _toggle_cursor_blink(self) -> None:
-        """Flip the cursor blink phase and refresh only the visible draft."""
+        """Flip the cursor blink phase and refresh only the visible draft.
+
+        TASK-22218: `_sync_cursor_blink_state`'s resume gate is
+        `has_focus_within`, which reads this widget's OWN screen's focus
+        memory -- it survives `push_screen`, so the timer keeps firing under
+        every modal. Rather than pause/resume bookkeeping across cover and
+        uncover (Textual's ScreenSuspend/ScreenResume are posted to the
+        Screen, not to its descendants), this keeps the TASK-22219 shape:
+        the timer keeps ticking and the tick early-outs while the screen is
+        not active, which reduces a covered fire to one property check. The
+        caret parks SOLID on the first covered tick (matching
+        `_sync_cursor_blink_state`'s pause convention, and the composer can
+        be partly visible under a dialog); the first tick after the screen
+        is active again resumes the blink -- the timer itself is the resume
+        path, so there is no resume callback to miss.
+        """
+        if not self.is_attached:
+            # Teardown race: a queued tick can land while the composer is
+            # being unmounted; `self.screen` would raise NoScreen.
+            return
+        if not self.screen.is_active:
+            if not self._cursor_visible:
+                self._cursor_visible = True
+                self._render_visible_draft_only()
+            return
         self._cursor_visible = not self._cursor_visible
         self._render_visible_draft_only()
 
@@ -4284,6 +4392,10 @@ class ConsoleComposerBar(Horizontal):
         """
         self._prompt_history = history
         self._history_index = 0
+        # TASK-22218: the render memo keys the ghost on (id(history),
+        # revision); dropping it outright on a store swap sidesteps any
+        # reliance on id() uniqueness across a freed old store.
+        self._visible_render_cache = None
 
     def _ghost_suffix(self) -> str:
         """Return the ghost-text suffix for the current draft, or ``""``.
