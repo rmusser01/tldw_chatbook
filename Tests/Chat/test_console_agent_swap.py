@@ -1837,9 +1837,16 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     # Both calls executed under the "approved" decision (a session
     # approval, not a persistent "allowed" server default -- the
     # vocabulary fix half of Finding I1).
+    # Turn 2's decision is "approved-session", NOT "approved": that is the
+    # whole subject of this test. `MCPToolProvider.execute` documents it --
+    # "a live session approval short-circuits an `ask` state to execute
+    # (decision='approved-session')". Expecting "approved" on turn 2 asserted
+    # that the session approval was NOT consulted, which is the opposite of
+    # what the test's name claims, so this expectation now distinguishes
+    # approved-by-card from approved-by-session instead of conflating them.
     assert service.execute_calls == [
         ("local:srv", "run", {"x": 1}, "agent", "approved"),
-        ("local:srv", "run", {"x": 2}, "agent", "approved"),
+        ("local:srv", "run", {"x": 2}, "agent", "approved-session"),
     ]
 
 
