@@ -1158,9 +1158,15 @@ class ProviderStep(SetupStep):
                     id="setup-provider-endpoint-status",
                     classes="setup-probe-status",
                 )
+                # TASK-21144 (UAT P-8): labels name the outcome, not the
+                # mechanism — "Detect" vs "Test" was an unexplained pair.
                 with Horizontal(classes="setup-provider-connection-actions"):
-                    yield Button("Detect", id="setup-provider-detect")
-                    yield Button("Test", id="setup-provider-test", variant="primary")
+                    yield Button("Find local servers", id="setup-provider-detect")
+                    yield Button(
+                        "Test connection",
+                        id="setup-provider-test",
+                        variant="primary",
+                    )
                 yield ProviderEndpointCandidateList(
                     ProviderEndpointCandidateOption(
                         Text("Detected endpoints", style="bold"),
@@ -1173,6 +1179,15 @@ class ProviderStep(SetupStep):
                     id="setup-provider-detection-results",
                     classes="setup-detection-results hidden",
                 )
+            # TASK-21144 (UAT P-6): the probe/discovery status renders
+            # ABOVE the Authentication collapsible, directly under the
+            # connection controls it reports on — at its old panel-bottom
+            # position it fell below the fold at 40-row terminals, which
+            # (compounded by the F-1 focus soft-lock eating the button
+            # presses) is how UAT experienced "silent" probes.
+            yield Static(
+                "", id="setup-provider-probe-status", classes="setup-probe-status"
+            )
             with Collapsible(
                 title="Authentication (optional)",
                 collapsed=True,
@@ -1192,9 +1207,6 @@ class ProviderStep(SetupStep):
                     yield Button("Keep current", id="setup-provider-key-keep")
                     yield Button("Replace", id="setup-provider-key-replace")
                     yield Button("Clear", id="setup-provider-key-clear")
-            yield Static(
-                "", id="setup-provider-probe-status", classes="setup-probe-status"
-            )
 
     # TASK-1498: providers most first-time users are actually looking for, in
     # display order. Filtered against the live catalog, so a missing key

@@ -3330,3 +3330,61 @@ async def test_enter_in_model_fallback_input_advances(
             await _wait_until(
                 pilot, lambda: _current_step_id(container) == STEP_VOICE
             )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21144 (UAT P-6/P-7/P-8): local-provider probe feedback. The UAT
+# "silent Detect/Test" incident decomposed into the F-1 focus soft-lock
+# eating the presses plus the status Static sitting at the panel's bottom,
+# below the fold at 40-row terminals. These pin the feedback contract:
+# selecting a local provider reports its reachability unprompted, Test
+# always ends in a visible verdict, and the status renders adjacent to the
+# controls it reports on.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_local_provider_probe_feedback_is_visible_and_adjacent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 45)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+            provider = next(
+                s for s in container.steps if isinstance(s, ProviderStep)
+            )
+            provider.select_provider("llama_cpp")
+            status = provider.query_one("#setup-provider-probe-status", Static)
+            # P-7: selection alone produces reachability feedback (nothing
+            # listens on the endpoint in this environment).
+            await _wait_until(
+                pilot, lambda: str(status.renderable) != "", timeout_seconds=15.0
+            )
+            # P-6: Test always ends in a visible verdict.
+            provider.query_one("#setup-provider-test", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: str(status.renderable).startswith(("✗", "✓")),
+                timeout_seconds=15.0,
+            )
+            # Adjacency: the status renders above the auth collapsible, next
+            # to the connection controls — not at the panel's bottom.
+            auth = provider.query_one("#setup-provider-auth-toggle")
+            test_button = provider.query_one("#setup-provider-test", Button)
+            assert status.region.y >= test_button.region.y
+            assert status.region.y <= auth.region.y or not auth.display
+            # P-8: buttons are labeled by outcome.
+            assert str(provider.query_one("#setup-provider-detect", Button).label) == (
+                "Find local servers"
+            )
+            assert str(test_button.label) == "Test connection"
