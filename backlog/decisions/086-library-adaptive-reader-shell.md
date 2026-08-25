@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-24
-Related Task: Implementation tasks will be created from the approved design during planning.
+Related Tasks: TASK-22031, TASK-22032, TASK-22033, TASK-22034
 
 ## Decision
 
