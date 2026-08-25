@@ -192,6 +192,83 @@ async def test_open_console_requires_final_complete_error_free_match(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changed", "tooltip_copy"),
+    (
+        ({"complete": False, "loading": True}, "finish loading"),
+        (
+            {
+                "bulk_active": True,
+                "bulk_selected_count": 1,
+                "bulk_loaded_preview_selected": True,
+            },
+            "bulk selection",
+        ),
+        (
+            {
+                "complete": False,
+                "unavailable": True,
+                "error": "Conversation unavailable.",
+            },
+            "unavailable",
+        ),
+        (
+            {"complete": False, "error": "detail failed"},
+            "try again",
+        ),
+        (
+            {"selected_id": "chat-b", "selected_version": 7, "generation": 3},
+            "does not match",
+        ),
+    ),
+)
+async def test_disabled_open_console_tooltip_names_the_actual_blocker(
+    widget_pilot, changed: dict[str, object], tooltip_copy: str
+) -> None:
+    state = replace(_loaded_reader_state(), **changed)
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=state,
+        loaded_metadata={"title": "Alpha planning"},
+        selected_metadata={"title": "Beta review"},
+        id="library-conversation-reader",
+    ) as pilot:
+        action = pilot.app.query_one("#library-conversation-open-console", Button)
+        assert action.disabled
+        assert tooltip_copy in str(action.tooltip).casefold()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("included", "copy"),
+    ((True, "is included"), (False, "is not included"), (None, "no transcript")),
+)
+async def test_bulk_reader_status_names_loaded_preview_inclusion(
+    widget_pilot, included: bool | None, copy: str
+) -> None:
+    base = _loaded_reader_state()
+    state = replace(
+        base,
+        loaded_id=None if included is None else base.loaded_id,
+        loaded_version=None if included is None else base.loaded_version,
+        loaded_generation=None if included is None else base.loaded_generation,
+        messages=() if included is None else base.messages,
+        message_total=0 if included is None else base.message_total,
+        complete=False if included is None else base.complete,
+        bulk_active=True,
+        bulk_selected_count=1 if included else 0,
+        bulk_loaded_preview_selected=included,
+    )
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=state,
+        id="library-conversation-reader",
+    ) as pilot:
+        status = pilot.app.query_one("#library-conversation-reader-status", Static)
+        assert copy in str(status.renderable).casefold()
+
+
+@pytest.mark.asyncio
 async def test_conversations_mount_three_retained_roles_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -335,6 +412,7 @@ class _ProgressiveConversationService:
             "id": conversation_id,
             "title": "Alpha planning",
             "version": 4,
+            "message_epoch": "epoch-chat-a",
             "message_total": total,
             "message_offset": offset,
             "returned_message_count": len(messages),
@@ -365,6 +443,7 @@ class _OutOfOrderConversationService:
             "id": conversation_id,
             "title": conversation_id,
             "version": version,
+            "message_epoch": f"epoch-{conversation_id}",
             "message_total": 1,
             "message_offset": int(kwargs.get("message_offset", 0)),
             "returned_message_count": 1,
@@ -404,6 +483,7 @@ class _ContinuationConversationService:
             return {
                 "id": conversation_id,
                 "version": 4,
+                "message_epoch": "epoch-chat-a",
                 "message_total": 1,
                 "messages": [
                     {
@@ -424,6 +504,7 @@ class _ContinuationConversationService:
             "id": conversation_id,
             "title": "Alpha planning",
             "version": 4,
+            "message_epoch": "epoch-chat-a",
             "message_total": 1,
             "message_offset": 0,
             "returned_message_count": 1,
@@ -460,6 +541,7 @@ class _GatedVersionConversationService:
             "id": conversation_id,
             "title": f"Alpha v{self.version}",
             "version": self.version,
+            "message_epoch": f"epoch-v{self.version}",
             "message_total": 1,
             "message_offset": 0,
             "returned_message_count": 1,
@@ -497,6 +579,7 @@ class _GatedFailureConversationService:
             "id": conversation_id,
             "title": "Beta response must not relabel Alpha",
             "version": 7,
+            "message_epoch": "epoch-chat-b",
             "message_total": 1,
             "message_offset": 0,
             "returned_message_count": 1,
@@ -526,6 +609,7 @@ class _GatedBootstrapConversationService:
             "id": conversation_id,
             "title": "Bootstrap title",
             "version": 4,
+            "message_epoch": "epoch-chat-a",
             "message_total": 1,
             "message_offset": 0,
             "returned_message_count": 1,
@@ -558,6 +642,7 @@ class _RejectedLaterPageConversationService:
                 "id": conversation_id,
                 "title": "REJECTED TITLE",
                 "version": 4,
+                "message_epoch": "epoch-chat-a",
                 "message_total": 21,
                 "message_offset": 20,
                 "returned_message_count": 1,
@@ -597,6 +682,7 @@ class _RejectedLaterPageConversationService:
             "id": conversation_id,
             "title": "Accepted title",
             "version": 4,
+            "message_epoch": "epoch-chat-a",
             "message_total": 21,
             "message_offset": 0,
             "returned_message_count": 20,
@@ -619,6 +705,7 @@ class _GatedFindRetryConversationService:
             "id": conversation_id,
             "title": "Alpha planning",
             "version": 4,
+            "message_epoch": "epoch-chat-a",
             "message_total": 1,
             "message_offset": 0,
             "returned_message_count": 1,
@@ -1008,6 +1095,44 @@ async def test_progressive_reader_paints_first_page_then_completes_find_off_loop
         assert [call["message_offset"] for call in service.calls] == [0, 20]
         assert [call["message_limit"] for call in service.calls] == [20, 20]
         assert all(thread_id != event_loop_thread for thread_id in service.thread_ids)
+
+
+@pytest.mark.asyncio
+async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records()[:1])
+    service = _ProgressiveConversationService()
+    app.local_chat_conversation_service = service
+    host = LibraryHarness(app, screen=_active_conversations_screen(app))
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await asyncio.to_thread(service.second_started.wait, 10)
+        try:
+            partial = screen._library_conversation_reader_state
+            assert partial.loading and not partial.complete
+
+            screen.query_one("#library-conversations-select-toggle", Button).press()
+            await pilot.pause()
+            assert screen._library_conversation_reader_state.bulk_active
+            invalidated_generation = (
+                screen._library_conversation_reader_state.generation
+            )
+
+            screen.query_one("#library-conversations-select-toggle", Button).press()
+            await pilot.pause()
+            restarting = screen._library_conversation_reader_state
+            assert not restarting.bulk_active
+            assert restarting.loading
+            assert restarting.generation > invalidated_generation
+        finally:
+            service.release_second.set()
+
+        await screen.workers.wait_for_complete()
+        settled = screen._library_conversation_reader_state
+        assert settled.complete and settled.loaded_actions_eligible
+        assert [call["message_offset"] for call in service.calls].count(0) == 2
 
 
 @pytest.mark.asyncio

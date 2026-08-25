@@ -16,6 +16,27 @@ from tldw_chatbook.Library.library_conversation_reader_state import (
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 
 
+def _open_console_disabled_tooltip(state: ConversationReaderState) -> str | None:
+    """Describe the current reason the retained transcript cannot be opened."""
+    if state.loaded_actions_eligible:
+        return None
+    if state.bulk_active:
+        return "Finish bulk selection before opening a conversation in Console."
+    if state.loading:
+        return "Wait for the selected conversation to finish loading."
+    if state.unavailable:
+        return "The selected conversation is unavailable."
+    if state.error:
+        return "Try again before opening the selected conversation in Console."
+    if (
+        state.selected_id != state.loaded_id
+        or state.selected_version != state.loaded_version
+        or state.generation != state.loaded_generation
+    ):
+        return "The selected conversation does not match the retained transcript."
+    return "Wait for the complete selected transcript before opening it in Console."
+
+
 class LibraryConversationReader(Vertical):
     """Render one retained Conversations Read/Info pane from pure state."""
 
@@ -95,10 +116,7 @@ class LibraryConversationReader(Vertical):
                 compact=True,
             )
             open_console.disabled = not eligible
-            if not eligible:
-                open_console.tooltip = (
-                    "Wait for the selected conversation to finish loading."
-                )
+            open_console.tooltip = _open_console_disabled_tooltip(self.state)
             yield open_console
             retry = Button(
                 "Try again",
@@ -199,9 +217,16 @@ class LibraryConversationReader(Vertical):
             return f"{list_summary} · {copy}" if list_summary else copy
 
         if state.bulk_active:
+            if state.bulk_loaded_preview_selected is True:
+                preview = "The retained transcript is included and remains read-only."
+            elif state.bulk_loaded_preview_selected is False:
+                preview = (
+                    "The retained transcript is not included and remains read-only."
+                )
+            else:
+                preview = "No transcript is retained; Read and Info remain available."
             return with_list_summary(
-                f"Bulk selection: {state.bulk_selected_count} conversations. "
-                "The last loaded transcript remains read-only."
+                f"Bulk selection: {state.bulk_selected_count} conversations. {preview}"
             )
         if state.unavailable:
             copy = state.error or "Conversation unavailable."
@@ -282,12 +307,7 @@ class LibraryConversationReader(Vertical):
         open_console.label = library_disabled_action_label(
             "Open in Console", not eligible
         )
-        if not eligible:
-            open_console.tooltip = (
-                "Wait for the selected conversation to finish loading."
-            )
-        else:
-            open_console.tooltip = None
+        open_console.tooltip = _open_console_disabled_tooltip(state)
         retry = self.query_one("#library-conversation-reader-retry", Button)
         retry.display = bool(state.error or state.unavailable)
 

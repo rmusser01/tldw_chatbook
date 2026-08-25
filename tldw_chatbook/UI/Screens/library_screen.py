@@ -5356,6 +5356,30 @@ class LibraryScreen(BaseAppScreen):
             library_config[section_name] = section
         section[key] = value
 
+    def _replace_library_reader_preference(
+        self,
+        destination: Literal["media", "conversations"],
+        key: Literal["library_open", "items_open"],
+        value: bool,
+    ) -> None:
+        """Replace one pane choice, sharing only the Library-pane preference."""
+        attribute = (
+            "_library_conversation_reader_preferences"
+            if destination == "conversations"
+            else "_library_media_reader_preferences"
+        )
+        preferences = getattr(self, attribute)
+        setattr(self, attribute, dataclasses.replace(preferences, **{key: value}))
+        if key != "library_open":
+            return
+        other_attribute = (
+            "_library_media_reader_preferences"
+            if destination == "conversations"
+            else "_library_conversation_reader_preferences"
+        )
+        other = getattr(self, other_attribute)
+        setattr(self, other_attribute, dataclasses.replace(other, library_open=value))
+
     async def _persist_library_conversation_reader_preference(
         self,
         pane: Literal["library", "items"],
@@ -5384,12 +5408,15 @@ class LibraryScreen(BaseAppScreen):
             getattr(self._library_conversation_reader_preferences, key) != value
         ):
             return
-        self._library_conversation_reader_preferences = dataclasses.replace(
-            self._library_conversation_reader_preferences,
-            **{key: previous_value},
-        )
+        self._replace_library_reader_preference("conversations", key, previous_value)
         self._mirror_library_conversation_reader_preference(key, previous_value)
         self._sync_library_conversation_reader_layout_from_shell()
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "Library reader layout could not be saved; the previous pane choice was restored.",
+                severity="warning",
+            )
 
     def _sync_library_media_reader_layout_from_shell(
         self,
@@ -5535,10 +5562,7 @@ class LibraryScreen(BaseAppScreen):
         # not let an older failed write roll that newer preference back.
         if getattr(self._library_media_reader_preferences, key) != value:
             return
-        self._library_media_reader_preferences = dataclasses.replace(
-            self._library_media_reader_preferences,
-            **{key: previous_value},
-        )
+        self._replace_library_reader_preference("media", key, previous_value)
         self._mirror_library_media_reader_preference(key, previous_value)
         self._sync_library_media_reader_layout_from_shell()
         notify = getattr(self.app_instance, "notify", None)
@@ -5596,10 +5620,7 @@ class LibraryScreen(BaseAppScreen):
                 "library_open" if event.pane == "library" else "items_open"
             )
             previous_value = getattr(self._library_conversation_reader_preferences, key)
-            self._library_conversation_reader_preferences = dataclasses.replace(
-                self._library_conversation_reader_preferences,
-                **{key: opening},
-            )
+            self._replace_library_reader_preference("conversations", key, opening)
             self._mirror_library_conversation_reader_preference(key, opening)
             self._sync_library_conversation_reader_layout_from_shell(
                 event.pane if opening else None
@@ -5619,10 +5640,7 @@ class LibraryScreen(BaseAppScreen):
             "library_open" if event.pane == "library" else "items_open"
         )
         previous_value = getattr(self._library_media_reader_preferences, key)
-        self._library_media_reader_preferences = dataclasses.replace(
-            self._library_media_reader_preferences,
-            **{key: opening},
-        )
+        self._replace_library_reader_preference("media", key, opening)
         self._mirror_library_media_reader_preference(key, opening)
         self._sync_library_media_reader_layout_from_shell(
             event.pane if opening else None
@@ -12274,6 +12292,7 @@ class LibraryScreen(BaseAppScreen):
                 unavailable=False,
                 bulk_active=False,
                 bulk_selected_count=0,
+                bulk_loaded_preview_selected=None,
             )
             self._sync_library_conversation_reader()
             self.run_worker(
@@ -12685,6 +12704,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_conversation_reader_state,
             active=False,
             selected_count=0,
+            loaded_preview_selected=None,
         )
         self._sync_library_conversation_reader()
         self._sync_library_conversation_canvas()
@@ -19513,6 +19533,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_conversation_reader_state,
                 active=True,
                 selected_count=self._library_conversations_row_selection.count,
+                loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
             )
             self._sync_library_conversation_reader()
             return
@@ -19606,6 +19627,13 @@ class LibraryScreen(BaseAppScreen):
             group="library_conversation_reader",
         )
 
+    def _library_conversation_loaded_preview_selected(self) -> bool | None:
+        """Return whether the retained transcript is in the checked-row set."""
+        loaded_id = self._library_conversation_reader_state.loaded_id
+        if loaded_id is None:
+            return None
+        return self._library_conversations_row_selection.is_selected(loaded_id)
+
     @on(Button.Pressed, "#library-conversations-select-toggle")
     def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
         """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
@@ -19620,9 +19648,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_conversation_reader_state,
             active=self._library_conversations_select_mode,
             selected_count=0,
+            loaded_preview_selected=(
+                self._library_conversation_loaded_preview_selected()
+                if self._library_conversations_select_mode
+                else None
+            ),
         )
         self._sync_library_conversation_reader()
         _sync_library_canvas(self, "conversations")
+        if not self._library_conversations_select_mode:
+            self._ensure_library_conversation_reader_selection()
 
     @on(Button.Pressed, "#library-conversations-select-all")
     def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
@@ -19638,6 +19673,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_conversation_reader_state,
             active=True,
             selected_count=self._library_conversations_row_selection.count,
+            loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
         )
         self._sync_library_conversation_reader()
         _sync_library_canvas(self, "conversations")
@@ -19653,6 +19689,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_conversation_reader_state,
             active=True,
             selected_count=0,
+            loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
         )
         self._sync_library_conversation_reader()
         _sync_library_canvas(self, "conversations")

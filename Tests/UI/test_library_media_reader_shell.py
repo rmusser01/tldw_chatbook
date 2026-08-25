@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 
 import pytest
@@ -450,6 +451,103 @@ async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
 
     next_screen = LibraryScreen(app)
     assert next_screen._library_media_reader_preferences.library_open is True
+
+
+@pytest.mark.asyncio
+async def test_shared_library_pane_choice_round_trips_between_media_and_conversations(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    writes = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args: writes.append(args) or True,
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        conversation_shell = await _wait_for_selector(
+            screen, pilot, "#library-conversations-reader-shell"
+        )
+
+        conversation_shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(writes) == 1,
+            message="Conversations Library-pane choice was not persisted.",
+        )
+        assert not screen._library_conversation_reader_preferences.library_open
+        assert not screen._library_media_reader_preferences.library_open
+
+        screen.query_one("#library-row-browse-media", Button).press()
+        media_shell = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-shell"
+        )
+        assert not media_shell.effective_layout.library_open
+
+        media_shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(writes) == 2,
+            message="Media Library-pane choice was not persisted.",
+        )
+        assert screen._library_media_reader_preferences.library_open
+        assert screen._library_conversation_reader_preferences.library_open
+
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        conversation_shell = await _wait_for_selector(
+            screen, pilot, "#library-conversations-reader-shell"
+        )
+        assert conversation_shell.effective_layout.library_open
+        assert writes == [
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_failed_conversations_library_pane_write_restores_shared_choice_and_warns(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    write_started = threading.Event()
+    notices = []
+
+    def fail_save(*_args):
+        write_started.set()
+        return False
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", fail_save)
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append((message, kwargs)),
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        conversation_shell = await _wait_for_selector(
+            screen, pilot, "#library-conversations-reader-shell"
+        )
+
+        conversation_shell.library_grip.press()
+        await asyncio.to_thread(write_started.wait, 10)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_reader_preferences.library_open,
+            message="Failed Conversations pane write did not roll back.",
+        )
+
+        assert screen._library_media_reader_preferences.library_open
+        assert notices[-1][1]["severity"] == "warning"
+        assert "could not be saved" in notices[-1][0]
 
 
 @pytest.mark.asyncio

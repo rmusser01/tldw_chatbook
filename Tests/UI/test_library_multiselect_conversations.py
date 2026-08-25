@@ -44,7 +44,7 @@ def _fake(select_mode):
     loaded_message = ConversationMessageView(
         "message-1", "user", "now", "revision-1", 5, "hello"
     )
-    return SimpleNamespace(
+    fake = SimpleNamespace(
         _library_conversation_freshness="fresh",
         _library_conversations_select_mode=select_mode,
         _library_conversations_row_selection=RowSelection("conversations"),
@@ -69,6 +69,10 @@ def _fake(select_mode):
         _sync_library_conversation_reader=lambda: None,
         _start_library_conversation_reader_selection=lambda conversation_id: None,
     )
+    fake._library_conversation_loaded_preview_selected = lambda: (
+        LibraryScreen._library_conversation_loaded_preview_selected(fake)
+    )
+    return fake
 
 
 def test_convo_row_select_mode_toggles():
@@ -84,6 +88,7 @@ def test_convo_row_select_mode_toggles():
     assert fake._library_conversation_reader_state.bulk_selected_count == 1
     assert fake._library_conversation_reader_state.loaded_id == "c1"
     assert fake._library_conversation_reader_state.messages[0].text == "hello"
+    assert fake._library_conversation_reader_state.bulk_loaded_preview_selected is False
     assert fake._library_conversation_reader_state.loaded_actions_eligible is False
 
 

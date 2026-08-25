@@ -63,6 +63,7 @@ class ConversationReaderState:
     mode: ConversationReaderMode = "read"
     messages: tuple[ConversationMessageView, ...] = ()
     message_total: int = 0
+    message_epoch: str | None = None
     complete: bool = False
     find_query: str = ""
     find_matches: tuple[ConversationFindMatch, ...] = ()
@@ -72,6 +73,7 @@ class ConversationReaderState:
     unavailable: bool = False
     bulk_active: bool = False
     bulk_selected_count: int = 0
+    bulk_loaded_preview_selected: bool | None = None
 
     @property
     def loaded_actions_eligible(self) -> bool:
@@ -116,6 +118,7 @@ def select_conversation(
             unavailable=False,
             bulk_active=False,
             bulk_selected_count=0,
+            bulk_loaded_preview_selected=None,
         ),
         request,
     )
@@ -248,6 +251,7 @@ def settle_conversation_page(
     returned_count = response.get("returned_message_count")
     has_more = response.get("has_more")
     next_message_offset = response.get("next_message_offset")
+    message_epoch = response.get("message_epoch")
     if (
         not isinstance(raw_messages, list)
         or type(offset) is not int
@@ -261,8 +265,10 @@ def settle_conversation_page(
         or request.message_offset < 0
         or type(request.message_limit) is not int
         or request.message_limit <= 0
+        or not isinstance(message_epoch, str)
+        or not message_epoch.strip()
     ):
-        raise ValueError("conversation page has invalid coordinates.")
+        raise ValueError("conversation page has invalid coordinates or epoch.")
     expected_next = offset + len(raw_messages)
     expected_has_more = expected_next < message_total
     if (
@@ -284,7 +290,11 @@ def settle_conversation_page(
     if offset == 0 and not current_request_loaded:
         messages = page
     else:
-        if not current_request_loaded or offset > len(state.messages):
+        if (
+            not current_request_loaded
+            or state.message_epoch != message_epoch
+            or offset > len(state.messages)
+        ):
             return state
         overlap = min(len(page), len(state.messages) - offset)
         if state.messages[offset : offset + overlap] != page[:overlap]:
@@ -304,6 +314,7 @@ def settle_conversation_page(
             loaded_generation=request.generation,
             messages=messages,
             message_total=message_total,
+            message_epoch=message_epoch,
             complete=complete,
             error=None,
             loading=not complete,
@@ -326,6 +337,8 @@ def settle_conversation_continuation(
         or state.loaded_version != request.version
         or state.loaded_generation != request.generation
         or response.get("message_total") != state.message_total
+        or not isinstance(response.get("message_epoch"), str)
+        or response.get("message_epoch") != state.message_epoch
     ):
         return state
     raw_messages = response.get("messages")
@@ -422,6 +435,7 @@ def settle_conversation_unavailable(
         loaded_generation=None if clear_loaded else state.loaded_generation,
         messages=() if clear_loaded else state.messages,
         message_total=0 if clear_loaded else state.message_total,
+        message_epoch=None if clear_loaded else state.message_epoch,
         complete=False if clear_loaded else state.complete,
         error="Conversation unavailable.",
         loading=False,
@@ -469,6 +483,7 @@ def confirm_conversation_deleted(
         generation=state.generation + 1 if selected else state.generation,
         messages=() if loaded else state.messages,
         message_total=0 if loaded else state.message_total,
+        message_epoch=None if loaded else state.message_epoch,
         complete=False if loaded else state.complete,
         error="Conversation deleted." if selected else state.error,
         loading=False if selected else state.loading,
@@ -482,6 +497,7 @@ def project_conversation_multiselect(
     *,
     active: bool,
     selected_count: int,
+    loaded_preview_selected: bool | None,
 ) -> ConversationReaderState:
     """Project read-only bulk selection without replacing the single preview."""
     if type(active) is not bool:
@@ -490,18 +506,26 @@ def project_conversation_multiselect(
         raise ValueError("selected_count must be a non-negative integer.")
     if not active:
         selected_count = 0
+        loaded_preview_selected = None
+    elif state.loaded_id is None:
+        if loaded_preview_selected is not None:
+            raise ValueError("a missing loaded preview cannot be selected.")
+    elif type(loaded_preview_selected) is not bool:
+        raise TypeError("loaded_preview_selected must describe the loaded preview.")
     entering = active and not state.bulk_active
     if not entering:
         return replace(
             state,
             bulk_active=active,
             bulk_selected_count=selected_count,
+            bulk_loaded_preview_selected=loaded_preview_selected,
         )
     if not state.loading:
         return replace(
             state,
             bulk_active=True,
             bulk_selected_count=selected_count,
+            bulk_loaded_preview_selected=loaded_preview_selected,
         )
     generation = state.generation + 1
     return replace(
@@ -510,4 +534,5 @@ def project_conversation_multiselect(
         loading=False,
         bulk_active=True,
         bulk_selected_count=selected_count,
+        bulk_loaded_preview_selected=loaded_preview_selected,
     )

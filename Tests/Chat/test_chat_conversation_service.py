@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,6 +14,12 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
     InputError,
+)
+from tldw_chatbook.Library.library_conversation_reader_state import (
+    ConversationReaderState,
+    select_conversation,
+    settle_conversation_continuation,
+    settle_conversation_page,
 )
 
 
@@ -1317,6 +1323,23 @@ class TestLibraryConversationSeams:
     arguments untouched and echoes the list/search envelope shape shared by
     the other Library domains (items/total/offset/limit)."""
 
+    def test_message_projection_preserves_an_already_string_timestamp(self):
+        db = object.__new__(CharactersRAGDB)
+
+        item = db._library_message_item(
+            {
+                "id": "message-1",
+                "sender": "user",
+                "timestamp": "preserve-this-timestamp",
+                "version": 1,
+                "total_chars": 4,
+                "text": "body",
+            },
+            char_start=0,
+        )
+
+        assert item["timestamp"] == "preserve-this-timestamp"
+
     def test_list_delegates_and_echoes_pagination(self):
         class FakeLibraryDB:
             def __init__(self):
@@ -1486,7 +1509,131 @@ class TestLibraryConversationSeams:
                 for message in repeated_first["messages"]
             ] == [(message["id"], message["revision"]) for message in first["messages"]]
             assert first["version"] == middle["version"] == last["version"] == 1
+            assert (
+                first["message_epoch"]
+                == middle["message_epoch"]
+                == last["message_epoch"]
+            )
+            assert all(
+                isinstance(message["timestamp"], str) and message["timestamp"]
+                for message in messages
+            )
             assert last["has_more"] is False
+        finally:
+            db.close_connection()
+
+    def test_real_service_epoch_rejects_interleaved_page_and_preserves_iso_timestamp(
+        self, tmp_path
+    ):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "interleaved"})
+            first_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "user",
+                    "content": "old first",
+                    "timestamp": "2026-08-24T12:00:00Z",
+                }
+            )
+            db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "assistant",
+                    "content": "second",
+                    "timestamp": "2026-08-24T12:01:00Z",
+                }
+            )
+            first_page = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=1
+            )
+            pending, request = select_conversation(
+                ConversationReaderState(), conv_id, version=1
+            )
+            request = replace(request, message_limit=1)
+            partial = settle_conversation_page(pending, request, first_page)
+            assert partial.messages[0].timestamp == "2026-08-24T12:00:00Z"
+
+            db.update_message(first_id, {"content": "edited first"}, 1)
+            second_page = service.get_library_conversation_messages(
+                conv_id, message_offset=1, message_limit=1
+            )
+            mixed = settle_conversation_page(
+                partial,
+                replace(request, message_offset=1, message_limit=1),
+                second_page,
+            )
+
+            assert first_page["message_epoch"] != second_page["message_epoch"]
+            assert mixed is partial
+            assert not mixed.complete and not mixed.loaded_actions_eligible
+        finally:
+            db.close_connection()
+
+    def test_real_service_epoch_rejects_interleaved_continuation(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "continuation epoch"})
+            message_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "user",
+                    "content": "prefix and suffix",
+                }
+            )
+            first_page = service.get_library_conversation_messages(
+                conv_id, message_limit=1, max_chars=7
+            )
+            pending, request = select_conversation(
+                ConversationReaderState(), conv_id, version=1
+            )
+            partial = settle_conversation_page(pending, request, first_page)
+
+            db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "assistant",
+                    "content": "interleaving message",
+                }
+            )
+            continuation = service.get_library_conversation_messages(
+                conv_id,
+                message_id=message_id,
+                char_start=7,
+                max_chars=100,
+            )
+            mixed = settle_conversation_continuation(partial, request, continuation)
+
+            assert first_page["message_epoch"] != continuation["message_epoch"]
+            assert mixed is partial
+            assert not mixed.complete and not mixed.loaded_actions_eligible
+        finally:
+            db.close_connection()
+
+    def test_real_service_epoch_ignores_local_usage_and_metadata(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "local adjuncts"})
+            message_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "assistant",
+                    "content": "stable transcript",
+                }
+            )
+            before = service.get_library_conversation_messages(conv_id)
+
+            assert db.update_message_usage_local(message_id, '{"total_tokens": 3}')
+            assert db.update_message_metadata_local(
+                message_id, '{"interrupted": false}'
+            )
+            after = service.get_library_conversation_messages(conv_id)
+
+            assert before["message_epoch"] == after["message_epoch"]
+            assert before["messages"] == after["messages"]
         finally:
             db.close_connection()
 
