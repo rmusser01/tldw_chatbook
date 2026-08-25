@@ -9932,6 +9932,102 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, tuple([conversation_id, *parent_ids]))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_message_tree_rows_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        order_by_timestamp: str = "ASC",
+        include_deleted_conversation: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Fetch every live message row of one conversation, without BLOBs.
+
+        TASK-22206: the single conversation-scoped read backing
+        ``ChatConversationService.get_conversation_tree``'s in-memory tree
+        assembly (which replaced a one-query-per-node recursive walk).
+        Selects the same columns as
+        ``get_messages_for_conversation_by_parent_ids`` EXCEPT the
+        ``image_data`` BLOB, which is replaced by a ``has_image`` flag so
+        callers can batch-hydrate images lazily via
+        ``get_message_images_by_ids``. Ordered by ``m.timestamp`` so the
+        query is driven by ``idx_msgs_conv_ts (conversation_id, timestamp)``
+        with no post-sort (plan verified with ``sqlite_stat1`` absent, the
+        production shape) and a stable partition of the result reproduces
+        each parent's child order.
+
+        Args:
+            conversation_id: The conversation UUID.
+            order_by_timestamp: 'ASC' or 'DESC'.
+            include_deleted_conversation: Include rows whose parent
+                conversation is soft-deleted.
+
+        Returns:
+            All non-deleted message rows of the conversation, in timestamp
+            order, each with ``has_image`` (0/1) instead of ``image_data``.
+
+        Raises:
+            InputError: If ``order_by_timestamp`` is not 'ASC'/'DESC'.
+        """
+        if order_by_timestamp.upper() not in ["ASC", "DESC"]:
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   (m.image_data IS NOT NULL) AS has_image, m.image_mime_type,
+                   m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
+                   m.usage_json, m.metadata_json, m.provider_continuation_json,
+                   m.assistant_generation_state
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.deleted = 0
+            ORDER BY m.timestamp {order_by_timestamp}
+        """
+        if not include_deleted_conversation:
+            query = query.replace(
+                "ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1
+            )
+        cursor = self.execute_query(query, (conversation_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_message_images_by_ids(
+        self, message_ids: Sequence[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Batch-fetch the legacy position-0 image columns for messages.
+
+        TASK-22206 companion to ``get_message_tree_rows_for_conversation``:
+        the tree read carries only a ``has_image`` flag; callers hydrate the
+        actual BLOBs here, once, for exactly the ids that need them. Chunked
+        at 500 ids per statement (mirrors ``get_attachments_for_messages``).
+
+        Args:
+            message_ids: Message UUIDs to fetch image columns for.
+
+        Returns:
+            Mapping of message id to ``{"image_data", "image_mime_type"}``;
+            ids with no stored image are absent.
+        """
+        ids = [str(m) for m in message_ids if m]
+        if not ids:
+            return {}
+        result: Dict[str, Dict[str, Any]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT id, image_data, image_mime_type FROM messages"
+                    f" WHERE id IN ({placeholders})"
+                    " AND image_data IS NOT NULL",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result[row["id"]] = {
+                        "image_data": row["image_data"],
+                        "image_mime_type": row["image_mime_type"],
+                    }
+        return result
+
     def update_conversation(
         self, conversation_id: str, update_data: Dict[str, Any], expected_version: int
     ) -> Optional[bool]:
