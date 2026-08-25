@@ -63,8 +63,10 @@ def _controller_double() -> AsyncMock:
 
 def test_layout_intent_dataclasses_use_pascal_case_names() -> None:
     assert hasattr(collections_module, "ManualLayoutRollback")
+    assert hasattr(collections_module, "ResponsivePriorityLease")
     assert hasattr(collections_module, "SectionViewIntent")
     assert not hasattr(collections_module, "_ManualLayoutRollback")
+    assert not hasattr(collections_module, "_ResponsivePriorityLease")
     assert not hasattr(collections_module, "_SectionViewIntent")
 
 

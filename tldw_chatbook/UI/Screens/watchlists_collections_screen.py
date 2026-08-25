@@ -414,6 +414,14 @@ class _ItemStatusIntent:
 
 
 @dataclass(frozen=True)
+class ResponsivePriorityLease:
+    """A manually prioritized pane and the mode where it originated."""
+
+    target: Region
+    read_mode: bool
+
+
+@dataclass(frozen=True)
 class ManualLayoutRollback:
     """One manual preference intent owned by its latest request token."""
 
@@ -422,7 +430,7 @@ class ManualLayoutRollback:
     attempted_preferred: RegionLayout
     preferred_before: RegionLayout
     article_focus_before: bool
-    priority_before: Region | None
+    priority_lease_before: ResponsivePriorityLease | None
 
 
 @dataclass(frozen=True)
@@ -1019,7 +1027,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._effective_region_layout = loaded_layout
         self._responsive_region_layout: RegionLayout | None = None
         self._article_focus_active = False
-        self._responsive_priority_target: Region | None = None
+        self._responsive_priority_lease: ResponsivePriorityLease | None = None
         self._layout_request_generation = 0
         self._current_layout_request_token = 0
         # Avoid initializing the reactive (and its watcher) before Textual
@@ -3058,7 +3066,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 attempted_preferred=rollback.attempted_preferred,
                 preferred_before=rollback.preferred_before,
                 article_focus_before=rollback.article_focus_before,
-                priority_before=rollback.priority_before,
+                priority_lease_before=rollback.priority_lease_before,
             )
         return self._current_layout_request_token
 
@@ -3081,26 +3089,47 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         responsive = self._responsive_region_layout
         if cause != "article_focus" or responsive is None:
             previous = responsive if cause == "resize" else None
-            unprioritized = resolve_effective_layout(
-                self.region_layout,
-                width=width,
-                read_mode=read_mode,
-                article_focus=False,
-                priority_target=None,
-                previous=previous,
+            lease = self._responsive_priority_lease
+            priority_target = (
+                lease.target
+                if lease is not None and lease.read_mode == read_mode
+                else None
             )
-            preferred_mounted = frozenset(
-                self.region_layout.collapsed.intersection(mounted)
-            )
-            if unprioritized.collapsed == preferred_mounted:
-                self._responsive_priority_target = None
+            if (
+                cause == "resize"
+                and priority_target is not None
+                and not self._article_focus_active
+            ):
+                unprioritized_previous = previous
+                if previous is not None:
+                    # The explicit open placed the leased target in responsive
+                    # history. Re-collapse only that target for the expiry
+                    # probe so the same dead-band width cannot immediately
+                    # clear the lease it just created.
+                    unprioritized_previous = RegionLayout(
+                        collapsed=previous.collapsed.union({priority_target})
+                    )
+                unprioritized = resolve_effective_layout(
+                    self.region_layout,
+                    width=width,
+                    read_mode=read_mode,
+                    article_focus=False,
+                    priority_target=None,
+                    previous=unprioritized_previous,
+                )
+                preferred_mounted = frozenset(
+                    self.region_layout.collapsed.intersection(mounted)
+                )
+                if unprioritized.collapsed == preferred_mounted:
+                    self._responsive_priority_lease = None
+                    priority_target = None
 
             responsive = resolve_effective_layout(
                 self.region_layout,
                 width=width,
                 read_mode=read_mode,
                 article_focus=False,
-                priority_target=self._responsive_priority_target,
+                priority_target=priority_target,
                 previous=previous,
             )
             self._responsive_region_layout = responsive
@@ -3455,19 +3484,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.region_layout,
             self._effective_region_layout,
             self._article_focus_active,
-            self._responsive_priority_target,
+            self._responsive_priority_lease,
         )
         self._article_focus_active = False
+        read_mode = self.active_section == "items"
         preferred = self.region_layout
         if requested_open:
             if preferred.is_collapsed(region):
                 preferred = preferred.toggle_preferred(region)
-            self._responsive_priority_target = region
+            self._responsive_priority_lease = ResponsivePriorityLease(
+                target=region,
+                read_mode=read_mode,
+            )
         else:
             if not preferred.is_collapsed(region):
                 preferred = preferred.toggle_preferred(region)
-            if self._responsive_priority_target is region:
-                self._responsive_priority_target = None
+            lease = self._responsive_priority_lease
+            if (
+                lease is not None
+                and lease.target is region
+                and lease.read_mode == read_mode
+            ):
+                self._responsive_priority_lease = None
         self.region_layout = preferred
         token = self._recompute_effective_layout(cause="explicit")
         if token is not None:
@@ -3477,7 +3515,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 attempted_preferred=preferred,
                 preferred_before=before[0],
                 article_focus_before=before[2],
-                priority_before=before[3],
+                priority_lease_before=before[3],
             )
         self._schedule_layout_persist(preferred)
 
@@ -3503,7 +3541,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             current_preferred = self.region_layout
             self.region_layout = rollback.preferred_before
             self._article_focus_active = rollback.article_focus_before
-            self._responsive_priority_target = rollback.priority_before
+            self._responsive_priority_lease = rollback.priority_lease_before
             self._manual_layout_rollback = None
             self._recompute_effective_layout(cause="explicit")
             if current_preferred != rollback.preferred_before:
