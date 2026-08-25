@@ -9,7 +9,7 @@ framework worker/modal edges and final Textual mutation remain named callbacks.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Any, Literal
@@ -114,6 +114,10 @@ class ConsoleCharacterController:
         self._active_character_avatar_name: str | None = None
         self._last_console_avatar_scope: Any | None = None
         self._last_console_avatar_request_key: Any | None = None
+        # TASK-22204: the most recently BUILT avatar request; the staleness
+        # fence compares against it instead of re-deriving the world (see
+        # `_request_is_current`).
+        self._latest_built_request: AvatarRequest | None = None
         self._console_expression_spec_cache: dict[tuple[str, ...], dict] = {}
         self._character_emote_cursor_by_session: dict[str, int] = {}
         self._character_emote_explicit_by_session: dict[str, tuple[str, str]] = {}
@@ -281,17 +285,38 @@ class ConsoleCharacterController:
         explicit_message_id, explicit_state = (
             self._character_emote_explicit_by_session.get(session_id, (None, None))
         )
+        # TASK-22204: fetch the transcript snapshot ONCE and share it across
+        # both resolutions below. `messages_for_session` replace-copies every
+        # message (after folding live stream buffers), and this method runs on
+        # the 0.2 s sync tick; the pre-22204 shape re-fetched it here twice
+        # and again inside every `_request_is_current` fence check. The empty
+        # snapshot on failure resolves idle exactly like the resolver's own
+        # fetch-and-fail-soft path.
+        messages: Sequence[Any] = ()
+        if react and store is not None and session_id is not None:
+            try:
+                messages = store.messages_for_session(session_id)
+            except Exception:
+                messages = ()
         selection = resolve_console_expression_selection(
             store,
             session_id,
             react_enabled=react,
             explicit_message_id=explicit_message_id,
             explicit_state=explicit_state,
+            messages=messages,
         )
         state = selection.state
         if selection.source in {"idle", "operational"}:
+            # Retained from PR #2020: for non-explicit, non-historical sources
+            # the legacy resolver still owns the state string (this call is
+            # also the seam the avatar tests monkeypatch to drive states). It
+            # now reuses the snapshot instead of re-copying the transcript --
+            # over one snapshot the two resolutions are provably identical for
+            # these sources, because the explicit parameters only alter the
+            # streaming+matching branch (source "explicit").
             state = resolve_console_expression_state(
-                store, session_id, react_enabled=react
+                store, session_id, react_enabled=react, messages=messages
             )
         manual = self._manual_reaction_key(actor) if actor else None
         source: AvatarRequestSource = selection.source
@@ -302,7 +327,7 @@ class ConsoleCharacterController:
             source = "manual"
             history_identity = None
             message_id = None
-        return (
+        request: AvatarRequest = (
             actor,
             state,
             manual,
@@ -315,6 +340,8 @@ class ConsoleCharacterController:
             message_id,
             history_identity,
         )
+        self._latest_built_request = request
+        return request
 
     async def _consume_character_emote_events(self) -> bool:
         """Advance the active feed and paint each eligible live beat in order."""
@@ -351,9 +378,25 @@ class ConsoleCharacterController:
         return painted
 
     def _request_is_current(self, request: AvatarRequest) -> bool:
-        return self._current_request() == request and self._is_mounted()
+        """Race fence: is ``request`` still the newest built avatar request?
+
+        TASK-22204: compares against the most recently built request instead
+        of re-entering `_current_request` (which re-copied the whole
+        transcript per check -- 4-6 copies per repainting 0.2 s tick).
+        Freshness is tick-bound: the sync tick rebuilds
+        `_latest_built_request` on every pass, so an in-flight paint made
+        stale by a world change is fenced by the first rebuild that observes
+        it (at most one tick later, immediately for every forced refresh).
+        The mounted check keeps teardown paints out unchanged.
+        """
+        return request == self._latest_built_request and self._is_mounted()
 
     def _invalidate_actor(self, actor_kind: str, actor_id: str) -> None:
+        # TASK-22204: the actor's cached identities are no longer
+        # trustworthy, so neither is any paint still in flight -- drop the
+        # fence baseline; the forced refresh that always follows this call
+        # rebuilds it and repaints fresh.
+        self._latest_built_request = None
         actor_tokens = (f"actor_kind={actor_kind}", f"actor_id={actor_id}")
 
         def belongs_to_actor(identity: tuple[str, ...]) -> bool:
@@ -440,6 +483,10 @@ class ConsoleCharacterController:
             self._active_character_avatar_name = None
             self._last_console_avatar_scope = None
             self._last_console_avatar_request_key = None
+            # TASK-22204: this early return never rebuilds the request, so
+            # drop the fence baseline explicitly -- any paint still in flight
+            # from before the avatar was hidden must fail its fence check.
+            self._latest_built_request = None
             return
 
         request = self._current_request()

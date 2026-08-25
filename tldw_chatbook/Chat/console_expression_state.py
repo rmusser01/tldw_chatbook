@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
@@ -50,6 +51,7 @@ def resolve_console_expression_selection(
     react_enabled: bool,
     explicit_message_id: str | None = None,
     explicit_state: str | None = None,
+    messages: Sequence[Any] | None = None,
 ) -> ConsoleExpressionSelection:
     """Return the operational, live-explicit, or final historical selection.
 
@@ -59,6 +61,12 @@ def resolve_console_expression_selection(
         react_enabled: Whether automatic character reactions are enabled.
         explicit_message_id: Streaming message associated with an explicit event.
         explicit_state: Most recent normalized explicit state for that message.
+        messages: Optional pre-fetched transcript snapshot for
+            ``active_session_id``. When provided, the store is not consulted:
+            ``messages_for_session`` replace-copies every message per call, so
+            a caller resolving more than once per tick fetches one snapshot
+            and shares it (TASK-22204). ``None`` keeps the fetch-and-fail-soft
+            behavior.
 
     Returns:
         The precedence-resolved selection before manual display overrides.
@@ -67,10 +75,11 @@ def resolve_console_expression_selection(
     idle = ConsoleExpressionSelection("idle", "idle")
     if not react_enabled or active_session_id is None or store is None:
         return idle
-    try:
-        messages = store.messages_for_session(active_session_id)
-    except Exception:
-        return idle
+    if messages is None:
+        try:
+            messages = store.messages_for_session(active_session_id)
+        except Exception:
+            return idle
     for message in reversed(messages):
         if getattr(message, "role", None) is not ConsoleMessageRole.ASSISTANT:
             continue
@@ -115,11 +124,24 @@ def resolve_console_expression_state(
     active_session_id,
     *,
     react_enabled: bool,
+    messages: Sequence[Any] | None = None,
 ) -> str:
-    """Return the legacy state string for callers without live-event context."""
+    """Return the legacy state string for callers without live-event context.
+
+    Args:
+        store: Console chat store that owns the session messages.
+        active_session_id: Session whose latest assistant message controls state.
+        react_enabled: Whether automatic character reactions are enabled.
+        messages: Optional pre-fetched transcript snapshot, forwarded to
+            :func:`resolve_console_expression_selection` (TASK-22204).
+
+    Returns:
+        The resolved expression state string.
+    """
 
     return resolve_console_expression_selection(
         store,
         active_session_id,
         react_enabled=react_enabled,
+        messages=messages,
     ).state
