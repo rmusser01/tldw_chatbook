@@ -3,6 +3,7 @@
 #
 # Imports
 import logging
+import re
 import threading
 import sqlite3  # For exception handling in _get_db
 import time
@@ -40,9 +41,10 @@ _RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
 
 
 def _is_internal_research_keyword(row: Any) -> bool:
-    return isinstance(row, dict) and str(row.get("keyword") or "").startswith(
-        _RESEARCH_RECEIPT_PROOF_PREFIX
-    )
+    return isinstance(row, dict) and re.fullmatch(
+        rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
+        str(row.get("keyword") or ""),
+    ) is not None
 
 
 class NotesInteropService:
@@ -835,17 +837,6 @@ class NotesInteropService:
         db = self._get_db(user_id)
         row = db.get_keyword_by_text(keyword_text=keyword_text)
         return None if _is_internal_research_keyword(row) else row
-
-    def get_internal_keyword_by_text(
-        self, user_id: str, keyword_text: str
-    ) -> Optional[Dict[str, Any]]:
-        """Resolve a recovery marker solely for receipt keyword synchronization."""
-
-        if not isinstance(keyword_text, str) or not keyword_text.startswith(
-            _RESEARCH_RECEIPT_PROOF_PREFIX
-        ):
-            raise ValueError("Only internal Research receipt keywords may be read.")
-        return self._get_db(user_id).get_keyword_by_text(keyword_text=keyword_text)
 
     def list_keywords(
         self, user_id: str, limit: int = 100, offset: int = 0

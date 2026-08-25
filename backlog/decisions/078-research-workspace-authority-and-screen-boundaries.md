@@ -174,13 +174,15 @@ commit. Restart promotion requires the exact qualified receipt plus its private
 proof and canonical owner invariants, except that a `projection_committed`
 receipt may resume after its proof has already been removed.
 
-The genuine Notes v42→v43 migration backfills only canonical historical
-receipt-proof keyword links into the private table, removes their keyword and
-note-keyword sync-log payloads, then deletes every reserved proof keyword in the
-same version-guarded transaction. New writes never create an ordinary proof
-keyword. Library keyword reads, sync/export, list/search, graphs, RAG tag
-batches, Research tags, Notes bodies, and logs therefore cannot observe the
-proof; legacy keyword filtering remains defense in depth during migration.
+The genuine Notes v42→v43 migration recognizes only the exact historical marker
+shape: the case-sensitive `research-receipt-proof:` prefix followed by exactly
+64 lowercase hexadecimal characters. It backfills those linked proofs into the
+private table and removes only their keyword and note-keyword sync payloads and
+rows in the same version-guarded transaction. Prefix-adjacent user tags,
+including uppercase, non-hexadecimal, shorter, and longer values, retain their
+rows, links, sync history, and ordinary Library visibility. New writes never
+create an internal proof keyword, so Notes bodies, sync/export, list/search,
+graphs, RAG, Research tags, and logs cannot observe an owner proof.
 
 A pending create carries a short durable work lease and revision fence.
 Reconciliation does not inspect or clear it while the lease is live. Lease

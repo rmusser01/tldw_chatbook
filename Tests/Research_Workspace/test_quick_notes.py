@@ -32,6 +32,7 @@ from tldw_chatbook.Research_Workspace import (
 from tldw_chatbook.Research_Workspace.local_adapter import (
     LocalResearchWorkspaceAdapter,
 )
+from tldw_chatbook.Research_Workspace.quick_notes import split_note_keywords
 from tldw_chatbook.Research_Workspace.server_adapter import (
     ServerResearchWorkspaceAdapter,
 )
@@ -51,6 +52,39 @@ SERVER_REF = QualifiedWorkspaceRef(
         "credential-fingerprint:test:" + hashlib.sha256(b"test-token").hexdigest()[:24]
     ),
 )
+
+
+@pytest.mark.parametrize(
+    "ordinary_tag",
+    (
+        "Research-receipt-proof:" + "d" * 64,
+        "research-receipt-proof:" + "E" * 64,
+        "research-receipt-proof:" + "f" * 63,
+        "research-receipt-proof:" + "1" * 65,
+        "research-receipt-proof:" + "2" * 63 + "g",
+        "research-receipt-proof:project-alpha",
+    ),
+)
+def test_near_proof_prefix_is_an_ordinary_research_note_tag(ordinary_tag: str) -> None:
+    request = ResearchNoteSaveRequest(
+        title="Near prefix",
+        content="Body",
+        tags=(ordinary_tag,),
+        operation_id=VALID_OPERATION_TOKEN,
+    )
+
+    assert request.tags == (ordinary_tag,)
+    assert split_note_keywords([ordinary_tag]) == ((ordinary_tag,), (), ())
+
+
+def test_exact_legacy_proof_shape_remains_reserved() -> None:
+    with pytest.raises(ValueError, match="reserved provenance"):
+        ResearchNoteSaveRequest(
+            title="Exact proof",
+            content="Body",
+            tags=("research-receipt-proof:" + "a" * 64,),
+            operation_id=VALID_OPERATION_TOKEN,
+        )
 
 
 class RecordingRegistry:

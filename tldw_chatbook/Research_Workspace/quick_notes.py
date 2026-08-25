@@ -245,9 +245,15 @@ def _bounded_values(
 
 
 def _is_provenance_keyword(value: str) -> bool:
-    return value.startswith(_RECEIPT_PROOF_PREFIX) or any(
+    return _is_legacy_receipt_proof_keyword(value) or any(
         value.startswith(prefix) for prefix in _PROVENANCE_PREFIXES.values()
     )
+
+
+def _is_legacy_receipt_proof_keyword(value: str) -> bool:
+    return re.fullmatch(
+        rf"{re.escape(_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}", value
+    ) is not None
 
 
 def encode_note_keywords(request: ResearchNoteSaveRequest) -> list[str]:
@@ -291,7 +297,7 @@ def split_note_keywords(
             )
             if decoded:
                 sources.append(decoded)
-        elif value.startswith(_RECEIPT_PROOF_PREFIX):
+        elif _is_legacy_receipt_proof_keyword(value):
             continue
         elif value and len(value) <= 200:
             tags.append(value)

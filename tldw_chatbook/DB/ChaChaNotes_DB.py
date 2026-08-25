@@ -2961,12 +2961,13 @@ SELECT nk.note_id,
        substr(k.keyword, length('research-receipt-proof:') + 1)
   FROM note_keywords AS nk
   JOIN keywords AS k ON k.id = nk.keyword_id
- WHERE k.keyword LIKE 'research-receipt-proof:%'
-   AND length(substr(k.keyword, length('research-receipt-proof:') + 1)) = 64
-   AND substr(k.keyword, length('research-receipt-proof:') + 1)
-       = lower(substr(k.keyword, length('research-receipt-proof:') + 1))
-   AND substr(k.keyword, length('research-receipt-proof:') + 1)
-       NOT GLOB '*[^0-9a-f]*';
+ WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+   AND substr(k.keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(k.keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
 """
     _MIGRATE_V42_TO_V43_PURGE_LINK_LOG_SQL = """
 DELETE FROM sync_log
@@ -2974,7 +2975,13 @@ DELETE FROM sync_log
    AND EXISTS (
        SELECT 1
          FROM keywords AS k
-        WHERE k.keyword LIKE 'research-receipt-proof:%'
+        WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+          AND substr(k.keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(k.keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
           AND CAST(json_extract(sync_log.payload, '$.keyword_id') AS INTEGER) = k.id
    );
 """
@@ -2984,11 +2991,24 @@ DELETE FROM sync_log
    AND entity_id IN (
        SELECT CAST(id AS TEXT)
          FROM keywords
-        WHERE keyword LIKE 'research-receipt-proof:%'
+        WHERE length(keyword) = length('research-receipt-proof:') + 64
+          AND substr(keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
    );
 """
     _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL = """
-DELETE FROM keywords WHERE keyword LIKE 'research-receipt-proof:%';
+DELETE FROM keywords
+ WHERE length(keyword) = length('research-receipt-proof:') + 64
+   AND substr(keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
 """
     _MIGRATE_V42_TO_V43_SQL = (
         _MIGRATE_V42_TO_V43_CREATE_SQL
@@ -5986,8 +6006,13 @@ UPDATE db_schema_version
                       FROM research_quick_note_owner_proofs AS p
                       JOIN note_keywords AS nk ON nk.note_id = p.note_id
                       JOIN keywords AS k ON k.id = nk.keyword_id
-                     WHERE k.keyword LIKE 'research-receipt-proof:%'
-                       AND length(substr(k.keyword, length('research-receipt-proof:') + 1)) = 64
+                     WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+                       AND substr(k.keyword, 1, length('research-receipt-proof:'))
+                           = 'research-receipt-proof:' COLLATE BINARY
+                       AND trim(
+                           substr(k.keyword, length('research-receipt-proof:') + 1),
+                           '0123456789abcdef'
+                       ) = ''
                        AND p.owner_proof <> substr(
                            k.keyword, length('research-receipt-proof:') + 1
                        )
@@ -13577,11 +13602,10 @@ UPDATE db_schema_version
             """
             SELECT * FROM keywords
             WHERE deleted = 0
-              AND keyword NOT LIKE ?
             ORDER BY keyword COLLATE NOCASE
             LIMIT ? OFFSET ?
             """,
-            ("research-receipt-proof:%", limit, offset),
+            (limit, offset),
             redact_params=True,
         )
         return [dict(row) for row in cursor.fetchall()]
@@ -13640,11 +13664,19 @@ UPDATE db_schema_version
             FROM keywords_fts fts
             JOIN keywords main ON fts.rowid = main.id
             WHERE fts.keyword MATCH ? AND main.deleted = 0
-              AND main.keyword NOT LIKE ?
+              AND NOT (
+                  length(main.keyword) = length('research-receipt-proof:') + 64
+                  AND substr(main.keyword, 1, length('research-receipt-proof:'))
+                      = 'research-receipt-proof:' COLLATE BINARY
+                  AND trim(
+                      substr(main.keyword, length('research-receipt-proof:') + 1),
+                      '0123456789abcdef'
+                  ) = ''
+              )
             ORDER BY rank
             LIMIT ?
             """,
-            (match_expression, "research-receipt-proof:%", limit),
+            (match_expression, limit),
             redact_params=True,
         )
         return [dict(row) for row in cursor.fetchall()]
@@ -14017,7 +14049,6 @@ UPDATE db_schema_version
             FROM note_keywords nk
             JOIN keywords k ON nk.keyword_id = k.id
             WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
-              AND k.keyword NOT LIKE 'research-receipt-proof:%'
             ORDER BY k.keyword COLLATE NOCASE
         """
         cursor = conn.execute(query, tuple(note_ids))
@@ -14119,7 +14150,6 @@ UPDATE db_schema_version
             "id IN (SELECT nk.note_id FROM note_keywords nk "
             "JOIN keywords k ON nk.keyword_id = k.id "
             "WHERE k.deleted = 0 "
-            "AND k.keyword NOT LIKE 'research-receipt-proof:%' "
             "AND k.keyword LIKE ? ESCAPE '\\')"
         )
 
@@ -15377,13 +15407,12 @@ UPDATE db_schema_version
                 FROM note_keywords nk
                 JOIN keywords k ON nk.keyword_id = k.id
                 WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
-                  AND k.keyword NOT LIKE ?
                 ORDER BY nk.note_id, k.keyword COLLATE NOCASE
                 """
         try:
             cursor = self.execute_query(
                 query,
-                tuple(note_ids) + ("research-receipt-proof:%",),
+                tuple(note_ids),
                 redact_params=True,
             )
             results = cursor.fetchall()

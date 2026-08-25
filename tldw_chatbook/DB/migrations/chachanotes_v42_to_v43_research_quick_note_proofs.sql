@@ -14,19 +14,26 @@ SELECT nk.note_id,
        substr(k.keyword, length('research-receipt-proof:') + 1)
   FROM note_keywords AS nk
   JOIN keywords AS k ON k.id = nk.keyword_id
- WHERE k.keyword LIKE 'research-receipt-proof:%'
-   AND length(substr(k.keyword, length('research-receipt-proof:') + 1)) = 64
-   AND substr(k.keyword, length('research-receipt-proof:') + 1)
-       = lower(substr(k.keyword, length('research-receipt-proof:') + 1))
-   AND substr(k.keyword, length('research-receipt-proof:') + 1)
-       NOT GLOB '*[^0-9a-f]*';
+ WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+   AND substr(k.keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(k.keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';
 
 DELETE FROM sync_log
  WHERE entity = 'note_keywords'
    AND EXISTS (
        SELECT 1
          FROM keywords AS k
-        WHERE k.keyword LIKE 'research-receipt-proof:%'
+        WHERE length(k.keyword) = length('research-receipt-proof:') + 64
+          AND substr(k.keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(k.keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
           AND CAST(json_extract(sync_log.payload, '$.keyword_id') AS INTEGER) = k.id
    );
 
@@ -35,7 +42,20 @@ DELETE FROM sync_log
    AND entity_id IN (
        SELECT CAST(id AS TEXT)
          FROM keywords
-        WHERE keyword LIKE 'research-receipt-proof:%'
+        WHERE length(keyword) = length('research-receipt-proof:') + 64
+          AND substr(keyword, 1, length('research-receipt-proof:'))
+              = 'research-receipt-proof:' COLLATE BINARY
+          AND trim(
+              substr(keyword, length('research-receipt-proof:') + 1),
+              '0123456789abcdef'
+          ) = ''
    );
 
-DELETE FROM keywords WHERE keyword LIKE 'research-receipt-proof:%';
+DELETE FROM keywords
+ WHERE length(keyword) = length('research-receipt-proof:') + 64
+   AND substr(keyword, 1, length('research-receipt-proof:'))
+       = 'research-receipt-proof:' COLLATE BINARY
+   AND trim(
+       substr(keyword, length('research-receipt-proof:') + 1),
+       '0123456789abcdef'
+   ) = '';

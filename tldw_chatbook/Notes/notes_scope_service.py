@@ -82,9 +82,6 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
     ),
 }
 
-_RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
-
-
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
 
@@ -743,19 +740,12 @@ class NotesScopeService:
         for keyword_key, keyword_text in requested_keyword_map.items():
             if keyword_key in existing_keyword_map:
                 continue
-            if keyword_key.startswith(_RESEARCH_RECEIPT_PROOF_PREFIX) and hasattr(
-                service, "get_internal_keyword_by_text"
-            ):
-                keyword_row = service.get_internal_keyword_by_text(
-                    user_id, keyword_key
-                )
-            else:
-                keyword_row = service.get_keyword_by_text(user_id, keyword_key)
+            keyword_row = service.get_keyword_by_text(user_id, keyword_text)
             keyword_id = (
                 keyword_row.get("id") if isinstance(keyword_row, dict) else None
             )
             if keyword_id is None:
-                keyword_id = service.add_keyword(user_id, keyword_key)
+                keyword_id = service.add_keyword(user_id, keyword_text)
             if keyword_id is not None:
                 service.link_note_to_keyword(user_id, note_id, keyword_id)
 
@@ -1801,7 +1791,7 @@ class NotesScopeService:
         user_id: Optional[str] = None,
         include_internal: bool = False,
     ) -> list[str]:
-        """Return canonical Local Note keywords, hiding owner-internal markers."""
+        """Return canonical Local Note keywords; recovery proofs are not keywords."""
 
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope != ScopeType.LOCAL_NOTE:
@@ -1818,13 +1808,7 @@ class NotesScopeService:
             for row in rows
             if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
         ]
-        if include_internal:
-            return keywords
-        return [
-            keyword
-            for keyword in keywords
-            if not keyword.startswith(_RESEARCH_RECEIPT_PROOF_PREFIX)
-        ]
+        return keywords
 
     async def has_internal_research_quick_note_owner_proof(
         self,
