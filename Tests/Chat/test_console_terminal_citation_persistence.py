@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import provider_resolution
 
 
 _MISSING = object()
@@ -219,13 +220,7 @@ class _RealDirectGateway:
         self.chunks = chunks
 
     async def resolve_for_send(self, _selection: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(
         self,
@@ -470,11 +465,22 @@ def _real_controller(
 
 
 def _real_assistant(store: ConsoleChatStore):
-    return next(
-        message
-        for message in store.messages_for_session(store.active_session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
+    """Return the session's assistant row, naming the failure when there is none.
+
+    A bare `next(...)` here raised StopIteration out of the calling coroutine,
+    which Python re-raises as `RuntimeError: coroutine raised StopIteration` --
+    a message that names neither the store, the session, nor the fact that the
+    send produced no assistant row at all.
+    """
+    messages = list(store.messages_for_session(store.active_session_id))
+    assistant = next(
+        (m for m in messages if m.role is ConsoleMessageRole.ASSISTANT), None
     )
+    assert assistant is not None, (
+        "the send produced no ASSISTANT row; the session holds "
+        f"{[(m.role.value, m.content[:24]) for m in messages]}"
+    )
+    return assistant
 
 
 def _citation_row_counts(db: CharactersRAGDB) -> dict[str, int]:

@@ -9180,6 +9180,34 @@ class ConsoleChatStore:
             current = self._native_parent_by_message.get(current)
         return None
 
+    def durable_parent_for_message(self, message_id: str) -> str | None:
+        """Resolve the persisted parent one durable write should thread.
+
+        The dispatch checkpoint path used to read ``message.parent_message_id``
+        directly, but that field is the *persisted* parent id and is assigned
+        only by :meth:`_persist_new_message`. A ``persist=False`` optimistic
+        echo has not been through that method, so the field is always ``None``
+        and every checkpointed turn was written as a fresh DB root -- forking
+        the conversation away from its own history.
+
+        Args:
+            message_id: Native id of the message about to be persisted.
+
+        Returns:
+            The nearest PERSISTED ancestor's persisted id -- non-persisted
+            mid-chain nodes are skipped, matching :meth:`_persist_new_message`
+            -- or ``None`` when nothing above it is durable, which is the
+            documented "true persisted root" answer rather than an error.
+        """
+
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            return None
+        message = self._nodes_by_session.get(session_id, {}).get(message_id)
+        if message is None:
+            return None
+        return self._nearest_persisted_ancestor_id(session_id, message)
+
     def _persist_new_message(
         self,
         *,

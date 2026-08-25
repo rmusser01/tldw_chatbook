@@ -17,6 +17,8 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 
 from Tests.Chat.conftest import StreamingGateway
+from Tests.console_provider_doubles import provider_resolution
+from Tests.console_provider_doubles import persisted_console_store
 
 
 # `controller_with_two_sessions` (and its `StreamingGateway` provider stub)
@@ -217,7 +219,7 @@ def test_cap_refusal_truncates_and_k_more_suffix():
     )
     from Tests.Chat.conftest import StreamingGateway
 
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
     # Create 5 sessions: 4 to make busy, 1 to test from
@@ -444,17 +446,13 @@ class TwoStreamGateway:
         self.release = {"a": asyncio.Event(), "b": asyncio.Event()}
 
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(
+                   ready=True,
+                   provider="llama_cpp",
+                   model="test-model",
+                   base_url="http://127.0.0.1:9099",
+                   visible_copy="",
+               )
 
     @staticmethod
     def _key_for(messages: list[dict]) -> str:
@@ -500,7 +498,7 @@ async def test_stopping_one_session_does_not_truncate_a_concurrent_untouched_ses
     the fix (Critical 1) had to stop being read by an unrelated run's
     loop.
     """
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = TwoStreamGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
@@ -567,7 +565,7 @@ async def test_submit_draft_targets_dispatched_session_not_active_session_at_exe
     the write; session B (the one merely being *viewed*) must stay
     untouched.
     """
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = StreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
@@ -597,7 +595,7 @@ async def test_submit_draft_session_id_none_preserves_active_session_bootstrap()
     accidentally broke the "no session exists yet" bootstrap path (which
     ``store.ensure_session()`` -- not a session lookup -- must still
     handle)."""
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = StreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     assert store.active_session_id is None
@@ -626,7 +624,7 @@ async def test_submit_draft_closed_session_id_fails_closed_without_touching_acti
     ``test_close_streaming_session_stops_run_without_key_error`` in
     test_console_chat_controller.py, which pins that generic copy
     unchanged for a MID-RUN close)."""
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     gateway = StreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
@@ -663,7 +661,7 @@ async def test_finalize_agent_success_citation_repair_keyerror_stamps_owning_ses
     ``KeyError`` (the message's session vanished mid-run), while a
     DIFFERENT, untouched session B is the one currently active.
     """
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
     session_a = store.ensure_session(title="A")

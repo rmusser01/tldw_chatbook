@@ -50,6 +50,8 @@ from Tests.Chat.test_console_agent_bridge import (
     _run,
 )
 from Tests.Chat.test_fleet_attention import _AppStub
+from Tests.console_provider_doubles import provider_resolution
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat import console_fleet_wake
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
@@ -122,13 +124,7 @@ class _RecordingWakeGateway:
         self.on_stream: object | None = None
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            ready=self.ready,
-            provider="llama_cpp",
-            model="test-model",
-            base_url=None,
-            visible_copy="" if self.ready else "WIP: provider warming up",
-        )
+        return provider_resolution(ready=self.ready)
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append([dict(m) for m in messages])
@@ -209,7 +205,14 @@ def _controller_rig(tmp_path, *, session_title="Research"):
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     app = _AppStub(chacha)
     runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
+    # Wire the real ChaChaNotes DB this rig already opens into the store, as
+    # production does (`ConsoleRuntime.ensure_chat_store`). A bare store has
+    # `persistence is None`, and since `a26cdafd8` a MANUAL or QUEUED send on a
+    # non-ephemeral session is refused with "Durable turn acceptance is
+    # unavailable". Wake turns are exempt (`durable_turn` covers only MANUAL and
+    # QUEUED), which is why this file's own tests never noticed -- but
+    # `test_console_viewless_hooks` imports this rig and does MANUAL sends.
+    store = ConsoleChatStore(persistence=ChatPersistenceService(chacha))
     session = store.ensure_session(title=session_title)
     gateway = _RecordingWakeGateway()
     bridge = _FakeWakeBridge(runs_db)

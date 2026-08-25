@@ -39,6 +39,7 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
     ConsoleRewindChoice,
     ConsoleRewindModal,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
@@ -68,6 +69,7 @@ async def _seed_u1_a1_u2_a2(console):
 @pytest.mark.asyncio
 async def test_restore_mid_path_truncates_active_path_and_refills_composer():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -92,6 +94,7 @@ async def test_restore_mid_path_truncates_active_path_and_refills_composer():
 @pytest.mark.asyncio
 async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -117,6 +120,7 @@ async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path():
 @pytest.mark.asyncio
 async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -154,6 +158,7 @@ async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
 @pytest.mark.asyncio
 async def test_none_choice_just_refocuses_composer_without_mutation():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -179,6 +184,7 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
     the exclusive per-session ``console-run-{session_id}`` worker group (see
     the parallel-agents spec Sec3) and never does tree surgery."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -220,6 +226,7 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
 async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
     """A summarize refuses (no worker) while a run streams, like restore does."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -261,6 +268,7 @@ async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
 @pytest.mark.asyncio
 async def test_console_command_rewind_notifies_when_no_prompts_yet():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -288,6 +296,7 @@ async def test_restore_refills_composer_with_full_prompt_not_truncated_preview()
     prompt over the preview's `max_length` silently clipped the re-edit.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     long_prompt = "A" * 120
@@ -329,6 +338,7 @@ async def test_restore_to_a_stale_message_id_makes_no_mutation_and_notifies():
     task adds, so this documents that guard still holds.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -372,6 +382,7 @@ async def test_restore_choice_guards_against_changed_active_session():
     instead of mutating the now-different active session's tree.
     """
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -416,6 +427,7 @@ async def test_summarize_choice_guards_against_changed_active_session():
     """Same session-changed guard covers the summarize-up-to branch: no
     worker is dispatched and nothing is stored."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -456,6 +468,7 @@ async def test_summarize_choice_guards_against_changed_active_session():
 @pytest.mark.asyncio
 async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -478,6 +491,7 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
 @pytest.mark.asyncio
 async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -510,6 +524,7 @@ async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft(
 @pytest.mark.asyncio
 async def test_visible_send_rewind_cancel_clears_command_and_refocuses_empty_composer():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -545,6 +560,7 @@ async def test_visible_send_rewind_cancel_clears_command_and_refocuses_empty_com
 @pytest.mark.asyncio
 async def test_rewind_restore_replaces_late_keyboard_text_with_full_prompt():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
     full_prompt = "selected full prompt " + ("x" * 100)
 
@@ -583,6 +599,7 @@ async def test_rewind_restore_replaces_late_keyboard_text_with_full_prompt():
 @pytest.mark.asyncio
 async def test_rewind_no_prompts_restores_keyboard_stash_ahead_of_late_text():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
     notices: list[tuple[str, str]] = []
 
@@ -623,6 +640,7 @@ async def test_rewind_no_prompts_restores_keyboard_stash_ahead_of_late_text():
 @pytest.mark.asyncio
 async def test_rewind_with_args_keeps_restore_before_dispatch_behavior():
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -648,6 +666,7 @@ async def test_rewind_with_args_keeps_restore_before_dispatch_behavior():
 @pytest.mark.parametrize("source", ["keyboard", "visible-send"])
 async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -692,6 +711,7 @@ async def test_visible_rewind_cleanup_preserves_a_changed_composer(
     mutation, monkeypatch
 ):
     app = _build_test_app()
+    attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

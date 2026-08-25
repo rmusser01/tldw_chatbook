@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
+from Tests.console_provider_doubles import provider_resolution
 
 
 class StreamingGateway:
@@ -51,17 +52,13 @@ class StreamingGateway:
     controller's construction needs a gateway object to exist."""
 
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(
+                   ready=True,
+                   provider="llama_cpp",
+                   model="test-model",
+                   base_url="http://127.0.0.1:9099",
+                   visible_copy="",
+               )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):

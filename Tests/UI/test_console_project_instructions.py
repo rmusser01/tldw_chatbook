@@ -56,6 +56,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _ui_module():
@@ -1425,13 +1426,13 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
 
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
-            return SimpleNamespace(
-                ready=True,
-                provider=selection.provider,
-                execution_key=f"exec-{selection.provider}",
-                model=selection.explicit_model,
-                max_tokens=selection.max_tokens,
-            )
+            return provider_resolution(
+                       ready=True,
+                       provider=selection.provider,
+                       execution_key=f"exec-{selection.provider}",
+                       model=selection.explicit_model,
+                       max_tokens=selection.max_tokens,
+                   )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
@@ -1537,14 +1538,14 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
 
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
-            return SimpleNamespace(
-                ready=True,
-                provider=selection.provider,
-                execution_key=selection.provider,
-                model=selection.explicit_model or selection.configured_model,
-                max_tokens=selection.max_tokens,
-                base_url=selection.base_url,
-            )
+            return provider_resolution(
+                       ready=True,
+                       provider=selection.provider,
+                       execution_key=selection.provider,
+                       model=selection.explicit_model or selection.configured_model,
+                       max_tokens=selection.max_tokens,
+                       base_url=selection.base_url,
+                   )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(

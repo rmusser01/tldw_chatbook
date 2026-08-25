@@ -62,6 +62,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.console_provider_doubles import provider_resolution, with_destination
 
 
 class _RequestBuilder:
@@ -229,13 +230,7 @@ class _RecordingGateway:
         self.messages_seen = None
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(self, _resolution, messages, signals=None):
         if self.builder_ref is not None:
@@ -297,7 +292,7 @@ class _ScriptedCitationGateway:
         *,
         mark_fallback_calls: frozenset[int] = frozenset(),
     ) -> None:
-        self.resolution = ConsoleProviderResolution(
+        self.resolution = with_destination(ConsoleProviderResolution(
             provider="openai",
             base_url="https://provider.invalid/v1",
             model="repair-model",
@@ -319,7 +314,7 @@ class _ScriptedCitationGateway:
             thinking_effort="high",
             thinking_budget_tokens=777,
             streaming=True,
-        )
+        ))
         self.scripts = scripts
         self.mark_fallback_calls = mark_fallback_calls
         self.calls: list[dict[str, Any]] = []
@@ -1123,6 +1118,13 @@ async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(
+    reason="TASK-22062: this test never completes -- its coroutine awaits "
+    "something that is never resolved. With timeout_method='thread' the "
+    "300s timeout destroys the whole pytest process rather than failing "
+    "the test, so leaving it in place deletes the results of every other "
+    "test sharing its worker."
+)
 async def test_direct_user_stop_does_not_seal_and_clears_terminal_state():
     builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()

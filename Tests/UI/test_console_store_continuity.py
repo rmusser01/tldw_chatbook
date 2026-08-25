@@ -50,6 +50,9 @@ from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
+from tldw_chatbook.Chat.console_library_destination import (
+    resolve_console_destination,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -88,13 +91,24 @@ class _StallingWakeGateway:
         if self.stall:
             self.entered_stall.set()
             await self.release.wait()
-        return SimpleNamespace(
+        resolution = SimpleNamespace(
             ready=self.ready,
             provider="llama_cpp",
             model="test-model",
             base_url=None,
             visible_copy="" if self.ready else "WIP: provider warming up",
         )
+        if resolution.ready:
+            # TASK-21590 made the typed destination mandatory on a READY
+            # resolution: `_resolved_destination_for_context` raises
+            # ValueError without it, and the submit is refused with the
+            # generic "Provider destination is incomplete." copy. Derive it
+            # through the production classifier the real gateway uses rather
+            # than hand-building one, so this double cannot drift from it.
+            resolution.resolved_destination = resolve_console_destination(
+                resolution
+            )
+        return resolution
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append([dict(m) for m in messages])
@@ -266,8 +280,12 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
 
     # ...and only NOW let the turn finish: both wake rows land headless.
     _step("wake: releasing provider")
+    seeded_payloads = len(gateway.payloads)
     gateway.release.set()
-    assert await _settle(lambda: gateway.payloads), (
+    # Measure GROWTH, not truthiness: `_seed_console` already sent once, so
+    # `gateway.payloads` is non-empty before the wake ever starts and a bare
+    # truthiness check here can never go red.
+    assert await _settle(lambda: len(gateway.payloads) > seeded_payloads), (
         "the parked wake turn never reached the provider after the nav-away"
     )
     assert await _settle(
