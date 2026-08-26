@@ -369,7 +369,7 @@ async def test_repeated_cancellation_still_reconciles_durable_policy(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_cancelled_reconciliation_task_terminates_and_releases_reservation(
+async def test_cancelled_reconciliation_keeps_reservation_until_worker_settles(
     monkeypatch,
 ):
     controller = _new_controller()
@@ -379,13 +379,18 @@ async def test_cancelled_reconciliation_task_terminates_and_releases_reservation
     release = threading.Event()
     committed = threading.Event()
     durable = {}
+    calls = []
 
     class Repository:
         def replace(self, conversation_id, detail):
-            started.set()
-            release.wait(5)
+            calls.append(detail)
+            is_first = len(calls) == 1
+            if is_first:
+                started.set()
+                release.wait(5)
             durable[conversation_id] = detail
-            committed.set()
+            if is_first:
+                committed.set()
             return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
 
     controller._capture_policy_repository = Repository()
@@ -393,41 +398,51 @@ async def test_cancelled_reconciliation_task_terminates_and_releases_reservation
         controller_module, "runtime_capture_policy",
         lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
     )
-    real_shield = asyncio.shield
-    shield_calls = 0
+    real_create_task = asyncio.create_task
+    owned_tasks = []
 
-    async def cancel_child_once(awaitable):
-        nonlocal shield_calls
-        shield_calls += 1
-        if shield_calls == 1:
-            assert await asyncio.to_thread(started.wait, 2)
-            awaitable.cancel()
-            release.set()
-        if shield_calls > 2:
-            raise RuntimeError("cancelled child was re-polled")
-        return await real_shield(awaitable)
+    def track_owned_task(coro):
+        task = real_create_task(coro)
+        owned_tasks.append(task)
+        return task
 
-    monkeypatch.setattr(controller_module.asyncio, "shield", cancel_child_once)
+    monkeypatch.setattr(controller_module.asyncio, "create_task", track_owned_task)
     before = controller.capture_policy_snapshot(session.id)
+    mutation = real_create_task(controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.FULL,
+        expected_policy_revision=before.policy_revision,
+    ))
+    assert await asyncio.to_thread(started.wait, 2)
+    reconciliation = owned_tasks[0]
+    reconciliation.cancel()
+    await asyncio.sleep(0)
 
+    during = controller.capture_policy_snapshot(session.id)
+    newer = await controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.SAFE,
+        expected_policy_revision=during.policy_revision,
+    )
+    release.set()
     with pytest.raises(asyncio.CancelledError):
-        await controller.replace_conversation_capture_detail(
-            session.id, CaptureDetail.FULL,
-            expected_policy_revision=before.policy_revision,
-        )
-
-    assert shield_calls <= 2
+        await mutation
     assert await asyncio.to_thread(committed.wait, 2)
+
+    assert newer.status is controller_module.CapturePolicyMutationStatus.STALE
+    assert calls == [CaptureDetail.FULL]
     assert durable["conversation-1"] is CaptureDetail.FULL
     assert controller.capture_policy_snapshot(
         session.id
-    ).conversation_detail is None
+    ).conversation_detail is CaptureDetail.FULL
     current = controller.capture_policy_snapshot(session.id)
-    follow_up = controller.set_next_capture_detail(
+    follow_up = await controller.replace_conversation_capture_detail(
         session.id, CaptureDetail.SAFE,
         expected_policy_revision=current.policy_revision,
     )
     assert follow_up.status is controller_module.CapturePolicyMutationStatus.APPLIED
+    assert durable["conversation-1"] is CaptureDetail.SAFE
+    assert controller.capture_policy_snapshot(
+        session.id
+    ).conversation_detail is CaptureDetail.SAFE
 
 
 @pytest.mark.asyncio

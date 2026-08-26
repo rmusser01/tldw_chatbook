@@ -2701,23 +2701,38 @@ class ConsoleChatController:
 
         async def reconcile() -> CapturePolicyMutationResult:
             reservation_owned = True
+            reconciliation_cancelled = False
             try:
                 session_only = False
                 if (
                     has_durable_identity
                     and self._capture_policy_repository is not None
                 ):
-                    write_status = await self._run_durable_db_call(
-                        self._capture_policy_repository.replace,
-                        before.conversation_id,
-                        detail,
+                    repository_task = asyncio.create_task(
+                        self._run_durable_db_call(
+                            self._capture_policy_repository.replace,
+                            before.conversation_id,
+                            detail,
+                        )
                     )
+                    while not repository_task.done():
+                        try:
+                            await asyncio.shield(repository_task)
+                        except asyncio.CancelledError:
+                            reconciliation_cancelled = True
+                            if repository_task.cancelled():
+                                break
+                    if repository_task.cancelled():
+                        raise asyncio.CancelledError
+                    write_status = repository_task.result()
                     if (
                         write_status.status
                         is CapturePolicyWriteStatus.MISSING_CONVERSATION
                     ):
                         self.store.abandon_capture_policy_mutation(reservation)
                         reservation_owned = False
+                        if reconciliation_cancelled:
+                            raise asyncio.CancelledError
                         return CapturePolicyMutationResult(
                             CapturePolicyMutationStatus.TARGET_MISSING,
                             before,
@@ -2732,6 +2747,8 @@ class ConsoleChatController:
                 if session_only and inherited is CaptureDetail.FULL:
                     self.store.abandon_capture_policy_mutation(reservation)
                     reservation_owned = False
+                    if reconciliation_cancelled:
+                        raise asyncio.CancelledError
                     return CapturePolicyMutationResult(
                         CapturePolicyMutationStatus.FAILED,
                         before,
@@ -2747,6 +2764,8 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     reservation_owned = False
+                    if reconciliation_cancelled:
+                        raise asyncio.CancelledError
                     return CapturePolicyMutationResult(
                         CapturePolicyMutationStatus.TARGET_MISSING,
                         before,
@@ -2754,7 +2773,7 @@ class ConsoleChatController:
                         "session_closed",
                     )
                 reservation_owned = False
-                return CapturePolicyMutationResult(
+                result = CapturePolicyMutationResult(
                     CapturePolicyMutationStatus.SAFE_SESSION_ONLY
                     if session_only and has_durable_identity
                     else CapturePolicyMutationStatus.APPLIED,
@@ -2764,6 +2783,9 @@ class ConsoleChatController:
                     if session_only and has_durable_identity
                     else None,
                 )
+                if reconciliation_cancelled:
+                    raise asyncio.CancelledError
+                return result
             finally:
                 if reservation_owned:
                     try:

@@ -211,9 +211,58 @@ and closure. It was not marked Done and its acceptance checkboxes remain open.
 
 ### Commit / concerns
 
-- Fix-round commit: recorded after commit below.
+- Fix-round commit: `69c26d8001` —
+  `fix(console): bound capture reconciliation cancellation`.
 - The remaining scoped A1 finding is addressed without dependency, schema, or
   scope changes. A directly cancelled reconciliation reports cancellation and
   releases ownership even if its already-started worker thread later commits;
   it does not falsely publish an applied runtime result. Task remains **In
   Progress** for independent review.
+
+## Fix round 4
+
+### Summary
+
+- Gave the synchronous repository operation its own task, protected from
+  reconciliation cancellation by `asyncio.shield`.
+- The reconciliation owner records cancellation but retains the policy
+  reservation until the repository task has definitely settled, publishes the
+  durable result to runtime state, releases the reservation, and only then
+  propagates `CancelledError`.
+- Replaced the round-3 unsafe cancelled-child expectation with a race regression
+  that rejects a newer edit while the old worker is blocked and proves a later
+  post-settlement edit cannot be overwritten by the older write.
+
+### RED evidence
+
+- Exact cancelled-reconciliation regression: **1 failed, 19 deselected**. The
+  competing Safe mutation returned `APPLIED` instead of the required `STALE`
+  while the cancelled reconciliation's earlier Full repository worker was
+  still blocked, proving the reservation had been released prematurely.
+
+### GREEN / verification evidence
+
+- Exact cancelled-reconciliation plus repeated-outer-cancel focus: **2 passed,
+  18 deselected**.
+- Cumulative Task 2 fix focus, including the Task 1 sanitizer canaries: **14
+  passed, 317 deselected**.
+- Focused Task 1 sanitizer tests: **3 passed, 30 deselected**.
+- Exact Gate 2 command: **554 passed, 2 skipped, 0 failed** in 27.55s. The two
+  skips are the existing sandbox-denied loopback listeners.
+- Changed-file Ruff: **All checks passed**. Production `py_compile`: exit 0.
+  `git diff --check`: exit 0.
+
+### Files changed in fix round 4
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `Tests/Chat/test_console_chat_controller_exchanges.py`
+- `.superpowers/sdd/2026-08-26-console-full-semantic-capture/task-2-report.md`
+
+### Commit / concerns
+
+- Fix-round commit: pending — `fix(console): retain policy reservation through write`.
+- The round-3 worker-lifetime concern is superseded: cancellation can no longer
+  release ownership while the repository thread remains unobserved. No
+  dependency, schema, or scope change was introduced. Task remains **In
+  Progress**; it was not marked Done and its acceptance checkboxes remain open
+  for independent review and closure.
