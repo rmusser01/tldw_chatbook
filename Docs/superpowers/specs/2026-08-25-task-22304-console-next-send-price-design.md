@@ -1,9 +1,9 @@
 # TASK-22304 — Console next-send price indicator design
 
 **Status:** Approved for implementation
-**Design direction:** Approved in conversation  
-**Target:** Native Console composer send/queue action  
-**Visitor mode:** Operate  
+**Design direction:** Approved in conversation
+**Target:** Native Console composer send/queue action
+**Visitor mode:** Operate
 
 ## Context
 

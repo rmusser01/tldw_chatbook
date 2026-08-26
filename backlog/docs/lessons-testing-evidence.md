@@ -652,6 +652,19 @@ rendered region after refresh, not just its value. For dynamic Button labels,
 request a layout refresh and assert that `region.width` can contain the visible
 label; a correct reactive value does not prove that layout was recomputed.
 
+**Recurred, TASK-22304, 2026-08-26.** A screenshot exported in the same turn as
+the Console Send label changed to `Send | $` appeared to clip the dollar suffix,
+even though the production callback requested a layout refresh. After one Pilot
+pause, the button's settled region matched its declared width and the full label
+painted at both 80x24 and 160x40. The first tooltip probe also appeared blank
+because Textual's `run_test` disables tooltips unless `tooltips=True` is passed.
+
+**What to do.** For dynamic-label and tooltip evidence, let the Pilot reach a
+settled layout before capturing the frame. Enable tooltips explicitly in the test
+host, hover the production control, and assert both the control geometry and the
+mounted `#textual-tooltip` render. An immediate frame and a default-disabled
+framework feature can manufacture two different false UI regressions.
+
 ---
 
 ## Test embedded panes at their allocated width, not the terminal width
