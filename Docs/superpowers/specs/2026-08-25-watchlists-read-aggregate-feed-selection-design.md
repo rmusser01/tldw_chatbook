@@ -1,6 +1,6 @@
 # Watchlists Read Aggregate Feed Selection Design
 
-Status: Approved interactively; final feasibility revisions awaiting written-spec review
+Status: Approved
 
 Date: 2026-08-25
 
