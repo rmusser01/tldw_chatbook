@@ -17,9 +17,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
-LIBRARY_TARGET_WIDTH = 28
-LIBRARY_MIN_WIDTH = 24
-LIBRARY_MAX_WIDTH = 48
+from .library_rail_width import (
+    LIBRARY_CUSTOM_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    LIBRARY_REFERENCE_WIDTH,
+)
+
+LIBRARY_TARGET_WIDTH = LIBRARY_REFERENCE_WIDTH
+LIBRARY_MAX_WIDTH = LIBRARY_CUSTOM_MAX_WIDTH
 ITEMS_TARGET_WIDTH = 40
 ITEMS_MIN_WIDTH = 32
 ITEMS_MAX_WIDTH = 72
@@ -192,8 +197,7 @@ def resolve_adaptive_reader_layout(
                 items_open = False
                 library_width = (
                     preferences.library_width
-                    if width
-                    >= grip_width + preferences.library_width + work_min_width
+                    if width >= grip_width + preferences.library_width + work_min_width
                     else min(LIBRARY_MIN_WIDTH, max(width - grip_width, 0))
                 )
                 items_width = 0
@@ -202,8 +206,7 @@ def resolve_adaptive_reader_layout(
                 library_width = 0
                 items_width = (
                     preferences.items_width
-                    if width
-                    >= grip_width + preferences.items_width + work_min_width
+                    if width >= grip_width + preferences.items_width + work_min_width
                     else min(
                         max(profile.list_min_width, 0),
                         max(width - grip_width, 0),

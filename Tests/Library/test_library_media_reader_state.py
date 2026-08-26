@@ -28,6 +28,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     settle_failure,
     settle_success,
 )
+from tldw_chatbook.Library.library_rail_width import LIBRARY_REFERENCE_WIDTH
 
 
 def test_media_layout_public_names_remain_importable() -> None:
@@ -45,6 +46,10 @@ def test_default_preferences_are_both_open_and_fixed() -> None:
         library_width=LIBRARY_TARGET_WIDTH,
         items_width=ITEMS_TARGET_WIDTH,
     )
+
+
+def test_default_library_preference_uses_the_shared_reference_width() -> None:
+    assert LIBRARY_TARGET_WIDTH == LIBRARY_REFERENCE_WIDTH == 31
 
 
 @pytest.mark.parametrize(

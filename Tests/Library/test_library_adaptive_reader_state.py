@@ -50,21 +50,23 @@ def test_shared_normalization_matches_current_media_custom_width_behavior() -> N
         "items_width": 1,
     }
 
-    assert normalize_adaptive_reader_preferences(raw) == (
-        normalize_media_reader_preferences(raw)
-    ) == AdaptiveReaderLayoutPreferences(
-        library_open=False,
-        items_open=True,
-        custom_widths_enabled=True,
-        library_width=48,
-        items_width=32,
+    assert (
+        normalize_adaptive_reader_preferences(raw)
+        == (normalize_media_reader_preferences(raw))
+        == AdaptiveReaderLayoutPreferences(
+            library_open=False,
+            items_open=True,
+            custom_widths_enabled=True,
+            library_width=48,
+            items_width=32,
+        )
     )
 
 
 @pytest.mark.parametrize(
     ("width", "expected_geometry"),
     [
-        (160, (True, True, 28, 40, 82)),
+        (160, (True, True, 31, 40, 79)),
         (120, (False, True, 0, 56, 54)),
         (100, (False, True, 0, 46, 44)),
         (80, (False, False, 0, 0, 70)),
@@ -211,16 +213,16 @@ def test_explicit_open_priority_protects_the_requested_pane_when_possible(
 
 def test_shared_resolution_preserves_hysteresis() -> None:
     preferences = AdaptiveReaderLayoutPreferences()
-    collapsed = resolve_adaptive_reader_layout(121, preferences, MEDIA_PROFILE)
+    collapsed = resolve_adaptive_reader_layout(124, preferences, MEDIA_PROFILE)
 
     boundary = resolve_adaptive_reader_layout(
-        122,
+        125,
         preferences,
         MEDIA_PROFILE,
         previous=collapsed,
     )
     reopened = resolve_adaptive_reader_layout(
-        122 + LAYOUT_HYSTERESIS_WIDTH,
+        125 + LAYOUT_HYSTERESIS_WIDTH,
         preferences,
         MEDIA_PROFILE,
         previous=boundary,
