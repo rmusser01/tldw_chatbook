@@ -2706,11 +2706,12 @@ class ConsoleChatController:
                 self._capture_policy_repository.replace, before.conversation_id, detail
             ))
             try:
-                try:
-                    write_status = await asyncio.shield(durable_task)
-                except asyncio.CancelledError:
-                    cancelled = True
-                    write_status = await durable_task
+                while True:
+                    try:
+                        write_status = await asyncio.shield(durable_task)
+                        break
+                    except asyncio.CancelledError:
+                        cancelled = True
             except BaseException:
                 self.store.abandon_capture_policy_mutation(reservation)
                 raise
@@ -2737,12 +2738,22 @@ class ConsoleChatController:
                 True,
                 "save_failed",
             )
-        self.store.finish_capture_policy_mutation(
-            reservation,
-            session_id=session_id,
-            detail=detail,
-            save_pending=session_only and has_durable_identity,
-        )
+        try:
+            self.store.finish_capture_policy_mutation(
+                reservation,
+                session_id=session_id,
+                detail=detail,
+                save_pending=session_only and has_durable_identity,
+            )
+        except KeyError:
+            if cancelled:
+                raise asyncio.CancelledError
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.TARGET_MISSING,
+                before,
+                False,
+                "session_closed",
+            )
         result = CapturePolicyMutationResult(
             CapturePolicyMutationStatus.SAFE_SESSION_ONLY
             if session_only and has_durable_identity

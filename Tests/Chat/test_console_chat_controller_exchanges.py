@@ -324,6 +324,147 @@ async def test_conversation_policy_reservation_blocks_race_and_reconciles_cancel
     ).conversation_detail is CaptureDetail.FULL
 
 
+@pytest.mark.asyncio
+async def test_repeated_cancellation_still_reconciles_durable_policy(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    started = threading.Event()
+    release = threading.Event()
+    committed = threading.Event()
+    durable = {}
+
+    class Repository:
+        def replace(self, conversation_id, detail):
+            started.set()
+            release.wait(5)
+            durable[conversation_id] = detail
+            committed.set()
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
+
+    controller._capture_policy_repository = Repository()
+    monkeypatch.setattr(
+        controller_module, "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
+    )
+    before = controller.capture_policy_snapshot(session.id)
+    mutation = asyncio.create_task(controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.FULL,
+        expected_policy_revision=before.policy_revision,
+    ))
+    assert await asyncio.to_thread(started.wait, 2)
+
+    mutation.cancel()
+    await asyncio.sleep(0)
+    mutation.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert await asyncio.to_thread(committed.wait, 2)
+    assert durable["conversation-1"] is CaptureDetail.FULL
+    assert controller.capture_policy_snapshot(
+        session.id
+    ).conversation_detail is CaptureDetail.FULL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "origin", [ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED]
+)
+async def test_admission_consumes_exact_one_shot_during_policy_reservation(
+    monkeypatch, origin,
+):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    before = controller.capture_policy_snapshot(session.id)
+    controller.set_next_capture_detail(
+        session.id, CaptureDetail.FULL,
+        expected_policy_revision=before.policy_revision,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    class Repository:
+        def replace(self, _conversation_id, _detail):
+            started.set()
+            release.wait(5)
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
+
+    controller._capture_policy_repository = Repository()
+    monkeypatch.setattr(
+        controller_module, "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
+    )
+    armed = controller.capture_policy_snapshot(session.id)
+    mutation = asyncio.create_task(controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.SAFE,
+        expected_policy_revision=armed.policy_revision,
+    ))
+    assert await asyncio.to_thread(started.wait, 2)
+    expected_consumed_revision = controller.store.capture_policy_state(
+        session.id
+    ).next_revision
+
+    admitted = controller._admit_capture_policy(session.id, origin)
+    assert admitted.capture_detail is CaptureDetail.FULL
+    assert controller.capture_policy_snapshot(session.id).next_detail is None
+
+    release.set()
+    await mutation
+    after = controller.capture_policy_snapshot(session.id)
+    controller.set_next_capture_detail(
+        session.id, CaptureDetail.SAFE,
+        expected_policy_revision=after.policy_revision,
+    )
+    assert controller.store.consume_session_next_capture_detail(
+        session.id, expected_next_revision=expected_consumed_revision,
+    ) is False
+    assert controller.capture_policy_snapshot(
+        session.id
+    ).next_detail is CaptureDetail.SAFE
+
+
+@pytest.mark.asyncio
+async def test_session_close_during_policy_write_releases_reservation(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    session.persisted_conversation_id = "conversation-1"
+    started = threading.Event()
+    release = threading.Event()
+
+    class Repository:
+        def replace(self, _conversation_id, _detail):
+            started.set()
+            release.wait(5)
+            return CapturePolicyWriteResult(CapturePolicyWriteStatus.STORED, None)
+
+    controller._capture_policy_repository = Repository()
+    monkeypatch.setattr(
+        controller_module, "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=1),
+    )
+    before = controller.capture_policy_snapshot(session.id)
+    mutation = asyncio.create_task(controller.replace_conversation_capture_detail(
+        session.id, CaptureDetail.FULL,
+        expected_policy_revision=before.policy_revision,
+    ))
+    assert await asyncio.to_thread(started.wait, 2)
+    controller.store.close_session(session.id)
+    replacement = controller.store.ensure_session()
+    release.set()
+
+    result = await mutation
+    assert result.status is controller_module.CapturePolicyMutationStatus.TARGET_MISSING
+    current = controller.capture_policy_snapshot(replacement.id)
+    follow_up = controller.set_next_capture_detail(
+        replacement.id, CaptureDetail.SAFE,
+        expected_policy_revision=current.policy_revision,
+    )
+    assert follow_up.status is controller_module.CapturePolicyMutationStatus.APPLIED
+
+
 def test_kill_switch_disables_capture(monkeypatch):
     """Patch ``get_cli_setting`` AT THE CONTROLLER'S NAMESPACE (a from-import
     binds at import time -- patch the consumer, prove it with a call

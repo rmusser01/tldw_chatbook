@@ -122,8 +122,53 @@ and closure. It was not marked Done and its acceptance checkboxes remain open.
 
 ### Commit / concerns
 
-- Fix-round commit: `aa285db7d7` —
+- Fix-round commit: `86690344f4` —
   `fix(console): harden semantic capture policy`.
 - All seven independent findings are addressed. No dependency, schema, or
   scope deviation was introduced. Task remains **In Progress**; acceptance
   checkboxes remain open for independent review and closure.
+
+## Fix round 2
+
+### Summary
+
+- Repeated cancellation now remains independently shielded until the durable
+  repository call completes; runtime publication is synchronous before the
+  original cancellation propagates.
+- Eligible manual/queued admission may consume only the exact snapshotted
+  one-shot revision while a policy reservation is active. Other sibling policy
+  mutations remain excluded, and stale consumption cannot erase a re-arm.
+- Reserved publication releases its owned token in `finally`. A session that
+  closes during its durable write returns bounded `TARGET_MISSING` /
+  `session_closed`, and later policy edits are not stranded.
+
+### RED evidence
+
+- Round-2 focused command collected four tests and produced **4 failed**:
+  repeated cancellation left durable `full` with runtime `None`; both manual
+  and queued admissions used Full but left the slot armed; session removal
+  raised `KeyError` from `finish_capture_policy_mutation`.
+
+### GREEN / verification evidence
+
+- Round-2 focused regressions: **4 passed, 15 deselected**.
+- Round-1 plus round-2 fix-focused matrix, including the Task 1 sanitizer
+  canaries: **18 passed, 312 deselected**.
+- Exact Gate 2 command: **553 passed, 2 skipped, 0 failed** in 23.16s. The two
+  skips are the existing sandbox-denied loopback listeners.
+- Changed-file Ruff: **All checks passed**. Production `py_compile`: exit 0.
+  `git diff --check`: exit 0.
+
+### Files changed in fix round 2
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `Tests/Chat/test_console_chat_controller_exchanges.py`
+- `.superpowers/sdd/2026-08-26-console-full-semantic-capture/task-2-report.md`
+
+### Commit / concerns
+
+- Fix-round commit: recorded after commit below.
+- Both scoped re-review findings are addressed without dependency, schema, or
+  scope changes. Task remains **In Progress**; acceptance checkboxes remain
+  open for independent review and closure.

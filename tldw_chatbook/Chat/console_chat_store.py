@@ -4474,8 +4474,6 @@ class ConsoleChatStore:
         """Clear only the exact next-send slot captured by admission."""
         with self._capture_policy_lock:
             session = self._session_or_raise(session_id)
-            if self._capture_policy_mutation is not None:
-                return False
             if session.next_capture_detail_revision != expected_next_revision:
                 return False
             session.next_capture_detail = None
@@ -4572,17 +4570,19 @@ class ConsoleChatStore:
         with self._capture_policy_lock:
             if self._capture_policy_mutation is not token:
                 raise CapturePolicyStaleError
-            if session_id is not None:
-                session = self._session_or_raise(session_id)
-                session.capture_detail_override = detail
-                session.capture_policy_save_pending = bool(save_pending)
-            if disarm_next:
-                for session in self._sessions.values():
-                    if session.next_capture_detail is not None:
-                        session.next_capture_detail = None
-                        session.next_capture_detail_revision += 1
-            self._capture_policy_mutation = None
-            return self._capture_policy_revision
+            try:
+                if session_id is not None:
+                    session = self._session_or_raise(session_id)
+                    session.capture_detail_override = detail
+                    session.capture_policy_save_pending = bool(save_pending)
+                if disarm_next:
+                    for session in self._sessions.values():
+                        if session.next_capture_detail is not None:
+                            session.next_capture_detail = None
+                            session.next_capture_detail_revision += 1
+                return self._capture_policy_revision
+            finally:
+                self._capture_policy_mutation = None
 
     def abandon_capture_policy_mutation(self, token: object) -> int:
         """Release a failed reserved mutation without publishing policy state."""
