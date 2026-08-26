@@ -151,7 +151,9 @@ panes are collapsed.
 
 Default wide layout uses a bounded fractional Library width and fixed destination-list targets.
 The Library default follows the ordinary 3:13 Library-to-canvas proportion, rounded
-deterministically and clamped to 24–34 cells; its representative fallback/reset value is 31.
+deterministically as `floor((3W + 8) / 16)` from the positive adaptive-shell content width `W`
+and clamped to 24–34 cells; exact halves round upward. A zero-width pre-layout shell retains an
+all-zero effective sentinel. Its representative new/reset preference value is 31.
 Custom widths remain opt-in, normalized, and clamped to their declared 24–48 range. The geometry
 resolver distinguishes:
 
@@ -412,7 +414,7 @@ Each PR includes a focused live TUI walkthrough at approximately:
 
 | Terminal | Required checks |
 | --- | --- |
-| 160x50 | All three roles, fixed defaults, list comfort expansion after Library collapse |
+| 160x50 | All three roles, bounded Library default, list comfort expansion after Library collapse |
 | 120x35 | Library-responsive collapse, full list details, usable work mode |
 | 100x30 | deterministic one/two-pane effective state and compact mode control |
 | 80x24 | permanent work pane, both restore controls, no compositor overflow |

@@ -29,18 +29,29 @@ destination widths. Existing Media Library values are a compatibility fallback u
 section is explicitly saved. Grips persist open/collapsed choices only; custom widths are changed
 through Settings rather than by turning the grips into drag handles.
 
-The default expanded Library width is one shared bounded-fractional policy. It follows the
-ordinary Library workbench's 3:13 Library-to-canvas proportion, rounded deterministically to a
-whole cell and clamped to 24–34 cells. Ordinary destinations retain native Textual fractional
-allocation; adaptive readers project the same policy to the exact cell width required by their
-pure resolver. At the same settled shell width, the two adapters may differ by at most one cell.
-The representative fallback/reset value is 31 cells.
+The default Library width when displayed alongside content is one shared bounded-fractional
+policy. For positive Library-shell content width `W`, it follows the ordinary workbench's 3:13
+Library-to-canvas proportion as `floor((3W + 8) / 16)` (exact halves round upward), clamped to
+24–34 cells. Ordinary destinations retain native Textual fractional allocation; adaptive readers
+project the same policy from `LibraryAdaptiveReaderShell.content_region.width` to the exact cell
+width required by their pure resolver. At the same settled shell width, the two adapters may
+differ by at most one cell. A zero-width pre-layout state remains an all-zero effective sentinel;
+31 is the representative new/reset preference value, not zero-width geometry.
 
 The existing custom-width opt-in remains distinct from the default bound. When enabled, an
-explicit 24–48-cell Library width applies to ordinary and adaptive destinations whenever responsive
-layout can fit it. Values above 34 are deliberate overrides and are not normalized down to the
-default ceiling. Auto-collapse, extreme-width compression, and ordinary compact rail-only or
-canvas-only takeovers remain transient effective states and never rewrite the requested width.
+explicit 24–48-cell Library width applies to ordinary and adaptive destinations whenever the rail
+is displayed alongside content and responsive layout can fit it. Values above 34 are deliberate
+overrides and are not normalized down to the default ceiling. Existing stored 28 values are not
+migrated: they remain dormant while custom mode is off and become active if custom mode is later
+enabled; new/reset preferences use 31. Auto-collapse, extreme-width compression, and ordinary
+compact rail-only or canvas-only takeovers remain transient effective states and never rewrite the
+requested width.
+
+`LibraryScreen` owns the shared normalized preference snapshot and effective ordinary state.
+`LibraryRail` owns the reversible style transition: bounded `3fr` while alongside content with
+custom mode off, exact 24–48 cells while alongside content with custom mode on, fill while rail-only,
+and hidden under existing collapse/canvas-only contracts. Wide recovery restores the applicable
+bounded or custom declaration. Adaptive shells continue to own exact effective cell geometry.
 
 `LibraryScreen` remains the orchestration owner under the existing compose-once and scoped canvas
 replacement contracts. Concrete destination list and work widgets remain destination-owned and
