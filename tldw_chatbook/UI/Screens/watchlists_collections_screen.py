@@ -9978,11 +9978,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 raise TypeError("Reader item service returned an invalid page")
             if not self._items_request_is_current(generation, query_key):
                 return False
-            first_page_rows = list(page.items)
+            backend_rows = list(page.items)
+            first_page_rows = backend_rows
+            displaced_rows: list[dict[str, Any]] = []
             if reason in {"filter", "search"}:
                 first_page_rows = self._with_open_item(
                     first_page_rows, max_items=_ITEMS_PAGE_SIZE
                 )
+                visible_ids = {str(row.get("id") or "") for row in first_page_rows}
+                displaced_rows = [
+                    row
+                    for row in backend_rows
+                    if str(row.get("id") or "") not in visible_ids
+                ]
                 page = WatchlistItemPage(
                     items=tuple(first_page_rows),
                     has_more=page.has_more,
@@ -9991,6 +9999,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     next_cursor=page.next_cursor,
                 )
             candidate = ReaderItemSnapshot.start(query, page)
+            if displaced_rows:
+                candidate, _ = candidate.with_continuation(
+                    WatchlistItemPage(
+                        items=tuple(displaced_rows),
+                        has_more=page.has_more,
+                        snapshot_max_item_id=page.snapshot_max_item_id,
+                        snapshot_count=None,
+                        next_cursor=page.next_cursor,
+                    )
+                )
             rows = list(candidate.page(0))
 
             def commit() -> None:
@@ -10194,6 +10212,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         async with self._items_page_presentation_lock:
             snapshot = self._items_snapshot
+            selection_generation = self._items_snapshot_generation
             selection_page_key = (
                 snapshot.query.context_key if snapshot is not None else None
             )
@@ -10205,26 +10224,38 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # once a background fetch lands -- exactly the recompose-storm
         # shape this whole audit exists to remove from this screen.
         await self._load_item_content(event.item)
-        self._select_entity(event.item)
-        # Route to the reader (Task 4), independent of `_select_entity`'s
-        # generic Inspector reconciliation above: Sources/Runs/Rules also
-        # flow through `_select_entity`, and none of those dicts carry
-        # `content_kind`/`content` -- pushing them into `ContentPane` would
-        # render `render_for`'s article-fallback over the WRONG entity's
-        # fields instead of leaving the reader showing the last real item.
-        # Held on the screen (`_selected_content_item`), not just pushed to
-        # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
-        # `ContentPane` the same way `_build_inspector_pane` re-seeds
-        # `selected_entity` — see that seeding note above.
-        self._selected_content_item = event.item
-        self._selected_content_page_key = selection_page_key
-        try:
-            content = self.query_one("#watchlists-content-pane", ContentPane)
-            content.item = event.item
-            content.position = self._reader_position_text()
-        except NoMatches:
-            pass
-        self._mark_item_read_on_open(event.item)
+        async with self._items_page_presentation_lock:
+            current_snapshot = self._items_snapshot
+            current_page_key = (
+                current_snapshot.query.context_key
+                if current_snapshot is not None
+                else None
+            )
+            if (
+                selection_generation != self._items_snapshot_generation
+                or selection_page_key != current_page_key
+            ):
+                return
+            self._select_entity(event.item)
+            # Route to the reader (Task 4), independent of `_select_entity`'s
+            # generic Inspector reconciliation above: Sources/Runs/Rules also
+            # flow through `_select_entity`, and none of those dicts carry
+            # `content_kind`/`content` -- pushing them into `ContentPane` would
+            # render `render_for`'s article-fallback over the WRONG entity's
+            # fields instead of leaving the reader showing the last real item.
+            # Held on the screen (`_selected_content_item`), not just pushed to
+            # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
+            # `ContentPane` the same way `_build_inspector_pane` re-seeds
+            # `selected_entity` — see that seeding note above.
+            self._selected_content_item = event.item
+            self._selected_content_page_key = selection_page_key
+            try:
+                content = self.query_one("#watchlists-content-pane", ContentPane)
+                content.item = event.item
+                content.position = self._reader_position_text()
+            except NoMatches:
+                pass
+            self._mark_item_read_on_open(event.item)
 
     async def _load_item_content(self, item: dict[str, Any] | None) -> None:
         """Backfill `item["content"]` from the DETAIL fetch (TASK-15464).

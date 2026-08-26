@@ -521,6 +521,44 @@ async def test_query_pin_is_cached_and_deduplicated_across_page_replay(reason):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["filter", "search"])
+async def test_full_query_pin_caches_displaced_terminal_row(reason):
+    controller = AsyncMock()
+    controller.list_reader_items_page.side_effect = [
+        _page([100], high_water=100, snapshot_count=1),
+        _page(range(50, 0, -1), high_water=100, snapshot_count=50),
+    ]
+
+    async with _open_screen(controller) as (screen, _pilot):
+        assert await screen._replace_items_snapshot(reason="initial") is True
+        screen._selected_content_item = screen._loaded_items[0]
+        if reason == "filter":
+            screen._items_status_filter = "unread"
+        else:
+            screen._items_search_query = "needle"
+
+        assert await screen._replace_items_snapshot(reason=reason) is True
+        snapshot = screen._items_snapshot
+        assert len(snapshot.page(0)) == 50
+        assert snapshot.page_count == 2
+        assert snapshot.has_next(0) is True
+        assert snapshot.cursor is None
+        assert snapshot.has_more is False
+        assert snapshot.seen_ids == frozenset({100, *range(1, 51)})
+
+        controller.list_reader_items_page.reset_mock()
+        assert await screen._load_next_items_page() is True
+        assert [row["item_id"] for row in screen._loaded_items] == [1]
+        assert sum(
+            row["item_id"] == 1
+            for page in screen._items_snapshot.pages
+            for row in page
+        ) == 1
+        assert await screen._load_next_items_page() is False
+        assert controller.list_reader_items_page.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_failed_query_replacement_keeps_committed_query_rows_and_reader():
     controller = AsyncMock()
     controller.list_reader_items_page.return_value = _page(
@@ -597,6 +635,46 @@ async def test_selection_records_committed_query_while_detail_fetch_is_pending()
 
         assert screen._selected_content_item is item
         assert screen._selected_content_page_key == committed_query.context_key
+
+
+@pytest.mark.asyncio
+async def test_detail_result_cannot_select_from_replaced_snapshot():
+    controller = AsyncMock()
+    controller.list_reader_items_page.side_effect = [
+        _page([4], high_water=4, snapshot_count=1),
+        _page([9], high_water=9, snapshot_count=1),
+    ]
+
+    async with _open_screen(controller) as (screen, pilot):
+        assert await screen._replace_items_snapshot(reason="initial") is True
+        stale_item = screen._loaded_items[0]
+        started = asyncio.Event()
+        detail: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+
+        async def pending_content(**_kwargs):
+            started.set()
+            return await detail
+
+        controller.get_item_content.side_effect = pending_content
+        screen._mark_item_read_on_open = Mock()
+        selection = asyncio.create_task(
+            screen.handle_item_selected(ItemSelected(stale_item))
+        )
+        await _wait_until(pilot, started.is_set)
+        old_snapshot = screen._items_snapshot
+        screen._items_search_query = "replacement"
+        assert await screen._replace_items_snapshot(reason="search") is True
+        assert screen._items_snapshot is not old_snapshot
+        assert [row["item_id"] for row in screen._loaded_items] == [9]
+
+        detail.set_result("Fetched stale body")
+        await selection
+
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        assert screen._selected_content_item is None
+        assert screen._selected_content_page_key is None
+        assert content.item is None
+        screen._mark_item_read_on_open.assert_not_called()
 
 
 @pytest.mark.asyncio
