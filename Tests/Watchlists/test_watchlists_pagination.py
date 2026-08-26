@@ -387,16 +387,23 @@ async def test_arrivals_use_the_committed_query_and_only_update_the_pill():
         screen._items_search_query = "Needle"
         assert await screen._replace_items_snapshot(reason="search") is True
         snapshot = screen._items_snapshot
+        committed_kwargs = snapshot.query.as_kwargs()
         rows = screen._loaded_items
         screen._items_page_index = 2
         screen._selected_content_item = rows[0]
+
+        # These are attempted, mutable controls. Arrival authority belongs to
+        # the mounted snapshot, so none of them may leak into the count query.
+        screen._items_status_filter = "all"
+        screen._items_search_query = "Different attempted search"
+        screen._pending_tree_scope = TreeScope(kind="source", source_id=999)
 
         assert await screen._refresh_items_pending_arrivals() is True
 
         controller.count_reader_item_arrivals.assert_awaited_once_with(
             runtime_backend="local",
             snapshot_max_item_id=snapshot.watermark,
-            **snapshot.query.as_kwargs(),
+            **committed_kwargs,
         )
         assert screen._items_snapshot is snapshot
         assert screen._loaded_items is rows

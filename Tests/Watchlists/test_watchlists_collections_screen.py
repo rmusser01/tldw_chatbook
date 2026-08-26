@@ -31,6 +31,7 @@ from tldw_chatbook.UI.Watchlists_Modules.article_list import (
     NextItemsPageRequested,
     PreviousItemsPageRequested,
 )
+from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsFilterChanged
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
@@ -3823,23 +3824,51 @@ async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
         screen._apply_tree_scope(TreeScope(kind="source", source_id=active))
         assert await screen._replace_items_snapshot(reason="initial") is True
         snapshot = screen._items_snapshot
-        rows = list(screen._loaded_items)
+        rows = screen._loaded_items
+        content = screen.query_one("#watchlists-content-pane", ContentPane)
+        reader_item = rows[0]
+        screen._selected_content_item = reader_item
+        content.item = reader_item
 
         db.mark_item_status(committed_id, "reviewed")
         await screen._load_tree_data().wait()
+        await pilot.pause(0.1)
         assert screen._items_pending_arrivals == 0
         assert screen._items_snapshot_count == 1
+        assert str(screen.query_one("#wl-tree-node-all", Button).label) == (
+            "All sources  0"
+        )
 
         _seed_item(db, outside, "Out of scope")
         assert await screen._refresh_items_pending_arrivals() is True
         assert screen._items_pending_arrivals == 0
 
         arrival_id = _seed_item(db, active, "Matching arrival")
-        assert await screen._refresh_items_pending_arrivals() is True
+        count_arrivals = AsyncMock(
+            wraps=screen._controller.count_reader_item_arrivals
+        )
+        screen._controller.count_reader_item_arrivals = count_arrivals
+        await screen._load_tree_data().wait()
+        await pilot.pause(0.1)
+
+        count_arrivals.assert_awaited_once_with(
+            runtime_backend="local",
+            snapshot_max_item_id=snapshot.watermark,
+            **snapshot.query.as_kwargs(),
+        )
         assert screen._items_pending_arrivals == 1
+        assert str(screen.query_one("#wl-tree-node-all", Button).label) == (
+            "All sources  2"
+        )
         assert screen._items_snapshot is snapshot
-        assert screen._loaded_items == rows
+        assert screen._loaded_items is rows
         assert screen._items_snapshot_count == 1
+        assert screen._selected_content_item is reader_item
+        assert content.item is reader_item
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert pane.new_items_note == "1 new item"
+        assert pane.snapshot_count == 1
+        assert pane.items is rows
 
         # A later status/star patch only touches rows already admitted to the
         # committed cache; it cannot smuggle this above-watermark row in.
