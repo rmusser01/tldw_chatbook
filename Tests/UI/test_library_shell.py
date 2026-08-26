@@ -4423,6 +4423,7 @@ async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
         shell = await _wait_for_selector(screen, pilot, shell_selector)
         canvas = screen.query_one("#library-canvas", Vertical)
         rail = screen.query_one("#library-rail", LibraryRail)
+        assert not screen.query_one("#library-rail-collapse", Button).display
         await _wait_for_condition(
             pilot,
             lambda: canvas.styles.width.value == shell.effective_layout.items_width,

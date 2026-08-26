@@ -12612,6 +12612,7 @@ class LibraryScreen(BaseAppScreen):
                     id="library-media-reader-shell",
                 )
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
+            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
             return
         with shell_grid:
             rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
