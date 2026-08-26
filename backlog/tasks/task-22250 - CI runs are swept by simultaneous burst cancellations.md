@@ -103,3 +103,50 @@ keeps its queue position and the newer run waits behind it, so under starvation
 both eventually run rather than one replacing the other. That is correct for
 getting verdicts but doubles runner demand for a branch under active work —
 which matters only while starvation persists.
+
+
+## Update 2026-08-26 (second) — there IS a second cancellation source
+
+The supersession finding above is correct but does not explain everything. A
+second, distinct mechanism is now documented, and it is the one the original
+title described.
+
+Measured on `fix/task-22251-findings` at head `d86e82800`, with **no newer
+commit** (local and remote both at that SHA):
+
+| workflow | timeout-minutes | job started | job cancelled | ran for |
+|---|---|---|---|---|
+| Perf Guard | 15 | 02:02:52 | 02:07:37 | 4m45s |
+| CSS Bundle Guard | none (default 360) | 02:02:51 | 02:07:38 | ~4m47s |
+| Backlog Guard | none (default 360) | 02:02:51 | 02:07:40 | ~4m49s |
+| TASK-2062.1 / .2 GGUF | — | 02:02:51 | 02:07:39-40 | ~4m48s |
+
+These were **running** jobs, killed within ~3 seconds of each other, roughly 5
+minutes in. Not supersession — nothing superseded them. Not `timeout-minutes` —
+one had 15 minutes, the others had the 6-hour default.
+
+The same shape appeared on an unrelated branch (`fix/setup-wizard-uat`, batch
+created 01:38:43): guards and GGUF cancelled, `Derived Artifacts` in progress,
+`Tests` queued. So it is systematic, not branch-specific.
+
+Also observed in the same window: 8 runs queued repo-wide for 23-40 minutes with
+**zero** in progress, then capacity returning.
+
+### What this needs from the owner
+
+The repo is public and user-owned; Actions concurrency and billing are
+**per-account**, so nothing inside this repository can identify the source.
+Worth checking, in order:
+
+- the account's concurrent-job ceiling, and what else under `rmusser01` consumes it
+- Actions spending limit / billing state (a hit limit can stop and cancel jobs)
+- whether any automation, bot, or another session calls the cancel-workflow API
+- GitHub's own status for the relevant runner pools during these windows
+
+### What is NOT the cause (ruled out with evidence)
+
+- `timeout-minutes` — one victim had 15 min, others the 6h default, all died at ~5 min
+- supersession by a later push — local and remote were the same SHA
+- the `cancel-in-progress` rule — `Derived Artifacts` and `Tests`, which are
+  push-scoped, were not hit in this burst while the blanket-rule ones were;
+  but note that is correlation observed once, not a mechanism
