@@ -140,6 +140,12 @@ from tldw_chatbook.Chat.message_metadata import (
     MessageMetadata,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingEnvelope,
+    ThinkingStatus,
+    dump_thinking_blocks_json,
+    read_thinking_blocks_json,
+)
 from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
@@ -207,6 +213,10 @@ class ConsoleDurableAcceptanceRetired(RuntimeError):
     """
 
 
+class ConsoleThinkingCompatibilityError(RuntimeError):
+    """A generation mutation would replace unreadable durable thinking."""
+
+
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
     """Represent a missing durable projection seam in an immutable plan."""
     return False
@@ -229,6 +239,18 @@ class _VariantStreamBase:
     prior_status: ConsoleMessageStatus
     prior_usage: "ProviderUsage | None" = None
     prior_metadata: MessageMetadata | None = None
+    prior_thinking: ThinkingEnvelope | None = field(default=None, repr=False)
+    prior_opaque_thinking_json: str | None = field(default=None, repr=False)
+    prior_thinking_warning: str | None = None
+    prior_thinking_actions_enabled: bool = True
+    prior_provider_continuation: ProviderContinuationCheckpoint | None = field(
+        default=None, repr=False
+    )
+    prior_provider_continuation_warning: str | None = None
+    prior_provider_continuation_remote: bool = False
+    prior_provider_continuation_message_version: int | None = None
+    prior_provider_continuation_actions_enabled: bool = True
+    prior_assistant_generation_state: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,6 +500,7 @@ class ConsoleChatPersistence(Protocol):
         usage_json: str | None = None,
         metadata_json: str | None = None,
         preserve_provider_continuation: bool = False,
+        clear_generation_provenance: bool = False,
     ) -> bool:
         """Update persisted message content.
 
@@ -496,6 +519,19 @@ class ConsoleChatPersistence(Protocol):
         ``metadata_json`` (task-2364) follows the identical contract for
         the structured metadata column.
         """
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Atomically replace one selected assistant generation."""
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
         """Persist normalized usage as a version-neutral, local-only write.
@@ -1012,7 +1048,9 @@ class ConsoleChatStore:
         )
         self.library_policy_coordinator = library_policy_coordinator
         if self.library_policy_coordinator is None and repository is not None:
-            self.library_policy_coordinator = ConsoleLibraryPolicyCoordinator(repository)
+            self.library_policy_coordinator = ConsoleLibraryPolicyCoordinator(
+                repository
+            )
         self.active_session_id: str | None = None
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
@@ -2252,6 +2290,17 @@ class ConsoleChatStore:
             raise RuntimeError("Dispatch retry assistant owner changed.")
         message.content = ""
         message.status = "pending"
+        message.thinking = None
+        message.opaque_thinking_json = None
+        message.thinking_warning = None
+        message.thinking_actions_enabled = True
+        message.usage = None
+        message.provider_continuation = None
+        message.provider_continuation_warning = None
+        message.provider_continuation_remote = False
+        message.provider_continuation_message_version = None
+        message.provider_continuation_actions_enabled = True
+        message.assistant_generation_state = None
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
         self._bump_payload_revision(session_id)
@@ -2316,6 +2365,11 @@ class ConsoleChatStore:
                             else None
                         ),
                         provider_continuation_json=provider_continuation_json,
+                        thinking_blocks_json=(
+                            dump_thinking_blocks_json(message.thinking)
+                            if message is not None
+                            else None
+                        ),
                     )
                 )
             except Exception:
@@ -2328,9 +2382,7 @@ class ConsoleChatStore:
             message.status = terminal_state
             message.assistant_generation_state = terminal_state
             message.provider_continuation = provider_continuation
-            message.provider_continuation_message_version = (
-                committed_message_version
-            )
+            message.provider_continuation_message_version = committed_message_version
             message.provider_continuation_actions_enabled = False
             self._stream_chunks_by_message.pop(message.id, None)
             self._stream_materialized_counts.pop(message.id, None)
@@ -2405,8 +2457,14 @@ class ConsoleChatStore:
             safe = read_provider_continuation_json(
                 row.get("provider_continuation_json")
             )
+            thinking = read_thinking_blocks_json(row.get("thinking_blocks_json"))
             node = by_persisted_id.get(persisted_id)
-            if node is None and (safe.checkpoint is not None or safe.warning):
+            if node is None and (
+                safe.checkpoint is not None
+                or safe.warning
+                or thinking.envelope is not None
+                or thinking.warning
+            ):
                 node = ConsoleChatMessage(
                     id=persisted_id,
                     role=ConsoleMessageRole.ASSISTANT,
@@ -2436,10 +2494,14 @@ class ConsoleChatStore:
             node.provider_continuation_message_version = (
                 version if type(version) is int else None
             )
-            node.assistant_generation_state = row.get(
-                "assistant_generation_state"
-            )
+            node.assistant_generation_state = row.get("assistant_generation_state")
             node.provider_continuation_actions_enabled = False
+            node.thinking = thinking.envelope
+            node.opaque_thinking_json = thinking.opaque_json
+            node.thinking_warning = thinking.warning
+            node.thinking_actions_enabled = (
+                thinking.generation_actions_enabled and thinking.warning is None
+            )
         return nodes
 
     def _quarantine_continuation_hydration(
@@ -2462,8 +2524,7 @@ class ConsoleChatStore:
                     assistant_message_id=current.assistant_message_id,
                     conversation_id=conversation_id,
                     visible_copy=(
-                        "Continuation recovery is unavailable; reload the "
-                        "conversation."
+                        "Continuation recovery is unavailable; reload the conversation."
                     ),
                     actions=(),
                     error_code="continuation_hydration_error",
@@ -2477,20 +2538,19 @@ class ConsoleChatStore:
     ) -> None:
         """Normalize and rebind one restored active ADR-063 owner before actions."""
         recovery = self.dispatch_recovery_for_session(session_id)
-        if recovery is None or recovery.kind is not ConsoleDispatchRecoveryKind.CONTINUATION:
+        if (
+            recovery is None
+            or recovery.kind is not ConsoleDispatchRecoveryKind.CONTINUATION
+        ):
             return
         message = self._nodes_by_session.get(session_id, {}).get(
             recovery.assistant_message_id
         )
-        repository = getattr(
-            self.persistence, "console_dispatch_repository", None
-        )
+        repository = getattr(self.persistence, "console_dispatch_repository", None)
         snapshot_reader = getattr(
             repository, "provider_continuation_owner_snapshot", None
         )
-        normalizer = getattr(
-            repository, "normalize_provider_continuation_owner", None
-        )
+        normalizer = getattr(repository, "normalize_provider_continuation_owner", None)
         if (
             message is None
             or message.provider_continuation is None
@@ -2506,9 +2566,7 @@ class ConsoleChatStore:
                 if current is recovery:
                     self._dispatch_recoveries_by_session.pop(session_id, None)
                     self._dispatch_recovery_message_baselines.pop(session_id, None)
-                    self._dispatch_recovery_queue_hydration_pending.discard(
-                        session_id
-                    )
+                    self._dispatch_recovery_queue_hydration_pending.discard(session_id)
             return
         original = message.provider_continuation
         original_json = dump_provider_continuation_json(original)
@@ -2978,9 +3036,7 @@ class ConsoleChatStore:
             raise TypeError("preparation must be ConsoleTurnPreparation")
         self._session_or_raise(preparation.session_id)
         with self._preparation_lock:
-            existing_owner = self._preparations_by_id.get(
-                preparation.preparation_id
-            )
+            existing_owner = self._preparations_by_id.get(preparation.preparation_id)
             if existing_owner is not None:
                 return existing_owner if existing_owner is preparation else None
             if preparation.preparation_id in self._durable_tombstones:
@@ -3005,9 +3061,7 @@ class ConsoleChatStore:
         with self._preparation_lock:
             return self._preparations_by_session.get(session_id)
 
-    def preparation_by_id(
-        self, preparation_id: str
-    ) -> ConsoleTurnPreparation | None:
+    def preparation_by_id(self, preparation_id: str) -> ConsoleTurnPreparation | None:
         """Return one exact volatile owner, including during session teardown."""
 
         if not isinstance(preparation_id, str) or not preparation_id:
@@ -3191,10 +3245,7 @@ class ConsoleChatStore:
             return session.library_policy_holder.snapshot
         result = await coordinator.load(session_id, conversation_id)
         current = self._sessions.get(session_id)
-        if (
-            current is session
-            and current.persisted_conversation_id == conversation_id
-        ):
+        if current is session and current.persisted_conversation_id == conversation_id:
             current.library_policy_hydrated = True
         return result.snapshot
 
@@ -3221,10 +3272,7 @@ class ConsoleChatStore:
             )
             return False
         current = self._sessions.get(session_id)
-        if (
-            current is not None
-            and current.persisted_conversation_id == conversation_id
-        ):
+        if current is not None and current.persisted_conversation_id == conversation_id:
             self._pending_workspace_projections.pop(session_id, None)
         return True
 
@@ -4073,7 +4121,9 @@ class ConsoleChatStore:
             self._durable_fingerprint_by_preparation.pop(preparation_id, None)
             self._durable_commit_in_flight.pop(preparation_id, None)
             self._durable_effects_in_flight = {
-                key for key in self._durable_effects_in_flight if key[0] != preparation_id
+                key
+                for key in self._durable_effects_in_flight
+                if key[0] != preparation_id
             }
             self._durable_tombstones.pop(preparation_id, None)
             self._durable_tombstones[preparation_id] = _ConsoleDurableTombstone(
@@ -5149,9 +5199,7 @@ class ConsoleChatStore:
         self._activate_session(None)
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
-                self.library_policy_coordinator.unregister_holder(
-                    replaced_session_id
-                )
+                self.library_policy_coordinator.unregister_holder(replaced_session_id)
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -6245,6 +6293,15 @@ class ConsoleChatStore:
             raise ValueError("Wait for response to finish before editing this message.")
         session_id = self._message_session_index[message.id]
         previous_content = message.content
+        if (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and content != previous_content
+            and not message.thinking_actions_enabled
+        ):
+            raise ConsoleThinkingCompatibilityError(
+                "This conversation contains a newer thinking format; "
+                "upgrade before editing it."
+            )
         descendant_ids = self._subtree_ids(session_id, message.id)[1:]
         on_active_path = self._message_is_on_active_path(message.id)
         provenance_cleared = (
@@ -6267,8 +6324,30 @@ class ConsoleChatStore:
             message.variants.variants[selected_index] = replace(
                 message.variants.variants[selected_index],
                 content=content,
+                thinking=None,
+                opaque_thinking_json=None,
+                thinking_warning=None,
+                thinking_actions_enabled=True,
+                provider_continuation=None,
+                provider_continuation_warning=None,
+                provider_continuation_remote=False,
+                provider_continuation_message_version=None,
+                provider_continuation_actions_enabled=True,
             )
-            message.content = message.variants.current.content
+            self._apply_generation_variant(message, message.variants.current)
+        generation_cleared = (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and message.content != previous_content
+        )
+        if generation_cleared:
+            message.thinking = None
+            message.opaque_thinking_json = None
+            message.thinking_warning = None
+            message.provider_continuation = None
+            message.provider_continuation_warning = None
+            message.provider_continuation_remote = False
+            message.provider_continuation_message_version = None
+            message.provider_continuation_actions_enabled = True
         self._bump_message_speech_revision(message.id)
         if provenance_cleared:
             self._bump_identity_revision(session_id)
@@ -6277,7 +6356,9 @@ class ConsoleChatStore:
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
         persisted = self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
+            message,
+            force_metadata_write=provenance_cleared,
+            clear_generation_provenance=generation_cleared,
         )
         if persisted and message.content != previous_content and descendant_ids:
             self._purge_descendants_invalidated_by_edit(
@@ -7774,17 +7855,13 @@ class ConsoleChatStore:
                         if existing.event_kind != "capture_failed":
                             continue
                         try:
-                            existing_payload = json.loads(
-                                existing.payload_json or "{}"
-                            )
+                            existing_payload = json.loads(existing.payload_json or "{}")
                         except (TypeError, ValueError):
                             continue
                         existing_id = existing_payload.get("event_id")
                         if isinstance(existing_id, str):
                             self._trajectory_capture_failure_keys.add(existing_id)
-                    self._trajectory_capture_failure_hydrated.add(
-                        first.conversation_id
-                    )
+                    self._trajectory_capture_failure_hydrated.add(first.conversation_id)
             except Exception:  # noqa: BLE001 — diagnostic lookup is best-effort
                 logger.warning("trajectory_capture_diagnostic_lookup_failed")
         if event_id in self._trajectory_capture_failure_keys:
@@ -8640,6 +8717,8 @@ class ConsoleChatStore:
             and finalizer is None
         ):
             message.status = "complete"
+            message.assistant_generation_state = "complete"
+            self._settle_thinking_envelope(message, "complete")
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
@@ -8648,22 +8727,24 @@ class ConsoleChatStore:
             return self._snapshot(message)
         if not terminal_persistence:
             message.status = "complete"
+            message.assistant_generation_state = "complete"
+            self._settle_thinking_envelope(message, "complete")
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
-            self._persist_existing_message(message, preserve_provider_continuation=True)
+            self._persist_terminal_generation(message)
             self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
 
         try:
             if not message.content:
                 message.status = "complete"
+                message.assistant_generation_state = "complete"
+                self._settle_thinking_envelope(message, "complete")
                 self._bump_message_speech_revision(message.id)
                 self._bump_payload_revision(session_id)
                 self._settle_failed_retry_context(message, provider_visible=True)
-                self._persist_existing_message(
-                    message, preserve_provider_continuation=True
-                )
+                self._persist_terminal_generation(message)
                 # ``_persist_existing_message`` only reaches its own
                 # exchanges hook when the message ALREADY had a
                 # persisted_message_id -- an empty-content deferred message
@@ -8683,6 +8764,8 @@ class ConsoleChatStore:
                 except Exception:
                     logger.warning("terminal_finalizer_unavailable")
             message.status = "complete"
+            message.assistant_generation_state = "complete"
+            self._settle_thinking_envelope(message, "complete")
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
@@ -8709,6 +8792,7 @@ class ConsoleChatStore:
                     force_stable_message_id=True,
                     terminal_persistence=True,
                 )
+                self._persist_terminal_generation(message)
                 # This branch creates the durable row directly via
                 # ``_persist_new_message`` rather than
                 # ``_persist_existing_message``, so it never passes through
@@ -8756,9 +8840,12 @@ class ConsoleChatStore:
             message.status = base.prior_status
             message.usage = base.prior_usage
             message.metadata = base.prior_metadata
+            self._restore_variant_stream_base(message, base)
             self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "stopped"
+            message.assistant_generation_state = "stopped"
+            self._settle_thinking_envelope(message, "stopped")
             self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(session_id)
@@ -8767,9 +8854,7 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         if not self._settle_owned_dispatch_terminal(message, "stopped"):
-            self._persist_existing_message(
-                message, preserve_provider_continuation=True
-            )
+            self._persist_terminal_generation(message)
             if message.persisted_message_id is None:
                 self._flush_pending_trace_events_to_parent(message)
         self._settle_message_library_destination(session_id, message.id)
@@ -8805,9 +8890,12 @@ class ConsoleChatStore:
             message.status = base.prior_status
             message.usage = base.prior_usage
             message.metadata = base.prior_metadata
+            self._restore_variant_stream_base(message, base)
             self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "failed"
+            message.assistant_generation_state = "failed"
+            self._settle_thinking_envelope(message, "failed")
             self._variant_restored_message_ids.discard(message.id)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(session_id)
@@ -8816,9 +8904,7 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         if not self._settle_owned_dispatch_terminal(message, "failed"):
-            self._persist_existing_message(
-                message, preserve_provider_continuation=True
-            )
+            self._persist_terminal_generation(message)
             if message.persisted_message_id is None:
                 self._flush_pending_trace_events_to_parent(message)
         self._settle_message_library_destination(session_id, message.id)
@@ -8903,7 +8989,10 @@ class ConsoleChatStore:
             )
         message.content = ""
         message.status = "pending"
-        if message.metadata is not None and message.metadata.character_emote is not None:
+        if (
+            message.metadata is not None
+            and message.metadata.character_emote is not None
+        ):
             message.metadata = replace(message.metadata, character_emote=None)
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
@@ -8924,15 +9013,18 @@ class ConsoleChatStore:
         previous_content = message.content
         on_active_path = self._message_is_on_active_path(message.id)
         if message.variants is None:
-            message.variants = ConsoleVariantSet.from_contents(
+            message.variants = ConsoleVariantSet.from_generations(
                 turn_id=message.turn_id or message.id,
-                contents=[message.content, content],
+                generations=[
+                    self._generation_variant(message),
+                    ConsoleVariant(content=content),
+                ],
                 selected_index=1,
             )
         else:
             message.variants.variants.append(ConsoleVariant(content=content))
             message.variants.selected_index = len(message.variants.variants) - 1
-        message.content = message.variants.current.content
+        self._apply_generation_variant(message, message.variants.current)
         self._bump_message_speech_revision(message.id)
         provenance_cleared = self._clear_character_greeting_provenance(message)
         if not provenance_cleared:
@@ -8941,6 +9033,111 @@ class ConsoleChatStore:
             self._bump_conversation_context_epoch(session_id)
         self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         self._record_message_completed(session_id, message.id)
+        return self._snapshot(message)
+
+    @staticmethod
+    def _generation_variant(message: ConsoleChatMessage) -> ConsoleVariant:
+        """Capture every field owned by the message's selected generation."""
+        return ConsoleVariant(
+            content=message.content,
+            thinking=message.thinking,
+            opaque_thinking_json=message.opaque_thinking_json,
+            thinking_warning=message.thinking_warning,
+            thinking_actions_enabled=message.thinking_actions_enabled,
+            usage=message.usage,
+            metadata=message.metadata,
+            provider_continuation=message.provider_continuation,
+            provider_continuation_warning=message.provider_continuation_warning,
+            provider_continuation_remote=message.provider_continuation_remote,
+            provider_continuation_message_version=(
+                message.provider_continuation_message_version
+            ),
+            provider_continuation_actions_enabled=(
+                message.provider_continuation_actions_enabled
+            ),
+            assistant_generation_state=message.assistant_generation_state,
+        )
+
+    @staticmethod
+    def _settle_thinking_envelope(
+        message: ConsoleChatMessage, status: ThinkingStatus
+    ) -> None:
+        """Keep thinking status paired with a stopped or failed generation."""
+        if message.thinking is None:
+            return
+        message.thinking = ThinkingEnvelope(
+            tuple(replace(block, status=status) for block in message.thinking.blocks)
+        )
+
+    def _persist_terminal_generation(self, message: ConsoleChatMessage) -> None:
+        """Persist a terminal assistant as one paired generation projection."""
+        if (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and self.persist_selected_generation(message.id)
+        ):
+            return
+        self._persist_existing_message(message, preserve_provider_continuation=True)
+
+    @staticmethod
+    def _apply_generation_variant(
+        message: ConsoleChatMessage, variant: ConsoleVariant
+    ) -> None:
+        """Install one complete live generation on its assistant owner."""
+        message.content = variant.content
+        message.thinking = variant.thinking
+        message.opaque_thinking_json = variant.opaque_thinking_json
+        message.thinking_warning = variant.thinking_warning
+        message.thinking_actions_enabled = variant.thinking_actions_enabled
+        message.usage = variant.usage
+        message.metadata = variant.metadata
+        message.provider_continuation = variant.provider_continuation
+        message.provider_continuation_warning = variant.provider_continuation_warning
+        message.provider_continuation_remote = variant.provider_continuation_remote
+        message.provider_continuation_message_version = (
+            variant.provider_continuation_message_version
+        )
+        message.provider_continuation_actions_enabled = (
+            variant.provider_continuation_actions_enabled
+        )
+        message.assistant_generation_state = variant.assistant_generation_state
+
+    @staticmethod
+    def _restore_variant_stream_base(
+        message: ConsoleChatMessage, base: _VariantStreamBase
+    ) -> None:
+        message.thinking = base.prior_thinking
+        message.opaque_thinking_json = base.prior_opaque_thinking_json
+        message.thinking_warning = base.prior_thinking_warning
+        message.thinking_actions_enabled = base.prior_thinking_actions_enabled
+        message.provider_continuation = base.prior_provider_continuation
+        message.provider_continuation_warning = base.prior_provider_continuation_warning
+        message.provider_continuation_remote = base.prior_provider_continuation_remote
+        message.provider_continuation_message_version = (
+            base.prior_provider_continuation_message_version
+        )
+        message.provider_continuation_actions_enabled = (
+            base.prior_provider_continuation_actions_enabled
+        )
+        message.assistant_generation_state = base.prior_assistant_generation_state
+
+    def replace_message_thinking(
+        self, message_id: str, envelope: ThinkingEnvelope | None
+    ) -> ConsoleChatMessage:
+        """Replace canonical thinking at the generation-owner seam."""
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can own thinking.")
+        if not message.thinking_actions_enabled:
+            raise ConsoleThinkingCompatibilityError(
+                "This conversation contains a newer thinking format; "
+                "upgrade before regenerating it."
+            )
+        # The dumper is the shared strict boundary; no provider-delta plumbing
+        # belongs in this foundation seam.
+        dump_thinking_blocks_json(envelope)
+        message.thinking = envelope
+        message.opaque_thinking_json = None
+        message.thinking_warning = None
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -8961,17 +9158,48 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be regenerated.")
+        if not message.thinking_actions_enabled:
+            raise ConsoleThinkingCompatibilityError(
+                "This conversation contains a newer thinking format; "
+                "upgrade before regenerating it."
+            )
         self._materialize_stream_buffer(message)
         self._variant_stream_bases[message.id] = _VariantStreamBase(
             content=message.content,
             prior_status=message.status,
             prior_usage=message.usage,
             prior_metadata=message.metadata,
+            prior_thinking=message.thinking,
+            prior_opaque_thinking_json=message.opaque_thinking_json,
+            prior_thinking_warning=message.thinking_warning,
+            prior_thinking_actions_enabled=message.thinking_actions_enabled,
+            prior_provider_continuation=message.provider_continuation,
+            prior_provider_continuation_warning=(message.provider_continuation_warning),
+            prior_provider_continuation_remote=message.provider_continuation_remote,
+            prior_provider_continuation_message_version=(
+                message.provider_continuation_message_version
+            ),
+            prior_provider_continuation_actions_enabled=(
+                message.provider_continuation_actions_enabled
+            ),
+            prior_assistant_generation_state=message.assistant_generation_state,
         )
         # A new generation starts here, so this message's next usage attach
         # is legitimate again even if an earlier regenerate was abandoned.
         self._variant_restored_message_ids.discard(message.id)
         message.content = ""
+        message.thinking = None
+        message.opaque_thinking_json = None
+        message.thinking_warning = None
+        message.thinking_actions_enabled = True
+        message.usage = None
+        message.metadata = None
+        message.provider_continuation = None
+        message.provider_continuation_warning = None
+        message.provider_continuation_remote = False
+        message.provider_continuation_message_version = None
+        message.provider_continuation_actions_enabled = True
+        message.assistant_generation_state = "streaming"
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
         message.status = "streaming"
@@ -9001,29 +9229,68 @@ class ConsoleChatStore:
             raise ValueError("Message has no active variant stream.")
         self._finalize_character_emote_capture(message, outcome="variant")
         self._materialize_stream_buffer(message)
-        new_content = message.content
+        message.assistant_generation_state = "complete"
+        new_generation = self._generation_variant(message)
         base_entry = self._variant_stream_bases.pop(message.id)
         base = base_entry.content
         session_id = self._message_session_index[message.id]
         on_active_path = self._message_is_on_active_path(message.id)
         if message.variants is None:
-            message.variants = ConsoleVariantSet.from_contents(
+            base_generation = ConsoleVariant(
+                content=base_entry.content,
+                thinking=base_entry.prior_thinking,
+                opaque_thinking_json=base_entry.prior_opaque_thinking_json,
+                thinking_warning=base_entry.prior_thinking_warning,
+                thinking_actions_enabled=base_entry.prior_thinking_actions_enabled,
+                usage=base_entry.prior_usage,
+                metadata=base_entry.prior_metadata,
+                provider_continuation=base_entry.prior_provider_continuation,
+                provider_continuation_warning=(
+                    base_entry.prior_provider_continuation_warning
+                ),
+                provider_continuation_remote=(
+                    base_entry.prior_provider_continuation_remote
+                ),
+                provider_continuation_message_version=(
+                    base_entry.prior_provider_continuation_message_version
+                ),
+                provider_continuation_actions_enabled=(
+                    base_entry.prior_provider_continuation_actions_enabled
+                ),
+                assistant_generation_state=(
+                    base_entry.prior_assistant_generation_state
+                ),
+            )
+            message.variants = ConsoleVariantSet.from_generations(
                 turn_id=message.turn_id or message.id,
-                contents=[base, new_content],
+                generations=[base_generation, new_generation],
                 selected_index=1,
             )
         else:
-            message.variants.variants.append(ConsoleVariant(content=new_content))
+            message.variants.variants.append(new_generation)
             message.variants.selected_index = len(message.variants.variants) - 1
-        message.content = message.variants.current.content
+        self._apply_generation_variant(message, message.variants.current)
         message.status = "complete"
         self._bump_message_speech_revision(message.id)
-        provenance_cleared = self._clear_character_greeting_provenance(message)
+        provenance_cleared = False
+        if (
+            message.metadata is None
+            and base_entry.prior_metadata is not None
+            and base_entry.prior_metadata.template_kind == "character_greeting"
+        ):
+            message.metadata = MessageMetadata()
+            self._bump_identity_revision(session_id)
+            provenance_cleared = True
+        else:
+            provenance_cleared = self._clear_character_greeting_provenance(message)
         if not provenance_cleared:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
+        if not self.persist_selected_generation(message.id):
+            self._persist_existing_message(
+                message, force_metadata_write=provenance_cleared
+            )
         self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
@@ -9041,12 +9308,13 @@ class ConsoleChatStore:
         previous_content = message.content
         on_active_path = self._message_is_on_active_path(message.id)
         message.variants.selected_index = selected_index
-        message.content = message.variants.current.content
+        self._apply_generation_variant(message, message.variants.current)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message)
+        if not self.persist_selected_generation(message.id):
+            self._persist_existing_message(message)
         return self._snapshot(message)
 
     def persist_session_if_needed(
@@ -9342,9 +9610,7 @@ class ConsoleChatStore:
             None,
         )
         if not callable(atomic_promote):
-            raise RuntimeError(
-                "Persistence adapter cannot perform atomic promotion."
-            )
+            raise RuntimeError("Persistence adapter cannot perform atomic promotion.")
         return self._promote_ephemeral_session_atomically(
             session,
             contributions=contributions,
@@ -9414,9 +9680,7 @@ class ConsoleChatStore:
         scope_type, workspace_id = self._persistence_scope(session)
         metadata: dict[str, object] = {}
         if session.rag_scope_holder.scope is not None:
-            metadata["rag_scope"] = serialize_scope(
-                session.rag_scope_holder.scope
-            )
+            metadata["rag_scope"] = serialize_scope(session.rag_scope_holder.scope)
         pinned_prefill = (
             session.settings.pinned_prefill if session.settings is not None else None
         )
@@ -9447,9 +9711,7 @@ class ConsoleChatStore:
             "workspace_id": workspace_id,
             "scope_type": scope_type,
             "system_prompt": (
-                session.settings.system_prompt
-                if session.settings is not None
-                else None
+                session.settings.system_prompt if session.settings is not None else None
             ),
             "runtime_backend": session.runtime_backend,
             "assistant_kind": session.assistant_kind,
@@ -9505,9 +9767,7 @@ class ConsoleChatStore:
             message.persisted_message_id = staged_message_ids[message.id]
             native_parent = self._native_parent_by_message.get(message.id)
             message.parent_message_id = (
-                staged_message_ids[native_parent]
-                if native_parent is not None
-                else None
+                staged_message_ids[native_parent] if native_parent is not None else None
             )
         held_scope = session.rag_scope_holder.scope
         session.rag_scope_holder.set(None)
@@ -10192,6 +10452,41 @@ class ConsoleChatStore:
             return
         self._persist_existing_message(message)
 
+    def persist_selected_generation(self, message_id: str) -> bool:
+        """Atomically project the complete selected assistant generation."""
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages own generation projections.")
+        if not message.thinking_actions_enabled:
+            raise ConsoleThinkingCompatibilityError(
+                "This conversation contains a newer thinking format; "
+                "upgrade before regenerating it."
+            )
+        if self.persistence is None or message.persisted_message_id is None:
+            return False
+        writer = getattr(
+            self.persistence, "replace_assistant_generation_projection", None
+        )
+        if not callable(writer):
+            return False
+        committed_version = writer(
+            message_id=message.persisted_message_id,
+            content=message.content,
+            thinking_blocks_json=dump_thinking_blocks_json(message.thinking),
+            provider_continuation_json=dump_provider_continuation_json(
+                message.provider_continuation
+            ),
+            assistant_generation_state=message.assistant_generation_state,
+            usage_json=message.usage.to_json() if message.usage is not None else None,
+            expected_version=message.provider_continuation_message_version,
+        )
+        if type(committed_version) is not int or committed_version <= 0:
+            raise RuntimeError("Selected generation persistence did not commit.")
+        message.provider_continuation_message_version = committed_version
+        message.provider_continuation_remote = False
+        self._enqueue_sync_v2_message_if_ready(message)
+        return True
+
     def _persist_existing_message(
         self,
         message: ConsoleChatMessage,
@@ -10199,6 +10494,7 @@ class ConsoleChatStore:
         update_feedback: bool = False,
         force_metadata_write: bool = False,
         preserve_provider_continuation: bool = False,
+        clear_generation_provenance: bool = False,
     ) -> bool:
         if self.persistence is None:
             return True
@@ -10258,6 +10554,11 @@ class ConsoleChatStore:
             update_kwargs["preserve_provider_continuation"] = (
                 preserve_provider_continuation
             )
+        if clear_generation_provenance and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content,
+            "clear_generation_provenance",
+        ):
+            update_kwargs["clear_generation_provenance"] = True
         had_provider_continuation = message.provider_continuation is not None
         if not self.persistence.update_message_content(**update_kwargs):
             return False
@@ -10266,8 +10567,20 @@ class ConsoleChatStore:
         if had_provider_continuation:
             self._refresh_and_project_provider_continuation(message)
             return True
+        self._refresh_generation_owner_version(message)
         self._enqueue_sync_v2_message_if_ready(message)
         return True
+
+    def _refresh_generation_owner_version(self, message: ConsoleChatMessage) -> None:
+        """Refresh the committed version when the adapter exposes its local DB."""
+        persisted_id = message.persisted_message_id
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        getter = getattr(database, "get_message_by_id", None)
+        if persisted_id is None or not callable(getter):
+            return
+        row = getter(persisted_id)
+        if row is not None and type(row.get("version")) is int:
+            message.provider_continuation_message_version = row["version"]
 
     def _refresh_and_project_provider_continuation(
         self, message: ConsoleChatMessage
@@ -10295,9 +10608,7 @@ class ConsoleChatStore:
         if profile_id is None or not callable(reconcile):
             return
         payload: dict[str, Any] = {
-            "assistant_generation_state": row.get(
-                "assistant_generation_state"
-            ),
+            "assistant_generation_state": row.get("assistant_generation_state"),
             "content": str(row.get("content") or ""),
             "role": message.role.value,
         }
@@ -10482,17 +10793,11 @@ class ConsoleChatStore:
         ):
             dispatch_checkpoint = dispatch_recovery.checkpoint
             if isinstance(event, ToolBatchReady):
-                repository = getattr(
-                    persistence, "console_dispatch_repository", None
-                )
-                handoff = getattr(
-                    repository, "handoff_to_provider_continuation", None
-                )
+                repository = getattr(persistence, "console_dispatch_repository", None)
+                handoff = getattr(repository, "handoff_to_provider_continuation", None)
                 if not callable(handoff):
                     self.mark_dispatch_recovery_needed(session_id, message.id)
-                    raise RuntimeError(
-                        "Provider continuation handoff is unavailable."
-                    )
+                    raise RuntimeError("Provider continuation handoff is unavailable.")
                 try:
                     result = handoff(
                         ConsoleContinuationHandoff(
@@ -10512,9 +10817,7 @@ class ConsoleChatStore:
                     )
                 except Exception as exc:
                     self.mark_dispatch_recovery_needed(session_id, message.id)
-                    raise RuntimeError(
-                        "Provider continuation handoff failed."
-                    ) from exc
+                    raise RuntimeError("Provider continuation handoff failed.") from exc
                 if (
                     result.status is not ConsoleDispatchResultStatus.COMMITTED
                     or type(result.committed_message_version) is not int
@@ -10535,9 +10838,7 @@ class ConsoleChatStore:
                 with self._preparation_lock:
                     self._dispatch_recoveries_by_session.pop(session_id, None)
                     self._dispatch_recovery_message_baselines.pop(session_id, None)
-                    self._dispatch_recovery_queue_hydration_pending.discard(
-                        session_id
-                    )
+                    self._dispatch_recovery_queue_hydration_pending.discard(session_id)
                 durability = self.ensure_provider_continuation_durable(
                     message_id=message.persisted_message_id or message.id,
                     message_version=result.committed_message_version,
@@ -10685,9 +10986,7 @@ class ConsoleChatStore:
             return None
         if not isinstance(row, Mapping):
             return None
-        durable = read_provider_continuation_json(
-            row.get("provider_continuation_json")
-        )
+        durable = read_provider_continuation_json(row.get("provider_continuation_json"))
         if (
             row.get("role") != ConsoleMessageRole.ASSISTANT.value
             or row.get("deleted") != 0

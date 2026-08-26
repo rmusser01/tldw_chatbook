@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
@@ -119,9 +120,7 @@ class ConsoleLifecycleImpact:
         """Return whether leaving would discard or cancel Console work."""
 
         return bool(
-            self.live_run_count
-            or self.queued_session_count
-            or self.unsent_prompt_count
+            self.live_run_count or self.queued_session_count or self.unsent_prompt_count
         )
 
 
@@ -925,6 +924,13 @@ class ConsoleChatMessage:
     # field is that machine consumers (reseed, exports, summaries) read it
     # instead of string-matching UI copy in ``content``.
     metadata: "MessageMetadata | None" = None
+    # Provider-approved model thinking owned by this exact assistant generation.
+    # Both supported text and unsupported raw JSON are repr-hidden so routine
+    # diagnostics cannot disclose them.
+    thinking: "ThinkingEnvelope | None" = field(default=None, repr=False)
+    opaque_thinking_json: str | None = field(default=None, repr=False)
+    thinking_warning: str | None = None
+    thinking_actions_enabled: bool = True
     # Private provider state owned by this exact assistant generation. It is
     # deliberately excluded from repr/render content while remaining part of
     # ordinary dataclass equality/copy semantics.
@@ -965,6 +971,20 @@ class ConsoleVariant:
     """One regenerated variant for a turn."""
 
     content: str
+    thinking: "ThinkingEnvelope | None" = field(default=None, repr=False)
+    opaque_thinking_json: str | None = field(default=None, repr=False)
+    thinking_warning: str | None = None
+    thinking_actions_enabled: bool = True
+    usage: "ProviderUsage | None" = None
+    metadata: "MessageMetadata | None" = None
+    provider_continuation: "ProviderContinuationCheckpoint | None" = field(
+        default=None, repr=False
+    )
+    provider_continuation_warning: str | None = None
+    provider_continuation_remote: bool = False
+    provider_continuation_message_version: int | None = None
+    provider_continuation_actions_enabled: bool = True
+    assistant_generation_state: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
 
 
@@ -992,6 +1012,25 @@ class ConsoleVariantSet:
         return cls(
             turn_id=turn_id,
             variants=[ConsoleVariant(content) for content in contents],
+            selected_index=selected_index,
+        )
+
+    @classmethod
+    def from_generations(
+        cls,
+        *,
+        turn_id: str,
+        generations: list[ConsoleVariant],
+        selected_index: int = 0,
+    ) -> "ConsoleVariantSet":
+        """Build a variant set from complete generation-owned values."""
+        if not generations:
+            raise ValueError("ConsoleVariantSet requires at least one variant")
+        if selected_index < 0 or selected_index >= len(generations):
+            raise ValueError("selected_index must reference an existing variant")
+        return cls(
+            turn_id=turn_id,
+            variants=list(generations),
             selected_index=selected_index,
         )
 
@@ -1046,7 +1085,9 @@ class ProjectInstructionActivationEvent:
             for values in fields
             for value in values
         ):
-            raise ValueError("project instruction event values must be single-line text")
+            raise ValueError(
+                "project instruction event values must be single-line text"
+            )
 
 
 @dataclass(frozen=True)

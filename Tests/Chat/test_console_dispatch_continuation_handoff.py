@@ -37,10 +37,17 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleAssistantSettlement,
+    ConsoleContinuationHandoff,
     ConsoleDispatchResultStatus,
     ConsoleEgressClass,
     ConsoleProviderIntent,
     ConsoleResolvedDestination,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+    dump_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
@@ -111,6 +118,25 @@ def _continuation(
                 ),
             ),
         ),
+    )
+
+
+def _thinking(*, status: str = "complete") -> str:
+    return dump_thinking_blocks_json(
+        ThinkingEnvelope(
+            (
+                DisplayableThinkingBlock(
+                    block_id="reasoning-1",
+                    round_ordinal=0,
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                    protocol="responses",
+                    source_format="reasoning_content",
+                    status=status,  # type: ignore[arg-type]
+                    text="bounded reasoning",
+                ),
+            )
+        )
     )
 
 
@@ -248,6 +274,81 @@ def _checkpoint_count(db) -> int:
         db.get_connection()
         .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
         .fetchone()[0]
+    )
+
+
+def test_terminal_settlement_commits_thinking_with_terminal_status(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "thinking-settle.sqlite")
+    started = _start(
+        repository,
+        _insert(db, repository, _acceptance(conversation_id)),
+    )
+    canonical = _thinking(status="stopped")
+
+    result = repository.settle_with_assistant(
+        ConsoleAssistantSettlement(
+            assistant_message_id=started.assistant_message_id,
+            expected_checkpoint_state=started.state,
+            expected_checkpoint_revision=started.checkpoint_revision,
+            expected_user_message_version=started.user_message_version,
+            expected_assistant_message_version=started.assistant_message_version,
+            terminal_state="stopped",
+            content="partial answer",
+            metadata_json=None,
+            thinking_blocks_json=canonical,
+        )
+    )
+    row = db.get_message_by_id(started.assistant_message_id)
+
+    assert result.status is ConsoleDispatchResultStatus.COMMITTED
+    assert row["assistant_generation_state"] == "stopped"
+    assert row["thinking_blocks_json"] == canonical
+    assert result.committed_payload_hash == canonical_payload_hash(
+        {
+            "assistant_generation_state": "stopped",
+            "content": "partial answer",
+            "role": "assistant",
+            "thinking_blocks_json": canonical,
+        }
+    )
+
+
+def test_continuation_handoff_preserves_existing_thinking(tmp_path: Path) -> None:
+    db, conversation_id, repository = _database(tmp_path / "thinking-handoff.sqlite")
+    started = _start(
+        repository,
+        _insert(db, repository, _deepseek_acceptance(conversation_id)),
+    )
+    canonical_thinking = _thinking()
+    db.get_connection().execute(
+        "UPDATE messages SET thinking_blocks_json = ? WHERE id = ?",
+        (canonical_thinking, started.assistant_message_id),
+    )
+    canonical_continuation = dump_provider_continuation_json(_continuation())
+
+    result = repository.handoff_to_provider_continuation(
+        ConsoleContinuationHandoff(
+            assistant_message_id=started.assistant_message_id,
+            expected_checkpoint_revision=started.checkpoint_revision,
+            expected_user_message_version=started.user_message_version,
+            expected_assistant_message_version=started.assistant_message_version,
+            provider_continuation_json=canonical_continuation,
+        )
+    )
+    row = db.get_message_by_id(started.assistant_message_id)
+
+    assert result.status is ConsoleDispatchResultStatus.COMMITTED
+    assert row["thinking_blocks_json"] == canonical_thinking
+    assert result.committed_payload_hash == canonical_payload_hash(
+        {
+            "assistant_generation_state": "continuation_active",
+            "content": "",
+            "provider_continuation_json": canonical_continuation,
+            "role": "assistant",
+            "thinking_blocks_json": canonical_thinking,
+        }
     )
 
 

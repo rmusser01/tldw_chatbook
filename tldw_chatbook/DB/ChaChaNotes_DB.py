@@ -16255,6 +16255,7 @@ UPDATE db_schema_version
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
                        m.role, m.content, m.image_mime_type,
                        m.provider_continuation_json,
+                       m.thinking_blocks_json,
                        m.assistant_generation_state, m.timestamp, m.ranking,
                        m.last_modified, m.deleted, m.client_id, m.version,
                        intent.operation, intent.payload
@@ -16305,6 +16306,11 @@ UPDATE db_schema_version
             content = row["content"]
             if type(role) is not str or type(content) is not str:
                 return None
+            # Full thinking-aware Sync v2 records land in Task 4. This reader
+            # accepts the v50 trigger's nullable field so legacy rows are not
+            # falsely stale, while non-NULL thinking still fails closed.
+            if row["thinking_blocks_json"] is not None:
+                return None
             if row["assistant_generation_state"] is not None and role != "assistant":
                 return None
             private_json = row["provider_continuation_json"]
@@ -16350,6 +16356,7 @@ UPDATE db_schema_version
                 "content": row["content"],
                 "image_mime_type": row["image_mime_type"],
                 "provider_continuation_json": row["provider_continuation_json"],
+                "thinking_blocks_json": None,
                 "assistant_generation_state": row_state.value
                 if row_state is not None
                 else None,

@@ -149,11 +149,7 @@ class ChatPersistenceService:
         if conversation is None or conversation.get("deleted"):
             return None
         version = conversation.get("version")
-        if (
-            not isinstance(version, int)
-            or isinstance(version, bool)
-            or version < 1
-        ):
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             return None
         return version
 
@@ -357,7 +353,9 @@ class ChatPersistenceService:
                 **dict(conversation_kwargs),
             )
             if created_id != conversation_id:
-                raise RuntimeError("Persistence returned an unexpected conversation id.")
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
             result = self.console_library_policy_repository.insert(
                 conversation_id,
                 policy_candidate,
@@ -455,7 +453,9 @@ class ChatPersistenceService:
                 **dict(conversation_kwargs),
             )
             if created_id != conversation_id:
-                raise RuntimeError("Persistence returned an unexpected conversation id.")
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
             policy_result = self.console_library_policy_repository.insert(
                 conversation_id,
                 policy_candidate,
@@ -640,8 +640,7 @@ class ChatPersistenceService:
         if (
             expected_system_prompts is not None
             and not allow_source_owned_repair
-            and current_conversation.get("system_prompt")
-            not in expected_system_prompts
+            and current_conversation.get("system_prompt") not in expected_system_prompts
         ):
             return False
 
@@ -819,6 +818,7 @@ class ChatPersistenceService:
         expected_roleplay_version: int | None = None,
         preserve_provider_continuation: bool = False,
         preserve_descendants: bool = False,
+        clear_generation_provenance: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -904,8 +904,7 @@ class ChatPersistenceService:
             if (
                 current_metadata is None
                 or current_metadata.template_kind != "character_greeting"
-                or current_metadata.template_source
-                != expected_roleplay_template_source
+                or current_metadata.template_source != expected_roleplay_template_source
             ):
                 return False
         if (
@@ -957,6 +956,8 @@ class ChatPersistenceService:
         # ``metadata_json`` column (task-2364).
         if metadata_json is not None:
             update_data["metadata_json"] = metadata_json
+        if clear_generation_provenance:
+            update_data["thinking_blocks_json"] = None
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:
@@ -1041,6 +1042,28 @@ class ChatPersistenceService:
                 preserve_provider_continuation=preserve_provider_continuation,
                 preserve_descendants=preserve_descendants,
             )
+        )
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Replace and return one committed selected-generation version."""
+        return self.db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content=content,
+            thinking_blocks_json=thinking_blocks_json,
+            provider_continuation_json=provider_continuation_json,
+            assistant_generation_state=assistant_generation_state,
+            usage_json=usage_json,
+            expected_version=expected_version,
         )
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
@@ -1479,11 +1502,9 @@ class ChatPersistenceService:
         ):
             raise CitationPersistenceUnavailable("message_identity_conflict")
 
-        existing_generation_metadata = (
-            self.db.get_generation_metadata_for_messages([existing_message["id"]]).get(
-                existing_message["id"], []
-            )
-        )
+        existing_generation_metadata = self.db.get_generation_metadata_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
 
         def generation_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
             return (

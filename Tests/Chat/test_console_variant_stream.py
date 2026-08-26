@@ -16,8 +16,15 @@ import asyncio
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
 from Tests.console_provider_doubles import provider_resolution
 
 
@@ -31,6 +38,23 @@ def _store_with_answer():
     # Non-empty content already yields status "complete" via _initial_status;
     # this mirrors the existing regenerate tests that seed via append_message alone.
     return store, session, assistant.id
+
+
+def _thinking(text: str, *, block_id: str = "thinking-1") -> ThinkingEnvelope:
+    return ThinkingEnvelope(
+        (
+            DisplayableThinkingBlock(
+                block_id=block_id,
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="complete",
+                text=text,
+            ),
+        )
+    )
 
 
 def test_begin_variant_stream_resets_buffer_and_keeps_base():
@@ -92,6 +116,124 @@ def test_finalize_variant_stream_appends_to_existing_set():
         "third",
     ]
     assert final.variants.selected_index == 2
+
+
+def test_message_repr_hides_displayable_and_opaque_thinking() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        thinking=_thinking("secret-visible-reasoning"),
+        opaque_thinking_json='{"version":99,"secret":"opaque-secret"}',
+    )
+
+    rendered = repr(message)
+
+    assert "secret-visible-reasoning" not in rendered
+    assert "opaque-secret" not in rendered
+
+
+def test_select_variant_swaps_complete_generation() -> None:
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationRound,
+        ProviderContinuationCheckpoint,
+    )
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store, _session, mid = _store_with_answer()
+    original = store._message_or_raise(mid)
+    original.thinking = _thinking("original thinking", block_id="original")
+    original.usage = ProviderUsage(uncached_input=2, output=3)
+    original.provider_continuation = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="llama_cpp",
+        protocol="chat_completions",
+        model="test-model",
+        api_base_url="http://127.0.0.1:8000/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="original", reasoning_blocks=(), calls=()
+            ),
+        ),
+    )
+    original.assistant_generation_state = "complete"
+    original_snapshot = store.get_message(mid)
+
+    store.begin_variant_stream(mid)
+    assert store.get_message(mid).thinking is None
+    store.replace_message_thinking(mid, _thinking("new thinking", block_id="new"))
+    store.append_stream_chunk(mid, "new answer")
+    new_usage = ProviderUsage(uncached_input=5, output=8)
+    store.set_message_usage(mid, new_usage)
+    finalized = store.finalize_variant_stream(mid)
+
+    assert finalized.thinking == _thinking("new thinking", block_id="new")
+    assert finalized.variants.current.assistant_generation_state == "complete"
+    restored = store.select_variant(mid, 0)
+    assert restored.content == "original"
+    assert restored.thinking == _thinking("original thinking", block_id="original")
+    assert restored.usage == original_snapshot.usage
+    assert restored.provider_continuation == original_snapshot.provider_continuation
+    assert restored.assistant_generation_state == "complete"
+    selected_again = store.select_variant(mid, 1)
+    assert selected_again.thinking == _thinking("new thinking", block_id="new")
+    assert selected_again.assistant_generation_state == "complete"
+
+
+def test_add_variant_keeps_original_generation_owned_by_original_variant() -> None:
+    store, _session, mid = _store_with_answer()
+    original = store._message_or_raise(mid)
+    original.thinking = _thinking("original thinking")
+    original.assistant_generation_state = "complete"
+
+    added = store.add_variant(mid, "manual alternative")
+
+    assert added.thinking is None
+    assert added.assistant_generation_state is None
+    restored = store.select_variant(mid, 0)
+    assert restored.thinking == _thinking("original thinking")
+    assert restored.assistant_generation_state == "complete"
+
+
+@pytest.mark.parametrize("terminal", ["mark_message_stopped", "mark_message_failed"])
+def test_abandoned_variant_restores_complete_generation(terminal: str) -> None:
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store, _session, mid = _store_with_answer()
+    original = store._message_or_raise(mid)
+    original.thinking = _thinking("original thinking")
+    original.usage = ProviderUsage(uncached_input=1, output=2)
+    original.assistant_generation_state = "complete"
+
+    store.begin_variant_stream(mid)
+    store.replace_message_thinking(mid, _thinking("abandoned thinking", block_id="new"))
+    store.append_stream_chunk(mid, "abandoned answer")
+    getattr(store, terminal)(mid)
+    restored = store.get_message(mid)
+
+    assert restored.content == "original"
+    assert restored.thinking == _thinking("original thinking")
+    assert restored.usage == ProviderUsage(uncached_input=1, output=2)
+    assert restored.assistant_generation_state == "complete"
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected_status"),
+    [("mark_message_stopped", "stopped"), ("mark_message_failed", "failed")],
+)
+def test_normal_terminal_updates_thinking_envelope_status(
+    terminal: str, expected_status: str
+) -> None:
+    store, _session, mid = _store_with_answer()
+    live = store._message_or_raise(mid)
+    live.thinking = _thinking("partial thinking")
+    live.status = "streaming"
+
+    settled = getattr(store, terminal)(mid)
+
+    assert settled.thinking is not None
+    assert {block.status for block in settled.thinking.blocks} == {expected_status}
 
 
 class _ScriptedGateway:
