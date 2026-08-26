@@ -607,7 +607,7 @@ class SetupStep(WizardStep):
         layout: bool = False,
         recompose: bool = False,
     ) -> "SetupStep":
-        """TASK-21139 (UAT F-1): recompose must never orphan keyboard focus.
+        """TASK-22281 (UAT F-1): recompose must never orphan keyboard focus.
 
         A recompose rebuilds this step's children; if ``app.focused`` is one
         of them, Textual 8.2.8 leaves it pointing at the DETACHED widget --

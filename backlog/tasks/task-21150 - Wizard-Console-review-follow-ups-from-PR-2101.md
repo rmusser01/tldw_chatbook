@@ -15,7 +15,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Deferred minors and recommendations from the TASK-21139..21149 code review (PR #2101): (a) Summary consent allow-path should schedule the model-catalog refresh in the same session, matching the Console modal's allow behavior; (b) AppearanceStep show-all rebuilds (themes and cards) should re-press the row matching the retained selection; (c) bound the three remaining resolve_for_send awaits outside the send path (continuation replay ~3211, instruction preview ~8066, compaction ~9790 in console_chat_controller.py) — same hang class as UAT H-3; (d) make the composer action-link markup invariant mechanical (escape or assert on the reason literal) instead of comment-enforced.
+Deferred minors and recommendations from the TASK-22281..21149 code review (PR #2101): (a) Summary consent allow-path should schedule the model-catalog refresh in the same session, matching the Console modal's allow behavior; (b) AppearanceStep show-all rebuilds (themes and cards) should re-press the row matching the retained selection; (c) bound the three remaining resolve_for_send awaits outside the send path (continuation replay ~3211, instruction preview ~8066, compaction ~9790 in console_chat_controller.py) — same hang class as UAT H-3; (d) make the composer action-link markup invariant mechanical (escape or assert on the reason literal) instead of comment-enforced.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

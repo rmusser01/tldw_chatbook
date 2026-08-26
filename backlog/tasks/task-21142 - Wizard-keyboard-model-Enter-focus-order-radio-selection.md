@@ -38,7 +38,7 @@ UAT findings N-1, N-2, N-8, N-9 (findings.md section N): Enter never advances; t
 
 <!-- SECTION:NOTES:BEGIN -->
 --------------------------------------------------
-N-9 re-verified first: focus-after-Back was the SAME orphaned-focus family as F-1 and is already cured by the TASK-21139 heal (Pilot probe: focus restored to the radio, arrows move highlight; live: Down+Space selects). The remaining fixes:
+N-9 re-verified first: focus-after-Back was the SAME orphaned-focus family as F-1 and is already cured by the TASK-22281 heal (Pilot probe: focus restored to the radio, arrows move highlight; live: Down+Space selects). The remaining fixes:
 
 N-8: SetupRadioSet(RadioSet) — selection follows highlight (WAI-ARIA semantics) via action_next_button/action_previous_button overrides selecting the highlighted button; all 10 wizard RadioSets swapped. This also moots the near-invisible highlight glyph.
 

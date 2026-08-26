@@ -227,7 +227,7 @@ class-level replacement plus framework dispatch that splits in two.
 - `lessons-live-verification.md` — why a green suite can still miss live-only defects
 - `lessons-backlog-hygiene.md` — task IDs, CLI quirks, git plumbing traps
 
-## `refresh(recompose=True)` can orphan `app.focused` and soft-lock ALL keyboard input (TASK-21139, 2026-08-25)
+## `refresh(recompose=True)` can orphan `app.focused` and soft-lock ALL keyboard input (TASK-22281, 2026-08-25)
 
 **What happened.** UAT finding F-1: on a cold full-track walk of the first-run
 wizard, entering the Speech step killed every key — ctrl+n/ctrl+b, Escape, Tab,

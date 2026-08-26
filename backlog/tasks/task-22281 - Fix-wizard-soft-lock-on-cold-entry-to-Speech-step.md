@@ -1,5 +1,5 @@
 ---
-id: TASK-21139
+id: TASK-22281
 title: Fix wizard soft-lock on cold entry to Speech step
 status: Done
 assignee:
@@ -46,3 +46,14 @@ Evidence: regression test test_cold_full_track_speech_entry_keeps_keyboard_alive
 
 Files: tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py (SetupStep.refresh + _heal_orphaned_focus), Tests/UI/test_first_run_wizard_live_contract.py (regression test + STEP_RAG/STEP_SPEECH imports), backlog/docs/lessons-textual.md.
 <!-- SECTION:NOTES:END -->
+
+
+## Renumbering provenance
+
+Renumbered from TASK-21139 on 2026-08-25 per the 2026-08-21 owner rule
+(TASK-19601): upstream's "Restore Windows checkout for Backlog task paths"
+(created 2026-08-23) is the older arrival and keeps the id; this task
+(created 2026-08-25 on the fix/setup-wizard-uat branch, PR #2101) is the
+younger and renumbers. Git commit messages retain the historical id;
+code comments, tests, lessons entries, and dependent task references were
+updated to TASK-22281.

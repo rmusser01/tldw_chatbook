@@ -3082,7 +3082,7 @@ def test_setup_wizard_constructs_before_base_init_sets_app_instance():
 
 
 # ---------------------------------------------------------------------------
-# TASK-21139 / UAT F-1: cold full-track entry to Speech must keep keyboard
+# TASK-22281 / UAT F-1: cold full-track entry to Speech must keep keyboard
 # input alive. SpeechSetupStep's first on_show schedules a
 # refresh(recompose=True); show_step's focus fix then targets a child of the
 # pre-recompose tree, and the recompose detaches the focused widget. Textual
