@@ -463,3 +463,51 @@ def test_the_test_summary_job_can_actually_fail() -> None:
         "the verdict must be the final step, after the PR comment is posted; "
         f"steps end with {step_names[-2:]}"
     )
+
+
+def test_an_in_flight_pull_request_run_is_not_cancelled_mid_run() -> None:
+    """TASK-22250: superseding RUNNING PR runs is why `Tests` never reports.
+
+    Scope, stated precisely because the first version of this test overclaimed:
+    this guarantees only that a PR run already EXECUTING is not killed
+    mid-flight. GitHub concurrency keeps one running plus one *pending* member
+    per group, and a third arrival still replaces the pending one -- so a PR run
+    can be cancelled while queued, and `cancel-in-progress` cannot prevent that.
+    Making the group unique per run would, but it would also stop superseding
+    obsolete commits and multiply queue pressure that is already this repo's
+    bottleneck (runs observed queued 20+ minutes before starting).
+
+    Killing a queued run costs nothing and yields the newer commit's verdict,
+    which is what you want. Killing a RUNNING batch throws away up to 35 minutes
+    per shard and produces no verdict at all. Only the second is the defect.
+
+    This is the slowest workflow in the repo -- 12 UI shards plus 6 core
+    shards at roughly 35 minutes each. With `cancel-in-progress` applying to
+    `pull_request` events, every push to a branch killed the batch already
+    running for that branch's PR, so an actively-worked PR never produced a
+    verdict at all.
+
+    Measured on PR #2078: one push cancelled 20 checks at once (all 6 core
+    shards, all 12 UI shards, MCP min-Textual, an artifact-lease leg), and
+    each batch's cancellation timestamp matched the NEXT batch's creation
+    timestamp -- supersession, not an external agent.
+
+    `derived-artifacts.yml` already scopes cancellation to `push` only, and it
+    is the one required check that reliably survives to report. That is the
+    precedent this pins.
+
+    A push run may still be superseded: pushing again genuinely obsoletes the
+    previous commit's run. `main` is never cancelled either way.
+    """
+    concurrency = _workflow_text().split("concurrency:", 1)[1].split("permissions:", 1)[0]
+    cancel_line = next(
+        line for line in concurrency.splitlines() if "cancel-in-progress:" in line
+    )
+    assert "github.event_name == 'push'" in cancel_line, (
+        "cancel-in-progress must be scoped to push events; cancelling a "
+        "RUNNING pull_request run mid-flight is what stopped this workflow "
+        f"reporting. Line: {cancel_line.strip()!r}"
+    )
+    assert "github.ref != 'refs/heads/main'" in cancel_line, (
+        f"main must never be cancelled. Line: {cancel_line.strip()!r}"
+    )
