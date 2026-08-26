@@ -185,6 +185,21 @@ class ConsoleDispatchSettlementError(RuntimeError):
     """An owned dispatch terminal could not commit atomically."""
 
 
+class ConsoleDurableAcceptanceRetired(RuntimeError):
+    """The preparation was retired underneath an in-flight postcommit effect.
+
+    TASK-22587: closing a Console session retires its durable preparation, so
+    an effect still in flight finds its fingerprint gone. That is an ORDINARY
+    consequence of the user closing a chat, and it is not the same event as a
+    fingerprint that changed unexpectedly -- which is a bug, and which must
+    keep raising the bare ``RuntimeError`` the postcommit APIs already document.
+
+    Retirement is decidable rather than inferred: ``retire_durable_acceptance``
+    leaves a tombstone carrying the SAME fingerprint, so a matching tombstone
+    proves the preparation was retired rather than mutated.
+    """
+
+
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
     """Represent a missing durable projection seam in an immutable plan."""
     return False
@@ -3844,6 +3859,12 @@ class ConsoleChatStore:
         """Release a failed effect claim without recording completion."""
 
         with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                # TASK-22587: `retire_durable_acceptance` already dropped every
+                # in-flight key for this preparation, so there is nothing left
+                # to release and nothing left to protect. Raising here would
+                # only mask the failure that sent us down the release path.
+                return
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             self._durable_effects_in_flight.discard((preparation_id, effect_name))
 
@@ -3855,7 +3876,21 @@ class ConsoleChatStore:
         if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
         if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                raise ConsoleDurableAcceptanceRetired(
+                    "Durable acceptance was retired."
+                )
             raise RuntimeError("Durable postcommit fingerprint changed.")
+
+    def _durable_retired_locked(
+        self,
+        preparation_id: str,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> bool:
+        """True when this exact preparation was retired, not mutated."""
+
+        tombstone = self._durable_tombstones.get(preparation_id)
+        return tombstone is not None and tombstone.fingerprint == fingerprint
 
     def retire_durable_acceptance(
         self,

@@ -94,6 +94,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
+    ConsoleDurableAcceptanceRetired,
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
@@ -5605,13 +5606,34 @@ class ConsoleChatController:
             if inspect.isawaitable(result):
                 result = await result
         except BaseException:
-            self.store.abandon_durable_postcommit_effect(
+            # TASK-22587: releasing the claim must never REPLACE the failure
+            # that sent us here. Bookkeeping is strictly less informative than
+            # the original exception, and this arm also runs for CancelledError.
+            try:
+                self.store.abandon_durable_postcommit_effect(
+                    preparation_id, effect_name, fingerprint=fingerprint
+                )
+            except Exception as release_exc:
+                logger.warning(
+                    "Durable postcommit effect release failed; keeping the "
+                    "original failure (effect={}, release_exception_type={})",
+                    effect_name,
+                    type(release_exc).__name__,
+                )
+            raise
+        try:
+            self.store.complete_durable_postcommit_effect(
                 preparation_id, effect_name, fingerprint=fingerprint
             )
-            raise
-        self.store.complete_durable_postcommit_effect(
-            preparation_id, effect_name, fingerprint=fingerprint
-        )
+        except ConsoleDurableAcceptanceRetired:
+            # TASK-22587: the session was closed while this effect ran. The
+            # work itself succeeded; there is simply no ledger left to record
+            # it in. Closing a chat is not an error.
+            logger.debug(
+                "Durable postcommit effect completed after retirement "
+                "(effect={})",
+                effect_name,
+            )
         return result
 
     def _durable_db_call_offloadable(self) -> bool:

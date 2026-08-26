@@ -1,15 +1,21 @@
 ---
-id: task-22587
+id: TASK-22587
 title: Closing a session during a durable postcommit raises
-status: To Do
+status: In Progress
+assignee:
+  - '@claude'
+created_date: ''
+updated_date: '2026-08-26 20:48'
 labels:
   - console
   - durable-turns
+dependencies: []
 priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Closing a Console session while a durable turn is still collecting raises
 `RuntimeError: Durable postcommit fingerprint changed.` out of the effect
 release path.
@@ -31,16 +37,30 @@ ephemeral sessions throughout.
 The conversion was reverted rather than worked around, so this is currently
 latent in tests but reachable in production: any user closing a chat while a
 durable turn is in flight takes the same path.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] Closing a session during an in-flight durable turn does not raise
-- [ ] The in-flight effect is released (or deliberately abandoned) without an
+<!-- AC:BEGIN -->
+- [ ] #1 Closing a session during an in-flight durable turn does not raise
+- [ ] #2 The in-flight effect is released (or deliberately abandoned) without an
       unhandled exception
-- [ ] A test covers close-during-collection on a DURABLE session
+- [ ] #3 A test covers close-during-collection on a DURABLE session
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce at store level: claim an effect, retire the preparation, release the claim -> RuntimeError (DONE: confirmed on dev)
+2. Distinguish the two causes the guard currently conflates. retire_durable_acceptance already leaves a tombstone carrying the SAME fingerprint, so 'retired' is decidable: tombstone present AND fingerprint matches = ordinary retirement; anything else = genuine mismatch.
+3. Add a distinct exception type for retirement so callers can handle it without string-matching, and keep the existing RuntimeError for a real fingerprint change.
+4. Make the RELEASE path tolerate retirement: abandon_durable_postcommit_effect on a retired preparation is a no-op, not a raise. There is nothing left to protect.
+5. Fix the masking bug in _run_durable_postcommit_effect: its 'except BaseException: abandon(); raise' arm currently loses the ORIGINAL exception when abandon raises.
+6. Mutation-prove each behaviour change, then A/B the Chat/Console test set against the merge-base.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 The fingerprint guard is correct in intent — an effect must not commit against a
 retired preparation. What is missing is a defined outcome for "the preparation
 was retired underneath me", distinct from "the fingerprint changed
@@ -50,7 +70,6 @@ closing a chat; a *changed* one is a bug. Those two currently share a raise.
 Related: TASK-22301 (converting that module's assertions to row queries needs
 durable sessions, so this blocks it).
 
-
 ## Renumbering provenance
 
 Filed as task-22303; renumbered to task-22587 under the 2026-08-21 owner rule
@@ -58,3 +77,4 @@ Filed as task-22303; renumbered to task-22587 under the 2026-08-21 owner rule
 `task-22303 - Restore-priced-Console-cost-chip-harness-readiness`, which
 arrived first and keeps the id. No dependencies or doc references pointed at the
 old number.
+<!-- SECTION:NOTES:END -->
