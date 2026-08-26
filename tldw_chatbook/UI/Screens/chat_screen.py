@@ -733,9 +733,7 @@ class _ConsoleTurnUndoPlan:
     total_files: int
 
 
-def _console_turn_undo_run_active(
-    provider: Any, roots: tuple[str, ...]
-) -> bool:
+def _console_turn_undo_run_active(provider: Any, roots: tuple[str, ...]) -> bool:
     """Read the provider's root-aware run probe with legacy fallback."""
     root_probe = getattr(provider, "run_active_for_root", None)
     if callable(root_probe):
@@ -869,9 +867,7 @@ def _apply_console_turn_undo(provider: Any, plan: _ConsoleTurnUndoPlan) -> list:
             ):
                 outcomes.extend(
                     RevertOutcome(
-                        path=(
-                            f"{pending_label}/{path}" if multi_root else str(path)
-                        ),
+                        path=(f"{pending_label}/{path}" if multi_root else str(path)),
                         ok=False,
                         error=error,
                     )

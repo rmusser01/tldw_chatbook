@@ -55,11 +55,20 @@ requires the implemented branch to satisfy the unchanged final ratchet. The
 combined TASK-3070.12/.13 projection becomes 17,476 / 562, still 251 lines and 31
 methods below the immutable 17,727 / 593 ceilings.
 
-The final delivery bases after `794ae11521` changed only the repository diagnostic
+The delivery bases through `65cf855371` changed only the repository diagnostic
 inventory (`b53169e1f1`) and citation provenance in the Console chat controller/store
 (`3daa56bf4f`), followed by an unrelated backlog task record (`65cf855371`), in
-this scope; the screen counts, ownership classification, and ratchets above remain
-the final delivery evidence.
+this scope; those bases did not change the screen counts or ownership classification.
+
+The later delivery base `f9a06ff625` simplified per-turn change review and removed
+73 further `ChatScreen` lines and 8 direct methods without changing the exact
+realtime family, 1,997/19 spans, or 56/0/1 classification. The rebased extraction
+is therefore 17,603 / 569, still 473 lines and 8 methods below the unchanged
+18,076 / 577 ratchet. The combined TASK-3070.12/.13 projection becomes 17,403 /
+554, 324 lines and 39 methods below the immutable 17,727 / 593 ceilings. The
+generated diagnostic inventory records the same 49 realtime statements under the
+controller, with 90 remaining on `ChatScreen`; aggregate delivery counts are 538
+owners, 1,241 TASK-492 calls, 7,360 TASK-494 calls, and 8 sink files.
 
 ## Goals
 
