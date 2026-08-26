@@ -6,7 +6,8 @@ Implemented the ADR-089 shared Console capture-policy controls and governed
 per-call exchange export in commit `d685a90009` (`feat(console): expose
 governed full capture controls`) and hardened the independently reviewed
 surface in fix-round commit `478a9f1bae` (`fix(console): harden capture policy
-disclosure`). The Backlog task remains **In Progress** and all acceptance
+disclosure`), then closed the remaining scoped findings in fix-round commit
+`26218ae5aa` (`fix(console): close remaining capture review gaps`). The Backlog task remains **In Progress** and all acceptance
 criteria remain unchecked for independent review.
 
 ## TDD evidence
@@ -74,17 +75,37 @@ criteria remain unchecked for independent review.
   handlers, direct-call tests, and callable `asdict` clipboard/non-atomic file
   disclosure paths. The governed Export action is the only exchange boundary.
 
+### Fix round 2 RED/GREEN
+
+- Scoped Global Full acknowledgement: RED was 1 failed because a conversation
+  Safe override masked the prospective effective global Full value and allowed
+  persistence without the restart-aware acknowledgement. GREEN is 1/1: every
+  Global + Full edit opens `GlobalFullCaptureConfirmation`, and cancellation
+  leaves the mutation callback uncalled.
+- Off-state prospective preview: RED was 1 failed because selecting dormant
+  conversation Safe left the visible preview at dormant Full. GREEN is 1/1:
+  the dialog retains the current Off/dormant state, adds the prospective
+  selected dormant resolution, keeps radio state aligned, and does not mutate
+  the snapshot.
+- Production sentinel: the stricter rewrite first failed because its provider
+  fake returned a pre-adapter Anthropic wire response at the production
+  post-adapter `chat_api_call` seam, then exposed two incorrect test
+  expectations for the canonical endpoint and API endpoint. GREEN is 1/1 with
+  an Anthropic resolution through the real gateway/controller/store,
+  `ChatPersistenceService`, in-memory ChaChaNotes SQLite, production exchange
+  query, decoded cache blobs, and decoded full storage captures.
+
 ## Final gates
 
-- Exact Task 4 privacy/UI matrix after fix round 1: **867 passed, 2 skipped,
-  0 failed** in 395.53 seconds. Both skips were existing loopback-listener cases skipped
+- Exact Task 4 privacy/UI matrix after fix round 2: **869 passed, 2 skipped,
+  0 failed** in 391.35 seconds. Both skips were existing loopback-listener cases skipped
   because the sandbox denied listener creation.
 - Production-shaped 80x24 policy/export/Inspector/live/imported/Settings gate:
-  **105 passed**.
+  **107 passed** in 40.27 seconds.
 - Settings/config/layout gate: **379 passed**.
 - Focused fix suite including dialogs, Inspector wiring, atomic file behavior,
-  and the Task 4 baseline-delta regression: **77 passed**.
-- Final exchange exporter plus privacy-safe log sentinel focus: **7 passed**.
+  exchange export, and the Task 4 baseline-delta regression: **99 passed**.
+- Real SQLite/cache production sentinel focus: **1 passed**.
 - Ruff on every owned Python source and test: **passed**.
 - `py_compile` on every owned production Python module: **passed**.
 - `python -m tldw_chatbook.css.build_css`: **passed**; regenerated modular,
@@ -103,13 +124,16 @@ criteria remain unchecked for independent review.
 
 ## Sentinel inspection
 
-The corrected inspection drives `ConsoleProviderGateway`,
-`ConsoleChatController`, `ConsoleChatStore`, the persistence append seam, real
-capture blob compression/decompression, in-memory/cache owners, Redacted and
-Full export projections, and a filesystem loguru sink. One Safe and one Full
-provider exchange contain unique system, tagged AGENTS/workspace, RAG,
+The corrected inspection drives an Anthropic provider resolution through
+`ConsoleProviderGateway`, `ConsoleChatController`, `ConsoleChatStore`,
+`ChatPersistenceService`, in-memory ChaChaNotes SQLite, the production
+`get_message_exchanges` query, capture blob compression/decompression,
+runtime/store/decoded-cache/decoded-storage owners, Redacted and Full export
+projections, and a filesystem loguru sink. One Safe and one Full provider
+exchange contain unique system, separately tagged AGENTS project/workspace, RAG,
 tool-schema, tool-argument/result, ordinary semantic-secret, structured API
-key, endpoint credential/query/fragment, and nested base64 sentinels.
+key, endpoint credential/query/fragment, structured path, and nested base64
+sentinels.
 
 Observed and asserted:
 
@@ -117,7 +141,9 @@ Observed and asserted:
 - Full storage and Full export retain the semantic system,
   AGENTS/workspace, RAG, tool, and ordinary-text sentinels.
 - Structured API/tool credentials, endpoint userinfo/query/fragment, and raw
-  nested base64 appear in none of the stored/exported projections.
+  nested base64 appear in none of the decoded owners, stored/exported
+  projections, or logs. A direct whole-capture endpoint assertion would fail
+  if a non-request field retained the configured credential-bearing URL.
 - Binary content is represented by a deterministic `sha256:` stub.
 - The configured filesystem log sink contains none of the sentinels.
 - The selected filesystem export boundary separately proves its destination,
@@ -142,12 +168,15 @@ Observed and asserted:
   hand-edited.
 - The fix-round CSS build changed only the generated modular timestamp; all
   five generated artifacts reproduce from their sources.
+- Fix round 2 changed only the policy modal, its focused tests, and the real
+  exchange sentinel; its CSS build again changed only the generated modular
+  timestamp.
 - No dependency, second export enum, second policy owner, legacy Settings
   surface, or speculative abstraction was added. No generalizable new lesson
   was identified.
 
 ## Remaining review items
 
-- Scoped re-review of fix round 1 remains outstanding. The controller-owned
+- Scoped re-review of fix round 2 remains outstanding. The controller-owned
   one-time Impeccable detector was already run and was not rerun.
 - Task `TASK-22507.4` therefore remains **In Progress** with ACs unchecked.

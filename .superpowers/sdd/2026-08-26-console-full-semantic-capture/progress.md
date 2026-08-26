@@ -113,4 +113,14 @@ Task 4: Ruling: expand fix-round ownership to `tldw_chatbook/Utils/atomic_file_o
 
 Task 4: fix round 1/5 dispatched from `37b3041381` for all 8 Important findings and the directly related retired raw Copy/Save path cleanup.
 
+Task 4: fix round 1/5 implemented in `478a9f1bae`; evidence/backlog/progress commit `cc0f5aab81`. Implementer reports exact matrix `867 passed, 2 skipped`, 80x24 gate `105 passed`, Settings/config/layout `379 passed`, focused fixes `77 passed`, exporter/privacy log sentinel `7 passed`, real gateway/controller/store/persistence/cache sentinel green, and Ruff/py_compile/CSS/docs/diff checks clean. `chat_screen.py` is `20,093` lines / `633` methods versus Task 4 base `20,099` / `633`; the explicit Task-4-delta node is green while the older repository-wide absolute ceiling remains independently stale and was not raised.
+
+Task 4: fix round 1/5 scoped re-review dispatched over `37b3041381..cc0f5aab81`.
+
+Task 4: fix round 1/5 re-review — 5 prior findings and the Minor raw-path cleanup are addressed; 3 Important findings remain open: scoped Global Full acknowledgement is bypassed when conversation Safe masks effective detail, Off-state prospective preview ignores the selected edit, and the sentinel still substitutes list persistence/checks compressed bytes instead of a real Anthropic-shaped SQLite/cache round trip.
+
+Task 4: fix round 2/5 dispatched from `cc0f5aab81` for the three remaining review findings.
+
 Task 4: fix round 1/5 implemented in `478a9f1bae`; exact matrix `867 passed, 2 skipped`, 80x24 gate `105 passed`, Settings/config/layout `379 passed`, exporter + log sentinel `7 passed`, focused fixes `77 passed`, Ruff/py_compile/CSS/docs/diff checks green. The explicit Task 4 screen delta is 20,093 lines/633 methods versus base `1b50778714` at 20,099/633; the older 17,727/593 repository ceiling remains independently stale and was not raised.
+
+Task 4: fix round 2/5 implemented in `26218ae5aa`; scoped Global Full cancellation and Off-state prospective preview are GREEN, and the sentinel now uses Anthropic resolution through the real gateway/controller/store/`ChatPersistenceService`/ChaChaNotes SQLite seam with production queries and decoded cache/storage captures. Exact matrix `869 passed, 2 skipped`, 80x24 gate `107 passed`, Settings/config/layout `379 passed`, focused re-review set `99 passed`, real sentinel `1 passed`, and Ruff/py_compile/CSS/docs/diff checks green. Task 4 remains In Progress with ACs unchecked for scoped re-review.
