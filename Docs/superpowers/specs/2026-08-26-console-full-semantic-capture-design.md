@@ -1,0 +1,360 @@
+# Console Full Semantic Capture
+
+**Date:** 2026-08-26
+
+**Status:** Owner-approved design; implementation not started
+
+**Task:** [TASK-22507](../../../backlog/tasks/task-22507%20-%20Enable-scoped-Full-semantic-capture-in-Conversation-Inspector.md)
+
+**ADR:** [ADR-089](../../../backlog/decisions/089-console-full-semantic-capture-policy.md)
+
+**Builds on:** [Console Conversation Inspector](2026-08-18-console-conversation-inspector-design.md)
+
+**Amends:** the durable exchange-capture exclusion in [ADR-069](../../../backlog/decisions/069-console-project-instruction-local-state-and-preflight.md)
+
+## Summary
+
+The Conversation Inspector currently persists a useful but deliberately incomplete
+provider exchange. In particular, automatic project-instruction bodies are removed
+before storage. Users therefore cannot always answer why a provider behaved as it did,
+even though the Inspector appears to show the request.
+
+Add an explicit, privacy-sensitive **Full semantic capture** policy. A user may apply
+Safe or Full detail to the next eligible send, the inspected conversation, or the
+global Console default. The default remains Safe. Full capture retains semantic
+content actually handed to the provider adapter, including Anthropic system content,
+project/workspace instructions, retrieval context, tool schemas, tool calls, and tool
+results. It is not generally a byte-literal HTTP recording.
+
+The existing provider gateway, run signals, exchange store, and Inspector remain the
+owners. This design does not add a second tracing pipeline or database.
+
+## Approved decisions
+
+1. Capture detail has two values: `safe` and `full`.
+2. The existing `[console] exchange_capture` Boolean remains the authoritative global
+   kill switch. A new global detail default is Safe.
+3. Precedence is: next eligible send override, conversation override, global default,
+   then application Safe.
+4. The one-shot override belongs to one inspected Console session and is consumed only
+   by an admitted human-authored manual or authorized queued turn. Autonomous agent
+   wakeups, rejected sends, local commands, and cancelled pre-admission work do not
+   consume it.
+5. Capture detail freezes when the turn is admitted. Every provider call, retry, tool
+   loop, and surviving fleet call using that run's signals retains the same detail.
+6. Full capture keeps semantic text but still structurally excludes provider
+   credentials, stubs binary/base64 payloads, and enforces the existing storage cap.
+7. Policy controls are available from the Conversation Inspector through one compact,
+   focused change flow rather than a persistent row of scope buttons.
+8. Capture detail and export profile are distinct concepts.
+9. Users can delete stored Full captures for one idle conversation. Purge does not
+   change capture policy and does not delete Safe captures, messages, usage, exported
+   files, or backups.
+10. Policy changes and purge always target the immutable conversation/session captured
+    when the Inspector opened, never whichever tab is active when the user confirms.
+
+## Goals
+
+- Make the Inspector honest about which semantic provider content was retained.
+- Let users escalate diagnostic detail for the smallest useful duration.
+- Capture injected project/workspace/RAG/tool context for Anthropic and other provider
+  paths without admitting structured credentials.
+- Keep policy deterministic across queues, autonomous work, retries, and tool loops.
+- Provide a scoped erasure path for the new sensitive records.
+- Preserve Safe behavior and backward compatibility for existing conversations.
+
+## Non-goals
+
+- Hidden chain-of-thought or provider-internal activity Chatbook cannot observe.
+- Literal HTTP headers, provider credentials, transport framing, or TLS traffic.
+- Capturing arbitrary auxiliary calls that are not currently owned by conversation
+  exchange capture.
+- Automatic secret detection inside user/project/tool text. Full mode warns that text
+  may itself contain secrets.
+- Cross-capture deduplication, retention schedules, automatic pruning, or backup
+  deletion.
+- A new Trace event store, settings subsystem, permission system, or dependency.
+- Repairing unrelated historical capture gaps unless a touched provider/retry path
+  must carry the frozen detail correctly. Known gaps remain separately tracked.
+
+## Terminology
+
+- **Capture enabled:** whether the existing kill switch permits exchange capture at
+  all.
+- **Capture detail:** Safe or Full; determines which semantic bodies are retained.
+- **Policy source:** next eligible send, conversation, global, or application default.
+- **Eligible send:** an admitted manual or authorized queued human-authored turn.
+- **Export profile:** Safe summary, Redacted diagnostic, or Full trace; determines what
+  leaves the app from an already stored capture.
+- **Full semantic capture:** the allowlisted provider-adapter request plus observable
+  response content, not necessarily the final provider wire representation.
+
+## Capture policy
+
+### Stored and runtime state
+
+The capture module owns a string enum `CaptureDetail(SAFE, FULL)` and a pure resolver.
+It stays beside `ExchangeCapture` in `Chat/console_exchange_capture.py`; a separate
+policy framework would add indirection without another consumer.
+
+State is intentionally sparse:
+
+- **Application default:** Safe, constant.
+- **Global default:** `[console] exchange_capture_detail = "safe" | "full"`.
+- **Conversation override:** local-only nullable Safe/Full record keyed by persisted
+  conversation ID. `None` means inherit global. Ephemeral sessions hold it in memory
+  and flush it if the conversation is later promoted.
+- **Next eligible send override:** nullable Safe/Full value held only in the live
+  session. It is discarded on consumption, explicit disarm, session deletion/close,
+  app restart, or observation that the capture kill switch has been turned off.
+- **Process-local revision:** incremented for every policy mutation. Inspector writes
+  carry the revision they observed and reject stale updates from a second modal.
+
+Conversation persistence follows the existing sparse local policy pattern but uses a
+small capture-policy repository/table rather than adding capture semantics to context
+compaction policy. It has no sync columns or triggers.
+
+### Resolution and admission
+
+The controller resolves capture once at the accepted turn-admission boundary:
+
+```text
+if capture kill switch is off: disabled
+else next eligible override ?? conversation override ?? global default ?? Safe
+```
+
+Resolution and one-shot consumption occur under the session's existing admission
+serialization. The override is consumed only after the turn has an admitted owner and
+frozen provider resolution. A send rejected for readiness, validation, permissions,
+queue authority, cancellation, or a local command leaves it armed.
+
+If a queued human turn is already next, the UI says that the next queued send will
+consume the override. Queue cancellation does not consume it. An autonomous wakeup
+may run first but cannot consume or use the one-shot; it resolves from conversation,
+global, and application state.
+
+`ConsoleProviderStreamSignals` carries both `exchange_capture_enabled` and the frozen
+`capture_detail`. All call-scoped signal views inherit those values. Changing policy
+while a run is active affects only a later admitted run.
+
+### Mutation failure behavior
+
+- **Escalating to Full:** persist first where persistence is required, then publish the
+  runtime policy. Failure leaves the previous detail active and shows
+  `Failed — previous policy retained` with Retry.
+- **Reducing to Safe or Inherit:** publish a privacy-safe in-memory result immediately.
+  If the durable write fails, the UI shows `Safe for this app session — save failed`
+  and keeps Retry visible. It never claims the reduction will survive restart.
+- **Global settings:** use the canonical settings writer. The Inspector and F9 Settings
+  read/write the same key; neither maintains a shadow copy.
+- **Unknown persisted/config values:** resolve to Safe and surface a content-free
+  diagnostic. They never enable Full.
+
+## Capture content contract
+
+### Safe
+
+Safe preserves the incumbent exchange-capture contract. Automatic
+project-instruction rows remain tagged and their bodies are replaced with the existing
+omission marker before persistence. Existing allowlisting, omitted-key inventory,
+binary stubs, and size cap remain.
+
+### Full
+
+Full retains allowlisted semantic bodies that Safe omits, including:
+
+- provider system content, including the Anthropic `system` content supplied at the
+  adapter boundary;
+- user and assistant message payloads;
+- project/workspace instruction riders and lazily activated instruction content;
+- staged RAG/retrieval context and source snippets present in the request;
+- tool schemas, tool calls, tool-result messages, and observable response tool calls;
+- sampling, reasoning, routing, usage, status, and observable response content already
+  captured by the gateway.
+
+Full does **not** weaken structural protections:
+
+- request kwargs remain allowlisted; `api_key`, resolved credentials, authorization
+  headers, and unknown kwargs are excluded by construction;
+- binary/data-URI/base64 values remain deterministic size/hash stubs;
+- a capture exceeding the existing compressed cap becomes the existing explicit
+  truncation record;
+- logs and exception surfaces never carry capture bodies or raw exception values from
+  frames containing them.
+
+Chatbook cannot reliably identify secrets typed inside ordinary semantic text. Every
+Full confirmation names that limitation.
+
+### Provider boundary
+
+The generic gateway records the prepared semantic kwargs immediately before invoking
+the provider adapter and records content/tool calls observed on return. Anthropic's
+system/message/tool inputs are therefore included in Full mode even though the adapter
+may later transform them into Anthropic-specific wire blocks. Provider-internal prompt
+caching markers, headers, or framing remain outside the generic contract. The
+llama.cpp branch remains the documented exception where Chatbook owns the literal
+payload.
+
+## Persistence and migration
+
+Implementation must re-read `_CURRENT_SCHEMA_VERSION`; it is 49 at design time, so
+the provisional migration is v49 to v50.
+
+1. `ExchangeCapture` gains `capture_detail` with a backward-compatible Safe default.
+2. `message_exchanges` gains a non-null checked `capture_detail` column defaulting to
+   `safe`. New writes store the same value in the blob and queryable column. Existing
+   rows are accurately Safe because the pre-feature builder always applied Safe
+   project-instruction redaction.
+3. A local-only `console_conversation_capture_policy` table stores a nullable sparse
+   override by conversation ID and cascades on conversation deletion. Inherit removes
+   the row.
+4. No capture or policy row enters sync, FTS, server payloads, conversation metadata,
+   or Trace projection by default.
+
+The queryable column is deliberate. Scanning and decoding every opaque capture blob
+to count or purge Full records would make deletion slow, make corrupt blobs
+unclassifiable, and risk leaving sensitive content behind.
+
+## Scoped purge
+
+The policy dialog shows `Stored Full captures: N` and `Delete Full captures…` for the
+inspected conversation.
+
+- The action is disabled while that conversation has an admitted active run. Its
+  visible reason explains that the run's frozen policy could create another capture.
+- Confirmation names the conversation, count, irreversibility, unaffected data, and
+  the capture policy that will remain active.
+- The database deletes only `message_exchanges.capture_detail = 'full'` rows belonging
+  to messages in that conversation, in one ChaChaNotes transaction.
+- After the durable delete succeeds, the idle session removes matching in-memory
+  captures, serialized-blob cache entries, abandoned-run bookkeeping, and Inspector
+  caches before another flush can occur. This prevents deleted rows from being
+  upserted again.
+- Ephemeral sessions perform the same in-memory removal without a database write.
+- Failure leaves the pre-action state displayed and offers Retry. Partial success is
+  not reported.
+- Exports and backups are outside this deletion boundary and are named in the
+  confirmation.
+
+Purge does not mutate next-send, conversation, global, or kill-switch policy.
+
+## Conversation Inspector UX
+
+The Inspector receives immutable target identity plus injected policy read/write/count/
+purge callbacks. It never resolves `active_session_id` when an action is pressed.
+
+A pinned two-line status region sits below `Conversation Inspector` and above the
+existing tabs:
+
+```text
+Capture · Safe · “Conversation title” · future calls
+Next eligible send: Full (armed) · c Change…
+```
+
+Only relevant facts appear. If an active run differs from future policy, the second
+line instead says, for example, `Active run continues with Safe · next run uses Full`.
+Capture Off, temporary-session scope, applying, failed, and queued-consumer states use
+persistent text rather than toast or color alone.
+
+`c` opens a scrollable policy modal with fixed Cancel/Apply actions and vertical rows:
+
+1. Next eligible send: Inherit / Safe / Full.
+2. This conversation: Inherit / Safe / Full.
+3. Global default: Safe / Full.
+4. Stored Full captures: count and scoped delete action.
+
+Next-send Full needs no secondary confirmation. Conversation Full uses a warning that
+states target and persistence. Global Full uses a stronger confirmation with an
+explicit acknowledgement that it applies to all Console conversations in the current
+app configuration and survives restart. Reductions need no warning. Duplicate actions
+are disabled while Applying. Escape safely cancels, and focus returns to the status
+control.
+
+At 80x24, policy content scrolls while the status and Cancel/Apply controls remain
+reachable. Disabled reasons are visible text, not tooltip-only. Styling uses semantic
+tokens and literal Safe/Full/Off text labels.
+
+Each Exchange call title gains compact stored provenance such as `capture: Full`.
+Current settings never relabel historical calls.
+
+## Export profiles
+
+Capture detail describes storage; export profile describes disclosure.
+
+- **Safe summary:** provider/model/status/usage/provenance and omission/truncation
+  inventory, without semantic request/response bodies.
+- **Redacted diagnostic (default):** the incumbent Safe semantic capture shape,
+  including ordinary message bodies but omitting automatically injected project
+  instruction bodies and structurally excluded credentials.
+- **Full trace:** every allowed semantic body actually stored by Full capture.
+
+Full trace is disabled with a visible reason for a Safe capture; export cannot recover
+content that was never stored. Every profile still excludes structured credentials and
+stubs binaries. Full clipboard or filesystem export requires confirmation every time.
+One profile/destination flow replaces multiplying Copy/Save buttons.
+
+## Error handling and observability
+
+- Capture remains best-effort and must never fail a model run.
+- Capture builders, gateway bookkeeping, serialization, and flush paths log only
+  content-free categories and identifiers already permitted by current policy.
+- Policy escalation and destructive purge are different: policy failure retains a safe
+  prior/effective state; purge failure preserves records and reports no success.
+- A stale Inspector revision refreshes the current policy and asks the user to apply
+  again. It never overwrites a newer decision.
+- A missing/deleted target disables conversation and one-shot controls; global policy
+  remains available.
+- Turning capture off affects future calls and disarms any one-shot override. Existing
+  records remain until scoped purge or conversation deletion.
+
+## Testing and verification
+
+Targeted automated coverage must include:
+
+1. Pure precedence matrices for kill switch, one-shot, conversation, global, and Safe
+   default; invalid values fail Safe.
+2. Exact one-shot consumption for admitted manual/queued turns, including queue
+   cancellation, readiness rejection, local commands, agent wakeups, and active-run
+   ordering.
+3. Frozen detail across direct calls, agent tool loops, retries, and surviving fleet
+   calls.
+4. Safe-versus-Full request builders with tagged project instructions, RAG context,
+   tool schemas/calls/results, ordinary semantic secrets, credential kwargs, binary
+   stubs, and oversize truncation.
+5. Anthropic adapter-boundary tests proving Full captures system/message/tool content
+   while Safe applies the incumbent project-instruction omission.
+6. Genuine historical migration fixtures plus current-schema and round-trip coverage
+   for the queryable detail column and conversation policy table.
+7. Scoped purge count/delete, transaction rollback, idle gate, ephemeral clearing,
+   in-memory/cache invalidation, and a mutation test proving a later flush cannot
+   reinsert purged rows.
+8. Export profile availability, redaction, confirmation, clipboard/file paths, and the
+   guarantee that Safe capture cannot produce omitted Full bodies.
+9. Two-Inspector stale revisions, failed escalation/reduction writes, deleted targets,
+   Capture Off, long names, visible disabled reasons, focus restoration, and keyboard
+   operation.
+10. Production-shaped Textual geometry/compositor coverage at 80x24 using
+    `ConsolidatedCSSApp`, plus CSS bundle regeneration/integrity checks.
+11. Privacy assertions over every durable owner reached by the real seam: decoded
+    ChaChaNotes rows, in-memory/blob caches, exports, and configured filesystem logs.
+
+Because this changes ChaChaNotes schema, the complete DB migration suite is required.
+The repository-wide full test sweep still requires explicit owner approval under the
+project testing policy.
+
+## Documentation changes at implementation
+
+- Amend the Console context/RAG guide to describe Safe and Full, what Full includes,
+  and what it never includes.
+- Amend project-instruction documentation to replace the unconditional durable-capture
+  exclusion with the explicit Full opt-in exception.
+- Document global/config persistence, one-shot expiry, conversation inheritance,
+  provider-boundary caveats, export profiles, purge, and backup limitations.
+- Link ADR-089 from TASK-22507, the implementation plan, and closeout notes.
+
+## Deferred work
+
+- Timed retention, automatic pruning, deduplication, and backup management.
+- Raw provider-wire capture for adapters Chatbook does not own.
+- Auxiliary-call capture and automatic secret classification inside semantic text.
+- Cross-process policy coordination; the Console remains single-app-process owned.
