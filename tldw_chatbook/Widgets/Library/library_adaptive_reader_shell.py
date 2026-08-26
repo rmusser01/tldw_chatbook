@@ -182,15 +182,6 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 and (focused is pane or pane in focused.ancestors)
             ):
                 restore_focus = grip
-            if open and not was_open and focused is grip:
-                restore_focus = next(
-                    (
-                        child
-                        for child in pane.walk_children()
-                        if child.can_focus and child.display and not child.disabled
-                    ),
-                    pane,
-                )
             if previous_layout is None or was_open != open:
                 pane.display = open
                 pane.disabled = not open
@@ -200,6 +191,17 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 pane.styles.max_width = width
             if previous_layout is None:
                 pane.styles.height = "100%"
+            if open and not was_open and focused is grip:
+                restore_focus = next(
+                    (
+                        candidate
+                        for candidate in self.screen.focus_chain
+                        if (candidate is pane or pane in candidate.ancestors)
+                        and candidate.display
+                        and not candidate.disabled
+                    ),
+                    grip,
+                )
             grip.sync_open(open)
         if previous_layout is None:
             self.work.display = True
@@ -208,4 +210,6 @@ class LibraryAdaptiveReaderShell(Horizontal):
             self.work.styles.height = "100%"
         self._applied_layout = layout
         if restore_focus is not None:
-            restore_focus.focus(scroll_visible=False)
+            # Widget.focus() defers through app.call_later(), which could overwrite
+            # a newer user focus intent queued before the next refresh.
+            self.screen.set_focus(restore_focus, scroll_visible=False)

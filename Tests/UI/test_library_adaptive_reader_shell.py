@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from textual import on
 from textual.containers import Vertical
+from textual.css.styles import StylesBase
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -55,11 +56,13 @@ class _ProbeApp(ConsolidatedCSSApp):
         layout: AdaptiveReaderEffectiveLayout | None = None,
         *,
         focusable_content: bool = False,
+        hidden_items_subtree: bool = False,
         work_disabled: bool = False,
     ) -> None:
         super().__init__()
         self.layout = layout or _layout()
         self.focusable_content = focusable_content
+        self.hidden_items_subtree = hidden_items_subtree
         self.work_disabled = work_disabled
         self.toggles: list[str] = []
         self.resize_messages = 0
@@ -67,7 +70,17 @@ class _ProbeApp(ConsolidatedCSSApp):
     def compose(self):
         if self.focusable_content:
             library = Vertical(Button("Library action", id="probe-library-action"))
-            items = Vertical(Button("Items action", id="probe-items-action"))
+            if self.hidden_items_subtree:
+                hidden_items = Vertical(
+                    Button("Hidden items action", id="probe-hidden-items-action")
+                )
+                hidden_items.display = False
+                items = Vertical(
+                    hidden_items,
+                    Button("Items action", id="probe-items-action"),
+                )
+            else:
+                items = Vertical(Button("Items action", id="probe-items-action"))
         else:
             library = Static("Library")
             items = Static("Items")
@@ -248,6 +261,94 @@ async def test_reopening_items_moves_focus_from_its_grip_into_the_items_pane():
 
         assert shell.items.display
         assert items_action.has_focus
+
+
+@pytest.mark.asyncio
+async def test_collapse_focus_recovery_cannot_override_newer_explicit_focus():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        items_action = shell.query_one("#probe-items-action", Button)
+        library_action = shell.query_one("#probe-library-action", Button)
+        app.screen.set_focus(items_action, scroll_visible=False)
+
+        shell.sync_layout(_layout(items_open=False))
+        app.screen.set_focus(library_action, scroll_visible=False)
+        await pilot.pause()
+
+        assert library_action.has_focus
+        assert not shell.items_grip.has_focus
+
+
+@pytest.mark.asyncio
+async def test_reopen_focus_recovery_cannot_override_newer_explicit_focus():
+    app = _ProbeApp(_layout(items_open=False), focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        library_action = shell.query_one("#probe-library-action", Button)
+        app.screen.set_focus(shell.items_grip, scroll_visible=False)
+
+        shell.sync_layout(_layout(items_open=True))
+        app.screen.set_focus(library_action, scroll_visible=False)
+        await pilot.pause()
+
+        assert library_action.has_focus
+        assert not shell.query_one("#probe-items-action", Button).has_focus
+
+
+@pytest.mark.asyncio
+async def test_reopen_focus_skips_focusable_descendants_of_hidden_subtrees():
+    app = _ProbeApp(
+        _layout(items_open=False),
+        focusable_content=True,
+        hidden_items_subtree=True,
+    )
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        visible_items_action = shell.query_one("#probe-items-action", Button)
+        hidden_items_action = shell.query_one("#probe-hidden-items-action", Button)
+        app.screen.set_focus(shell.items_grip, scroll_visible=False)
+
+        shell.sync_layout(_layout(items_open=True))
+        assert visible_items_action in app.screen.focus_chain
+        assert app.screen.focused is visible_items_action
+        await pilot.pause()
+
+        assert visible_items_action.has_focus
+        assert not hidden_items_action.has_focus
+
+
+@pytest.mark.asyncio
+async def test_unchanged_layout_skips_every_pane_geometry_assignment(monkeypatch):
+    app = _ProbeApp()
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        pane_styles = (shell.library.styles, shell.items.styles)
+        assignments: list[str] = []
+        original_setattr = StylesBase.__setattr__
+
+        def track_pane_style_assignment(styles, name, value):
+            if any(styles is pane_style for pane_style in pane_styles) and name in {
+                "display",
+                "width",
+                "min_width",
+                "max_width",
+            }:
+                assignments.append(name)
+            original_setattr(styles, name, value)
+
+        monkeypatch.setattr(StylesBase, "__setattr__", track_pane_style_assignment)
+        shell.sync_layout(shell.effective_layout)
+
+        assert assignments == []
 
 
 @pytest.mark.asyncio
