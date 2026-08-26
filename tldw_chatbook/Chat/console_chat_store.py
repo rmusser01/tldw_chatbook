@@ -981,6 +981,11 @@ class ConsoleChatStore:
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
+        #: Preparations whose postcommit sequence has begun and has not yet
+        #: been released. Their tombstones are the ONLY proof that an
+        #: in-flight effect's preparation was retired rather than mutated,
+        #: so FIFO eviction must not reclaim them first (TASK-22587).
+        self._durable_active_postcommit: set[str] = set()
         self._durable_tombstones: OrderedDict[str, _ConsoleDurableTombstone] = (
             OrderedDict()
         )
@@ -3763,6 +3768,7 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            self._durable_active_postcommit.add(preparation_id)
             existing = self._durable_effects_by_preparation.get(preparation_id)
             if existing is not None:
                 if (
@@ -3949,8 +3955,46 @@ class ConsoleChatStore:
                 fingerprint=fingerprint,
                 completed=completed,
             )
-            while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            self._evict_durable_tombstones_locked()
+
+    def _evict_durable_tombstones_locked(self) -> None:
+        """Hold the cap while preserving retirement proof still in use.
+
+        TASK-22587 (Qodo review of #2123): a plain FIFO `popitem` could reclaim
+        the tombstone of a preparation whose postcommit sequence was STILL
+        RUNNING, and that tombstone is the only proof its retirement was an
+        ordinary close rather than a mutation. Losing it put the generic
+        fingerprint-change error back on the in-flight effect -- making
+        correctness depend on unrelated session-close volume.
+
+        Protected entries are skipped, oldest-first, so the cap still holds:
+        if every entry is protected the oldest is evicted anyway, because a
+        bounded cache that can be pinned open without limit is a leak.
+        """
+
+        while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            victim = next(
+                (
+                    key
+                    for key in self._durable_tombstones
+                    if key not in self._durable_active_postcommit
+                ),
+                None,
+            )
+            if victim is None:
                 self._durable_tombstones.popitem(last=False)
+                continue
+            self._durable_tombstones.pop(victim, None)
+
+    def release_durable_postcommit_activity(self, preparation_id: str) -> None:
+        """Allow this preparation's tombstone to be evicted again.
+
+        Called once the postcommit sequence is finished with the preparation,
+        by either the normal tail or the closed-session path (TASK-22587).
+        """
+
+        with self._preparation_lock:
+            self._durable_active_postcommit.discard(preparation_id)
 
     def discard_uncommitted_durable_preparation(self, preparation_id: str) -> None:
         """Forget staged content for an acceptance which never committed."""

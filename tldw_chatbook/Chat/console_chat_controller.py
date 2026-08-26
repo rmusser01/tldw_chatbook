@@ -5870,6 +5870,7 @@ class ConsoleChatController:
         """
 
         logger.debug("Durable postcommit sequence stopped: session closed")
+        self.store.release_durable_postcommit_activity(preparation_id)
         self._settle_accepted_preparation(preparation_id)
         with self.store.durable_preparation_lock:
             current = self._durable_postcommit_continuations.pop(preparation_id, None)
@@ -6276,6 +6277,7 @@ class ConsoleChatController:
             self._durable_postcommit_continuations.pop(preparation_id, None)
             self._release_retired_prepared_evidence(current)
             self.store.retire_durable_acceptance(preparation_id, fingerprint)
+        self.store.release_durable_postcommit_activity(preparation_id)
         if not isinstance(stream_result, ConsoleSubmitResult):
             stream_result = ConsoleSubmitResult(True, True)
         return replace(

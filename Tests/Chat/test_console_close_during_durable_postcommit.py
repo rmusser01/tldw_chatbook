@@ -396,3 +396,74 @@ def test_completed_effects_survive_the_close_that_retired_them(tmp_path) -> None
     store.close_session("session-1")
 
     assert EFFECT in store.durable_completed_effects_for(prep, fingerprint=fingerprint)
+
+
+def test_retirement_proof_survives_a_flood_of_unrelated_closes(tmp_path) -> None:
+    """Qodo finding #4 on #2123: eviction must not lose retirement proof.
+
+    Tombstones are FIFO-evicted past `DURABLE_TOMBSTONE_CAP`. A plain eviction
+    could reclaim the tombstone of a preparation whose postcommit sequence was
+    still running -- and that tombstone is the only proof its retirement was an
+    ordinary close rather than a mutation. Losing it put the generic
+    fingerprint-change error back on the in-flight effect, which made
+    correctness depend on unrelated session-close volume.
+    """
+
+    from dataclasses import replace
+
+    store, prep, fingerprint = _claimed_effect(tmp_path)
+    store.close_session("session-1")
+    assert store._durable_retired_locked(prep, fingerprint), (
+        "harness precondition: the close left retirement proof"
+    )
+
+    # Far more unrelated retirements than the cap allows.
+    for index in range(store.DURABLE_TOMBSTONE_CAP * 2):
+        other_id = f"unrelated-{index}"
+        other_fp = replace(fingerprint, assistant_message_id=other_id)
+        store._durable_fingerprint_by_preparation[other_id] = other_fp
+        store.retire_durable_acceptance(other_id, other_fp)
+
+    assert store._durable_retired_locked(prep, fingerprint), (
+        "the in-flight preparation's retirement proof was evicted, so its "
+        "effect would see a fingerprint-change error instead of an ordinary "
+        "close -- correctness must not depend on unrelated close volume"
+    )
+
+
+def test_protecting_tombstones_still_honours_the_cap(tmp_path) -> None:
+    """The protection must not turn a bounded cache into a leak.
+
+    A pinned entry is skipped, oldest-first -- but if everything is pinned the
+    oldest is evicted anyway. Without that fallback, an unreleased protection
+    would let the tombstone map grow without limit.
+    """
+
+    from dataclasses import replace
+
+    store, prep, fingerprint = _claimed_effect(tmp_path)
+    store.close_session("session-1")
+
+    for index in range(store.DURABLE_TOMBSTONE_CAP * 2):
+        other_id = f"pinned-{index}"
+        other_fp = replace(fingerprint, assistant_message_id=other_id)
+        store._durable_fingerprint_by_preparation[other_id] = other_fp
+        # Pin every single one, which is the pathological case.
+        store._durable_active_postcommit.add(other_id)
+        store.retire_durable_acceptance(other_id, other_fp)
+
+    assert len(store._durable_tombstones) <= store.DURABLE_TOMBSTONE_CAP, (
+        f"tombstones grew past the cap ({len(store._durable_tombstones)} > "
+        f"{store.DURABLE_TOMBSTONE_CAP}) -- protection became a leak"
+    )
+
+
+def test_releasing_activity_lets_the_tombstone_be_evicted_again(tmp_path) -> None:
+    """Protection is scoped to the sequence, not permanent."""
+
+    store, prep, _fingerprint = _claimed_effect(tmp_path)
+    assert prep in store._durable_active_postcommit
+
+    store.release_durable_postcommit_activity(prep)
+
+    assert prep not in store._durable_active_postcommit
