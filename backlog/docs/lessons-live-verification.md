@@ -88,6 +88,31 @@ verify those bindings by reading `BINDINGS` in the code instead.
 
 ---
 
+## A route-activated geometry test does not prove the untouched startup state
+
+**TASK-22301, 2026-08-26.** The production-styled Library width matrix passed at
+235, 170, 120, 100, 80, and 60 columns, but its ordinary-route setup selected
+Prompts before measuring geometry. Detached tmux UAT entered a fresh Library
+landing without selecting a row and found that the legacy graduated landing
+clause still forced rail-only mode at 100 and 80 columns. The selected-route
+matrix had changed the exact state that triggered the defect. The same live run
+also found that the visible emergency return could not be reached by keyboard
+and that Settings reported ASCII glyphs Disabled while the runtime rendered the
+saved ASCII form; mounted tests had verified the underlying actions and config
+values without exercising those complete user journeys.
+
+**What to do.** For responsive shells, verify at least three distinct lifecycle
+entries: untouched startup/landing, route activation, and resize restoration.
+Do not let a helper select a route before the startup assertion. For a visible
+keyboard affordance, drive focus to it through the advertised production keys
+and activate it; calling its action directly proves behavior, not reachability.
+When Settings owns a runtime preference, restart a scratch-profile process and
+compare the visible Settings value with the behavior rendered by that same
+process. Keep the pre-fix capture as failed evidence instead of replacing it
+with the post-fix pass.
+
+---
+
 ## "It resolves" is not "it resolves the right thing"
 
 **What happened.** Verifying an "open the item the server created" action, the fetch
