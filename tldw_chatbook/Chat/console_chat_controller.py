@@ -1851,6 +1851,9 @@ class CapturePurgeStatus(str, Enum):
     FAILED = "failed"
 
 
+_MISSING_CAPTURE_REVISION = -1
+
+
 @dataclass(frozen=True, slots=True)
 class CapturePurgeResult:
     status: CapturePurgeStatus
@@ -2676,7 +2679,10 @@ class ConsoleChatController:
         self, session_id: str
     ) -> CapturePurgeAvailability:
         """Report the first bounded writer reason preventing quiescence."""
-        self.store.capture_revision(session_id)
+        try:
+            self.store.capture_revision(session_id)
+        except KeyError:
+            return CapturePurgeAvailability(False, "target_missing")
         with self._capture_quiescence_lock:
             reason = self._capture_purge_blocker(session_id, include_lease=True)
             return CapturePurgeAvailability(reason is None, reason)
@@ -2717,7 +2723,13 @@ class ConsoleChatController:
     ) -> CapturePurgeResult:
         """Logically erase Full captures while every session writer is fenced."""
         with self._capture_quiescence_lock:
-            revision = self.store.capture_revision(session_id)
+            try:
+                revision = self.store.capture_revision(session_id)
+            except KeyError:
+                return CapturePurgeResult.blocked(
+                    _MISSING_CAPTURE_REVISION,
+                    "target_missing",
+                )
             reason = self._capture_purge_blocker(session_id, include_lease=True)
             if reason is not None:
                 return CapturePurgeResult.blocked(
@@ -2738,18 +2750,7 @@ class ConsoleChatController:
                 return CapturePurgeResult.blocked(revision, reason)
         try:
             stage = self.store.stage_full_capture_purge(session_id)
-            commit_task = asyncio.create_task(
-                self._run_durable_db_call(self.store.commit_full_capture_purge, stage)
-            )
-            cancelled = False
-            while not commit_task.done():
-                try:
-                    await asyncio.shield(commit_task)
-                except asyncio.CancelledError:
-                    cancelled = True
-            removed = commit_task.result()
-            if cancelled:
-                raise asyncio.CancelledError
+            removed = self.store.commit_full_capture_purge(stage)
             return CapturePurgeResult.deleted(
                 removed, self.store.capture_revision(session_id)
             )
@@ -2760,8 +2761,6 @@ class ConsoleChatController:
                 self.store.capture_revision(session_id),
                 "stale_capture_revision",
             )
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             logger.warning(
                 "capture_purge_failed (exception_type={})", type(exc).__name__

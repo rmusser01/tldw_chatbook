@@ -7445,8 +7445,10 @@ class ChatScreen(BaseAppScreen):
                 target_conversation_id=target_conversation_id,
                 capture_revision_provider=(
                     (
-                        lambda session_id=target_session_id: controller.capture_revision(
-                            session_id
+                        lambda session_id=target_session_id: (
+                            None
+                            if controller.store.capture_quiescent(session_id)
+                            else controller.capture_revision(session_id)
                         )
                     )
                     if target_session_id is not None

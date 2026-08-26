@@ -1685,8 +1685,13 @@ async def test_late_snapshot_completion_does_not_steal_focus_from_costs_tab() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "current_revision",
+    [8, None],
+    ids=["purged", "purge-lease-held"],
+)
 async def test_stale_capture_revision_blocks_expansion_copy_and_save(
-    monkeypatch,
+    monkeypatch, current_revision,
 ) -> None:
     revision = SimpleNamespace(value=7)
     cap = _capture(
@@ -1720,7 +1725,7 @@ async def test_stale_capture_revision_blocks_expansion_copy_and_save(
         call = modal.query_one("#console-inspector-exchange-call-0-0", Collapsible)
         assert modal._exchange_capture_by_call_key
 
-        revision.value = 8
+        revision.value = current_revision
 
         assert modal._mount_exchange_call_body(call, "0-0") is False
         assert modal._copy_exchange_capture("0-0") is False
@@ -1768,5 +1773,61 @@ async def test_revision_change_during_async_capture_load_discards_result() -> No
             ),
         )
 
+        assert modal._exchange_capture_by_call_key == {}
+        assert not turn.query(".console-inspector-exchange-call")
+
+
+@pytest.mark.asyncio
+async def test_revision_change_during_first_async_call_mount_discards_all_calls(
+    monkeypatch,
+) -> None:
+    revision = SimpleNamespace(value=3)
+    captures = [
+        _capture("full-a", 0, "2026-08-26T10:00:00Z", "m"),
+        _capture("full-b", 1, "2026-08-26T10:00:01Z", "m"),
+    ]
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(capture, False) for capture in captures]
+
+    mount_calls = SimpleNamespace(value=0)
+    original_mount = Collapsible.Contents.mount
+
+    def racing_mount(contents, *widgets, **kwargs):
+        mounted = original_mount(contents, *widgets, **kwargs)
+        if not widgets or not isinstance(widgets[0], Collapsible):
+            return mounted
+
+        async def finish_mount():
+            result = await mounted
+            mount_calls.value += 1
+            if mount_calls.value == 1:
+                revision.value = 4
+            return result
+
+        return finish_mount()
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            exchanges_loader=loader,
+            initial_tab=TAB_EXCHANGE,
+            target_session_id="session-at-open",
+            target_conversation_id="conversation-at-open",
+            capture_revision_provider=lambda: revision.value,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        monkeypatch.setattr(Collapsible.Contents, "mount", racing_mount)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: mount_calls.value >= 1)
+        await pilot.pause()
+
+        status = modal.query_one("#console-inspector-capture-status", Static)
+        assert "Refresh required" in str(status.renderable)
+        assert mount_calls.value == 1
         assert modal._exchange_capture_by_call_key == {}
         assert not turn.query(".console-inspector-exchange-call")

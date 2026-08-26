@@ -12,6 +12,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
@@ -729,11 +730,12 @@ class StagedCapturePurge:
     expected_revision: int
     durable_keys: frozenset[tuple[str, str, int]]
     message_swaps: tuple[tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]], ...]
-    blob_cache: dict[str, dict[tuple[str, int, str], bytes]]
-    abandoned_tags: dict[str, set[str]]
-    capture_revisions: Mapping[str, int]
-    session_revision_swaps: tuple[tuple[ConsoleChatSession, int], ...]
-    removed_live_count: int
+    blob_cache: tuple[
+        tuple[str, Mapping[tuple[str, int, str], bytes]], ...
+    ]
+    abandoned_tags: tuple[tuple[str, frozenset[str]], ...]
+    capture_revisions: tuple[tuple[ConsoleChatSession, int], ...]
+    removed_count: int
 
 
 def _utc_now_iso() -> str:
@@ -4477,39 +4479,55 @@ class ConsoleChatStore:
         message_swaps: list[
             tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]]
         ] = []
-        removed_live_count = 0
+        live_full_keys: set[tuple[str, str, int]] = set()
         remaining_run_tags: dict[str, set[str]] = {}
+        remaining_capture_keys: dict[str, set[tuple[str, int, str]]] = {}
         for message in messages:
             exchanges = tuple(
                 capture
                 for capture in message.exchanges
                 if capture.capture_detail is not CaptureDetail.FULL
             )
-            removed_live_count += len(message.exchanges) - len(exchanges)
+            persisted_id = message.persisted_message_id or message.id
+            live_full_keys.update(
+                (persisted_id, capture.run_tag, capture.seq)
+                for capture in message.exchanges
+                if capture.capture_detail is CaptureDetail.FULL
+            )
             if exchanges != message.exchanges:
                 message_swaps.append((message, exchanges))
             remaining_run_tags[message.id] = {capture.run_tag for capture in exchanges}
-
-        blob_cache = {
-            message_id: {
-                key: blob
-                for key, blob in cache.items()
-                if key[0] in remaining_run_tags.get(message_id, set())
+            remaining_capture_keys[message.id] = {
+                (capture.run_tag, capture.seq, capture.status)
+                for capture in exchanges
             }
-            for message_id, cache in self._exchange_blob_cache.items()
-        }
-        abandoned_tags = {
-            message_id: tags & remaining_run_tags.get(message_id, set())
-            for message_id, tags in self._abandoned_exchange_run_tags.items()
-        }
-        capture_revisions = {
-            candidate.id: (
-                candidate.capture_revision + 1
-                if candidate.id == session_id
-                else candidate.capture_revision
+
+        blob_cache = tuple(
+            (
+                message.id,
+                MappingProxyType(
+                    {
+                        key: blob
+                        for key, blob in self._exchange_blob_cache[message.id].items()
+                        if key in remaining_capture_keys[message.id]
+                    }
+                ),
             )
-            for candidate in self._sessions.values()
-        }
+            for message in messages
+            if message.id in self._exchange_blob_cache
+        )
+        abandoned_tags = tuple(
+            (
+                message.id,
+                frozenset(
+                    self._abandoned_exchange_run_tags[message.id]
+                    & remaining_run_tags[message.id]
+                ),
+            )
+            for message in messages
+            if message.id in self._abandoned_exchange_run_tags
+        )
+        capture_revisions = ((session, session.capture_revision + 1),)
         return StagedCapturePurge(
             session_id=session_id,
             conversation_id=conversation_id,
@@ -4519,11 +4537,7 @@ class ConsoleChatStore:
             blob_cache=blob_cache,
             abandoned_tags=abandoned_tags,
             capture_revisions=capture_revisions,
-            session_revision_swaps=tuple(
-                (candidate, capture_revisions[candidate.id])
-                for candidate in self._sessions.values()
-            ),
-            removed_live_count=removed_live_count,
+            removed_count=len(durable_keys | live_full_keys),
         )
 
     def commit_full_capture_purge(self, stage: StagedCapturePurge) -> int:
@@ -4531,21 +4545,25 @@ class ConsoleChatStore:
         session = self._session_or_raise(stage.session_id)
         if session.capture_revision != stage.expected_revision:
             raise CapturePurgeStaleError()
-        removed = stage.removed_live_count
         if not session.ephemeral and stage.conversation_id is not None:
             deleter = getattr(
                 self.persistence, "delete_full_exchanges_for_conversation", None
             )
             if not callable(deleter):
                 raise RuntimeError("Full capture deletion is unavailable.")
-            removed = deleter(stage.conversation_id)
-        self._exchange_blob_cache = stage.blob_cache
-        self._abandoned_exchange_run_tags = stage.abandoned_tags
+            deleter(
+                stage.conversation_id,
+                expected_count=len(stage.durable_keys),
+            )
+        for message_id, cache in stage.blob_cache:
+            self._exchange_blob_cache[message_id] = cache
+        for message_id, tags in stage.abandoned_tags:
+            self._abandoned_exchange_run_tags[message_id] = tags
         for message, exchanges in stage.message_swaps:
             message.exchanges = exchanges
-        for target_session, revision in stage.session_revision_swaps:
+        for target_session, revision in stage.capture_revisions:
             target_session.capture_revision = revision
-        return removed
+        return stage.removed_count
 
     def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyState:
         """Hydrate a persisted conversation override into process-local state."""
@@ -8288,9 +8306,11 @@ class ConsoleChatStore:
             sorted(merged.values(), key=lambda c: (c.run_tag, c.seq))
         )
         if abandoned:
-            self._abandoned_exchange_run_tags.setdefault(message.id, set()).update(
-                c.run_tag for c in captures
-            )
+            abandoned_tags = self._abandoned_exchange_run_tags.get(message.id)
+            if not isinstance(abandoned_tags, set):
+                abandoned_tags = set(abandoned_tags or ())
+                self._abandoned_exchange_run_tags[message.id] = abandoned_tags
+            abandoned_tags.update(c.run_tag for c in captures)
         if message.status not in {"pending", "streaming"}:
             self._persist_exchanges_only(message)
 
@@ -9927,7 +9947,10 @@ class ConsoleChatStore:
             # "stopped" snapshot superseded by a later non-"stopped"
             # capture, which is a STATUS change and so is naturally a cache
             # miss (a different key) rather than a stale hit.
-            blob_cache = self._exchange_blob_cache.setdefault(message.id, {})
+            blob_cache = self._exchange_blob_cache.get(message.id)
+            if not isinstance(blob_cache, dict):
+                blob_cache = dict(blob_cache or ())
+                self._exchange_blob_cache[message.id] = blob_cache
             current_keys: set[tuple[str, int, str]] = set()
             rows = []
             for c in message.exchanges:
@@ -9955,7 +9978,10 @@ class ConsoleChatStore:
                 del blob_cache[stale_key]
             writer(message_id=message.persisted_message_id, rows=rows)
         except Exception as exc:
-            logger.bind(message_id=message.id, error=repr(exc)).warning(
+            logger.bind(
+                message_id=message.id,
+                error_type=type(exc).__name__,
+            ).warning(
                 "exchange_flush_failed"
             )
 

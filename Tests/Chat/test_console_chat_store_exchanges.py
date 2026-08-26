@@ -396,7 +396,7 @@ def test_deferred_terminal_persistence_flushes_exchanges(
 
 
 def test_persist_exchanges_only_survives_a_serialization_failure(
-        store_with_fake_persistence):
+        store_with_fake_persistence, monkeypatch):
     """FINDING 2: row-building (``capture_to_blob``'s JSON serialization)
     must run INSIDE ``_persist_exchanges_only``'s try, not before it -- a
     malformed capture (a circular reference in ``request``) degrades to the
@@ -405,19 +405,23 @@ def test_persist_exchanges_only_survives_a_serialization_failure(
     from loguru import logger as loguru_logger
 
     store, mid, persistence = store_with_fake_persistence
-    circular: dict = {}
-    circular["self"] = circular
+    canary = "CANARY_FULL_CAPTURE_MUST_NOT_REACH_LOGS"
     bad_capture = ExchangeCapture(
         run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request=circular, response={"content": "x"},
+        endpoint=None, request={}, response={"content": "x"},
         status="complete", usage_json=None, omitted_keys=())
     store.attach_message_exchanges(mid, [bad_capture])
+    monkeypatch.setattr(
+        store_module,
+        "capture_to_blob",
+        lambda _capture: (_ for _ in ()).throw(RuntimeError(canary)),
+    )
 
     diagnostics: list[str] = []
     sink_id = loguru_logger.add(
         diagnostics.append,
         level="WARNING",
-        format="{extra[message_id]} {extra[error]} {message}",
+        format="{extra} {message}",
     )
     try:
         store.mark_message_complete(mid)  # must not raise
@@ -426,6 +430,8 @@ def test_persist_exchanges_only_survives_a_serialization_failure(
 
     assert persistence.appended_exchange_rows == []  # never reached the writer
     assert any("exchange_flush_failed" in d for d in diagnostics), diagnostics
+    assert any("RuntimeError" in d for d in diagnostics), diagnostics
+    assert canary not in "\n".join(diagnostics)
 
 
 def test_append_message_exchanges_service_wrapper_logs_and_returns_false():

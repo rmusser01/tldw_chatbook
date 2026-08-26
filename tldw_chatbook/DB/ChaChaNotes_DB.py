@@ -12547,8 +12547,13 @@ UPDATE db_schema_version
                 f"Database error reading Full exchange keys: {e}"
             ) from e
 
-    def delete_full_exchanges_for_conversation(self, conversation_id: str) -> int:
-        """Atomically delete Full exchanges by immutable conversation id."""
+    def delete_full_exchanges_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        expected_count: int | None = None,
+    ) -> int:
+        """Atomically delete the staged number of Full conversation exchanges."""
         try:
             with self.transaction(immediate=True) as cursor:
                 result = cursor.execute(
@@ -12561,7 +12566,12 @@ UPDATE db_schema_version
                     """,
                     (conversation_id,),
                 )
-                return int(result.rowcount)
+                removed = int(result.rowcount)
+                if expected_count is not None and removed != expected_count:
+                    raise CharactersRAGDBError(
+                        "Full exchange inventory changed during deletion."
+                    )
+                return removed
         except sqlite3.Error as e:
             raise CharactersRAGDBError(
                 f"Database error deleting Full exchanges: {e}"

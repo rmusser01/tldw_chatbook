@@ -228,6 +228,34 @@ def test_full_exchange_delete_rolls_back_atomically(db):
     ] == [("first", b"one"), ("second", b"two")]
 
 
+def test_full_exchange_delete_rolls_back_when_staged_inventory_changed(db):
+    message_id = _seed_message(db)
+    db.append_message_exchanges_local(
+        message_id,
+        [
+            {
+                "run_tag": "full",
+                "seq": 0,
+                "status": "complete",
+                "abandoned": False,
+                "capture_detail": "full",
+                "capture_blob": b"full",
+                "created_at": "t",
+            }
+        ],
+    )
+    conversation_id = db.get_message_by_id(message_id)["conversation_id"]
+
+    with pytest.raises(Exception, match="inventory changed"):
+        db.delete_full_exchanges_for_conversation(
+            conversation_id, expected_count=2
+        )
+
+    assert [row["run_tag"] for row in db.get_message_exchanges(message_id)] == [
+        "full"
+    ]
+
+
 def test_schema_version_is_at_least_43(db):
     # Mirrors the house sibling-version test pattern (a local `_version()`
     # helper against db_schema_version -- there is no public accessor).

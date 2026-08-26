@@ -354,7 +354,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         | None = None,
         target_session_id: str | None = None,
         target_conversation_id: str | None = None,
-        capture_revision_provider: Callable[[], int] | None = None,
+        capture_revision_provider: Callable[[], int | None] | None = None,
         initial_tab: str = TAB_COSTS,
     ) -> None:
         """Initialize the inspector.
@@ -517,6 +517,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
         except NoMatches:
             pass
+
+    async def _invalidate_stale_exchange_mounts(self) -> None:
+        """Remove call nodes that may have mounted across a revision change."""
+        self._invalidate_stale_captures()
+        for call in list(self.query(".console-inspector-exchange-call")):
+            await call.remove()
 
     def compose(self) -> ComposeResult:
         """Build the header, tabbed body, and shared Close action."""
@@ -1206,11 +1212,23 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
         if load_failed:
             self._loaded_exchange_turn_indices.discard(turn.index)
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                return
             await contents.mount(Static(_LOAD_FAILURE_MESSAGE, markup=False))
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
             return
 
         if not pairs:
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
+                return
             await contents.mount(Static(_NO_CAPTURES_MESSAGE, markup=False))
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
             return
 
         ordered = sorted(pairs, key=lambda pair: (pair[0].created_at, pair[0].seq))
@@ -1218,6 +1236,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self._exchange_turn_title(turn, call_count=len(ordered)), markup=False
         )
         for call_ordinal, (capture, abandoned) in enumerate(ordered):
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
+                return
             call_key = f"{turn.index}-{call_ordinal}"
             self._exchange_capture_by_call_key[call_key] = capture
             await contents.mount(
@@ -1230,6 +1252,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     classes="console-inspector-exchange-call",
                 )
             )
+            if not self._capture_revision_is_current():
+                await self._invalidate_stale_exchange_mounts()
+                self._loaded_exchange_turn_indices.discard(turn.index)
+                return
 
     def _mount_exchange_call_body(
         self, collapsible: Collapsible, call_key: str

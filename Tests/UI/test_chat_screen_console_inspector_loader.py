@@ -312,9 +312,11 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
     session = SimpleNamespace(
         id="session-at-open", persisted_conversation_id="conversation-at-open"
     )
+    quiescent = SimpleNamespace(value=False)
     store = SimpleNamespace(
         active_session_id=session.id,
         sessions=lambda: [session],
+        capture_quiescent=lambda _session_id: quiescent.value,
     )
     capture_revision = Mock(return_value=11)
     controller = SimpleNamespace(store=store, capture_revision=capture_revision)
@@ -346,6 +348,8 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
     assert inspector._target_conversation_id == "conversation-at-open"
     assert inspector._capture_revision_at_open == 11
     assert inspector._capture_revision_provider() == 11
+    quiescent.value = True
+    assert inspector._capture_revision_provider() is None
     capture_revision.assert_called_with("session-at-open")
 
 
