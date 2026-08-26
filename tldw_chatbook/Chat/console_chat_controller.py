@@ -10730,7 +10730,6 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session_id,
         )
-<<<<<<< HEAD
         (
             resolution,
             turn_context,
@@ -10738,9 +10737,6 @@ class ConsoleChatController:
             session_id,
             configuration,
         )
-=======
-        resolution = await self._resolve_for_send_bounded(turn_selection)
->>>>>>> 90f062479 (fix(console): first-chat handoff — no folder interception, bounded validation, clickable blocked reason (TASK-21145))
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
@@ -15231,7 +15227,6 @@ class ConsoleChatController:
                     session, registry
                 )
             except ProjectInstructionBindingRecovery as exc:
-<<<<<<< HEAD
                 expected_setup_state = session.project_instruction_state
                 try:
                     options = list_project_instruction_bindings(session, registry)
@@ -15267,52 +15262,6 @@ class ConsoleChatController:
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
                         return self._block(session_id, "project_instructions_disabled")
-=======
-                # TASK-21145 (UAT H-2): a session that never had a folder
-                # bound has nothing to recover — "no eligible folders" on a
-                # fresh profile must not intercept the user's first message
-                # with a setup modal (which surfaced the raw
-                # no_eligible_binding code over a plain "Hello"). Project
-                # instructions simply don't apply to this send. The
-                # recovery dialog remains for sessions whose EXISTING
-                # binding broke or where multiple folders need an explicit
-                # choice.
-                if project_recovery_should_skip_send_interception(
-                    str(exc), session.project_instruction_state
-                ):
-                    project_selection = None
-                    exc = None
-                if exc is not None:
-                    callback = self._select_project_instruction_binding
-                    if callback is None:
-                        return ConsoleSubmitResult(False, False, str(exc))
-                    expected_setup_state = session.project_instruction_state
-                    try:
-                        options = list_project_instruction_bindings(
-                            session, registry
-                        )
-                    except ProjectInstructionBindingRecovery:
-                        options = ()
-                    action, binding_id = await callback(
-                        session_id, options, str(exc)
-                    )
-                    action, project_selection = (
-                        commit_project_instruction_setup_decision(
-                            store=self.store,
-                            session_id=session_id,
-                            registry=registry,
-                            expected_state=expected_setup_state,
-                            expected_options=options,
-                            action=action,
-                            binding_id=binding_id,
-                        )
-                    )
-                    if action == "disable":
-                        self._clear_project_instruction_delivery(session_id)
-                        return ConsoleSubmitResult(
-                            False, False, "project_instructions_disabled"
-                        )
->>>>>>> 90f062479 (fix(console): first-chat handoff — no folder interception, bounded validation, clickable blocked reason (TASK-21145))
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)
                         return ConsoleSubmitResult(False, False, str(exc))
