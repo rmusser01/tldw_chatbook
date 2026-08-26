@@ -89,3 +89,23 @@ production statements; those pass.
 The agent did not reach it and I am not inventing one — deciding whether this database should ever
 gather statistics deserves its own measurement, not a guess appended to someone else's work.
 
+## Read-side gain (measured after the fact)
+
+The original work proved the planner *chooses* these indexes and measured what they *cost*, but
+never measured what they *bought* — the agent hit a session limit first. Filling that in, with the
+real `list_library_media_page` statement, median of 40 runs per arm:
+
+| library size | without v9 | with v9 | |
+|---|---|---|---|
+| 1,000 | 0.35 ms | 0.07 ms | 5.3x |
+| 10,000 | 3.94 ms | 0.07 ms | 58.6x |
+| 50,000 | 19.58 ms | **0.07 ms** | **296x** |
+
+The shape matters more than the multiplier: **flat at 0.07 ms regardless of library size**, against
+a cost that otherwise grows linearly with every item ingested. Against +0.291 ms per 50-row batch
+and +16.1% file size, the trade is clearly worth taking.
+
+**Process note**: a schema migration adding four indexes, justified only by query plans and write
+cost, is not evaluable. Plan output tells you the index will be *used*; it does not tell you the
+use is *worth* anything. Both halves are required.
+
