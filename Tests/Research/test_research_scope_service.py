@@ -611,3 +611,103 @@ async def test_backend_exceptions_survive_the_offload(tmp_path):
     with pytest.raises(ValueError, match="research run not found"):
         await scope.get_bundle("no-such-run", mode="local")
     service.close()
+
+
+def _record_event_read_threads(monkeypatch):
+    """Record the thread each `list_run_events` read actually executes on.
+
+    `_record_db_threads` above hooks `_connect`, which a HELD connection only
+    reaches once per thread -- too coarse to tell where a later read ran.
+    """
+    seen: list[str] = []
+    real_list = LocalResearchService.list_run_events
+
+    def _recording(self, *args, **kwargs):
+        seen.append(threading.current_thread().name)
+        return real_list(self, *args, **kwargs)
+
+    monkeypatch.setattr(LocalResearchService, "list_run_events", _recording)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_local_stream_run_events_reads_off_the_event_loop(tmp_path, monkeypatch):
+    """The async-generator path must honour the same no-SQLite-on-the-loop rule.
+
+    `_ThreadOffloadedBackend` passes async generators through unwrapped, which
+    is right for the server backend but left `LocalResearchService.
+    stream_run_events` -- an `async def ... yield` whose body is a blocking
+    `list_run_events` call -- executing SQLite on the loop thread every time
+    the Research window's 2 s poll consumed it.
+    """
+    service = LocalResearchService(tmp_path / "research.db")
+    scope = ResearchScopeService(local_service=service, server_service=None)
+    run = await scope.create_run(mode="local", query="streamed off the loop")
+    for index in range(25):
+        service.record_run_event(run["id"], f"event-{index}", {"index": index})
+
+    loop_thread = threading.current_thread().name
+    seen = _record_event_read_threads(monkeypatch)
+    events = [event async for event in scope.stream_run_events(run["id"], mode="local")]
+
+    assert events, "the stream yielded nothing, so the thread assertion is vacuous"
+    assert seen, "no event read was observed at all"
+    assert loop_thread not in seen, f"SQLite ran on the event loop thread: {seen}"
+    assert all(name.startswith("research-backend") for name in seen), seen
+    service.close()
+
+
+@pytest.mark.asyncio
+async def test_local_stream_run_events_output_is_unchanged_by_the_offload(tmp_path):
+    """Taking the offloaded reader must yield exactly what the generator did.
+
+    `LocalResearchService.stream_run_events` is a snapshot loop over
+    `list_run_events`, so the two are required to agree item for item --
+    including under `after_id`, which is the argument the poll advances.
+    """
+    service = LocalResearchService(tmp_path / "research.db")
+    scope = ResearchScopeService(local_service=service, server_service=None)
+    run = await scope.create_run(mode="local", query="identical output")
+    for index in range(25):
+        service.record_run_event(run["id"], f"event-{index}", {"index": index})
+
+    direct = [event async for event in service.stream_run_events(run["id"])]
+    routed = [event async for event in scope.stream_run_events(run["id"], mode="local")]
+    assert routed == direct
+    assert len(routed) > 1, "too few events to distinguish a truncation bug"
+
+    tail_direct = [event async for event in service.stream_run_events(run["id"], after_id=10)]
+    tail_routed = [
+        event
+        async for event in scope.stream_run_events(run["id"], mode="local", after_id=10)
+    ]
+    assert tail_routed == tail_direct
+    assert len(tail_routed) < len(routed), "after_id was ignored"
+    service.close()
+
+
+@pytest.mark.asyncio
+async def test_async_backend_stream_is_still_consumed_as_a_generator():
+    """The server backend keeps its real streaming path -- no reader swap.
+
+    The offloaded-reader preference is gated on a SYNCHRONOUS `list_run_events`.
+    An async backend has none to prefer, so its `stream_run_events` must still
+    be the method that runs, and must still be iterated lazily.
+    """
+
+    class AsyncStreamingBackend:
+        def __init__(self):
+            self.streamed = 0
+
+        async def stream_run_events(self, run_id, *, after_id=0):
+            for index in range(3):
+                self.streamed += 1
+                yield {"id": index + 1, "run_id": run_id, "event": f"e{index}"}
+
+    backend = AsyncStreamingBackend()
+    scope = ResearchScopeService(local_service=None, server_service=backend)
+
+    events = [event async for event in scope.stream_run_events("r1", mode="server")]
+
+    assert backend.streamed == 3, "the async generator was not the method used"
+    assert [event["event"] for event in events] == ["e0", "e1", "e2"]

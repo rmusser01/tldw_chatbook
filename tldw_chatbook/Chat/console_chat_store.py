@@ -1782,6 +1782,22 @@ class ConsoleChatStore:
         second manual turn, and a queued follow-up is only *submitted* from
         ``_drain_waiting``, which runs after the previous turn reaches a
         terminal status -- by which point settlement has popped this owner.
+
+        Args:
+            session_id: Native Console session id. ``None`` -- and equally an
+                empty string or any non-``str`` -- means "no session to have
+                an owner", which ``dispatch_recovery_for_session`` answers
+                with ``None``, so the gate is open. Callers on a screen with
+                no active session therefore need no guard of their own.
+
+        Returns:
+            ``True`` only when that session has a recovery owner the user is
+            currently being shown a card for AND its kind is one of the five
+            unresolved source-local kinds above. ``False`` for no owner, for
+            a healthy in-flight owner (``recovery_needed=False``), and for
+            the three kinds outside that set (``REMOTE_ACCEPTED``,
+            ``REMOTE_DISPATCH_STARTED``, ``CONTINUATION``) -- i.e. the send
+            is admitted.
         """
 
         recovery = self.dispatch_recovery_for_presentation(session_id)
@@ -4502,6 +4518,18 @@ class ConsoleChatStore:
                 )
         self._sessions.clear()
         self._messages_by_session.clear()
+        # Retention, not correctness: the memo holds a strong reference to the
+        # PRE-restore view list, so clearing `_messages_by_session` does not
+        # release it. Correctness was always safe (the memo pins that list, so
+        # a rebuilt view can never reuse its identity), but nothing evicts the
+        # slot until some later `newest_change_review_run_id` call overwrites
+        # it -- and that call never comes when the changed-files guard is off
+        # or the screen stops querying, leaving a replaced session's entire
+        # transcript (every `ConsoleChatMessage`, image bytes included) alive
+        # for the rest of the store's life. Same reasoning as
+        # `_drop_newest_change_review_memo`; unconditional here because
+        # restore_state replaces every session, not one.
+        self._newest_change_review_memo = None
         self._message_session_index.clear()
         self._pending_persistence_message_ids.clear()
         self._terminal_citation_finalizers.clear()
@@ -5345,8 +5373,11 @@ class ConsoleChatStore:
         (and therefore every ``ConsoleChatMessage`` in it) for an unbounded
         time when the closed session was the active one and nothing queries
         again. Dropping a memo can only cost a recompute, so that is hygiene,
-        not an invalidation protocol; ``restore_state`` needs no such hook
-        because the next query re-derives against a new list anyway.
+        not an invalidation protocol. ``restore_state`` clears the slot for
+        the same RETENTION reason (Qodo review, 2026-08-26): its correctness
+        never needed a hook -- the next query re-derives against a new list --
+        but until that query happens the slot keeps the whole REPLACED
+        transcript alive, and after a state replacement it may never happen.
 
         Args:
             session_id: Native Console session id.

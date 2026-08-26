@@ -1143,11 +1143,9 @@ class NotesDeviceStateStore:
         ``idx_notes_sync_bindings_root(root_id, state, binding_id)``, which
         also supplies the ordering, so no temporary B-tree sort is built.
 
-        This is a private projection for owner-side reconciliation, not a
-        public summary: it deliberately carries no
-        :func:`validate_notes_sync_opaque_id` fail-closed check, exactly like
-        the :meth:`list_bindings` read it replaces. ``list_binding_summaries``
-        keeps that contract because it feeds surfaces outside this owner.
+        Both identifiers carry the same :func:`validate_notes_sync_opaque_id`
+        fail-closed check as the :meth:`list_bindings` read this replaces, so
+        narrowing the projection did not narrow the input contract.
 
         Args:
             root_id: The opaque sync root whose active bindings to project.
@@ -1157,6 +1155,10 @@ class NotesDeviceStateStore:
         Returns:
             tuple[str, ...]: Note ids of the matching active bindings, ordered
             by binding id.
+
+        Raises:
+            ValueError: If ``root_id`` -- or ``exclude_binding_id``, when
+                given -- is not a bounded opaque identifier.
         """
 
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
@@ -1210,6 +1212,10 @@ class NotesDeviceStateStore:
         Returns:
             bool: True when some binding of this root, in any state, already
             claims that note identity or that relative path.
+
+        Raises:
+            ValueError: If ``root_id`` is not a bounded opaque identifier. The
+                three search terms above are deliberately exempt.
         """
 
         validate_notes_sync_opaque_id(root_id, field_name="root_id")

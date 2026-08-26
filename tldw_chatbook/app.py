@@ -2769,6 +2769,12 @@ class LibraryIngestQueueMixin:
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
 
+        # Bound before the `try` so the failure path can tell "never opened"
+        # from "opened, then a later step failed" -- the second case owns a
+        # live SQLite connection (the store opens one in its constructor, via
+        # `_initialize_schema`) that nothing else will ever close, because the
+        # registry is left store-less.
+        store = None
         try:
             # `LibraryIngestJobsDB` opens with `check_same_thread=False`, so
             # the connection this thread creates stays usable from the UI
@@ -2793,6 +2799,13 @@ class LibraryIngestQueueMixin:
             logger.opt(exception=True).warning(
                 "Failed to restore persisted ingest job history; starting empty."
             )
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Ingest job store close after failed restore failed."
+                    )
             return
 
         try:
@@ -2823,13 +2836,22 @@ class LibraryIngestQueueMixin:
         store attach stay here even though the I/O moved. Uses
         ``merge_restored`` rather than ``restore`` so a job submitted in the
         few milliseconds between ``on_mount`` and this callback survives.
+
+        The store is attached BEFORE the merge, not after: a job submitted in
+        that window was submitted while the registry was store-less, so its
+        own ``_persist`` was a no-op, and nothing later re-offers it. With
+        the store attached first, ``merge_restored`` writes those live jobs
+        through -- which also replaces any persisted row that happens to
+        share their id (both sessions allocate from ``ingest-job-1`` upward,
+        so a collision in this window is the likely case, and the stale row
+        would otherwise be restored in the live job's place next launch).
         """
         if getattr(self, "_ingest_shutdown", False):
             store.close()
             return
         self._library_ingest_jobs_store = store
-        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
         self.library_ingest_jobs.attach_store(store)
+        self.library_ingest_jobs.merge_restored(plan.jobs, plan.next_id)
 
     def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
         """Expand a directory source into the files it contains.
@@ -14295,8 +14317,9 @@ class TldwCli(
             name="tldw-initial-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._initial_screen_preimport_thread = thread
-        thread.start()
 
     def _schedule_screen_preimport(self) -> None:
         """Start the background screen-module pre-importer, at most once."""
@@ -14311,8 +14334,41 @@ class TldwCli(
             name="tldw-screen-preimport",
             daemon=True,
         )
+        if not self._start_preimport_thread(thread):
+            return
         self._screen_preimport_thread = thread
-        thread.start()
+
+    def _start_preimport_thread(self, thread: threading.Thread) -> bool:
+        """Start a pre-import thread; report whether it is running.
+
+        Args:
+            thread: The unstarted daemon thread to run.
+
+        Returns:
+            ``True`` when the thread started. ``False`` when the interpreter
+            refused to spawn it -- thread exhaustion, or a start during
+            interpreter shutdown -- in which case the caller must NOT record a
+            handle.
+
+        Both callers run from the splash-path timer/deferred-startup callback,
+        not a request/response path, so a ``RuntimeError`` out of ``start()``
+        would surface as an unhandled exception in a Textual timer task during
+        boot. Losing a speculative warm-up is the correct outcome there: every
+        module this would have pre-imported is still imported normally on
+        first navigation. Recording the handle only after a successful start
+        also keeps the once-guard honest -- a failed attempt leaves ``None``,
+        so a later call can try again.
+        """
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            self.loguru_logger.debug(
+                "Screen pre-import thread could not start (name={}, error_type={})",
+                thread.name,
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:

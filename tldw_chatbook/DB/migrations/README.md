@@ -4,6 +4,27 @@
 methods in the matching `DB/*.py` module. Filenames are
 `<db>_v<from>_to_v<to>_<what>.sql`.
 
+## Which schemas live here (and which do not)
+
+Two of the eight versioned schemas do: `chachanotes` (`ChaChaNotes_DB.py`) and
+`workspaces` (`Workspace_DB.py`). The other six — media
+(`Client_Media_DB_v2.py`), agent runs, prompts, library ingest jobs, library
+collections, subscriptions — keep each step as a module-level SQL constant and
+run it from their own migration method. No `media_*.sql` has ever existed here.
+
+That is a scope statement, not a backlog item, and it is written down because
+reviewers keep reading "add `<db>_v<n>_to_v<n+1>.sql`" as repo-wide and filing
+the media DB's inline steps as a violation (twice on TASK-21126 and
+TASK-21593). What the rules below actually require of *every* schema is the
+behaviour: one guarded transaction per step, re-enterable, rewinding the
+version stamp on failure. `Client_Media_DB_v2._apply_migration_v8_to_v9` meets
+it through `self.transaction()` + `_execute_transactional_script`, and
+`Tests/DB/test_media_db_schema_v9.py::test_failed_v8_to_v9_rolls_back_and_
+leaves_a_working_v8_db` proves the rollback. Moving one media step into this
+directory would leave that module split across two conventions and buy
+nothing; moving all of them is a separate change, and would have to carry the
+packaging derivation in step 3 with it.
+
 ## Adding a migration
 
 1. Bump `_CURRENT_SCHEMA_VERSION` in the owning DB module.
