@@ -163,7 +163,40 @@ def test_roleplay_markdown_annotates_single_quoted_thought_with_contraction():
     assert thought_spans == [("'I don't know.'", ".console-rp-thought")]
 
 
+@pytest.mark.parametrize(
+    ("source", "speech"),
+    [
+        ('Narration. "I said \'no\'."', '"I said \'no\'."'),
+        ("Narration. “I said ‘no’.”", "“I said ‘no’.”"),
+    ],
+)
+def test_roleplay_markdown_outer_speech_prevents_nested_thought(source, speech):
+    """Outer speech quotes keep nested single quotes out of thought styling.
+
+    Args:
+        source: Markdown source containing nested speech punctuation.
+        speech: Expected complete speech span in the rendered content.
+    """
+    markdown = ConsoleRoleplayMarkdown(source, open_links=False)
+    content = markdown._build_from_source(source)[0]._content
+
+    speech_spans = [
+        content.plain[span.start : span.end]
+        for span in content.spans
+        if span.style == ".console-rp-speech"
+    ]
+    thought_spans = [
+        content.plain[span.start : span.end]
+        for span in content.spans
+        if span.style == ".console-rp-thought"
+    ]
+
+    assert speech_spans == [speech]
+    assert thought_spans == []
+
+
 def test_roleplay_markdown_thought_boundaries_and_protected_content():
+    """Thought styling excludes contractions, code, links, and open quotes."""
     source = (
         "Don't panic. ‘I don’t know.’ `\u0027code thought\u0027` "
         "[\u0027linked thought\u0027](https://example.com) \u0027unfinished"
@@ -485,6 +518,11 @@ async def test_streaming_append_activates_flavor_when_marker_closes(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_streaming_append_activates_thought_only_when_quote_closes(monkeypatch):
+    """Streaming activates thought styling only after the delimiter closes.
+
+    Args:
+        monkeypatch: Pytest fixture used to observe append and update calls.
+    """
     app = MarkdownHarness()
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)

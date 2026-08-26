@@ -211,3 +211,14 @@ def test_flavor_quote_containing_action_marker_styles_as_speech():
     assert _markdown_body_spans('"I *mean* it"') == [
         ('"I *mean* it"', _SPEECH_STYLE),
     ]
+
+
+def test_flavor_outer_speech_swallows_nested_single_quotes():
+    """Outer speech precedence keeps nested single quotes in one span."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _SPEECH_STYLE
+
+    straight = '"I said \'no\'."'
+    curly = "“I said ‘no’.”"
+
+    assert _markdown_body_spans(straight) == [(straight, _SPEECH_STYLE)]
+    assert _markdown_body_spans(curly) == [(curly, _SPEECH_STYLE)]

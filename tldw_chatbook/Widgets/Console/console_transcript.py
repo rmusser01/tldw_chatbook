@@ -619,13 +619,19 @@ def _roleplay_flavor_content(content: Content) -> Content:
         return remaining
 
     flavor_spans: list[Span] = []
-    for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain):
+    speech_ranges = [match.span() for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain)]
+    for match_start, match_end in speech_ranges:
         flavor_spans.extend(
             Span(start, end, f".{_CONSOLE_RP_SPEECH_COMPONENT}")
-            for start, end in unprotected_ranges(match.start(), match.end())
+            for start, end in unprotected_ranges(match_start, match_end)
             if start < end
         )
     for match in _ROLEPLAY_THOUGHT_RE.finditer(content.plain):
+        if any(
+            speech_start <= match.start() and match.end() <= speech_end
+            for speech_start, speech_end in speech_ranges
+        ):
+            continue
         flavor_spans.extend(
             Span(start, end, f".{_CONSOLE_RP_THOUGHT_COMPONENT}")
             for start, end in unprotected_ranges(match.start(), match.end())
