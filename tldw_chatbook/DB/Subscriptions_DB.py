@@ -30,7 +30,7 @@ import weakref
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Sequence, Union
+from typing import List, Dict, Any, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party Libraries
@@ -43,6 +43,9 @@ from .sql_validation import validate_identifier
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.fts5_match_forms import quote_fts5_token
+
+if TYPE_CHECKING:
+    from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -2488,6 +2491,7 @@ class SubscriptionsDB(BaseDB):
         "i.canonical_url, i.duplicate_of, i.created_at, i.updated_at, "
         "i.queued_for_briefing, i.run_id, i.alert_matches, "
         "i.content_format, i.content_kind, i.is_flagged, "
+        "i.effective_date, "
         "substr(i.content, 1, 2000) AS content_preview, "
         "s.name as subscription_name, s.type as subscription_type"
     )
@@ -2510,6 +2514,8 @@ class SubscriptionsDB(BaseDB):
         "s.last_successful_check AS subscription_last_successful_check"
     )
     _AGENT_SEARCH_PAGE_LIMIT = 50
+    _AGENT_ITEM_ORDER_BY = "i.effective_date DESC, i.id ASC"
+    _READER_ITEM_ORDER_BY = "i.effective_date DESC, i.id DESC"
     _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
     _AGENT_MEMBERSHIP_COLLECTION_LIMIT = 20
     _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
@@ -2647,6 +2653,7 @@ class SubscriptionsDB(BaseDB):
         select_columns: Optional[str] = None,
         select_params: Sequence[Any] = (),
         fts_select_columns: Optional[str] = None,
+        order_by: str = _AGENT_ITEM_ORDER_BY,
     ) -> List[Any]:
         """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
 
@@ -2659,6 +2666,12 @@ class SubscriptionsDB(BaseDB):
         ``\\`` stay literal). Either way the caller gets rows; the search
         box must never raise into the reader.
         """
+        if order_by == self._AGENT_ITEM_ORDER_BY:
+            selected_order_by = self._AGENT_ITEM_ORDER_BY
+        elif order_by == self._READER_ITEM_ORDER_BY:
+            selected_order_by = self._READER_ITEM_ORDER_BY
+        else:
+            raise ValueError("Unsupported internal item ordering")
         columns = select_columns or self._LIST_ITEM_COLUMNS
         fts_columns = fts_select_columns or columns
         effective_fts_select_params = () if fts_select_columns else select_params
@@ -2677,7 +2690,7 @@ class SubscriptionsDB(BaseDB):
                     JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
                     JOIN subscriptions s ON i.subscription_id = s.id
                     {fts_where}
-                    ORDER BY i.effective_date DESC, i.id ASC
+                    ORDER BY {selected_order_by}
                     LIMIT ?
                     """,
                     tuple([*effective_fts_select_params, *params, match, limit]),
@@ -2707,11 +2720,328 @@ class SubscriptionsDB(BaseDB):
             FROM subscription_items i
             JOIN subscriptions s ON i.subscription_id = s.id
             {like_where}
-            ORDER BY i.effective_date DESC, i.id ASC
+            ORDER BY {selected_order_by}
             LIMIT ?
             """,
             tuple([*select_params, *params, *like_params, limit]),
         ).fetchall()
+
+    def _reader_item_predicates(
+        self,
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        run_id: Optional[int],
+        watchlist_id: Optional[int],
+        unassigned_only: bool,
+        statuses: Optional[Sequence[str]],
+        is_flagged: Optional[bool],
+        since: Optional[str],
+    ) -> tuple[List[str], List[Any]]:
+        """Build every non-text Reader item predicate in one place."""
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
+        if run_id is not None:
+            predicates.append("i.run_id = ?")
+            params.append(run_id)
+        if unassigned_only:
+            predicates.append(
+                "NOT EXISTS (SELECT 1 FROM watchlist_sources ws "
+                "WHERE ws.subscription_id = i.subscription_id)"
+            )
+        if is_flagged is not None:
+            predicates.append("i.is_flagged = ?")
+            params.append(1 if is_flagged else 0)
+        return predicates, params
+
+    def _reader_search_parts(
+        self, conn: Any, search_terms: Sequence[str]
+    ) -> tuple[str, List[str], List[Any]]:
+        """Return one stable FTS-or-LIKE search mode for a Reader query.
+
+        A page's matching high-water, count, rows, and subsequent arrival
+        count must answer the same search question.  Probe the FTS table once
+        before building those statements; an absent/incomplete/broken index
+        chooses the literal LIKE form for all of them.
+        """
+        if not search_terms:
+            return "", [], []
+        match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
+        if self._subscription_items_fts_is_complete(conn):
+            try:
+                conn.execute(
+                    "SELECT 1 FROM subscription_items_fts "
+                    "WHERE subscription_items_fts MATCH ? LIMIT 1",
+                    (match,),
+                ).fetchone()
+                return (
+                    "JOIN subscription_items_fts "
+                    "ON subscription_items_fts.rowid = i.id",
+                    ["subscription_items_fts MATCH ?"],
+                    [match],
+                )
+            except sqlite3.OperationalError:
+                logger.debug(
+                    "subscription_items_fts unavailable; Reader falling back to LIKE."
+                )
+        like_clauses: List[str] = []
+        like_params: List[Any] = []
+        for term in search_terms:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like_clauses.append(
+                "(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' "
+                "OR i.author LIKE ? ESCAPE '\\')"
+            )
+            like_params.extend([f"%{escaped}%"] * 3)
+        return "", like_clauses, like_params
+
+    @staticmethod
+    def _reader_where_clause(predicates: Sequence[str]) -> str:
+        """Return a WHERE clause for fixed, internally-built predicates."""
+        return f"WHERE {' AND '.join(predicates)}" if predicates else ""
+
+    def _reader_matching_parts(
+        self,
+        conn: Any,
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        run_id: Optional[int],
+        watchlist_id: Optional[int],
+        unassigned_only: bool,
+        statuses: Optional[Sequence[str]],
+        is_flagged: Optional[bool],
+        search: Optional[str],
+        since: Optional[str],
+    ) -> tuple[str, List[str], List[Any]]:
+        """Return the shared Reader FROM join, predicates, and parameters."""
+        predicates, params = self._reader_item_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            run_id=run_id,
+            watchlist_id=watchlist_id,
+            unassigned_only=unassigned_only,
+            statuses=statuses,
+            is_flagged=is_flagged,
+            since=since,
+        )
+        search_terms = search.split() if search and search.strip() else []
+        search_join, search_predicates, search_params = self._reader_search_parts(
+            conn, search_terms
+        )
+        return search_join, [*predicates, *search_predicates], [*params, *search_params]
+
+    @staticmethod
+    def _validate_reader_query_inputs(
+        *,
+        status: Optional[str],
+        statuses: Optional[Sequence[str]],
+        limit: Optional[int] = None,
+        snapshot_max_item_id: Optional[int] = None,
+        after: Optional["WatchlistItemCursor"] = None,
+    ) -> None:
+        """Validate Reader API inputs shared by page and arrival queries."""
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be at least 1")
+        if status is not None and statuses is not None:
+            raise ValueError("Pass either status or statuses, not both.")
+        if after is None:
+            return
+        if snapshot_max_item_id is None:
+            raise ValueError("snapshot watermark is required for continuation")
+        if after.item_id < 1:
+            raise ValueError("cursor item id must be positive")
+        if snapshot_max_item_id < after.item_id:
+            raise ValueError("snapshot watermark must not be below cursor item id")
+
+    def get_reader_items_page(
+        self,
+        *,
+        subscription_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        run_id: int | None = None,
+        watchlist_id: int | None = None,
+        unassigned_only: bool = False,
+        statuses: Sequence[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+        snapshot_max_item_id: int | None = None,
+        after: "WatchlistItemCursor | None" = None,
+    ) -> "WatchlistItemPage":
+        """Return one Reader page in a stable DESC/DESC item snapshot.
+
+        Args:
+            subscription_id: Optional source scope.
+            status: Optional single item status.
+            limit: Number of returned rows; must be at least one.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional collection-membership scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope, exclusive with ``status``.
+            is_flagged: Optional starred-state scope.
+            search: Optional literal title/content/author search.
+            since: Optional inclusive effective-date floor.
+            snapshot_max_item_id: Existing snapshot high-water for continuation.
+            after: Last returned Reader cursor for continuation.
+
+        Returns:
+            Immutable page data with raw SQLite row dictionaries.
+
+        Raises:
+            ValueError: If the page request or continuation cursor is invalid.
+        """
+        self._validate_reader_query_inputs(
+            status=status,
+            statuses=statuses,
+            limit=limit,
+            snapshot_max_item_id=snapshot_max_item_id,
+            after=after,
+        )
+        from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+
+        with self.transaction() as conn:
+            search_join, predicates, params = self._reader_matching_parts(
+                conn,
+                subscription_id=subscription_id,
+                status=status,
+                run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+            )
+            first_page = after is None
+            if first_page and snapshot_max_item_id is None:
+                high_water_row = conn.execute(
+                    f"""
+                    SELECT COALESCE(MAX(i.id), 0)
+                    FROM subscription_items i
+                    {search_join}
+                    {self._reader_where_clause(predicates)}
+                    """,
+                    tuple(params),
+                ).fetchone()
+                snapshot_max_item_id = int(high_water_row[0])
+            assert snapshot_max_item_id is not None
+            bounded_predicates = [*predicates, "i.id <= ?"]
+            bounded_params = [*params, snapshot_max_item_id]
+            snapshot_count: Optional[int] = None
+            if first_page:
+                count_row = conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM subscription_items i
+                    {search_join}
+                    {self._reader_where_clause(bounded_predicates)}
+                    """,
+                    tuple(bounded_params),
+                ).fetchone()
+                snapshot_count = int(count_row[0])
+            if after is not None:
+                if after.effective_date is None:
+                    bounded_predicates.append("i.effective_date IS NULL AND i.id < ?")
+                    bounded_params.append(after.item_id)
+                else:
+                    bounded_predicates.append(
+                        "(i.effective_date IS NULL OR i.effective_date < datetime(?) "
+                        "OR (i.effective_date = datetime(?) AND i.id < ?))"
+                    )
+                    bounded_params.extend(
+                        [after.effective_date, after.effective_date, after.item_id]
+                    )
+            rows = conn.execute(
+                f"""
+                SELECT {self._LIST_ITEM_COLUMNS}
+                FROM subscription_items i
+                {search_join}
+                JOIN subscriptions s ON i.subscription_id = s.id
+                {self._reader_where_clause(bounded_predicates)}
+                ORDER BY {self._READER_ITEM_ORDER_BY}
+                LIMIT ?
+                """,
+                tuple([*bounded_params, limit + 1]),
+            ).fetchall()
+        visible_rows = [dict(row) for row in rows[:limit]]
+        has_more = len(rows) > limit
+        next_cursor = None
+        if has_more and visible_rows:
+            last_row = visible_rows[-1]
+            next_cursor = WatchlistItemCursor(last_row["effective_date"], last_row["id"])
+        return WatchlistItemPage(
+            items=tuple(visible_rows),
+            has_more=has_more,
+            snapshot_max_item_id=snapshot_max_item_id,
+            snapshot_count=snapshot_count,
+            next_cursor=next_cursor,
+        )
+
+    def count_reader_item_arrivals(
+        self,
+        *,
+        snapshot_max_item_id: int,
+        subscription_id: int | None = None,
+        status: str | None = None,
+        run_id: int | None = None,
+        watchlist_id: int | None = None,
+        unassigned_only: bool = False,
+        statuses: Sequence[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+    ) -> int:
+        """Count post-snapshot rows matching exactly one Reader query scope.
+
+        Args:
+            snapshot_max_item_id: Snapshot high-water that later rows exceed.
+            subscription_id: Optional source scope.
+            status: Optional single item status.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional collection-membership scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope, exclusive with ``status``.
+            is_flagged: Optional starred-state scope.
+            search: Optional literal title/content/author search.
+            since: Optional inclusive effective-date floor.
+
+        Returns:
+            Count of matching rows created after the supplied high-water.
+
+        Raises:
+            ValueError: If mutually exclusive status inputs are supplied.
+        """
+        self._validate_reader_query_inputs(status=status, statuses=statuses)
+        with self.transaction() as conn:
+            search_join, predicates, params = self._reader_matching_parts(
+                conn,
+                subscription_id=subscription_id,
+                status=status,
+                run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+            )
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM subscription_items i
+                {search_join}
+                {self._reader_where_clause([*predicates, 'i.id > ?'])}
+                """,
+                tuple([*params, snapshot_max_item_id]),
+            ).fetchone()
+        return int(row[0])
 
     def search_items_for_agent(
         self,
