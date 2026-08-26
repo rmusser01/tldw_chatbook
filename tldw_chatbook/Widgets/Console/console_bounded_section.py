@@ -94,6 +94,9 @@ class ConsoleBoundedSection(Vertical):
         self._has_overflow = False
         self._hint_text = ""
         self._reconcile_scheduled = False
+        # TASK-22203: True only while the single scheduled pass was requested
+        # exclusively through ``request_scoped_reconcile``.
+        self._reconcile_scoped = False
         self._focused_descendant: Widget | None = None
         self._focus_recovery_notified = False
         self._native_scroll_owner = native_scroll_owner
@@ -240,13 +243,37 @@ class ConsoleBoundedSection(Vertical):
     def request_reconcile(self) -> None:
         """Coalesce geometry reconciliation into one post-refresh callback."""
 
+        # A full request always demotes a pending scoped pass (TASK-22203),
+        # so coalescing can only widen a pass's ownership, never narrow it.
+        self._reconcile_scoped = False
         if not self.is_mounted or self._reconcile_scheduled:
             return
         self._reconcile_scheduled = True
         self.call_after_refresh(self._run_scheduled_reconcile)
 
+    def request_scoped_reconcile(self) -> None:
+        """Coalesce a reconcile that owns only this section's local geometry.
+
+        TASK-22203: identical to ``request_reconcile`` except that subclasses
+        which escalate demand changes to an outer allocator (see
+        ``_ContextBoundedSection`` in ``UI/Console_Modules/left_rail.py``)
+        treat the resulting pass as scoped and skip that escalation — the
+        caller asserts the demand delta is its own local, self-absorbed
+        geometry (the workspace action row's one-row display flip). A plain
+        ``request_reconcile`` arriving before the pass runs demotes it back
+        to escalating, so genuine content changes keep full allocation
+        correctness even when the two coalesce.
+        """
+
+        if not self.is_mounted or self._reconcile_scheduled:
+            return
+        self._reconcile_scoped = True
+        self._reconcile_scheduled = True
+        self.call_after_refresh(self._run_scheduled_reconcile)
+
     def _run_scheduled_reconcile(self) -> None:
         self._reconcile_scheduled = False
+        self._reconcile_scoped = False
         self._reconcile()
 
     def _reconcile(self) -> None:

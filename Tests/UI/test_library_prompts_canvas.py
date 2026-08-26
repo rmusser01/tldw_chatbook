@@ -3082,11 +3082,10 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
         ]
     )
     app.prompt_scope_service = service
-    async with app.run_test(size=size) as pilot:
-        assert type(app) is TldwCli
-        assert app.CSS_PATH == TldwCli.CSS_PATH
-        screen = LibraryScreen(app)
-        await app.push_screen(screen)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=size) as pilot:
+        assert host.CSS_PATH == TldwCli.CSS_PATH
+        screen = _active_library_screen(host)
         try:
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-prompts", Button).press()
@@ -3125,7 +3124,7 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
             ):
                 widget = screen.query_one(selector)
                 assert pane.region.contains_region(widget.region), selector
-                assert widget in app.screen._compositor.visible_widgets, selector
+                assert widget in host.screen._compositor.visible_widgets, selector
             for selector in (
                 "#library-prompts-page-previous",
                 "#library-prompts-page-next",
@@ -3149,7 +3148,7 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
                 lambda: all(
                     pane.region.contains_region(screen.query_one(selector).region)
                     and screen.query_one(selector)
-                    in app.screen._compositor.visible_widgets
+                    in host.screen._compositor.visible_widgets
                     for selector in (
                         "#library-prompts-header",
                         "#library-prompts-page-label",
@@ -3174,7 +3173,7 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
             ):
                 widget = screen.query_one(selector)
                 assert pane.region.contains_region(widget.region), selector
-                assert widget in app.screen._compositor.visible_widgets, selector
+                assert widget in host.screen._compositor.visible_widgets, selector
             previous = screen.query_one("#library-prompts-page-previous", Button)
             next_page = screen.query_one("#library-prompts-page-next", Button)
             assert previous.disabled is True
@@ -3203,12 +3202,11 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         browse_failures=1,
     )
     app.prompt_scope_service = service
+    host = LibraryProductionCSSHarness(app)
 
-    async with app.run_test(size=size) as pilot:
-        assert type(app) is TldwCli
-        assert app.CSS_PATH == TldwCli.CSS_PATH
-        screen = LibraryScreen(app)
-        await app.push_screen(screen)
+    async with host.run_test(size=size) as pilot:
+        assert host.CSS_PATH == TldwCli.CSS_PATH
+        screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts", Button).press()
         await _wait_for_condition(
@@ -3241,7 +3239,7 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         ):
             widget = screen.query_one(selector)
             assert pane.region.contains_region(widget.region), selector
-            assert widget in app.screen._compositor.visible_widgets, selector
+            assert widget in host.screen._compositor.visible_widgets, selector
         for selector in (
             "#library-prompts-page-previous",
             "#library-prompts-page-next",
@@ -3297,7 +3295,7 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         ):
             widget = screen.query_one(selector)
             assert pane.region.contains_region(widget.region), selector
-            assert widget in app.screen._compositor.visible_widgets, selector
+            assert widget in host.screen._compositor.visible_widgets, selector
 
 
 @pytest.mark.asyncio
@@ -3317,9 +3315,9 @@ async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disabl
         ]
     )
 
-    async with app.run_test(size=(100, 30)) as pilot:
-        screen = LibraryScreen(app)
-        await app.push_screen(screen)
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts", Button).press()
         await _wait_for_condition(
@@ -3370,9 +3368,9 @@ async def test_library_prompt_page_focus_survives_loading_recompose() -> None:
     )
     app.prompt_scope_service = service
 
-    async with app.run_test(size=(100, 30)) as pilot:
-        screen = LibraryScreen(app)
-        await app.push_screen(screen)
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts", Button).press()
         await _wait_for_condition(
@@ -3430,11 +3428,10 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         ]
     )
 
-    async with app.run_test(size=size) as pilot:
-        assert type(app) is TldwCli
-        assert app.CSS_PATH == TldwCli.CSS_PATH
-        screen = LibraryScreen(app)
-        await app.push_screen(screen)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=size) as pilot:
+        assert host.CSS_PATH == TldwCli.CSS_PATH
+        screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts", Button).press()
         await _wait_for_selector(screen, pilot, "#library-prompt-row-26")
@@ -3467,7 +3464,7 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         )
         for widget in (canvas, rows, pager, status, previous, next_page):
             assert pane.region.contains_region(widget.region), widget.id
-            assert widget in app.screen._compositor.visible_widgets, widget.id
+            assert widget in host.screen._compositor.visible_widgets, widget.id
         assert rows.region.bottom <= pager.region.y
 
         pager_identity = pager
@@ -3478,7 +3475,7 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         await _wait_for_condition(
             pilot,
             lambda: rows.scroll_y > 0
-            and last_row in app.screen._compositor.visible_widgets,
+            and last_row in host.screen._compositor.visible_widgets,
             message="Prompt row 20 never became compositor-visible.",
         )
         assert screen.query_one("#library-prompts-pager") is pager_identity
@@ -4187,8 +4184,8 @@ def test_library_prompt_scope_restore_validates_query_page_offset_and_page_size(
 
 
 @pytest.mark.asyncio
-async def test_library_prompts_restored_create_row_list_dispatches_browse_once():
-    """A restored create-row/list state settles one exact browse request."""
+async def test_library_prompts_restored_create_row_list_stays_on_landing():
+    """A non-resumable create-row state does not bypass the Library landing."""
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     service = _FakePromptScopeServiceWithList(
@@ -4207,23 +4204,12 @@ async def test_library_prompts_restored_create_row_list_dispatches_browse_once()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
         await pilot.pause(0.1)
 
-        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_PROMPT
+        assert screen._library_selected_row_id == ""
         assert screen._library_prompts_view == "list"
-        assert screen._library_prompt_browse_controller.result.status == "ready"
-        assert service.browse_calls == [
-            {
-                "mode": "local",
-                "query": "",
-                "collection_id": None,
-                "sort_by": "last_modified",
-                "sort_order": "desc",
-                "page": 1,
-                "page_size": 20,
-            }
-        ]
+        assert len(screen.query("#library-hub-continue")) == 0
+        assert service.browse_calls == []
 
 
 @pytest.mark.asyncio
@@ -4269,8 +4255,13 @@ async def test_library_prompts_fresh_reentry_refetches_the_applied_scope_once():
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-continue")
+        assert screen._library_selected_row_id == ""
+        screen.query_one("#library-hub-continue", Button).press()
         await _wait_for_prompt_browse_scope(screen, pilot, scope)
 
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         assert service.browse_calls == [
             {
                 "mode": "local",

@@ -5682,7 +5682,21 @@ class ConsoleChatController:
             commit = await self._run_durable_db_call(
                 self.store.commit_durable_turn, acceptance
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- a failed commit is a retry, not a crash
+            # TASK-22251: the user-facing copy stays deliberately generic, but
+            # something must record WHICH failure occurred. `commit_durable_turn`
+            # is a multi-step transaction -- conversation create, Library-policy
+            # write, workspace validation, checkpoint insert -- and swallowing
+            # the exception collapsed every one of them into a single sentence.
+            # Two distinct causes ("Workspace registry is required for workspace
+            # conversations" and "Unknown workspace: <id>") were previously
+            # indistinguishable, and each needed a temporary print inside this
+            # method to identify. Type only, never the message: an exception
+            # string here can carry conversation or workspace identifiers.
+            logger.warning(
+                "Durable turn commit failed; turn refused (exception_type={})",
+                type(exc).__name__,
+            )
             return ConsoleSubmitResult(
                 False,
                 False,

@@ -428,8 +428,16 @@ def _persisted_store(
     persistence: _ReadyCitationPersistence | None = None,
 ) -> ConsoleChatStore:
     store = ConsoleChatStore(persistence=persistence)
-    session = store.ensure_session(
-        settings=ConsoleSessionSettings(provider="llama_cpp")
+    # EPHEMERAL: these doubles record `create_message` calls, which is the
+    # citation-write seam under test. They predate `commit_durable_turn`, so a
+    # non-ephemeral MANUAL send is refused before any provider call -- and the
+    # tests then wait forever on an Event the refused turn never sets.
+    # `durable_turn = not session.ephemeral and origin in {MANUAL, QUEUED}`, so
+    # an ephemeral session keeps the send on the `create_message` path these
+    # doubles actually observe.
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        ephemeral=True,
     )
     session.project_instruction_state = (
         ProjectInstructionControlState.legacy_disabled()
@@ -1118,13 +1126,6 @@ async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="TASK-22062: this test never completes -- its coroutine awaits "
-    "something that is never resolved. With timeout_method='thread' the "
-    "300s timeout destroys the whole pytest process rather than failing "
-    "the test, so leaving it in place deletes the results of every other "
-    "test sharing its worker."
-)
 async def test_direct_user_stop_does_not_seal_and_clears_terminal_state():
     builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()

@@ -180,6 +180,12 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         Binding("s", "workspace_star", "Star/Unstar", show=False),
     ]
 
+    # TASK-22203: class-level default because ``watch_cursor_line`` (and with
+    # it ``_update_tooltip``) can fire inside ``Tree.__init__``, before this
+    # subclass's instance attributes are assigned. Only ever reassigned to a
+    # fresh immutable tuple, never mutated, so the shared default is safe.
+    _tooltip_memo_key: tuple[str | None, str, str, bool, int] | None = None
+
     if ascii_glyph_mode():
         ICON_NODE = "> "
         ICON_NODE_EXPANDED = "v "
@@ -232,6 +238,10 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self.can_focus = False
         self._pressed_node_key: str | None = None
         self._last_pointer_click_key: str | None = None
+        # TASK-22203: identity+geometry key of the last computed tooltip, so
+        # per-cursor-move and per-projection-push calls skip the cell-width
+        # measurement and the tooltip write when nothing relevant changed.
+        self._tooltip_memo_key: tuple[str | None, str, str, bool, int] | None = None
 
     @staticmethod
     def _workspace_label(workspace: WorkspaceTreeWorkspace) -> Text:
@@ -973,6 +983,15 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self.call_after_refresh(self._update_tooltip)
 
     def _update_tooltip(self) -> None:
+        """Expose the full label as a tooltip only when the row is truncated.
+
+        TASK-22203: memoized on the target's identity and geometry (node key,
+        raw label, visible label, expansion, content width) — this runs on
+        every cursor move, hover change, and projection push (the 5 Hz tick
+        path while streaming), and only a changed target or width should pay
+        the ``cell_len`` measurement and the tooltip write.
+        """
+
         line = self.hover_line if self.hover_line >= 0 else self.cursor_line
         node = self.get_node_at_line(line)
         tooltip_plain = getattr(self.tooltip, "plain", self.tooltip)
@@ -989,6 +1008,17 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             line = self.cursor_line
             node = self.get_node_at_line(line)
         data = node.data if node is not None else None
+        label = node.label if node is not None else ""
+        memo_key = (
+            data.key if data is not None else None,
+            data.raw_label if data is not None else "",
+            getattr(label, "plain", str(label)),
+            bool(node is not None and node.is_expanded),
+            self.scrollable_content_region.width,
+        )
+        if memo_key == self._tooltip_memo_key:
+            return
+        self._tooltip_memo_key = memo_key
         self.tooltip = (
             Text(data.raw_label)
             if data is not None
