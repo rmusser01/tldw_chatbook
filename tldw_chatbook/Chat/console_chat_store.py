@@ -185,6 +185,21 @@ class ConsoleDispatchSettlementError(RuntimeError):
     """An owned dispatch terminal could not commit atomically."""
 
 
+class ConsoleDurableAcceptanceRetired(RuntimeError):
+    """The preparation was retired underneath an in-flight postcommit effect.
+
+    TASK-22587: closing a Console session retires its durable preparation, so
+    an effect still in flight finds its fingerprint gone. That is an ORDINARY
+    consequence of the user closing a chat, and it is not the same event as a
+    fingerprint that changed unexpectedly -- which is a bug, and which must
+    keep raising the bare ``RuntimeError`` the postcommit APIs already document.
+
+    Retirement is decidable rather than inferred: ``retire_durable_acceptance``
+    leaves a tombstone carrying the SAME fingerprint, so a matching tombstone
+    proves the preparation was retired rather than mutated.
+    """
+
+
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
     """Represent a missing durable projection seam in an immutable plan."""
     return False
@@ -966,6 +981,11 @@ class ConsoleChatStore:
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
+        #: Preparations whose postcommit sequence has begun and has not yet
+        #: been released. Their tombstones are the ONLY proof that an
+        #: in-flight effect's preparation was retired rather than mutated,
+        #: so FIFO eviction must not reclaim them first (TASK-22587).
+        self._durable_active_postcommit: set[str] = set()
         self._durable_tombstones: OrderedDict[str, _ConsoleDurableTombstone] = (
             OrderedDict()
         )
@@ -3748,6 +3768,7 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            self._durable_active_postcommit.add(preparation_id)
             existing = self._durable_effects_by_preparation.get(preparation_id)
             if existing is not None:
                 if (
@@ -3777,6 +3798,30 @@ class ConsoleChatStore:
         with self._preparation_lock:
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             return self._durable_effects_by_preparation.get(preparation_id)
+
+    def durable_completed_effects_for(
+        self,
+        preparation_id: str,
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> frozenset[str]:
+        """Return completed effect names from the live ledger OR a tombstone.
+
+        TASK-22587: recovery needs to know whether the checkpoint transition
+        ran, and it asks *after* a failure -- by which point the user may have
+        closed the chat and retired the preparation. Reading the ledger
+        directly raises there, which masked the original failure. The tombstone
+        retains `completed` for exactly this reason, so the answer survives a
+        close instead of becoming an exception.
+        """
+
+        with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                tombstone = self._durable_tombstones.get(preparation_id)
+                return tombstone.completed if tombstone is not None else frozenset()
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
+            effects = self._durable_effects_by_preparation.get(preparation_id)
+            return effects.completed if effects is not None else frozenset()
 
     def durable_turn_commit_for(
         self,
@@ -3844,6 +3889,12 @@ class ConsoleChatStore:
         """Release a failed effect claim without recording completion."""
 
         with self._preparation_lock:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                # TASK-22587: `retire_durable_acceptance` already dropped every
+                # in-flight key for this preparation, so there is nothing left
+                # to release and nothing left to protect. Raising here would
+                # only mask the failure that sent us down the release path.
+                return
             self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             self._durable_effects_in_flight.discard((preparation_id, effect_name))
 
@@ -3855,7 +3906,21 @@ class ConsoleChatStore:
         if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
         if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
+            if self._durable_retired_locked(preparation_id, fingerprint):
+                raise ConsoleDurableAcceptanceRetired(
+                    "Durable acceptance was retired."
+                )
             raise RuntimeError("Durable postcommit fingerprint changed.")
+
+    def _durable_retired_locked(
+        self,
+        preparation_id: str,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> bool:
+        """True when this exact preparation was retired, not mutated."""
+
+        tombstone = self._durable_tombstones.get(preparation_id)
+        return tombstone is not None and tombstone.fingerprint == fingerprint
 
     def retire_durable_acceptance(
         self,
@@ -3867,6 +3932,12 @@ class ConsoleChatStore:
         with self._preparation_lock:
             current = self._durable_fingerprint_by_preparation.get(preparation_id)
             if current != fingerprint:
+                if self._durable_retired_locked(preparation_id, fingerprint):
+                    # TASK-22587: closing a chat retires the preparation, and
+                    # the postcommit sequence retires it again when it ends.
+                    # Retiring what is already retired is a no-op, not a bug --
+                    # the tombstone proves this is the SAME acceptance.
+                    return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
             completed = effects.completed if effects is not None else frozenset()
@@ -3884,8 +3955,46 @@ class ConsoleChatStore:
                 fingerprint=fingerprint,
                 completed=completed,
             )
-            while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            self._evict_durable_tombstones_locked()
+
+    def _evict_durable_tombstones_locked(self) -> None:
+        """Hold the cap while preserving retirement proof still in use.
+
+        TASK-22587 (Qodo review of #2123): a plain FIFO `popitem` could reclaim
+        the tombstone of a preparation whose postcommit sequence was STILL
+        RUNNING, and that tombstone is the only proof its retirement was an
+        ordinary close rather than a mutation. Losing it put the generic
+        fingerprint-change error back on the in-flight effect -- making
+        correctness depend on unrelated session-close volume.
+
+        Protected entries are skipped, oldest-first, so the cap still holds:
+        if every entry is protected the oldest is evicted anyway, because a
+        bounded cache that can be pinned open without limit is a leak.
+        """
+
+        while len(self._durable_tombstones) > self.DURABLE_TOMBSTONE_CAP:
+            victim = next(
+                (
+                    key
+                    for key in self._durable_tombstones
+                    if key not in self._durable_active_postcommit
+                ),
+                None,
+            )
+            if victim is None:
                 self._durable_tombstones.popitem(last=False)
+                continue
+            self._durable_tombstones.pop(victim, None)
+
+    def release_durable_postcommit_activity(self, preparation_id: str) -> None:
+        """Allow this preparation's tombstone to be evicted again.
+
+        Called once the postcommit sequence is finished with the preparation,
+        by either the normal tail or the closed-session path (TASK-22587).
+        """
+
+        with self._preparation_lock:
+            self._durable_active_postcommit.discard(preparation_id)
 
     def discard_uncommitted_durable_preparation(self, preparation_id: str) -> None:
         """Forget staged content for an acceptance which never committed."""
