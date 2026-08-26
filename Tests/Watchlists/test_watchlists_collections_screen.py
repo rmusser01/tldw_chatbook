@@ -13,7 +13,7 @@ from textual.geometry import Size
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as collections_module
@@ -48,6 +48,12 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 from tldw_chatbook.Utils.input_validation import validate_url as real_validate_url
+
+
+class BundledWatchlistsDestinationHarness(DestinationHarness):
+    """Destination host with the same app-tier stylesheet as production."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
 def _controller_double() -> AsyncMock:
@@ -400,13 +406,17 @@ async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
 
 
 @pytest.mark.asyncio
-async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane():
-    """Task 6 chrome stays readable in the production 180x50 workbench."""
+@pytest.mark.parametrize(
+    "size",
+    [(120, 40), (180, 50), (235, 52)],
+    ids=["narrow", "normal", "wide"],
+)
+async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane(size):
+    """Task 6 chrome stays readable through the production CSS cascade."""
     app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.1)
-        await host.workers.wait_for_complete()
+    host = BundledWatchlistsDestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause(0.5)
         screen = host.screen_stack[-1]
         screen._items_snapshot_count = 50
         screen._items_pending_arrivals = 3
@@ -454,7 +464,7 @@ async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane():
             for left, right in zip(row_children, row_children[1:]):
                 assert left.region.right <= right.region.x
 
-        assert search.region.width >= 8
+        assert search.region.width >= max(8, search_row.region.width - 2)
         assert composited_text(count).strip() == "50 items in snapshot"
         assert composited_text(pill).strip() == "3 new items"
 
