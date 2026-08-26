@@ -2,7 +2,8 @@
 
 Status: Accepted
 Date: 2026-08-24
-Related Tasks: TASK-22031, TASK-22032, TASK-22033, TASK-22034
+Amended: 2026-08-25 by TASK-22301
+Related Tasks: TASK-22031, TASK-22032, TASK-22033, TASK-22034, TASK-22301
 
 ## Decision
 
@@ -27,6 +28,19 @@ destination-specific reader sections. The shared custom-width opt-in governs nor
 destination widths. Existing Media Library values are a compatibility fallback until the shared
 section is explicitly saved. Grips persist open/collapsed choices only; custom widths are changed
 through Settings rather than by turning the grips into drag handles.
+
+The default expanded Library width is one shared bounded-fractional policy. It follows the
+ordinary Library workbench's 3:13 Library-to-canvas proportion, rounded deterministically to a
+whole cell and clamped to 24–34 cells. Ordinary destinations retain native Textual fractional
+allocation; adaptive readers project the same policy to the exact cell width required by their
+pure resolver. At the same settled shell width, the two adapters may differ by at most one cell.
+The representative fallback/reset value is 31 cells.
+
+The existing custom-width opt-in remains distinct from the default bound. When enabled, an
+explicit 24–48-cell Library width applies to ordinary and adaptive destinations whenever responsive
+layout can fit it. Values above 34 are deliberate overrides and are not normalized down to the
+default ceiling. Auto-collapse, extreme-width compression, and ordinary compact rail-only or
+canvas-only takeovers remain transient effective states and never rewrite the requested width.
 
 `LibraryScreen` remains the orchestration owner under the existing compose-once and scoped canvas
 replacement contracts. Concrete destination list and work widgets remain destination-owned and
@@ -78,6 +92,8 @@ recorded as an ADR.
   preference values through compatibility normalization.
 - Library visibility and custom-width opt-in have one shared preference owner; each destination
   list has its own visibility and width keys.
+- Default Library width is bounded fractional (3:13, 24–34); explicit custom widths retain the
+  existing 24–48 range across ordinary and adaptive destinations.
 - Responsive adaptation never performs data work or writes preferences.
 - Every detail load distinguishes selected and loaded identity and rejects late results using a
   complete destination/item/revision/generation fence.

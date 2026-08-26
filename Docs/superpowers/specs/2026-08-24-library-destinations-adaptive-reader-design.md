@@ -115,7 +115,7 @@ The initial shared baselines are:
 
 | Role | Protected minimum / escape floor | Fixed target | Comfort / maximum |
 | --- | ---: | ---: | ---: |
-| Library | 24 / 0 when collapsed | 28 | 28 / 48 |
+| Library | 24 / 0 when collapsed | bounded 3:13 projection, 31 fallback | 34 default / 48 custom |
 | Destination list | 32 / 0 when collapsed | 40 | 56 / 72 |
 | Read-only work mode | 44 / 0 compositor escape | flexible | receives remaining width |
 | Editor work mode | 48 / 0 compositor escape | flexible | 56 / remaining width |
@@ -149,8 +149,11 @@ Each collapsed pane leaves a five-column, full-height grip with an action-labell
 work-pane header also keeps compact, labelled restore controls reachable when one or both optional
 panes are collapsed.
 
-Default wide layout uses fixed target widths. Custom widths remain opt-in, normalized, and clamped
-to declared limits. The geometry resolver distinguishes:
+Default wide layout uses a bounded fractional Library width and fixed destination-list targets.
+The Library default follows the ordinary 3:13 Library-to-canvas proportion, rounded
+deterministically and clamped to 24–34 cells; its representative fallback/reset value is 31.
+Custom widths remain opt-in, normalized, and clamped to their declared 24–48 range. The geometry
+resolver distinguishes:
 
 1. **Requested layout** — persisted manual visibility and normalized widths.
 2. **Responsive override** — temporary collapses or compression required by current width.
@@ -163,7 +166,8 @@ space becomes available.
 Resolution follows these rules:
 
 1. Reserve both grips and protect the active work mode's usable width.
-2. Render requested Library and list panes at their fixed targets when they fit.
+2. Render the Library pane at its bounded fractional default (or explicit custom width) and the
+   list pane at its fixed target when they fit.
 3. On shortfall, auto-collapse Library before the destination list.
 4. Whenever Library is effectively collapsed and the list remains open, allocate reclaimed width
    to the list up to its 56-column comfort cap; allocate the rest to the work pane.
@@ -192,8 +196,10 @@ and Skills. Preference ownership is explicit:
 | Prompts list | `[library.prompts_reader]` | `items_open`, `items_width` |
 | Skills list | `[library.skills_reader]` | `items_open`, `items_width` |
 
-`custom_widths_enabled` is one shared opt-in: when false, normalized fixed targets apply while saved
-custom values remain available for later re-enabling. When `[library.reader]` is absent, shared
+`custom_widths_enabled` is one shared opt-in: when false, the bounded fractional Library default and
+normalized fixed destination-list targets apply while saved custom values remain available for
+later re-enabling. Explicit Library widths from 35 through 48 are intentional overrides and are
+not clamped to the default 34-cell ceiling. When `[library.reader]` is absent, shared
 normalization reads `library_open`, `custom_widths_enabled`, and `library_width` from the existing
 `[library.media_reader]` section. No eager disk rewrite occurs. The first explicit shared toggle or
 Settings save writes `[library.reader]`; Media then reads the shared section first while retaining

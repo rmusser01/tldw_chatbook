@@ -22,10 +22,11 @@ Keep the persistent Library navigation rail visually stable across every Library
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The persistent Library rail keeps `3fr` sizing with an exact 24-cell minimum and 34-cell maximum in every Library mode.
-- [ ] #2 Switching among Media, Chats, Notes, Prompts, Skills, Collections, Search / RAG, Import, and Export does not change the rail sizing contract.
-- [ ] #3 At supported wide and standard terminal widths, the rendered rail stays within 24–34 cells while the canvas remains contained and receives the remaining width.
-- [ ] #4 Compact terminal layouts preserve the 24-cell readable rail floor without introducing new canvas or footer overlap.
-- [ ] #5 Production-styled tests cover initial mount, mode switching, live resize, and 235-, 170-, 120-, 100-, 80-, and 60-column geometry.
-- [ ] #6 Library documentation records the bounded fractional rail behavior and current limits.
+- [ ] #1 With custom widths disabled, every expanded Library rail uses the shared 3:13 default projection and renders within an exact 24–34-cell range.
+- [ ] #2 Switching among Media, Chats, Notes, Prompts, Skills, Collections, Search / RAG, Import, and Export at the same settled width keeps the expanded rail edge stable within one compositor cell.
+- [ ] #3 The existing explicit custom-width preference remains valid from 24 through 48 cells, applies across ordinary and adaptive Library destinations, and restores unchanged after responsive collapse.
+- [ ] #4 Adaptive auto-collapse, five-cell grips, focus recovery, priority, hysteresis, ordinary manual collapse, and compact rail-only/canvas-only takeovers retain their existing behavior without blank reserved rail space.
+- [ ] #5 At supported widths, the rail, canvas, adaptive panes, and footer remain contained without intersection; extreme-width escape behavior may hide the rail or compress an explicitly prioritized adaptive rail below 24 rather than overflow.
+- [ ] #6 Production-styled tests cover pure projection, initial mount, mode switching, scoped recompose, live resize, custom widths, and applicable 235-, 170-, 120-, 100-, 80-, and 60-column geometry states.
+- [ ] #7 Library Settings copy, defaults, ADR-086, the adaptive-reader design, and user documentation describe bounded fractional defaults separately from explicit 24–48-cell custom widths.
 <!-- AC:END -->
