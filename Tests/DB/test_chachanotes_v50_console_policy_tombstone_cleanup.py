@@ -296,9 +296,7 @@ def test_the_cleanup_is_idempotent(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(str(db_path))
     try:
-        cursor = connection.executescript(
-            MIGRATION_PATH.read_text(encoding="utf-8")
-        )
+        connection.executescript(MIGRATION_PATH.read_text(encoding="utf-8"))
         connection.commit()
         assert _policy_rows(connection) == after_first
     finally:
