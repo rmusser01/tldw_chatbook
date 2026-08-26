@@ -22,6 +22,65 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
+MESSAGE_PAYLOAD_KEYS = {
+    "id",
+    "conversation_id",
+    "parent_message_id",
+    "sender",
+    "content",
+    "image_mime_type",
+    "provider_continuation_json",
+    "thinking_blocks_json",
+    "assistant_generation_state",
+    "timestamp",
+    "ranking",
+    "last_modified",
+    "deleted",
+    "client_id",
+    "version",
+}
+CONVERSATION_PAYLOAD_KEYS = {
+    "id",
+    "root_id",
+    "forked_from_message_id",
+    "parent_conversation_id",
+    "character_id",
+    "assistant_kind",
+    "assistant_id",
+    "persona_memory_mode",
+    "scope_type",
+    "workspace_id",
+    "state",
+    "topic_label",
+    "topic_label_source",
+    "topic_last_tagged_at",
+    "topic_last_tagged_message_id",
+    "cluster_id",
+    "source",
+    "external_ref",
+    "runtime_backend",
+    "discovery_owner",
+    "discovery_entity_id",
+    "system_prompt",
+    "metadata",
+    "thinking_history_policy",
+    "title",
+    "rating",
+    "created_at",
+    "last_modified",
+    "deleted",
+    "client_id",
+    "version",
+}
+MESSAGE_DELETE_PAYLOAD_KEYS = {
+    "id",
+    "deleted",
+    "last_modified",
+    "assistant_generation_state",
+    "version",
+    "client_id",
+}
+UNSUPPORTED_THINKING = '{"version":2,"opaque":"must-not-escape"}'
 
 
 def _thinking(text: str = "thinkingonlycanary") -> str:
@@ -62,6 +121,24 @@ def _payloads(db: CharactersRAGDB, entity: str) -> list[dict[str, object]]:
         "SELECT payload FROM sync_log WHERE entity = ? ORDER BY change_id", (entity,)
     )
     return [json.loads(row[0]) for row in rows]
+
+
+def _raw_message(db: CharactersRAGDB, message_id: str) -> dict[str, object]:
+    row = (
+        db.get_connection()
+        .execute(
+            """
+        SELECT content, thinking_blocks_json, provider_continuation_json,
+               assistant_generation_state, usage_json, version, deleted
+          FROM messages
+         WHERE id = ?
+        """,
+            (message_id,),
+        )
+        .fetchone()
+    )
+    assert row is not None
+    return dict(row)
 
 
 def _seed_v49(path: Path) -> tuple[str, str, str]:
@@ -196,10 +273,12 @@ def test_message_and_conversation_boundaries_canonicalize_and_sync(
         db.get_conversation_by_id(conversation_id)["thinking_history_policy"]
         == "include"
     )
-    assert _payloads(db, "messages")[-1]["thinking_blocks_json"] == _thinking(
-        "boundary-canary"
-    )
-    assert _payloads(db, "conversations")[-1]["thinking_history_policy"] == "include"
+    message_create = _payloads(db, "messages")[-1]
+    conversation_create = _payloads(db, "conversations")[-1]
+    assert set(message_create) == MESSAGE_PAYLOAD_KEYS
+    assert set(conversation_create) == CONVERSATION_PAYLOAD_KEYS
+    assert message_create["thinking_blocks_json"] == _thinking("boundary-canary")
+    assert conversation_create["thinking_history_policy"] == "include"
 
     assert db.update_message(
         assistant_id,
@@ -209,9 +288,9 @@ def test_message_and_conversation_boundaries_canonicalize_and_sync(
     assert db.get_message_by_id(assistant_id)["thinking_blocks_json"] == _thinking(
         "updated-canary"
     )
-    assert _payloads(db, "messages")[-1]["thinking_blocks_json"] == _thinking(
-        "updated-canary"
-    )
+    message_update = _payloads(db, "messages")[-1]
+    assert set(message_update) == MESSAGE_PAYLOAD_KEYS
+    assert message_update["thinking_blocks_json"] == _thinking("updated-canary")
 
     assert db.update_conversation(
         conversation_id,
@@ -222,7 +301,9 @@ def test_message_and_conversation_boundaries_canonicalize_and_sync(
         db.get_conversation_by_id(conversation_id)["thinking_history_policy"]
         == "exclude"
     )
-    assert _payloads(db, "conversations")[-1]["thinking_history_policy"] == "exclude"
+    conversation_update = _payloads(db, "conversations")[-1]
+    assert set(conversation_update) == CONVERSATION_PAYLOAD_KEYS
+    assert conversation_update["thinking_history_policy"] == "exclude"
 
 
 def test_invalid_thinking_and_policy_are_rejected_before_mutation(
@@ -336,6 +417,150 @@ def test_selected_assistant_projection_is_atomic_and_optimistically_guarded(
     assert db.get_message_by_id(message_id) == projected
 
 
+def test_projection_rejects_unsupported_current_thinking_without_mutation(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "opaque projection"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "old answer",
+            "thinking_blocks_json": _thinking("old thought"),
+        }
+    )
+    assert message_id is not None
+    db.get_connection().execute(
+        "UPDATE messages SET thinking_blocks_json = ? WHERE id = ?",
+        (UNSUPPORTED_THINKING, message_id),
+    )
+    db.get_connection().commit()
+    before = _raw_message(db, message_id)
+
+    with pytest.raises(InputError) as error:
+        db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content="replacement",
+            thinking_blocks_json=_thinking("replacement thought"),
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json='{"output_tokens":9}',
+            expected_version=1,
+        )
+
+    assert "must-not-escape" not in str(error.value)
+    assert _raw_message(db, message_id) == before
+
+
+@pytest.mark.parametrize("requested_thinking", [None, _thinking("replacement")])
+def test_update_message_rejects_requested_thinking_over_unsupported_current_value(
+    db: CharactersRAGDB,
+    requested_thinking: str | None,
+) -> None:
+    conversation_id = db.add_conversation({"title": "opaque update"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "old answer",
+            "thinking_blocks_json": _thinking("old thought"),
+        }
+    )
+    assert message_id is not None
+    db.get_connection().execute(
+        "UPDATE messages SET thinking_blocks_json = ? WHERE id = ?",
+        (UNSUPPORTED_THINKING, message_id),
+    )
+    db.get_connection().commit()
+    before = _raw_message(db, message_id)
+
+    with pytest.raises(InputError) as error:
+        db.update_message(
+            message_id,
+            {"content": "replacement", "thinking_blocks_json": requested_thinking},
+            expected_version=1,
+        )
+
+    assert "must-not-escape" not in str(error.value)
+    assert _raw_message(db, message_id) == before
+
+    assert db.update_message(
+        message_id,
+        {"content": "unrelated edit"},
+        expected_version=1,
+    )
+    after_omission = _raw_message(db, message_id)
+    assert after_omission["thinking_blocks_json"] == UNSUPPORTED_THINKING
+    assert after_omission["content"] == "unrelated edit"
+    assert after_omission["version"] == 2
+
+
+def test_projection_owner_guards_and_optional_version(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "projection owners"})
+    user_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "question",
+        }
+    )
+    deleted_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "deleted answer",
+            "thinking_blocks_json": _thinking("deleted thought"),
+        }
+    )
+    active_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "active answer",
+            "thinking_blocks_json": _thinking("active thought"),
+        }
+    )
+    assert user_id is not None and deleted_id is not None and active_id is not None
+    assert db.soft_delete_message(deleted_id, expected_version=1)
+    user_before = _raw_message(db, user_id)
+    deleted_before = _raw_message(db, deleted_id)
+
+    with pytest.raises(InputError, match="assistant message"):
+        db.replace_assistant_generation_projection(
+            message_id=user_id,
+            content="bad owner",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+        )
+    with pytest.raises(ConflictError, match="version conflict"):
+        db.replace_assistant_generation_projection(
+            message_id=deleted_id,
+            content="deleted owner",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+        )
+    assert _raw_message(db, user_id) == user_before
+    assert _raw_message(db, deleted_id) == deleted_before
+
+    version = db.replace_assistant_generation_projection(
+        message_id=active_id,
+        content="unguarded replacement",
+        thinking_blocks_json=_thinking("unguarded thought"),
+        provider_continuation_json=None,
+        assistant_generation_state="complete",
+        usage_json=None,
+        expected_version=None,
+    )
+    assert version == 2
+    assert _raw_message(db, active_id)["content"] == "unguarded replacement"
+
+
 def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
     db: CharactersRAGDB,
 ) -> None:
@@ -349,6 +574,11 @@ def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
         }
     )
     assert message_id is not None
+    db.get_connection().execute(
+        "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
+        ("single-continuation", message_id),
+    )
+    db.get_connection().commit()
     db.get_connection().execute("DELETE FROM sync_log")
     db.get_connection().commit()
 
@@ -358,6 +588,90 @@ def test_local_only_writes_stay_out_of_sync_and_tombstones_hide_thinking(
 
     assert db.soft_delete_message(message_id, expected_version=1)
     assert db.get_message_by_id(message_id) is None
+    tombstone = _raw_message(db, message_id)
+    assert tombstone["thinking_blocks_json"] is None
+    assert tombstone["provider_continuation_json"] == "single-continuation"
+    delete_payload = _payloads(db, "messages")[-1]
+    assert set(delete_payload) == MESSAGE_DELETE_PAYLOAD_KEYS
+
+
+def test_subtree_tombstones_clear_thinking_but_retain_continuation(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "subtree"})
+    root_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "root",
+            "thinking_blocks_json": _thinking("root thought"),
+        }
+    )
+    child_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "parent_message_id": root_id,
+            "sender": "assistant",
+            "content": "child",
+            "thinking_blocks_json": _thinking("child thought"),
+        }
+    )
+    assert root_id is not None and child_id is not None
+    db.get_connection().executemany(
+        "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
+        (("root-continuation", root_id), ("child-continuation", child_id)),
+    )
+    db.get_connection().commit()
+
+    tombstones = db.soft_delete_message_subtree(root_id, expected_version=1)
+
+    assert {row["message_id"] for row in tombstones} == {root_id, child_id}
+    root = _raw_message(db, root_id)
+    child = _raw_message(db, child_id)
+    assert root["deleted"] == child["deleted"] == 1
+    assert root["thinking_blocks_json"] is None
+    assert child["thinking_blocks_json"] is None
+    assert root["provider_continuation_json"] == "root-continuation"
+    assert child["provider_continuation_json"] == "child-continuation"
+
+
+def test_content_edit_tombstones_descendant_thinking_only(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "edit subtree"})
+    root_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "original question",
+        }
+    )
+    child_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "parent_message_id": root_id,
+            "sender": "assistant",
+            "content": "old answer",
+            "thinking_blocks_json": _thinking("old descendant thought"),
+        }
+    )
+    assert root_id is not None and child_id is not None
+    db.get_connection().execute(
+        "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
+        ("descendant-continuation", child_id),
+    )
+    db.get_connection().commit()
+
+    assert db.update_message(
+        root_id,
+        {"content": "edited question"},
+        expected_version=1,
+    )
+
+    child = _raw_message(db, child_id)
+    assert child["deleted"] == 1
+    assert child["thinking_blocks_json"] is None
+    assert child["provider_continuation_json"] == "descendant-continuation"
 
 
 def test_v49_to_v50_requires_exact_entry_version(db: CharactersRAGDB) -> None:

@@ -185,6 +185,14 @@ def _validated_thinking_blocks_json(value: object) -> str:
     raise InputError("Invalid thinking data.") from None
 
 
+def _require_thinking_generation_actions(value: object) -> None:
+    """Reject replacement of an unsupported durable thinking envelope."""
+    from tldw_chatbook.Chat.thinking_blocks import read_thinking_blocks_json
+
+    if not read_thinking_blocks_json(value).generation_actions_enabled:
+        raise InputError("Stored thinking data cannot be replaced.")
+
+
 def _validated_thinking_history_policy(value: object) -> str | None:
     """Validate one nullable stored replay policy without inventing a default."""
     if value is None:
@@ -11680,6 +11688,34 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         try:
             with self.transaction(immediate=True) as conn:
+                current = conn.execute(
+                    """
+                    SELECT role, deleted, version, thinking_blocks_json
+                      FROM messages
+                     WHERE id = ?
+                    """,
+                    (message_id,),
+                ).fetchone()
+                if current is None:
+                    raise ConflictError(
+                        "Message version conflict.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+                if current["role"] != "assistant":
+                    raise InputError(
+                        "Generation projection requires an assistant message."
+                    )
+                if current["deleted"] or (
+                    expected_version is not None
+                    and current["version"] != expected_version
+                ):
+                    raise ConflictError(
+                        "Message version conflict.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+                _require_thinking_generation_actions(current["thinking_blocks_json"])
                 cursor = conn.execute(
                     """
                     UPDATE messages
@@ -11708,14 +11744,6 @@ UPDATE db_schema_version
                 )
                 updated = cursor.fetchone()
                 if updated is None:
-                    current = conn.execute(
-                        "SELECT role, deleted, version FROM messages WHERE id = ?",
-                        (message_id,),
-                    ).fetchone()
-                    if current is not None and current["role"] != "assistant":
-                        raise InputError(
-                            "Generation projection requires an assistant message."
-                        )
                     raise ConflictError(
                         "Message version conflict.",
                         entity="messages",
@@ -12343,6 +12371,7 @@ UPDATE db_schema_version
         if type(preserve_descendants) is not bool:
             raise InputError("Preserve descendants must be a boolean.")
         update_data = dict(update_data)
+        thinking_update_requested = "thinking_blocks_json" in update_data
         if update_data.get("thinking_blocks_json") is not None:
             update_data["thinking_blocks_json"] = _validated_thinking_blocks_json(
                 update_data["thinking_blocks_json"]
@@ -12418,7 +12447,7 @@ UPDATE db_schema_version
             with self.transaction(immediate=True) as conn:
                 current = conn.execute(
                     "SELECT conversation_id, version, deleted, role, content, "
-                    "provider_continuation_json "
+                    "provider_continuation_json, thinking_blocks_json "
                     "FROM messages WHERE id = ?",
                     (message_id,),
                 ).fetchone()
@@ -12434,11 +12463,12 @@ UPDATE db_schema_version
                         entity="messages",
                         entity_id=message_id,
                     )
-                if (
-                    "thinking_blocks_json" in update_data
-                    and current["role"] != "assistant"
-                ):
+                if thinking_update_requested and current["role"] != "assistant":
                     raise InputError("Thinking data requires an assistant message.")
+                if thinking_update_requested:
+                    _require_thinking_generation_actions(
+                        current["thinking_blocks_json"]
+                    )
 
                 content_changed = (
                     "content" in update_data
@@ -12500,6 +12530,7 @@ UPDATE db_schema_version
                         )
                         UPDATE messages
                            SET deleted = 1,
+                               thinking_blocks_json = NULL,
                                last_modified = ?,
                                version = version + 1,
                                client_id = ?
@@ -13116,7 +13147,7 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 
-        query = "UPDATE messages SET deleted = 1, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
+        query = "UPDATE messages SET deleted = 1, thinking_blocks_json = NULL, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
         params = (now, next_version_val, self.client_id, message_id, expected_version)
 
         try:
@@ -13247,6 +13278,7 @@ UPDATE db_schema_version
                 )
                 UPDATE messages
                    SET deleted = 1,
+                       thinking_blocks_json = NULL,
                        last_modified = ?,
                        version = version + 1,
                        client_id = ?
