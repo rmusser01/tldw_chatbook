@@ -8987,3 +8987,23 @@ bound the number of physical processes that can own that resource class and
 retire or recycle those owners at a verified idle boundary. A green scheduler
 fake cannot prove this property because it has neither OS worker selection nor
 allocator retention.
+
+---
+
+## Stream-chunk sanitation needs an aggregate-owner regression (TASK-22507.1, 2026-08-26)
+
+The Console provider gateway sanitized each streamed response chunk, and the
+existing binary canaries were green, but every test supplied the data URI or
+base64 value in one chunk. Final whole-branch review split those values across
+multiple sub-4096-byte chunks. Each fragment was individually harmless, while
+the later join reconstructed the raw binary encoding before immutable capture,
+SQLite persistence, and Full export.
+
+The production correction sanitizes once more at the final accumulated owner
+without re-consuming the shared serialization budget. The regression that
+proved it does not stop at the sanitizer helper: it sends split fragments
+through the real gateway, store, SQLite query, and Full exporter and asserts
+absolute exclusion in every decoded owner. For any streaming exclusion rule,
+test both fragment-level handling and an adversarial split at the final
+aggregate/storage owner; per-chunk green cannot prove a property of the joined
+value.

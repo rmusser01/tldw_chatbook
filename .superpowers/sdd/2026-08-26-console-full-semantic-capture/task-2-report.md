@@ -330,3 +330,15 @@ and closure. It was not marked Done and its acceptance checkboxes remain open.
 - The Backlog acceptance criteria are checked and `TASK-22507.2` is **Done**.
 - Final implementation range: `cf586ca823..e411781bd8` plus the Backlog/report
   closeout commit.
+
+## Final whole-branch correction
+
+The final review reopened Task 2. Unavailable/corrupt persisted policy now
+publishes explicit retryable Safe rather than inheriting Global Full;
+Full-to-Safe publishes Safe under the reservation before durable I/O; canonical
+config generation refreshes the runtime projection; and capture-policy
+resolution failures cannot abort an accepted model run or consume its one-shot.
+All prior cancellation/race cases remain green. See
+`final-review-fix-report.md` for exact RED/GREEN evidence. Task 2 remains
+**In Progress** with affected ACs #1, #4, and #5 unchecked for independent
+re-review.

@@ -198,3 +198,15 @@ Observed and asserted:
 - Scoped re-review of fix round 3 remains outstanding. The controller-owned
   one-time Impeccable detector was already run and was not rerun.
 - Task `TASK-22507.4` therefore remains **In Progress** with ACs unchecked.
+
+## Final whole-branch correction
+
+The final review reopened Task 4. Purge availability is now frozen from the
+controller and freshly revalidated with immutable title/count/policy and
+revision fences before confirmation and mutation; blocker reasons and
+destructive-action limits are exact. Inspector status names the immutable
+conversation title and armed next-send Full override, while Global detail
+editing disables Inherit. Real 80x24/focus/changed-state regressions cover the
+correction. See `final-review-fix-report.md` for exact RED/GREEN evidence. Task
+4 remains **In Progress** with affected ACs #1 and #2 unchecked for independent
+re-review.
