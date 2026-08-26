@@ -5781,6 +5781,7 @@ class LibraryScreen(BaseAppScreen):
         }[destination]
         attempted_generation = generation
         attempted_value = value
+        verified_physical_value = False
         async with locks[pane]:
             if (
                 not self._library_reader_persistence_is_current(
@@ -5823,6 +5824,27 @@ class LibraryScreen(BaseAppScreen):
                         attempted_generation == current_generation
                         and attempted_value == current_value
                     ):
+                        app_config = getattr(self.app_instance, "app_config", None)
+                        library_config = (
+                            app_config.get("library", {})
+                            if isinstance(app_config, Mapping)
+                            else {}
+                        )
+                        section_name = (
+                            "reader" if pane == "library" else f"{destination}_reader"
+                        )
+                        section_config = (
+                            library_config.get(section_name, {})
+                            if isinstance(library_config, Mapping)
+                            else {}
+                        )
+                        if (
+                            isinstance(section_config, Mapping)
+                            and section_config.get(key) is attempted_value
+                        ):
+                            self._library_reader_dirty_persistence_authorities.discard(
+                                authority
+                            )
                         return
                     attempted_generation = current_generation
                     attempted_value = current_value
@@ -5849,7 +5871,11 @@ class LibraryScreen(BaseAppScreen):
                     ):
                         return
                     if physical_value == current_value:
+                        self._library_reader_dirty_persistence_authorities.discard(
+                            authority
+                        )
                         return
+                    verified_physical_value = True
                     break
                 if (
                     attempted_generation != current_generation
@@ -5862,31 +5888,18 @@ class LibraryScreen(BaseAppScreen):
         self._replace_library_reader_preference(destination, key, durable_value)
         mirror(key, durable_value)
         self._sync_library_reader_preference_layout(destination, key)
+        if (
+            verified_physical_value
+            and self._library_reader_persistence_generations[authority]
+            == attempted_generation
+        ):
+            self._library_reader_dirty_persistence_authorities.discard(authority)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(
                 "Library reader layout could not be saved; the previous pane choice was restored.",
                 severity="warning",
             )
-
-    async def _repair_library_reader_preference(
-        self,
-        destination: Literal["media", "conversations", "notes"],
-        pane: Literal["library", "items"],
-        value: bool,
-        generation: int,
-    ) -> None:
-        """Repair one stale write, retaining authority if a newer refresh wins."""
-        await self._persist_library_reader_preference(
-            destination,
-            pane,
-            value,
-            generation,
-            verify_failure_from_config=True,
-        )
-        authority = self._library_reader_persistence_key(destination, pane)
-        if self._library_reader_persistence_generations[authority] == generation:
-            self._library_reader_dirty_persistence_authorities.discard(authority)
 
     def _sync_library_media_reader_layout_from_shell(
         self,
@@ -5991,19 +6004,6 @@ class LibraryScreen(BaseAppScreen):
         """Apply newer Library reader settings without reloading destination data."""
         if generation <= self._library_reader_layout_refresh_generation:
             return
-        first_refresh = self._library_reader_layout_refresh_generation == 0
-        previous_snapshot = (
-            self._library_reader_shared_preferences,
-            self._library_media_reader_preferences,
-            self._library_conversation_reader_preferences,
-            self._library_notes_reader_preferences,
-        )
-        previous_values = {
-            "library": self._library_reader_shared_preferences.library_open,
-            "conversations_items": self._library_conversation_reader_preferences.items_open,
-            "media_items": self._library_media_reader_preferences.items_open,
-            "notes_items": self._library_notes_reader_preferences.items_open,
-        }
         locally_persisted = {
             authority: authority in self._library_reader_dirty_persistence_authorities
             for authority in self._library_reader_persistence_generations
@@ -6029,12 +6029,6 @@ class LibraryScreen(BaseAppScreen):
             "media_items": self._library_media_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
         }
-        snapshot_changed = previous_snapshot != (
-            self._library_reader_shared_preferences,
-            self._library_media_reader_preferences,
-            self._library_conversation_reader_preferences,
-            self._library_notes_reader_preferences,
-        )
         persistence_authorities: tuple[
             tuple[Literal["media", "conversations", "notes"], str, str], ...
         ] = (
@@ -6043,34 +6037,7 @@ class LibraryScreen(BaseAppScreen):
             ("conversations", "items", "conversations_items"),
             ("notes", "items", "notes_items"),
         )
-        mounted_authorities: tuple[
-            tuple[Literal["media", "conversations", "notes"], str, str], ...
-        ] = ()
-        if self.query("#library-media-reader-shell"):
-            mounted_authorities = (
-                ("media", "library", "library"),
-                ("media", "items", "media_items"),
-            )
-        elif self.query("#library-conversations-reader-shell"):
-            mounted_authorities = (
-                ("conversations", "library", "library"),
-                ("conversations", "items", "conversations_items"),
-            )
-        elif self.query("#library-notes-reader-shell"):
-            mounted_authorities = (
-                ("notes", "library", "library"),
-                ("notes", "items", "notes_items"),
-            )
         repair_authorities = {
-            authority
-            for _, _, authority in mounted_authorities
-            if (
-                first_refresh
-                and not snapshot_changed
-                and previous_values[authority] == current_values[authority]
-            )
-        }
-        repair_authorities.update(
             authority
             for authority in current_values
             if locally_persisted[authority]
@@ -6079,7 +6046,7 @@ class LibraryScreen(BaseAppScreen):
                 != previous_persistence_generations[authority]
                 or previous_durable_values[authority] != current_values[authority]
             )
-        )
+        }
         for authority, value in current_values.items():
             if authority not in repair_authorities:
                 self._library_reader_durable_preferences[authority] = value
@@ -6094,11 +6061,12 @@ class LibraryScreen(BaseAppScreen):
             if authority not in repair_authorities:
                 continue
             self.run_worker(
-                self._repair_library_reader_preference(
+                self._persist_library_reader_preference(
                     destination,
                     pane,
                     current_values[authority],
                     self._library_reader_persistence_generations[authority],
+                    verify_failure_from_config=True,
                 ),
                 group=f"library_reader_{authority}_settings_persistence",
             )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import Mock
 
 import pytest
 from textual.containers import Horizontal
@@ -1013,6 +1014,7 @@ async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypa
         release_grip.set()
         await screen.workers.wait_for_complete()
         assert disk["library_open"] is False
+        assert "library" in screen._library_reader_dirty_persistence_authorities
 
         screen.request_library_reader_layout_refresh(
             screen._library_reader_layout_refresh_generation + 1
@@ -1033,17 +1035,15 @@ async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypatch):
+async def test_clean_first_mounted_settings_refresh_starts_no_repair(monkeypatch):
     app = _build_media_test_app()
     disk = {"library_open": True}
-    library_attempts = 0
+    save_attempts = []
     snapshot_reads = 0
 
-    def save_setting(_section, key, _value):
-        nonlocal library_attempts
-        if key == "library_open":
-            library_attempts += 1
-        return key != "library_open"
+    def save_setting(section, key, value):
+        save_attempts.append((section, key, value))
+        return False
 
     def read_snapshot():
         nonlocal snapshot_reads
@@ -1062,6 +1062,8 @@ async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypa
 
     async with host.run_test(size=(170, 48)) as pilot:
         screen, shell = await _open_media_shell(host, pilot)
+        workers = Mock(wraps=screen.run_worker)
+        monkeypatch.setattr(screen, "run_worker", workers)
         app.app_config["library"]["reader"]["library_open"] = True
         screen.request_library_reader_layout_refresh(
             screen._library_reader_layout_refresh_generation + 1
@@ -1069,8 +1071,9 @@ async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypa
         await screen.workers.wait_for_complete()
         await pilot.pause()
 
-        assert library_attempts == 1
-        assert snapshot_reads == 1
+        assert save_attempts == []
+        assert workers.call_count == 0
+        assert snapshot_reads == 0
         assert disk["library_open"] is True
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
@@ -1080,14 +1083,100 @@ async def test_failed_settings_reconciliation_reads_matching_disk_truth(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_completed_manual_write_yields_to_later_settings_without_repair(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    writes = []
+
+    def save_setting(section, key, value):
+        writes.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        shell.library_grip.press()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert writes == [("library.reader", "library_open", False)]
+
+        workers = Mock(wraps=screen.run_worker)
+        monkeypatch.setattr(screen, "run_worker", workers)
+        app.app_config["library"]["reader"]["library_open"] = True
+        screen.request_library_reader_layout_refresh(
+            screen._library_reader_layout_refresh_generation + 1
+        )
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert writes == [("library.reader", "library_open", False)]
+        assert workers.call_count == 0
+        assert screen._library_media_reader_preferences.library_open
+        assert shell.effective_layout.library_open
+
+
+@pytest.mark.asyncio
+async def test_failed_manual_write_gets_one_bounded_settings_repair(monkeypatch):
+    app = _build_media_test_app()
+    writes = []
+
+    def save_setting(section, key, value):
+        writes.append((section, key, value))
+        return len(writes) > 1
+
+    monkeypatch.setattr(
+        library_screen_module, "save_setting_to_cli_config", save_setting
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        shell.library_grip.press()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert writes == [("library.reader", "library_open", False)]
+        assert screen._library_media_reader_preferences.library_open
+
+        workers = Mock(wraps=screen.run_worker)
+        monkeypatch.setattr(screen, "run_worker", workers)
+        screen.request_library_reader_layout_refresh(
+            screen._library_reader_layout_refresh_generation + 1
+        )
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert writes == [
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        ]
+        assert workers.call_count == 1
+        assert shell.effective_layout.library_open
+
+        workers.reset_mock()
+        screen.request_library_reader_layout_refresh(
+            screen._library_reader_layout_refresh_generation + 1
+        )
+        await screen.workers.wait_for_complete()
+        assert len(writes) == 2
+        assert workers.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_failed_settings_reconciliation_does_not_project_cached_guess(
     monkeypatch,
 ):
     app = _build_media_test_app()
     cache_reads = 0
+    save_attempts = []
 
-    def save_setting(_section, key, _value):
-        return key != "library_open"
+    def save_setting(section, key, value):
+        save_attempts.append((section, key, value))
+        return False
 
     def fail_snapshot():
         raise ValueError("physical config unavailable")
@@ -1110,7 +1199,11 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
         monkeypatch.setattr(
             library_screen_module, "get_cli_setting", read_cached_setting
         )
-        app.app_config["library"]["reader"]["library_open"] = True
+        shell.library_grip.press()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert save_attempts == [("library.reader", "library_open", False)]
+
         screen.request_library_reader_layout_refresh(
             screen._library_reader_layout_refresh_generation + 1
         )
@@ -1118,6 +1211,11 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
         await pilot.pause()
 
         assert cache_reads == 0
+        assert save_attempts == [
+            ("library.reader", "library_open", False),
+            ("library.reader", "library_open", True),
+        ]
+        assert "library" in screen._library_reader_dirty_persistence_authorities
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
         assert screen._library_conversation_reader_preferences.library_open
