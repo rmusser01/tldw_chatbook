@@ -21,6 +21,8 @@ _OPEN_TO_CLOSE = {
     "<think>": "</think>",
     "<thinking>": "</thinking>",
 }
+_MAX_TAG_CHARS = max(map(len, (*_OPEN_TO_CLOSE, *_OPEN_TO_CLOSE.values())))
+_MAX_PROBE_CHARS = 2 * max(map(len, _OPEN_TO_CLOSE))
 
 ThinkCaptureStatus = Literal["pending", "complete", "failed"]
 
@@ -35,10 +37,18 @@ class ThinkSplitChunk:
 
 
 class StartAnchoredThinkSplitter:
-    """Split a start-anchored thinking section from visible answer content."""
+    """Split a start-anchored thinking section from visible answer content.
+
+    The undecided probe retains at most twice the longest opener: one opener
+    length for ordinary leading whitespace and one for the possible tag. If
+    that cap is crossed before an opener is confirmed, the probe fails open
+    into visible content and every later tag stays literal. A confirmed
+    thinking block never fails open; it can only close, fail at EOF, or enter
+    a terminal content-free capture failure.
+    """
 
     def __init__(self) -> None:
-        self._state: Literal["probing", "thinking", "visible"] = "probing"
+        self._state: Literal["probing", "thinking", "visible", "failed"] = "probing"
         self._buffer = ""
         self._close_tag = ""
         self._thinking_bytes = 0
@@ -51,26 +61,41 @@ class StartAnchoredThinkSplitter:
             raise TypeError("Thinking stream chunks must be strings.")
         if self._terminal_status is not None:
             raise RuntimeError("Thinking stream is already closed.")
-        return self._consume(chunk, terminal=False)
+        result = self._consume(chunk, terminal=False)
+        if result is None:
+            chunk = ""
+            raise ThinkingEnvelopeValidationError("Invalid thinking data: text.")
+        return result
 
     def flush(self) -> ThinkSplitChunk:
         """Settle the capture, marking an unclosed anchored block as failed."""
         if self._terminal_status is not None:
             return ThinkSplitChunk(status=self._terminal_status)
         result = self._consume("", terminal=True)
+        if result is None:
+            raise ThinkingEnvelopeValidationError("Invalid thinking data: text.")
         assert result.status != "pending"
         self._terminal_status = result.status
         return result
 
-    def _consume(self, chunk: str, *, terminal: bool) -> ThinkSplitChunk:
+    def _consume(self, chunk: str, *, terminal: bool) -> ThinkSplitChunk | None:
         if self._state == "visible":
             return ThinkSplitChunk(
                 content=self._visible_content(chunk),
                 status="complete" if terminal else "pending",
             )
-
         if self._state == "probing":
-            self._buffer += chunk
+            return self._consume_probe(chunk, terminal=terminal)
+        return self._consume_thinking(chunk, terminal=terminal)
+
+    def _consume_probe(self, chunk: str, *, terminal: bool) -> ThinkSplitChunk | None:
+        if terminal:
+            self._buffer = ""
+            return ThinkSplitChunk(status="complete")
+
+        had_buffered_probe = bool(self._buffer)
+        for index, character in enumerate(chunk):
+            self._buffer += character
             stripped = self._buffer.lstrip()
             opening = next(
                 (tag for tag in _OPEN_TO_CLOSE if stripped.startswith(tag)),
@@ -79,60 +104,119 @@ class StartAnchoredThinkSplitter:
             if opening is not None:
                 self._state = "thinking"
                 self._close_tag = _OPEN_TO_CLOSE[opening]
-                self._buffer = stripped[len(opening) :]
+                self._buffer = ""
+                return self._consume_thinking(chunk[index + 1 :], terminal=False)
             elif stripped and not any(
                 tag.startswith(stripped) for tag in _OPEN_TO_CLOSE
             ):
-                self._state = "visible"
-                content, self._buffer = self._buffer, ""
-                return ThinkSplitChunk(
-                    content=content,
-                    status="complete" if terminal else "pending",
+                return self._fail_open_probe(
+                    chunk, index=index, had_buffered_probe=had_buffered_probe
                 )
-            else:
-                status: ThinkCaptureStatus = (
-                    "failed"
-                    if terminal and stripped
-                    else "complete"
-                    if terminal
-                    else "pending"
+            if len(self._buffer) > _MAX_PROBE_CHARS:
+                return self._fail_open_probe(
+                    chunk, index=index, had_buffered_probe=had_buffered_probe
                 )
-                if terminal:
-                    self._buffer = ""
-                return ThinkSplitChunk(status=status)
-        else:
-            self._buffer += chunk
+        return ThinkSplitChunk()
 
-        close_at = self._buffer.find(self._close_tag)
-        if close_at >= 0:
-            thinking = self._bounded_thinking(self._buffer[:close_at])
-            remainder = self._buffer[close_at + len(self._close_tag) :]
-            self._buffer = ""
-            self._state = "visible"
-            self._strip_post_close_newlines = True
-            return ThinkSplitChunk(
-                thinking=thinking,
-                content=self._visible_content(remainder),
-                status="complete" if terminal else "pending",
-            )
+    def _fail_open_probe(
+        self, chunk: str, *, index: int, had_buffered_probe: bool
+    ) -> ThinkSplitChunk:
+        buffered, self._buffer = self._buffer, ""
+        self._state = "visible"
+        content = buffered + chunk[index + 1 :] if had_buffered_probe else chunk
+        return ThinkSplitChunk(content=content)
 
+    def _consume_thinking(
+        self, chunk: str, *, terminal: bool
+    ) -> ThinkSplitChunk | None:
         if terminal:
-            thinking = self._bounded_thinking(self._buffer)
+            thinking = self._bounded_thinking((self._buffer, 0, len(self._buffer)))
+            if thinking is None:
+                return None
             self._buffer = ""
             return ThinkSplitChunk(thinking=thinking, status="failed")
 
-        held = self._possible_close_suffix_length(self._buffer)
-        emit_through = len(self._buffer) - held
-        thinking = self._bounded_thinking(self._buffer[:emit_through])
-        self._buffer = self._buffer[emit_through:]
+        pending, self._buffer = self._buffer, ""
+        cross_window = pending + chunk[:_MAX_TAG_CHARS]
+        close_at = cross_window.find(self._close_tag)
+        if close_at >= 0:
+            chunk_reasoning_end = max(0, close_at - len(pending))
+            thinking = self._bounded_thinking(
+                (pending, 0, min(close_at, len(pending))),
+                (chunk, 0, chunk_reasoning_end),
+            )
+            if thinking is None:
+                return None
+            consumed = close_at + len(self._close_tag) - len(pending)
+            return self._close_thinking(thinking, chunk[consumed:])
+
+        close_at = chunk.find(self._close_tag)
+        if close_at >= 0:
+            thinking = self._bounded_thinking(
+                (pending, 0, len(pending)),
+                (chunk, 0, close_at),
+            )
+            if thinking is None:
+                return None
+            return self._close_thinking(
+                thinking, chunk[close_at + len(self._close_tag) :]
+            )
+
+        tail = pending + chunk[-(_MAX_TAG_CHARS - 1) :]
+        held = self._possible_close_suffix_length(tail)
+        safe_chars = len(pending) + len(chunk) - held
+        pending_end = min(len(pending), safe_chars)
+        chunk_end = max(0, safe_chars - len(pending))
+        thinking = self._bounded_thinking(
+            (pending, 0, pending_end),
+            (chunk, 0, chunk_end),
+        )
+        if thinking is None:
+            return None
+        if held:
+            self._buffer = (
+                chunk[-held:]
+                if held <= len(chunk)
+                else pending[-(held - len(chunk)) :] + chunk
+            )
         return ThinkSplitChunk(thinking=thinking)
 
-    def _bounded_thinking(self, text: str) -> str:
-        total = self._thinking_bytes + len(text.encode("utf-8"))
-        if total > MAX_THINKING_TEXT_BYTES:
-            raise ThinkingEnvelopeValidationError("Invalid thinking data: text.")
+    def _close_thinking(self, thinking: str, remainder: str) -> ThinkSplitChunk:
+        self._state = "visible"
+        self._close_tag = ""
+        self._strip_post_close_newlines = True
+        return ThinkSplitChunk(
+            thinking=thinking,
+            content=self._visible_content(remainder),
+        )
+
+    def _bounded_thinking(self, *ranges: tuple[str, int, int]) -> str | None:
+        total = self._thinking_bytes
+        for text, start, end in ranges:
+            for index in range(start, end):
+                codepoint = ord(text[index])
+                total += (
+                    1
+                    if codepoint <= 0x7F
+                    else 2
+                    if codepoint <= 0x7FF
+                    else 3
+                    if codepoint <= 0xFFFF
+                    else 4
+                )
+                if total > MAX_THINKING_TEXT_BYTES:
+                    self._terminal_capture_failure()
+                    return None
         self._thinking_bytes = total
-        return text
+        return "".join(text[start:end] for text, start, end in ranges)
+
+    def _terminal_capture_failure(self) -> None:
+        self._state = "failed"
+        self._buffer = ""
+        self._close_tag = ""
+        self._thinking_bytes = 0
+        self._strip_post_close_newlines = False
+        self._terminal_status = "failed"
 
     def _possible_close_suffix_length(self, text: str) -> int:
         maximum = min(len(text), len(self._close_tag) - 1)
@@ -153,8 +237,14 @@ class StartAnchoredThinkSplitter:
 def split_start_anchored_thinking(text: str) -> ThinkSplitChunk:
     """Split one complete response with the exact streaming semantics."""
     splitter = StartAnchoredThinkSplitter()
-    update = splitter.feed(text)
-    terminal = splitter.flush()
+    update = None
+    try:
+        update = splitter.feed(text)
+        terminal = splitter.flush()
+    except ThinkingEnvelopeValidationError:
+        text = ""
+        update = None
+        raise
     return ThinkSplitChunk(
         thinking=update.thinking + terminal.thinking,
         content=update.content + terminal.content,
@@ -170,7 +260,11 @@ class StartAnchoredThinkFilter:
 
     def feed(self, chunk: str) -> str:
         """Feed one stream chunk and return only visible answer content."""
-        return self._splitter.feed(chunk).content
+        try:
+            return self._splitter.feed(chunk).content
+        except ThinkingEnvelopeValidationError:
+            chunk = ""
+            raise
 
     def flush(self) -> str:
         """Drop an unterminated thinking tail, preserving ADR-066 privacy."""
