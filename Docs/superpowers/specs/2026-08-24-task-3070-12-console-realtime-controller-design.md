@@ -55,9 +55,10 @@ requires the implemented branch to satisfy the unchanged final ratchet. The
 combined TASK-3070.12/.13 projection becomes 17,476 / 562, still 251 lines and 31
 methods below the immutable 17,727 / 593 ceilings.
 
-The final delivery tip `b53169e1f1` changed only the repository diagnostic
-inventory in this scope; the screen counts, ownership classification, and ratchets
-above remain the final delivery evidence.
+The final delivery bases after `794ae11521` changed only the repository diagnostic
+inventory (`b53169e1f1`) and citation provenance in the Console chat controller/store
+(`3daa56bf4f`) in this scope; the screen counts, ownership classification, and
+ratchets above remain the final delivery evidence.
 
 ## Goals
 
