@@ -1,9 +1,11 @@
 ---
 id: TASK-22033
 title: Migrate Library Prompts to the adaptive reader shell
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-24 23:26'
+updated_date: '2026-08-26 03:06'
 labels:
   - library
   - ui
@@ -31,3 +33,16 @@ Move Prompts into the shared Library adaptive reader structure while preserving 
 - [ ] #6 Existing Prompt capability and backend ownership remain unchanged
 - [ ] #7 Automated browse editor hidden-field history geometry focus and capability tests pass with a representative live TUI walkthrough
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Inventory Prompt capabilities and draft authority
+2. Add one lossless reader projection
+3. Split persistent list and work pane
+4. Verify hidden fields, workflows, geometry, and focus
+
+ADR required: yes
+ADR path: backlog/decisions/086-library-adaptive-reader-shell.md
+Reason: consumes the accepted Library structural boundary without changing Prompt authority.
+<!-- SECTION:PLAN:END -->
