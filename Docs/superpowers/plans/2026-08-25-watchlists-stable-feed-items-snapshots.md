@@ -737,7 +737,7 @@ git commit -m "refactor(watchlists): cache reader keyset pages"
 - Modify: `Tests/Watchlists/test_watchlists_collections_screen.py`
 - Modify: `Tests/Watchlists/test_watchlists_scoped_rebuilds.py`
 
-- [ ] **Step 1: Write mounted RED tests for pending, successful, failed, and superseded scopes**
+- [x] **Step 1: Write mounted RED tests for pending, successful, failed, and superseded scopes**
 
 Cover this exact sequence:
 
@@ -769,13 +769,13 @@ Add sibling tests proving:
 - a local management-tab scope gesture commits immediately, invalidates parked Reader rows/selection, and issues no item query;
 - returning from that management tab to Read loads the committed scope into an honest loading/Retry state rather than mounting rows from the prior scope.
 
-- [ ] **Step 2: Run the exact new scope tests and verify RED**
+- [x] **Step 2: Run the exact new scope tests and verify RED**
 
 Run the new nodes in the three listed Watchlists files with `-k "atomic_scope or pending_scope or management_scope_invalidates_reader"`.
 
 Expected: failures show `_apply_tree_scope()` still changes `tree_scope` before the item request completes.
 
-- [ ] **Step 3: Split request and commit responsibilities**
+- [x] **Step 3: Split request and commit responsibilities**
 
 Retain `_apply_tree_scope()` as the committed reconciliation method, but remove automatic item loading from `watch_tree_scope()`. Add:
 
@@ -798,7 +798,7 @@ def _request_tree_scope(self, scope: TreeScope) -> None:
 
 Route both `_on_tree_scope_changed()` and breadcrumb promotion through this request method. Audit every existing `_apply_tree_scope()` caller: write-completion fallbacks may call the committed helper only when their surrounding operation has already established the new management context; user navigation must call the request path.
 
-- [ ] **Step 4: Make first-page presentation the scope commit boundary**
+- [x] **Step 4: Make first-page presentation the scope commit boundary**
 
 When `_replace_items_snapshot(..., clear_reader_on_commit=True)` is still the newest generation, enter `with self.app.batch_update():` while holding the presentation lock, apply the candidate rows, and commit the following state before leaving the batch. This is the existing Watchlists/Textual atomic-paint boundary; without it, the `await pane.apply_page_items(...)` can expose a frame containing replacement rows under the committed old heading.
 
@@ -810,15 +810,15 @@ When `_replace_items_snapshot(..., clear_reader_on_commit=True)` is still the ne
 
 Use a private commit guard so `tree_scope`'s watcher refreshes header/sources/tree styling but does not schedule a second item load.
 
-- [ ] **Step 5: Preserve committed state on failure and supersession**
+- [x] **Step 5: Preserve committed state on failure and supersession**
 
 Store `_pending_tree_scope` separately. On an exception from the newest pending scope, restore only loading controls and active styling; do not mutate committed state. Name attempted and retained scopes through the existing escaped display-label helpers. A superseded request returns silently and cannot clear the newer pending marker.
 
-- [ ] **Step 6: Preserve management behavior without hidden item I/O**
+- [x] **Step 6: Preserve management behavior without hidden item I/O**
 
 On local non-Read sections, commit the scope immediately and invalidate every parked Reader authority together: `_items_snapshot`, `_loaded_items`, selected Reader item/page identity, `_items_snapshot_count`, `_items_pending_arrivals`, and mounted pane rows/selection/count/new-items note. On the next Read entry, show loading with count `0` and no pill for that committed scope until `_replace_items_snapshot(reason="return_to_read")` succeeds; failure leaves the scope committed and shows scoped Retry with no old rows, count, pill, or article relabelled.
 
-- [ ] **Step 7: Run the focused scope/pagination regressions and verify GREEN**
+- [x] **Step 7: Run the focused scope/pagination regressions and verify GREEN**
 
 Run:
 
@@ -832,7 +832,7 @@ Run:
 
 Expected: selected atomic scope, management invalidation, and snapshot cases pass.
 
-- [ ] **Step 8: Commit atomic scope publication**
+- [x] **Step 8: Commit atomic scope publication**
 
 ```bash
 git add \
