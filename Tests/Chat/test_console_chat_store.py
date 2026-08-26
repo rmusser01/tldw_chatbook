@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -1664,12 +1665,14 @@ class FakePersistence:
         conversation_id,
         user_name_override,
         character_system_template,
+        character_name_snapshot,
     ):
         self.roleplay_updates.append(
             {
                 "conversation_id": conversation_id,
                 "user_name_override": user_name_override,
                 "character_system_template": character_system_template,
+                "character_name_snapshot": character_name_snapshot,
             }
         )
         return True
@@ -5078,6 +5081,7 @@ def test_first_persist_flushes_roleplay_context_after_conversation_exists():
             "conversation_id": conversation_id,
             "user_name_override": "Rowan",
             "character_system_template": "Speak with {{user}}.",
+            "character_name_snapshot": "Alraune",
         }
     ]
 
@@ -5278,6 +5282,7 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
             "conversation_id": "conv-1",
             "user_name_override": None,
             "character_system_template": "Serve {{user}} as {{character}}.",
+            "character_name_snapshot": "Brynn",
         }
     ]
 
@@ -5294,7 +5299,13 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
     assert store.persist_session_if_needed(saved.id) == "conv-1"
     assert saved.persisted_conversation_id == "conv-1"
 
-    temporary = store.create_session(ephemeral=True)
+    temporary = store.create_session(
+        ephemeral=True,
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
     temporary.user_display_name_override = "Rowan"
     conversation_id = store.promote_ephemeral_session(temporary.id)
 
@@ -5303,6 +5314,25 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
     assert temporary.persisted_conversation_id == conversation_id
     roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
     assert roleplay["user_name_override"] == "Rowan"
+    assert roleplay["character_name_snapshot"] == "Alraune"
+
+
+def test_generic_roleplay_context_does_not_capture_a_character_name():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
+    session.user_display_name_override = "Rowan"
+
+    conversation_id = store.persist_session_if_needed(session.id)
+
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": conversation_id,
+            "user_name_override": "Rowan",
+            "character_system_template": None,
+            "character_name_snapshot": None,
+        }
+    ]
 
 
 def test_identical_real_seed_does_not_append_a_duplicate_greeting():
@@ -5405,6 +5435,11 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     assert persistence.updated_messages == []
     with pytest.raises(FrozenInstanceError):
         plan.generation = -1
+    assert plan.system_prompt_write is not None
+    assert plan.system_prompt_write.expected_roleplay_context == ConsoleRoleplayContext(
+        character_system_template="Speak with {{user}}.",
+        character_name_snapshot="Alraune",
+    )
 
     store.close_session(session.id)
     result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
@@ -5459,6 +5494,7 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
                 conversation_id=conversation_id,
                 user_name_override=None,
                 character_system_template="Speak with {{user}}.",
+                character_name_snapshot="Alraune",
             )
             is True
         )
@@ -5744,6 +5780,7 @@ def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
         conversation_id=conversation_id,
         user_name_override=None,
         character_system_template="Speak with {{user}}.",
+        character_name_snapshot=None,
     )
     metadata = MessageMetadata(
         template_kind="character_greeting",

@@ -659,6 +659,7 @@ class ChatPersistenceService:
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
+        character_name_snapshot: str | None,
     ) -> bool:
         """Merge Console-owned roleplay identity context with one retry.
 
@@ -676,6 +677,7 @@ class ChatPersistenceService:
                 ConsoleRoleplayContext(
                     user_name_override=user_name_override,
                     character_system_template=character_system_template,
+                    character_name_snapshot=character_name_snapshot,
                 ),
             )
             try:

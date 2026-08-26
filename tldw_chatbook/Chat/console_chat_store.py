@@ -588,6 +588,7 @@ class ConsoleChatPersistence(Protocol):
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
+        character_name_snapshot: str | None,
     ) -> bool:
         """Persist Console-owned roleplay identity context for a conversation."""
 
@@ -6743,6 +6744,11 @@ class ConsoleChatStore:
             expected_roleplay_context=ConsoleRoleplayContext(
                 user_name_override=session.user_display_name_override,
                 character_system_template=session.character_system_template,
+                character_name_snapshot=(
+                    session.character_name
+                    if session.assistant_kind == "character"
+                    else None
+                ),
             ),
             expected_system_prompts=expected_system_prompts,
             accepts_roleplay_context_guard=self._persistence_accepts_kwarg(
@@ -7112,6 +7118,11 @@ class ConsoleChatStore:
                     conversation_id=session.persisted_conversation_id,
                     user_name_override=session.user_display_name_override,
                     character_system_template=session.character_system_template,
+                    character_name_snapshot=(
+                        session.character_name
+                        if session.assistant_kind == "character"
+                        else None
+                    ),
                 )
             )
         except Exception as exc:
@@ -9085,6 +9096,7 @@ class ConsoleChatStore:
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
+            or session.assistant_kind == "character"
         ) and not self._persist_roleplay_context(session):
             logger.warning("Failed to flush Console roleplay context on first persist.")
             if strict_roleplay_context:
@@ -9350,6 +9362,7 @@ class ConsoleChatStore:
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
+            or session.assistant_kind == "character"
         ):
             metadata = json.loads(
                 merge_console_roleplay_context(
@@ -9357,6 +9370,11 @@ class ConsoleChatStore:
                     ConsoleRoleplayContext(
                         user_name_override=session.user_display_name_override,
                         character_system_template=session.character_system_template,
+                        character_name_snapshot=(
+                            session.character_name
+                            if session.assistant_kind == "character"
+                            else None
+                        ),
                     ),
                 )
             )
