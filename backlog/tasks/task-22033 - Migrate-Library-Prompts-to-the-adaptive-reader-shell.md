@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 23:26'
-updated_date: '2026-08-26 19:17'
+updated_date: '2026-08-26 19:38'
 labels:
   - library
   - ui
@@ -53,4 +53,6 @@ Reason: consumes the accepted Library structural boundary without changing Promp
 Migrated Library Prompts into the shared adaptive reader with retained Items and Work panes, independent collapse geometry, and Basic as the default projection. Added one screen-owned lossless Prompt draft shared by Basic, Advanced, and Info; explicit validation ownership; selected-versus-loaded detail fencing; truthful read-only recovery; retained browse, bulk, import, history, collection, conflict, lifecycle, and delete/Undo authority without adding a parallel persistence path. Hardened editor-origin import and browse/detail retry behavior after independent review. Verified after rebasing onto origin/dev with 15 focused retained-reader tests, 340 Prompt canvas tests, 1,126 broader Prompt state/controller/widget/service tests, Ruff, compileall, diff checks, and the complete isolated production-CSS live matrix. Full-repository collection remains independently blocked on the existing unregistered filterwarnings marker baseline in Tests/Agents/test_mcp_tool_provider.py. ADR required: yes. ADR path: backlog/decisions/086-library-adaptive-reader-shell.md. Reason: directly implements the accepted long-lived Library adaptive-reader boundary; no new ADR was required.
 
 Post-Qodo hardening: removed the unused test-only PromptReaderState module so LibraryScreen remains the sole mutable reader authority; transferred hidden-field preservation and validation-focus coverage to the mounted production reader; fixed Info fallback so only unavailable Basic routes to Advanced; routed invalid outer saves to the owning Advanced block control; and confined config, data, app-data, and all XDG evidence-driver paths through centralized validation. Verified with 17 mounted reader tests, 10 seam/authority tests, focused mode and isolation regressions, Ruff, compileall, diff checks, and a fresh complete isolated live matrix. ADR required: yes. ADR path: backlog/decisions/086-library-adaptive-reader-shell.md. Reason: hardens the existing accepted boundary without adding a new architectural decision.
+
+CI derived-artifact review: inspected the exact persistent-diagnostic statement delta in tldw_chatbook/UI/Screens/library_screen.py (two new constant-message debug calls and one shortened existing info call retaining only the internal Prompt integer ID). Confirmed no new sink topology and no interpolation of user content, secrets, paths, or URLs; regenerated Docs/security/production-diagnostic-inventory.json and verified it reproduces at 538 owners, 1,241 TASK-492 calls, 7,359 TASK-494 calls, and 8 sink files.
 <!-- SECTION:NOTES:END -->
