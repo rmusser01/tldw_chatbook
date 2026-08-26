@@ -57,6 +57,34 @@ UPDATE_ORIGINAL_UNAVAILABLE_COPY = (
 )
 
 
+def _present_static(static: Static, text: str) -> None:
+    """Write ``text`` into ``static`` only when it is not already there.
+
+    TASK-22228 (item 5): the workbench re-syncs the edited card AND the
+    whole footer on every keystroke (``_change_field`` ->
+    ``replace_block_state`` -> ``_sync_card`` + ``_sync_footer``), and none
+    of that copy depends on the character typed -- measured on the mounted
+    editor at 15 footer ``Static.update`` calls for 5 keystrokes, ALL 15
+    writing text byte-identical to what was already rendered, plus the
+    card's own issue/status pair. ``Static.update`` defaults to
+    ``layout=True``, so each no-op write also invalidated layout for the
+    frame.
+
+    The guard is text equality rather than ``layout=False``: this copy
+    genuinely re-wraps at narrow widths, so its geometry is NOT fixed and
+    the layout flag must stay true for the writes that really change
+    something. Reading the rendered text back is exact here because every
+    Static this touches is composed ``markup=False``, and it self-heals
+    across a recompose (a fresh Static compares against its own initial
+    copy), which a write-side memo would not.
+
+    Mirrors ``ConsoleLeftRail._present_header_title``'s idiom.
+    """
+
+    if str(static.renderable) != text:
+        static.update(text)
+
+
 class PromptBlockCard(Vertical):
     """One stable mounted block whose controls are patched in place."""
 
@@ -200,11 +228,13 @@ class PromptBlockCard(Vertical):
             with content.prevent(TextArea.Changed):
                 content.load_text(block.content)
 
-        self.query_one(f"#prompt-block-issue-{self.token}", Static).update(
-            self._issue_copy()
+        _present_static(
+            self.query_one(f"#prompt-block-issue-{self.token}", Static),
+            self._issue_copy(),
         )
-        self.query_one(f"#prompt-block-status-{self.token}", Static).update(
-            self._status_copy()
+        _present_static(
+            self.query_one(f"#prompt-block-status-{self.token}", Static),
+            self._status_copy(),
         )
         self.query_one(
             f"#prompt-block-move-up-{self.token}", Button
@@ -214,11 +244,16 @@ class PromptBlockCard(Vertical):
         ).disabled = is_last
         duplicate = self.query_one(f"#prompt-block-duplicate-{self.token}", Button)
         duplicate.disabled = not can_duplicate_block(block.id)
-        duplicate.tooltip = (
+        # The tooltip setter is not a plain assignment: it reaches the
+        # screen's live tooltip machinery (``Widget.tooltip`` ->
+        # ``screen._update_tooltip``), so an unchanged value is guarded too.
+        duplicate_tooltip = (
             "Duplicate unavailable — mapped Additional context uses a reserved identity."
             if duplicate.disabled
             else None
         )
+        if duplicate.tooltip != duplicate_tooltip:
+            duplicate.tooltip = duplicate_tooltip
         self.set_class(bool(issues), "invalid")
         self.set_class(dirty, "dirty")
 
@@ -821,13 +856,14 @@ class PromptBlockEditor(Vertical):
         issue_count = len(self._state.issues)
         validation = self.query_one("#prompt-editor-validation", Static)
         if issue_count:
-            validation.update(
+            validation_copy = (
                 f"Invalid · {issue_count} blocking error"
                 f"{'s' if issue_count != 1 else ''} — correct the highlighted block."
             )
         else:
             block_count = sum(len(lane.blocks) for lane in self._state.definition.lanes)
-            validation.update(f"Valid · {block_count} blocks")
+            validation_copy = f"Valid · {block_count} blocks"
+        _present_static(validation, validation_copy)
         validation.set_class(bool(issue_count), "invalid")
 
         system = self.query_one("#prompt-editor-apply-system", Checkbox)
@@ -867,7 +903,7 @@ class PromptBlockEditor(Vertical):
             and not no_selected_content
         ):
             reason = "Ready — System changes only on Apply in this active session."
-        apply_reason.update(reason)
+        _present_static(apply_reason, reason)
         apply_reason.set_class(issue_count > 0 or no_selected_content, "blocked")
 
         self.query_one("#prompt-editor-apply", Button).disabled = bool(
@@ -879,7 +915,12 @@ class PromptBlockEditor(Vertical):
             save_menu.set_options(save_options)
             self._last_save_menu_options = save_options
         save_menu.disabled = not save_options
-        save_menu.tooltip = self._save_menu_tooltip(issue_count)
+        # The tooltip setter is not a plain assignment: it reaches the
+        # screen's live tooltip machinery (`Widget.tooltip` ->
+        # `screen._update_tooltip`), so an unchanged value is guarded too.
+        save_menu_tooltip = self._save_menu_tooltip(issue_count)
+        if save_menu.tooltip != save_menu_tooltip:
+            save_menu.tooltip = save_menu_tooltip
         update_reason = self.query_one("#prompt-editor-update-reason", Static)
         if not self._can_update_original:
             update_copy = self._update_original_unavailable_reason
@@ -887,7 +928,7 @@ class PromptBlockEditor(Vertical):
             update_copy = "Update unavailable — resolve the block errors above."
         else:
             update_copy = ""
-        update_reason.update(update_copy)
+        _present_static(update_reason, update_copy)
 
     def _save_menu_options(self) -> tuple[tuple[str, SaveAction], ...]:
         """Return only persistence actions valid for the current working copy."""

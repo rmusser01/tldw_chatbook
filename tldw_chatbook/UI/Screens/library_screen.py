@@ -6412,16 +6412,29 @@ class LibraryScreen(BaseAppScreen):
         del event
         self._library_notes_resize_epoch += 1
         self._library_notes_resize_settling = True
-        focused = self.focused
-        focus_intent = (
-            (focused, self._library_notes_focus_intent_generation)
-            if focused is not None
-            else None
-        )
-        self.call_after_refresh(
-            self._sync_library_media_reader_layout_from_shell,
-            focus_intent=focus_intent,
-        )
+        # TASK-22228 (item 7): the Media reader layout leg is scheduled only
+        # while Browse Media owns the canvas -- the one route that mounts
+        # ``#library-media-reader-shell`` (``compose``'s
+        # ``canvas_kind == "media"`` branch; the same predicate
+        # ``_sync_library_media_viewer_state`` gates the viewer on). Anywhere
+        # else the scheduled call could only walk the whole Library DOM
+        # looking for a shell that is not mounted and return: a FAILED
+        # ``query_one`` takes no id-cache fast path, so every Notes /
+        # Conversations / Ingest resize frame paid two full breadth-first
+        # walks (measured 16.0 us each on a 118-widget fixture) to do
+        # nothing. Behaviour is unchanged -- the skipped call was already a
+        # no-op on those routes.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            focused = self.focused
+            focus_intent = (
+                (focused, self._library_notes_focus_intent_generation)
+                if focused is not None
+                else None
+            )
+            self.call_after_refresh(
+                self._sync_library_media_reader_layout_from_shell,
+                focus_intent=focus_intent,
+            )
         try:
             width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -34121,7 +34134,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_session, "info"
         )
         self._library_media_editing = True
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-edit-cancel")
     def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
@@ -34132,7 +34145,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_editing = False
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-edit-save")
     def handle_library_media_edit_save(self, event: Button.Pressed) -> None:
@@ -34330,7 +34343,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_media_confirming_delete = True
         self._library_media_delete_receipt_ids = ()
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-delete-cancel")
     def handle_library_media_delete_cancel(self, event: Button.Pressed) -> None:
@@ -34342,7 +34355,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_confirming_delete = False
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-delete-confirm")
     def handle_library_media_delete_confirm(self, event: Button.Pressed) -> None:
@@ -35340,7 +35353,13 @@ class LibraryScreen(BaseAppScreen):
         task-21116: Escape's edit/delete-confirm/analysis Cancel branches
         flip one viewer flag; only the mounted ``LibraryMediaViewer``'s
         children change, so route the rebuild through the viewer itself
-        instead of tearing down the whole screen. Mirrors
+        instead of tearing down the whole screen. TASK-22228 (item 6)
+        finished the conversion: the six BUTTON presses that make the same
+        three flips (Edit metadata / Cancel, Move to trash / Cancel, Edit
+        analysis / Cancel) were still whole-screen recomposes -- the same
+        gesture through a different control paid the nav-bar + footer +
+        rail + canvas teardown that Escape had already stopped paying.
+        Mirrors
         ``_sync_library_canvas``'s mouse-capture release -- this path
         bypasses ``BaseAppScreen.refresh`` and its guard, and the viewer
         mounts ``Input``/``TextArea`` children whose removal mid-capture
@@ -35659,7 +35678,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_editing_analysis = True
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-cancel")
     def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
@@ -35671,7 +35690,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_editing_analysis = False
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-save")
     def handle_library_media_analysis_save(self, event: Button.Pressed) -> None:

@@ -22,7 +22,13 @@ from pathlib import Path
 #: structural-boundary arms added inside the new targeted seams). LOWER
 #: this pin when you remove sites; never raise it for a per-click path --
 #: see the failure message for the sanctioned seams.
-LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 97
+#:
+#: TASK-22228 (item 6) re-based it: the 2026-08-24 reader burn-down had
+#: already taken the census to 80 without lowering the pin (23 sites of
+#: silent headroom -- a ratchet that cannot bite), and routing the six
+#: Reader sub-state presses through
+#: ``_sync_library_media_viewer_or_recompose`` took it to 74.
+LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 74
 
 _LIBRARY_SCREEN_PATH = (
     Path(__file__).resolve().parents[2]
