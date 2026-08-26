@@ -55,7 +55,10 @@ from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore as _ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpoint,
     ConsoleDispatchReconstructability,
@@ -1068,12 +1071,13 @@ async def test_character_dispatch_shares_active_pack_prompt_and_capture_snapshot
         assert completed.content == "Visible answer"
         assert completed.metadata.character_emote.pack_id == graph["pack"]["id"]
         assert (
-            completed.metadata.character_emote.pack_version_id
-            == graph["version"]["id"]
+            completed.metadata.character_emote.pack_version_id == graph["version"]["id"]
         )
         assert completed.metadata.character_emote.expression_key == "custom:smug"
         smug_asset = next(
-            asset for asset in graph["assets"] if asset["expression_key"] == "custom:smug"
+            asset
+            for asset in graph["assets"]
+            if asset["expression_key"] == "custom:smug"
         )
         assert completed.metadata.character_emote.asset_id == smug_asset["id"]
     finally:
@@ -7367,6 +7371,84 @@ def test_dispatch_recovery_release_invalidates_only_exact_replacement_token(
         assert store._generation_attempt_is_current(assistant.id, newer_token)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+async def test_accepted_turn_settlement_rollback_uses_issued_generation_token(
+    monkeypatch: pytest.MonkeyPatch,
+    issue_newer_token: bool,
+) -> None:
+    """The normal accepted-turn rollback must fence its detached stream."""
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    issued: dict[str, int | str | None] = {}
+
+    async def fail_after_token(*_args, **kwargs):
+        assistant_id = str(kwargs["assistant_message_id"])
+        issued["assistant_id"] = assistant_id
+        issued["replacement"] = store.begin_generation_attempt(assistant_id)
+        issued["newer"] = (
+            store.begin_generation_attempt(assistant_id) if issue_newer_token else None
+        )
+        raise ConsoleDispatchSettlementError("injected settlement failure")
+
+    monkeypatch.setattr(controller, "_stream_assistant_response", fail_after_token)
+
+    with pytest.raises(ConsoleDispatchSettlementError):
+        await controller.submit_draft("accepted rollback", session_id=session.id)
+
+    assistant_id = str(issued["assistant_id"])
+    replacement = int(issued["replacement"])
+    newer = issued["newer"]
+    if newer is None:
+        assert not store._generation_attempt_is_current(assistant_id, replacement)
+    else:
+        assert store._generation_attempt_is_current(assistant_id, int(newer))
+
+
+@pytest.mark.parametrize("issue_newer_token", [False, True])
+def test_stop_settlement_rollback_uses_issued_generation_token(
+    monkeypatch: pytest.MonkeyPatch,
+    issue_newer_token: bool,
+) -> None:
+    """Stop's generic settlement rollback must fence only its exact stream."""
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="question")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="prior answer",
+    )
+    _install_retryable_dispatch_recovery(store, session, assistant)
+    claimed = store.claim_dispatch_recovery_action(
+        session.id,
+        ConsoleDispatchRecoveryActionId.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    replacement = store.begin_generation_attempt(assistant.id)
+    newer = store.begin_generation_attempt(assistant.id) if issue_newer_token else None
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller._active_assistant_message_ids[session.id] = assistant.id
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
+        session_id=session.id,
+    )
+
+    def fail_stop(*_args, **_kwargs):
+        raise ConsoleDispatchSettlementError("injected stop settlement failure")
+
+    monkeypatch.setattr(controller, "_mark_stream_stopped", fail_stop)
+
+    assert controller.stop_active_run(record_user_stop=False) is True
+    if newer is None:
+        assert not store._generation_attempt_is_current(assistant.id, replacement)
+    else:
+        assert store._generation_attempt_is_current(assistant.id, newer)
+
+
 def _wait_for_generation_owner_users(
     store: ConsoleChatStore,
     message_id: str,
@@ -8022,18 +8104,24 @@ def test_empty_continuation_discard_reclaims_generation_runtime_owner(
     expected_version = owned.provider_continuation_message_version
     assert type(expected_version) is int
 
-    assert store.discard_provider_continuation(
-        assistant.id,
-        expected_message_version=expected_version,
-    ) is True
+    assert (
+        store.discard_provider_continuation(
+            assistant.id,
+            expected_message_version=expected_version,
+        )
+        is True
+    )
 
     with pytest.raises(KeyError):
         store.get_message(assistant.id)
     assert store._generation_runtime_counts() == (0, 0, 0)
-    assert store.settle_message_thinking(
-        assistant.id,
-        _terminal_thinking(assistant.id, "failed"),
-        generation_token=old_token,
-    ) is None
+    assert (
+        store.settle_message_thinking(
+            assistant.id,
+            _terminal_thinking(assistant.id, "failed"),
+            generation_token=old_token,
+        )
+        is None
+    )
     assert store._generation_runtime_counts() == (0, 0, 0)
     db.close_connection()

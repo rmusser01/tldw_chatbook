@@ -1153,6 +1153,12 @@ class ConsoleChatStore:
             str, ConsoleDispatchRecoveryState
         ] = {}
         self._dispatch_recovery_message_baselines: dict[str, ConsoleChatMessage] = {}
+        # First generation token issued while one recovery owner is in flight.
+        # Generic outer settlement rollback paths do not own the inner stream
+        # stack frame, so the recovery owner retains this exact token. A later
+        # token for the same message must not replace it: rollback invalidates
+        # only the detached attempt it is restoring, never a newer attempt.
+        self._dispatch_recovery_generation_tokens: dict[str, int] = {}
         self._dispatch_recovery_queue_hydration_pending: set[str] = set()
         #: Derived VIEW = the current active path only (root -> active leaf).
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
@@ -2181,9 +2187,20 @@ class ConsoleChatStore:
                     current.with_in_flight(False)
                 )
             baseline = self._dispatch_recovery_message_baselines.pop(session_id, None)
+            retained_generation_token = self._dispatch_recovery_generation_tokens.pop(
+                session_id, None
+            )
         if baseline is not None:
-            if generation_token is not None and self._generation_attempt_is_current(
-                assistant_message_id, generation_token
+            rollback_generation_token = (
+                generation_token
+                if generation_token is not None
+                else retained_generation_token
+            )
+            if (
+                rollback_generation_token is not None
+                and self._generation_attempt_is_current(
+                    assistant_message_id, rollback_generation_token
+                )
             ):
                 self._invalidate_generation_attempt_locked(assistant_message_id)
             try:
@@ -2513,6 +2530,7 @@ class ConsoleChatStore:
                 raise RuntimeError("Dispatch recovery owner changed during settlement.")
             self._dispatch_recoveries_by_session.pop(session_id, None)
             self._dispatch_recovery_message_baselines.pop(session_id, None)
+            self._dispatch_recovery_generation_tokens.pop(session_id, None)
             self._dispatch_recovery_queue_hydration_pending.discard(session_id)
         return True
 
@@ -3121,6 +3139,7 @@ class ConsoleChatStore:
         self._unresolved_promotion_operations.pop(session_id, None)
         self._dispatch_recoveries_by_session.pop(session_id, None)
         self._dispatch_recovery_message_baselines.pop(session_id, None)
+        self._dispatch_recovery_generation_tokens.pop(session_id, None)
         self._dispatch_recovery_queue_hydration_pending.discard(session_id)
         self._pending_workspace_projections.pop(session_id, None)
         self._session_turn_ids.pop(session_id, None)
@@ -5366,6 +5385,7 @@ class ConsoleChatStore:
         self._pending_workspace_projections.clear()
         self._dispatch_recoveries_by_session.clear()
         self._dispatch_recovery_message_baselines.clear()
+        self._dispatch_recovery_generation_tokens.clear()
         self._dispatch_recovery_queue_hydration_pending.clear()
 
         for session in restored_sessions:
@@ -5418,6 +5438,7 @@ class ConsoleChatStore:
         with self._preparation_lock:
             self._dispatch_recoveries_by_session.clear()
             self._dispatch_recovery_message_baselines.clear()
+            self._dispatch_recovery_generation_tokens.clear()
             self._dispatch_recovery_queue_hydration_pending.clear()
 
     @staticmethod
@@ -8900,7 +8921,20 @@ class ConsoleChatStore:
                 self._generation_attempt_sequence += 1
                 token = self._generation_attempt_sequence
                 self._generation_attempt_tokens[message_id] = token
-                return token
+            with self._preparation_lock:
+                session_id = self._message_session_index.get(message_id)
+                recovery = self._dispatch_recoveries_by_session.get(session_id or "")
+                if (
+                    session_id is not None
+                    and recovery is not None
+                    and recovery.in_flight
+                    and recovery.assistant_message_id == message_id
+                ):
+                    self._dispatch_recovery_generation_tokens.setdefault(
+                        session_id,
+                        token,
+                    )
+            return token
 
     def _generation_attempt_is_current(
         self, message_id: str, generation_token: int | None
