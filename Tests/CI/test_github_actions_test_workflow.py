@@ -465,8 +465,21 @@ def test_the_test_summary_job_can_actually_fail() -> None:
     )
 
 
-def test_a_pull_request_run_is_never_cancelled_by_a_later_push() -> None:
-    """TASK-22250: superseding PR runs is why `Tests` never reports.
+def test_an_in_flight_pull_request_run_is_not_cancelled_mid_run() -> None:
+    """TASK-22250: superseding RUNNING PR runs is why `Tests` never reports.
+
+    Scope, stated precisely because the first version of this test overclaimed:
+    this guarantees only that a PR run already EXECUTING is not killed
+    mid-flight. GitHub concurrency keeps one running plus one *pending* member
+    per group, and a third arrival still replaces the pending one -- so a PR run
+    can be cancelled while queued, and `cancel-in-progress` cannot prevent that.
+    Making the group unique per run would, but it would also stop superseding
+    obsolete commits and multiply queue pressure that is already this repo's
+    bottleneck (runs observed queued 20+ minutes before starting).
+
+    Killing a queued run costs nothing and yields the newer commit's verdict,
+    which is what you want. Killing a RUNNING batch throws away up to 35 minutes
+    per shard and produces no verdict at all. Only the second is the defect.
 
     This is the slowest workflow in the repo -- 12 UI shards plus 6 core
     shards at roughly 35 minutes each. With `cancel-in-progress` applying to
@@ -492,8 +505,8 @@ def test_a_pull_request_run_is_never_cancelled_by_a_later_push() -> None:
     )
     assert "github.event_name == 'push'" in cancel_line, (
         "cancel-in-progress must be scoped to push events; cancelling a "
-        "pull_request run is what stopped this workflow reporting. Line: "
-        f"{cancel_line.strip()!r}"
+        "RUNNING pull_request run mid-flight is what stopped this workflow "
+        f"reporting. Line: {cancel_line.strip()!r}"
     )
     assert "github.ref != 'refs/heads/main'" in cancel_line, (
         f"main must never be cancelled. Line: {cancel_line.strip()!r}"

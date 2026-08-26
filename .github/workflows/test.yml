@@ -32,6 +32,15 @@ concurrency:
   # The exception proves it: `derived-artifacts.yml` already scopes
   # cancellation to `push` only, and it is the one required check that
   # consistently survives to report. This adopts that same rule.
+  #
+  # Scope, precisely: this protects a RUNNING pull_request batch. GitHub
+  # concurrency keeps one running plus one PENDING member per group, and a
+  # third arrival still replaces the pending one -- `cancel-in-progress`
+  # cannot prevent that. Only a per-run group (e.g. including `github.run_id`)
+  # would, and that would also stop superseding obsolete commits while
+  # multiplying queue pressure that is already the bottleneck here. Killing a
+  # QUEUED run costs nothing and yields the newer commit's verdict; killing a
+  # RUNNING batch throws away up to 35 minutes per shard for nothing.
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
