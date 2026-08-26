@@ -73,7 +73,7 @@
 - Create: `tldw_chatbook/UI/Watchlists_Modules/reader_item_snapshot.py`
 - Create: `Tests/Watchlists/test_reader_item_snapshot.py`
 
-- [ ] **Step 1: Write failing tests for first-page construction, cached backward pages, watermark consistency, and duplicate suppression**
+- [x] **Step 1: Write failing tests for first-page construction, cached backward pages, watermark consistency, and duplicate suppression**
 
 ```python
 from tldw_chatbook.Subscriptions.watchlist_item_page import (
@@ -152,7 +152,7 @@ def test_duplicate_only_continuation_advances_cursor_without_caching_a_blank_pag
     assert candidate.has_more is True
 ```
 
-- [ ] **Step 2: Run the pure contract tests and verify RED**
+- [x] **Step 2: Run the pure contract tests and verify RED**
 
 Run:
 
@@ -163,7 +163,7 @@ Run:
 
 Expected: collection fails because `watchlist_item_page` and `reader_item_snapshot` do not exist.
 
-- [ ] **Step 3: Add immutable transport values and the minimal cached snapshot state**
+- [x] **Step 3: Add immutable transport values and the minimal cached snapshot state**
 
 ```python
 # tldw_chatbook/Subscriptions/watchlist_item_page.py
@@ -282,13 +282,13 @@ class ReaderItemSnapshot:
 
 The private `_append_first()` mutates only the not-yet-published new snapshot, always creates visible page 0 even when it is empty, and initializes the traversal cursor/`has_more`. `with_continuation()` copy-stages all pages, seen ids, cursor, and `has_more`; it never mutates the committed snapshot. A continuation candidate advances traversal state but appends a visible cached page only when at least one unseen row remains. Add `page()`, `page_count`, and `has_next()` as direct bounds-checked accessors. Do not add persistence, reverse cursors, arbitrary page eviction, or a generalized pagination framework.
 
-- [ ] **Step 4: Run the pure contract tests and verify GREEN**
+- [x] **Step 4: Run the pure contract tests and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all tests in `test_reader_item_snapshot.py` pass.
 
-- [ ] **Step 5: Commit the contract slice**
+- [x] **Step 5: Commit the contract slice**
 
 ```bash
 git add \
