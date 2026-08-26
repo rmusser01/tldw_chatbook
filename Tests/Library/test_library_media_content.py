@@ -3,7 +3,6 @@
 import asyncio
 
 import pytest
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer
 from textual.widgets import Button, Input, Markdown, Static
@@ -12,9 +11,7 @@ from tldw_chatbook.Library.library_media_viewer_state import find_content_matche
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
-    RawContentHighlightPlan,
-    build_raw_content_highlight_plan,
-    build_raw_content_renderable,
+    build_raw_content_match_lines,
 )
 from tldw_chatbook.Widgets.Library.library_media_raw_view import (
     VirtualizedRawContent,
@@ -349,10 +346,15 @@ async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
     task-22500: the virtualized Raw view restyles each row it paints
     directly from ``_query``/``_match_index`` -- there is no whole-document
     renderable to rebuild -- so forwarding a search update only needs to
-    repaint, never relayout. ``sync_search`` calls ``self.refresh()``, whose
-    ``layout`` default is already ``False``; this pins that call never flips
-    it to ``True`` (task-21134's original 84.9 -> 57.7 ms/click regression
-    guard, now against the widget that replaced the plain ``Static``).
+    repaint, never relayout. ``LibraryMediaContentBody.sync_search`` now
+    makes TWO calls against the Raw view per invocation --
+    ``set_match_lines`` (feeding the active-match line list) and
+    ``sync_search`` itself -- and each triggers its own ``self.refresh()``,
+    whose ``layout`` default is already ``False``; this pins that BOTH
+    calls never flip it to ``True`` (task-21134's original 84.9 -> 57.7
+    ms/click regression guard, now against the widget that replaced the
+    plain ``Static``). The exact call COUNT is not pinned -- only that none
+    of them ever requests a layout pass.
     """
     body = LibraryMediaContentBody(
         content="alpha needle\nbeta\ngamma needle\n",
@@ -385,7 +387,9 @@ async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
         body.sync_search("needle", 0)
         body.sync_search("needle", 1)
 
-        assert seen == [False, False], f"search refresh armed a layout pass: {seen}"
+        assert seen and all(layout is False for layout in seen), (
+            f"search refresh armed a layout pass: {seen}"
+        )
 
 
 @pytest.mark.asyncio
@@ -425,41 +429,9 @@ async def test_search_refresh_still_repaints_the_active_match() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TASK-22209: one document pass per (document, query), not per click
+# TASK-22500: the whole-document highlight ``Text`` is retired; only the
+# match-LINE list survives, feeding ``VirtualizedRawContent.set_match_lines``.
 # ---------------------------------------------------------------------------
-
-
-def _reference_renderable(content: str, query: str, match_index: int) -> Text | str:
-    """The pre-task-22209 highlighter, kept verbatim as the equivalence oracle.
-
-    The plan-based builder must produce byte-identical text and identical
-    spans to this -- the point of task-22209 was to stop RUNNING it per
-    click, not to change what it draws.
-    """
-    display_content = content or "No stored content."
-    normalized_query = query.strip()
-    if not normalized_query or not content:
-        return display_content
-    matches = find_content_matches(content, normalized_query)
-    if not matches:
-        return display_content
-    current_line = matches[match_index % len(matches)]
-    needle = normalized_query.lower()
-    text = Text()
-    for line_index, line in enumerate(display_content.split("\n")):
-        if line_index:
-            text.append("\n")
-        hit = line.lower().find(needle)
-        if hit < 0:
-            text.append(line)
-            continue
-        text.append(line[:hit])
-        text.append(
-            line[hit : hit + len(needle)],
-            style="reverse bold" if line_index == current_line else "reverse",
-        )
-        text.append(line[hit + len(needle) :])
-    return text
 
 
 EQUIVALENCE_DOCUMENTS = {
@@ -476,68 +448,79 @@ EQUIVALENCE_DOCUMENTS = {
 }
 
 
-@pytest.mark.parametrize("label", sorted(EQUIVALENCE_DOCUMENTS))
-@pytest.mark.parametrize("match_index", [0, 1, 5])
-def test_highlight_plan_matches_the_previous_renderer(label, match_index) -> None:
-    """Catch a plan rebuild that draws anything different from the old loop."""
-    content = EQUIVALENCE_DOCUMENTS[label]
-    expected = _reference_renderable(content, "needle", match_index)
-    actual = build_raw_content_renderable(content, "needle", match_index)
+def test_match_lines_are_derived_without_building_a_document_text() -> None:
+    """TASK-22500 step 1: the retired builders are gone; only the line list remains."""
+    from tldw_chatbook.Widgets.Library import library_media_content as module
 
-    if isinstance(expected, str):
-        assert actual == expected
-        return
-    assert isinstance(actual, Text)
-    assert actual.plain == expected.plain
-    assert list(actual.spans) == list(expected.spans)
+    assert not hasattr(module, "build_raw_content_renderable")
+    lines = module.build_raw_content_match_lines(
+        "alpha\nbudget here\nomega\nbudget", "budget"
+    )
+    assert lines == (1, 3)
+    assert module.build_raw_content_match_lines("alpha", "") == ()
+    assert module.build_raw_content_match_lines("", "x") == ()
 
 
-def test_highlight_plan_match_lines_agree_with_the_shared_matcher() -> None:
-    """The plan's own match list must equal ``find_content_matches``'.
+def test_match_lines_agree_with_the_shared_matcher() -> None:
+    """``build_raw_content_match_lines`` must equal ``find_content_matches``'.
 
-    The plan derives its matches in the SAME pass that builds the spans (so
-    span ``i`` belongs to match ``i``); if that ever drifted from the
-    matcher the screen's status count and scroll target would point at
-    different lines than the highlights.
+    task-22500: replaces ``test_highlight_plan_match_lines_agree_with_the_
+    shared_matcher``, which compared this same oracle against a
+    ``RawContentHighlightPlan``'s ``.matches`` -- the plan is gone, but the
+    equivalence it guarded (the screen's status count and scroll target
+    must point at the same lines the Raw view highlights) still matters.
     """
     for content in EQUIVALENCE_DOCUMENTS.values():
-        plan = build_raw_content_highlight_plan(content, "  NeEdLe ")
+        actual = build_raw_content_match_lines(content, "  NeEdLe ")
         expected = find_content_matches(content, "needle")
-        if isinstance(plan, str):
-            assert expected == ()
-            continue
-        assert plan.matches == expected
+        assert actual == expected
 
 
-def test_highlight_plan_moves_only_the_active_span() -> None:
-    """Navigating between matches restyles two spans and rebuilds nothing."""
-    plan = build_raw_content_highlight_plan(
-        "needle one\nplain\nneedle two\nneedle three", "needle"
+@pytest.mark.asyncio
+async def test_sync_search_marks_only_the_active_match_line() -> None:
+    """``sync_search`` feeds ``set_match_lines`` so exactly one line paints active.
+
+    task-22500: replaces ``test_highlight_plan_moves_only_the_active_span``,
+    whose subject -- ``RawContentHighlightPlan.renderable`` rewriting Rich
+    ``Span`` entries in place -- no longer exists. Active-vs-plain styling
+    now lives in ``VirtualizedRawContent.render_line``, driven by the
+    ``_match_lines``/``_match_index`` that ``LibraryMediaContentBody.
+    sync_search`` feeds it via ``set_match_lines``; this pins that wiring
+    end to end instead of a ``Text``'s spans.
+    """
+    body = LibraryMediaContentBody(
+        content="needle one\nplain\nneedle two\nneedle three",
+        is_markdown=False,
+        mode="raw",
+        query="",
+        match_index=0,
+        id="body",
     )
-    assert isinstance(plan, RawContentHighlightPlan)
+    app = BodyHarness(body)
 
-    first = plan.renderable(0)
-    assert [str(span.style) for span in first.spans] == [
-        "reverse bold",
-        "reverse",
-        "reverse",
-    ]
+    def _active_by_line(raw_widget: VirtualizedRawContent) -> dict[int, bool]:
+        """Map every SOURCE line carrying the match style to active-or-not."""
+        found: dict[int, bool] = {}
+        for row in range(4):
+            strip = raw_widget.render_line(row)
+            for segment in strip._segments:
+                if segment.style is not None and segment.style.reverse:
+                    found[row] = bool(segment.style.bold)
+        return found
 
-    second = plan.renderable(1)
-    assert second is first
-    assert [str(span.style) for span in second.spans] == [
-        "reverse",
-        "reverse bold",
-        "reverse",
-    ]
+    async with app.run_test(size=(60, 12)):
+        raw_widget = body.raw_view
+        assert raw_widget is not None
 
-    # Wrapping past the end lands back on the first match.
-    wrapped = plan.renderable(3)
-    assert [str(span.style) for span in wrapped.spans] == [
-        "reverse bold",
-        "reverse",
-        "reverse",
-    ]
+        body.sync_search("needle", 0)
+        assert _active_by_line(raw_widget) == {0: True, 2: False, 3: False}
+
+        body.sync_search("needle", 1)
+        assert _active_by_line(raw_widget) == {0: False, 2: True, 3: False}
+
+        # Wrapping past the end (3 matches, index 3) lands back on the first.
+        body.sync_search("needle", 3)
+        assert _active_by_line(raw_widget) == {0: True, 2: False, 3: False}
 
 
 @pytest.mark.asyncio
