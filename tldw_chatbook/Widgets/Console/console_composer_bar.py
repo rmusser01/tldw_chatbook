@@ -17,6 +17,7 @@ import hmac
 import json
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -477,9 +478,11 @@ class ConsoleComposerBar(Horizontal):
         collapsed: bool = False,
         collapse_large_pastes: bool = True,
         paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        send_price_tooltip_provider: Callable[[str], str | None] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        self._send_price_tooltip_provider = send_price_tooltip_provider
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
         self.styles.height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
@@ -1728,15 +1731,24 @@ class ConsoleComposerBar(Horizontal):
 
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
-        self._send_button_width = max(6, cell_len(normalized_send_label) + 2)
-        send_button.label = normalized_send_label
+        send_ready = has_draft and not send_blocked
+        price_tooltip = None
+        displayed_send_label = normalized_send_label
+        if send_ready and self._send_price_tooltip_provider is not None:
+            try:
+                price_tooltip = self._send_price_tooltip_provider(self.draft_text())
+            except Exception:  # noqa: BLE001 -- pricing presentation cannot block Send
+                price_tooltip = "Next request: cost unavailable"
+            if price_tooltip:
+                displayed_send_label = f"{normalized_send_label} | $"
+
+        self._send_button_width = max(6, cell_len(displayed_send_label) + 2)
+        send_button.label = displayed_send_label
         send_button.styles.width = self._send_button_width
         send_button.styles.min_width = self._send_button_width
         send_button.styles.max_width = self._send_button_width
         if not self._voice_full_width_preparing:
             self._set_actions_row_width(actions, self._actions_row_width())
-
-        send_ready = has_draft and not send_blocked
 
         # TASK-2154.6 (FR-04): Send now carries a REAL disabled state instead
         # of the old CSS-classes-only subdual -- a hover tooltip was the sole
@@ -1761,6 +1773,8 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
             )
+        elif price_tooltip:
+            send_button.tooltip = price_tooltip
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
         else:

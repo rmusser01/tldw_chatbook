@@ -3324,6 +3324,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        # task-22209: in-content match list for the open item, memoized on
+        # (detail object identity, query). Both the query submit and every
+        # Prev/Next click need it, and deriving it costs a full content
+        # copy (``build_library_media_viewer_state``) plus a full scan --
+        # per click, on a document that has not changed. The detail is only
+        # ever replaced wholesale (a fetch settles) or cleared to None,
+        # never mutated in place, so its identity is a sound document
+        # marker; the None sentinel guarantees the first lookup misses.
+        self._library_media_content_match_memo: (
+            tuple[Any, str, tuple[int, ...]] | None
+        ) = None
         # LIB-13: "rendered" (Markdown, via the same render path Notes
         # Preview uses) or "raw" (plain/highlighted text). Reseeded per
         # item by ``_refresh_library_media_detail`` from the freshly built
@@ -3333,6 +3344,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode: str = "raw"
         self._library_media_read_scroll_by_id: dict[str, tuple[int, int]] = {}
         self._library_media_progress_restored_id: str | None = None
+        # TASK-22210: reading-progress writes are coalesced to the latest
+        # per-item value and drained by one serial worker (mirrors the
+        # lifecycle-persistence pattern above; cancellation-based supersede
+        # is unsound for durable writes -- see task-1541's lesson).
+        self._library_media_progress_pending_writes: dict[
+            str, tuple[int | str, tuple[int, int]]
+        ] = {}
+        self._library_media_progress_inflight_write: (
+            tuple[str, int | str, tuple[int, int]] | None
+        ) = None
+        self._library_media_progress_persisted_offsets: dict[
+            str, tuple[int, int]
+        ] = {}
+        self._library_media_progress_write_worker: Worker | None = None
         # Task 21665: decoded local originals are ephemeral screen-session
         # state. The production renderer is imported only after the capability
         # gate passes, preserving Library's no-Pillow startup path.
@@ -3344,6 +3369,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_preview_status: dict[str, str] = {}
         self._library_media_preview_hidden: set[str] = set()
         self._library_media_preview_loading: dict[str, int] = {}
+        # task-22208: viewer display-state memo, keyed by the DETAIL OBJECT
+        # (identity) plus the build parameters. ``build_library_media_
+        # viewer_state`` copies the whole content string per call
+        # (``str(content).strip()``), so it must run once per detail
+        # ARRIVAL, not once per sync. The detail is only ever replaced
+        # wholesale (worker settle) or cleared to None -- never mutated in
+        # place -- so identity is a sound arrival marker; the sentinel
+        # guarantees the first call always misses. See
+        # ``_library_media_viewer_state_cached`` for the full key.
+        self._library_media_viewer_state_memo_detail: Any = object()
+        self._library_media_viewer_state_memo_states: dict[
+            tuple[str, str, str, bool], Any
+        ] = {}
         self._library_notes_view: str = "list"
         self._library_notes_lasting_origin: str | None = None
         self._library_notes_select_mode: bool = False
@@ -6374,16 +6412,29 @@ class LibraryScreen(BaseAppScreen):
         del event
         self._library_notes_resize_epoch += 1
         self._library_notes_resize_settling = True
-        focused = self.focused
-        focus_intent = (
-            (focused, self._library_notes_focus_intent_generation)
-            if focused is not None
-            else None
-        )
-        self.call_after_refresh(
-            self._sync_library_media_reader_layout_from_shell,
-            focus_intent=focus_intent,
-        )
+        # TASK-22228 (item 7): the Media reader layout leg is scheduled only
+        # while Browse Media owns the canvas -- the one route that mounts
+        # ``#library-media-reader-shell`` (``compose``'s
+        # ``canvas_kind == "media"`` branch; the same predicate
+        # ``_sync_library_media_viewer_state`` gates the viewer on). Anywhere
+        # else the scheduled call could only walk the whole Library DOM
+        # looking for a shell that is not mounted and return: a FAILED
+        # ``query_one`` takes no id-cache fast path, so every Notes /
+        # Conversations / Ingest resize frame paid two full breadth-first
+        # walks (measured 16.0 us each on a 118-widget fixture) to do
+        # nothing. Behaviour is unchanged -- the skipped call was already a
+        # no-op on those routes.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            focused = self.focused
+            focus_intent = (
+                (focused, self._library_notes_focus_intent_generation)
+                if focused is not None
+                else None
+            )
+            self.call_after_refresh(
+                self._sync_library_media_reader_layout_from_shell,
+                focus_intent=focus_intent,
+            )
         try:
             width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -7228,6 +7279,27 @@ class LibraryScreen(BaseAppScreen):
                 )
         if self._library_lifecycle_pending_persist is not None:
             await self._drain_library_lifecycle_persistence()
+        # TASK-22210: the last captured reading position must survive
+        # teardown. Await the drainer, then re-queue a value it may have
+        # been cancelled under mid-write (the abandoned thread may or may
+        # not have committed; the upsert is idempotent, so rewriting the
+        # ambiguous value is harmless), then drain any residue inline.
+        progress_worker = self._library_media_progress_write_worker
+        if progress_worker is not None and not progress_worker.is_finished:
+            try:
+                await progress_worker.wait()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Pending Library media progress write failed during unmount."
+                )
+        inflight = self._library_media_progress_inflight_write
+        if inflight is not None:
+            self._library_media_progress_inflight_write = None
+            self._library_media_progress_pending_writes.setdefault(
+                inflight[0], (inflight[1], inflight[2])
+            )
+        if self._library_media_progress_pending_writes:
+            await self._drain_library_media_progress_writes()
         self._library_note_import_controller.cancel()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
@@ -10915,7 +10987,9 @@ class LibraryScreen(BaseAppScreen):
         detail = self._library_media_detail
         if not isinstance(detail, Mapping):
             return None
-        viewer = build_library_media_viewer_state(detail)
+        # task-22208: memoized -- this runs inside the viewer sync's
+        # unchanged compare (console representation) on every interaction.
+        viewer = self._library_media_viewer_state_cached(detail)
         external_detail = self._library_media_reader_session.external_detail
         media_id = (
             self._library_media_reader_session.loaded_id
@@ -15482,7 +15556,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode = (
             "rendered"
             if isinstance(self._library_media_detail, Mapping)
-            and build_library_media_viewer_state(self._library_media_detail).is_markdown
+            and self._library_media_viewer_state_cached(
+                self._library_media_detail
+            ).is_markdown
             else "raw"
         )
         if (
@@ -15702,6 +15778,9 @@ class LibraryScreen(BaseAppScreen):
         except (TypeError, ValueError):
             return False
         self._library_media_read_scroll_by_id[requested_id] = offset
+        # TASK-22210: the fetched value IS the durable row -- record it so a
+        # later capture of the same offset skips its redundant write.
+        self._library_media_progress_persisted_offsets[requested_id] = offset
         return True
 
     def _recompose_library_media_detail_if_unrendered(self) -> None:
@@ -34055,7 +34134,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_session, "info"
         )
         self._library_media_editing = True
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-edit-cancel")
     def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
@@ -34066,7 +34145,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_editing = False
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-edit-save")
     def handle_library_media_edit_save(self, event: Button.Pressed) -> None:
@@ -34264,7 +34343,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_media_confirming_delete = True
         self._library_media_delete_receipt_ids = ()
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-delete-cancel")
     def handle_library_media_delete_cancel(self, event: Button.Pressed) -> None:
@@ -34276,7 +34355,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_confirming_delete = False
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-delete-confirm")
     def handle_library_media_delete_confirm(self, event: Button.Pressed) -> None:
@@ -34635,13 +34714,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
-        detail = (
-            self._library_media_detail
-            if isinstance(self._library_media_detail, Mapping)
-            else None
-        )
-        content = build_library_media_viewer_state(detail).content if detail else ""
-        matches = find_content_matches(content, self._library_media_content_query)
+        matches = self._library_media_content_matches()
         viewer = self._mounted_library_media_viewer()
         if viewer is None:
             return
@@ -34746,9 +34819,26 @@ class LibraryScreen(BaseAppScreen):
         return viewer
 
     def _library_media_image_preview_projection(
-        self,
+        self, *, build_widget: bool = True
     ) -> tuple[Widget | None, str, bool, bool, Any]:
-        """Build the current item's ephemeral preview projection."""
+        """Build the current item's ephemeral preview projection.
+
+        task-22208: with ``build_widget=False`` this returns only the cheap
+        identity facts (status, hidden, available, source image) and never
+        invokes the widget factory -- the sync's unchanged compare reads
+        exactly those four fields, so the expensive PIL build must not run
+        just to decide nothing changed. The widget slot is None in that
+        mode; callers that conclude "changed" call again with the default
+        to build (and to surface a build failure through the normal
+        failure-status path).
+
+        Args:
+            build_widget: Whether to construct the preview widget for the
+                visible case.
+
+        Returns:
+            (widget, status, hidden, available, source-image) projection.
+        """
         session = self._library_media_reader_session
         canonical_id = session.loaded_id or ""
         if (
@@ -34764,6 +34854,8 @@ class LibraryScreen(BaseAppScreen):
             return None, status, False, False, None
         if hidden:
             return None, status, True, True, image
+        if not build_widget:
+            return None, status, False, True, image
         try:
             factory = self._library_media_preview_factory
             if factory is None:
@@ -34789,20 +34881,86 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_preview_status[canonical_id] = failure
             return None, failure, False, False, None
 
+    def _library_media_viewer_state_cached(
+        self,
+        detail: Mapping[str, Any] | None,
+        *,
+        arrival_note: str = "",
+        backend: str = "local",
+        canonical_id: str = "",
+        force_raw: bool = False,
+    ):
+        """Memoized ``build_library_media_viewer_state`` per detail arrival.
+
+        task-22208: the raw builder performs at least one O(document) string
+        copy per call, and it used to run 2+ times per viewer sync (display
+        state + the console-representation clause of the unchanged compare)
+        on EVERY interaction -- traversal step, mode switch, More toggle,
+        Escape. This memo bounds that to once per (detail arrival x build
+        parameters), and because a no-change sync gets back the SAME state
+        object, the sync's unchanged test can short-circuit on identity
+        before ever falling back to the structural (content-memcmp) compare.
+
+        Memo key and invalidation:
+        * the detail OBJECT, by identity -- the detail is only replaced
+          wholesale by ``_refresh_library_media_detail``'s settle (a fresh
+          dict per fetch) or cleared to None, never mutated in place, so a
+          new arrival (including an edit's refetch) always misses and
+          rebuilds; a None detail memoizes the empty state the same way;
+        * ``arrival_note`` / ``backend`` / ``canonical_id`` / ``force_raw``
+          -- the remaining builder inputs; the per-detail entry dict is
+          reset whenever the detail identity changes, so it holds at most
+          the couple of parameter combinations live for one arrival.
+
+        Known consequence, accepted by design: the "Updated: <age>" relative
+        label freezes for the lifetime of one detail arrival (the raw
+        builder stamps it from ``now`` per call). Recomputing it per sync is
+        what the memo exists to stop -- and under the task-21116 compare a
+        ticked-over age label would otherwise force a FULL document
+        recompose just to repaint one metadata line.
+
+        Args:
+            detail: The loaded detail mapping, or None for the empty state.
+            arrival_note: One-shot context line (see the raw builder).
+            backend: Provenance backend displayed by Reader Info.
+            canonical_id: Stable backend-qualified id override.
+            force_raw: Force ``is_markdown`` False (external/server details
+                render raw); folded into the memo so the replace also
+                happens once per arrival.
+
+        Returns:
+            The memoized immutable viewer state.
+        """
+        if self._library_media_viewer_state_memo_detail is not detail:
+            self._library_media_viewer_state_memo_detail = detail
+            self._library_media_viewer_state_memo_states = {}
+        key = (arrival_note, backend, canonical_id, force_raw)
+        states = self._library_media_viewer_state_memo_states
+        state = states.get(key)
+        if state is None:
+            state = build_library_media_viewer_state(
+                detail,
+                arrival_note=arrival_note,
+                backend=backend,
+                canonical_id=canonical_id,
+            )
+            if force_raw:
+                state = dataclasses.replace(state, is_markdown=False)
+            states[key] = state
+        return state
+
     def _build_library_media_viewer_display_state(
         self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
     ):
         """Build display facts and qualify one-off server provenance."""
         session = self._library_media_reader_session
-        state = build_library_media_viewer_state(
+        return self._library_media_viewer_state_cached(
             detail,
             arrival_note=arrival_note,
             backend="server" if session.external_detail else "local",
             canonical_id=(session.loaded_id or "") if session.external_detail else "",
+            force_raw=session.external_detail,
         )
-        if session.external_detail:
-            return dataclasses.replace(state, is_markdown=False)
-        return state
 
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
         """Re-read every viewer compose input after its mount await.
@@ -34832,13 +34990,16 @@ class LibraryScreen(BaseAppScreen):
         highlights = tuple(
             build_library_media_highlight_rows(self._library_media_highlights)
         )
+        # task-22208: identity facts only -- the compare below reads status/
+        # hidden/available/source, so the PIL preview widget must not be
+        # built (and discarded) just to decide nothing changed.
         (
-            preview_widget,
+            _,
             preview_status,
             preview_hidden,
             preview_available,
             preview_source,
-        ) = self._library_media_image_preview_projection()
+        ) = self._library_media_image_preview_projection(build_widget=False)
         loading = (
             self._library_media_reader_session.pending_request is not None
             and self._library_media_reader_session.error is None
@@ -34855,8 +35016,17 @@ class LibraryScreen(BaseAppScreen):
         # the loaded detail, sub-state flags, highlights, search, mode,
         # preview identity); the loading placeholder is patched in place on
         # the unchanged path via ``viewer.sync_loading_state``.
+        # task-22208: identity first -- ``viewer_state`` is memoized per
+        # detail arrival (``_library_media_viewer_state_cached``), so on a
+        # no-change sync it IS the object the mounted viewer already holds
+        # and the O(document) structural compare (which memcmps the whole
+        # content string) never runs. The ``==`` fallback stays: identity is
+        # inconclusive exactly when a new detail arrived, and a re-fetch
+        # with byte-identical values must still compare EQUAL so the
+        # document is not rebuilt (pinned by task-22207's alternating-focus
+        # probe).
         unchanged = (
-            viewer.viewer == viewer_state
+            (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -34878,8 +35048,28 @@ class LibraryScreen(BaseAppScreen):
             and viewer.image_preview_available == preview_available
         )
         if unchanged:
+            # Re-anchor the memoized state object so the NEXT no-change sync
+            # short-circuits on identity again -- after an identical
+            # re-fetch settles (new detail dict, equal values), the mounted
+            # viewer would otherwise hold the previous arrival's state
+            # object and pay the structural compare on every sync until
+            # something actually changed.
+            viewer.viewer = viewer_state
             viewer.sync_loading_state(loading=loading, message=loading_message)
         else:
+            # Something changed, so the viewer recomposes: build the
+            # preview widget now (a fresh instance -- a removed widget
+            # cannot be remounted; the expensive mosaic renderable inside is
+            # memoized by ``build_media_image_widget``). Assign the
+            # POST-build projection: a build failure flips the status caches
+            # and this keeps the mounted state consistent with them.
+            (
+                preview_widget,
+                preview_status,
+                preview_hidden,
+                preview_available,
+                preview_source,
+            ) = self._library_media_image_preview_projection()
             viewer.viewer = viewer_state
             viewer.editing = self._library_media_editing
             viewer.confirming_delete = self._library_media_confirming_delete
@@ -34998,7 +35188,14 @@ class LibraryScreen(BaseAppScreen):
                 )
 
     def _capture_library_media_loaded_progress(self) -> None:
-        """Snapshot and persist the mounted local content body's scroll offset."""
+        """Snapshot and queue persistence of the local content body's offset.
+
+        TASK-22210: this fires on every traversal step and mode switch, so
+        the write itself is deduplicated (an offset already durable or
+        already queued is skipped) and coalesced (one serial drainer keeps
+        only each item's latest value) instead of spawning one SQLite
+        writer per call.
+        """
         session = self._library_media_reader_session
         loaded_id = session.loaded_id
         if (
@@ -35015,25 +35212,95 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_read_scroll_by_id[loaded_id] = offset
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_progress = getattr(service, "update_reading_progress", None)
-        if not callable(update_progress):
+        if not callable(update_progress) or session.loaded_backing_id is None:
             return
-        self.run_worker(
-            self._write_library_media_loaded_progress(
-                session.loaded_backing_id, offset
-            ),
+        self._queue_library_media_progress_write(
+            loaded_id, session.loaded_backing_id, offset
+        )
+
+    def _library_media_progress_write_is_current(
+        self, canonical_id: str, offset: tuple[int, int]
+    ) -> bool:
+        """True when ``offset`` already matches the newest known write intent.
+
+        Precedence mirrors write recency: a queued value supersedes the
+        in-flight one, which supersedes the last durably persisted one --
+        so an equal older value never masks a newer pending write.
+        """
+        pending = self._library_media_progress_pending_writes.get(canonical_id)
+        if pending is not None:
+            return pending[1] == offset
+        inflight = self._library_media_progress_inflight_write
+        if inflight is not None and inflight[0] == canonical_id:
+            return inflight[2] == offset
+        return (
+            self._library_media_progress_persisted_offsets.get(canonical_id)
+            == offset
+        )
+
+    def _queue_library_media_progress_write(
+        self, canonical_id: str, backing_id: int | str, offset: tuple[int, int]
+    ) -> None:
+        """Coalesce progress writes to the latest per-item value, one drainer.
+
+        Last-write-wins coalescing, NOT ``exclusive=True``: cancelling an
+        in-flight ``to_thread`` writer leaves the durable outcome unknown
+        (the abandoned thread may still commit after its successor -- the
+        task-1541 lesson). Keying pending values per item means a slow
+        drain never drops a different item's final position either.
+        """
+        if self._library_media_progress_write_is_current(canonical_id, offset):
+            return
+        self._library_media_progress_pending_writes[canonical_id] = (
+            backing_id,
+            offset,
+        )
+        worker = self._library_media_progress_write_worker
+        if not self.is_attached or (worker is not None and not worker.is_finished):
+            return
+        self._library_media_progress_write_worker = self.run_worker(
+            self._drain_library_media_progress_writes(),
             group="library_media_reading_progress",
         )
 
+    async def _drain_library_media_progress_writes(self) -> None:
+        """Serialize progress writes while retaining each item's latest value."""
+        while self._library_media_progress_pending_writes:
+            canonical_id, (backing_id, offset) = next(
+                iter(self._library_media_progress_pending_writes.items())
+            )
+            del self._library_media_progress_pending_writes[canonical_id]
+            self._library_media_progress_inflight_write = (
+                canonical_id,
+                backing_id,
+                offset,
+            )
+            try:
+                persisted = await self._write_library_media_loaded_progress(
+                    backing_id, offset
+                )
+            finally:
+                self._library_media_progress_inflight_write = None
+            if persisted:
+                self._library_media_progress_persisted_offsets[canonical_id] = (
+                    offset
+                )
+
     async def _write_library_media_loaded_progress(
         self, backing_id: int | str | None, offset: tuple[int, int]
-    ) -> None:
-        """Persist a scroll snapshot already fenced to one loaded identity."""
+    ) -> bool:
+        """Persist a scroll snapshot already fenced to one loaded identity.
+
+        Returns:
+            True only when the service call completed; a failed write stays
+            un-recorded so a later capture of the same offset retries it.
+        """
         if backing_id is None:
-            return
+            return False
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_progress = getattr(service, "update_reading_progress", None)
         if not callable(update_progress):
-            return
+            return False
         try:
             await self._run_library_service_call(
                 update_progress,
@@ -35044,6 +35311,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Failed to persist Library media reading progress.")
+            return False
+        return True
 
     def _restore_library_media_loaded_progress(self, expected_id: str) -> None:
         """Restore only while the expected local identity still owns Reader."""
@@ -35084,7 +35353,13 @@ class LibraryScreen(BaseAppScreen):
         task-21116: Escape's edit/delete-confirm/analysis Cancel branches
         flip one viewer flag; only the mounted ``LibraryMediaViewer``'s
         children change, so route the rebuild through the viewer itself
-        instead of tearing down the whole screen. Mirrors
+        instead of tearing down the whole screen. TASK-22228 (item 6)
+        finished the conversion: the six BUTTON presses that make the same
+        three flips (Edit metadata / Cancel, Move to trash / Cancel, Edit
+        analysis / Cancel) were still whole-screen recomposes -- the same
+        gesture through a different control paid the nav-bar + footer +
+        rail + canvas teardown that Escape had already stopped paying.
+        Mirrors
         ``_sync_library_canvas``'s mouse-capture release -- this path
         bypasses ``BaseAppScreen.refresh`` and its guard, and the viewer
         mounts ``Input``/``TextArea`` children whose removal mid-capture
@@ -35209,6 +35484,58 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._advance_library_media_content_match(-1)
 
+    def _library_media_content_matches(self) -> tuple[int, ...]:
+        """Return the open item's matching line indexes for the active query.
+
+        task-22209: this used to run per Prev/Next click -- a full content
+        copy out of ``build_library_media_viewer_state`` plus a full
+        ``find_content_matches`` scan -- for a document and a query that
+        had not changed since the previous click. The result now lives in a
+        one-slot memo.
+
+        Memo key, and why each part is in it:
+
+        * the DETAIL OBJECT, by identity -- it is the document. A detail is
+          only ever replaced wholesale (a settling fetch builds a fresh
+          dict) or cleared to None, never mutated in place, so a new
+          arrival always misses. Arrow-key traversal swaps the document
+          while a submitted query stays live (only a row *press* blanks the
+          query), so this component is load-bearing, not defensive.
+        * the QUERY -- the same document answers differently per needle.
+
+        ``match_index`` is deliberately NOT in the key: navigation moves
+        the index over a match list that does not change.
+
+        Returns:
+            Ascending source-line indexes of the matching lines; empty when
+            no item is open, the query is blank, or nothing matches.
+        """
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
+        if detail is None:
+            # Nothing to search -- and dropping the entry here means the
+            # first lookup after a reader exit that cleared the detail
+            # (rail switch, delete) releases the PREVIOUS document instead
+            # of pinning its content behind the memo.
+            self._library_media_content_match_memo = None
+            return ()
+        query = self._library_media_content_query
+        memo = self._library_media_content_match_memo
+        if memo is not None and memo[0] is detail and memo[1] == query:
+            return memo[2]
+        matches = find_content_matches(
+            # task-22208 memoizes the viewer state per detail arrival; going
+            # through it keeps this memo's miss path from re-copying the whole
+            # document that 22208 already built for this same arrival.
+            self._library_media_viewer_state_cached(detail).content,
+            query,
+        )
+        self._library_media_content_match_memo = (detail, query, matches)
+        return matches
+
     def _advance_library_media_content_match(self, step: int) -> None:
         """Move the current content-search match index and scroll to it.
 
@@ -35219,13 +35546,7 @@ class LibraryScreen(BaseAppScreen):
             step: ``1`` to move to the next match, ``-1`` for the previous
                 one; wraps around the match count either direction.
         """
-        detail = (
-            self._library_media_detail
-            if isinstance(self._library_media_detail, Mapping)
-            else None
-        )
-        content = build_library_media_viewer_state(detail).content if detail else ""
-        matches = find_content_matches(content, self._library_media_content_query)
+        matches = self._library_media_content_matches()
         if not matches:
             return
         self._library_media_content_match_index = (
@@ -35357,7 +35678,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_editing_analysis = True
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-cancel")
     def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
@@ -35369,7 +35690,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_editing_analysis = False
-        self.refresh(recompose=True)
+        self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-save")
     def handle_library_media_analysis_save(self, event: Button.Pressed) -> None:

@@ -3,6 +3,19 @@
 Single-user, UI-thread-only: keeps ONE persistent WAL connection reused across
 all reads/writes (safe because every registry mutation runs on the UI thread),
 rather than opening/closing per operation.
+
+Held-connection rule (task-22224) -- this module is the store TEMPLATE other
+held-connection stores copy, so the rule lives here: a held connection MUST set
+``isolation_level = None`` (true autocommit). Without it, Python's legacy
+isolation mode auto-BEGINs a DEFERRED transaction on the first bare DML
+statement; that leaked transaction then makes the explicit ``BEGIN`` in
+``transaction()`` raise "cannot start a transaction within a transaction"
+(or, in stores with a borrow-style manager, silently degrades it), and bare
+DML is silently rolled back when the connection closes. Under autocommit,
+single statements are their own durable transaction, and multi-statement
+atomicity comes ONLY from the explicit BEGIN/COMMIT in ``transaction()`` --
+so every multi-statement write must go through it; ``conn.commit()`` outside
+an explicit BEGIN is a no-op, never a substitute.
 """
 
 from __future__ import annotations
@@ -42,7 +55,13 @@ class LibraryIngestJobsDB(BaseDB):
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Open a write transaction that rolls back on failure."""
+        """Open a write transaction that rolls back on failure.
+
+        The explicit BEGIN below is the ONLY transaction owner on this
+        store's autocommit connection (task-22224, module docstring): every
+        multi-statement write must run inside this manager, because outside
+        it each statement commits individually.
+        """
         conn = self._get_connection()
         conn.execute("BEGIN")
         try:
@@ -66,6 +85,10 @@ class LibraryIngestJobsDB(BaseDB):
             # are per-mutation on the UI thread (a bulk drop = many small
             # commits), so FULL's per-commit fsync would add avoidable latency.
             self._conn.execute("PRAGMA synchronous=NORMAL")
+            # task-22224: a HELD connection needs true autocommit -- see the
+            # module docstring for the rule and its failure modes. Explicit
+            # BEGIN/COMMIT in ``transaction()`` is the only transaction owner.
+            self._conn.isolation_level = None
         return self._conn
 
     def close(self) -> None:
@@ -162,8 +185,14 @@ class LibraryIngestJobsDB(BaseDB):
                 ALTER TABLE ingest_jobs_v3 RENAME TO ingest_jobs;
                 """
             )
-            conn.execute("DELETE FROM schema_version")
-            conn.execute("INSERT INTO schema_version (version) VALUES (3)")
+            # task-22224: ``executescript`` ends the manager's explicit
+            # transaction and commits as it goes (it did so under legacy
+            # isolation too -- verified empirically on 3.12/SQLite 3.49), so
+            # everything after it runs in autocommit. The version stamp must
+            # therefore be ONE statement: a DELETE+INSERT pair here could be
+            # split by a crash, leaving ``schema_version`` empty. The table
+            # always holds exactly one row (created by ``_initialize_schema``).
+            conn.execute("UPDATE schema_version SET version = 3")
 
     def _initialize_schema(self) -> None:
         conn = self._get_connection()
@@ -208,7 +237,9 @@ class LibraryIngestJobsDB(BaseDB):
             );
             """
         )
-        conn.commit()
+        # No ``conn.commit()``: the connection is autocommit (task-22224) and
+        # ``executescript`` commits as it goes; a trailing commit() would be a
+        # no-op that invites copying the wrong idiom out of this template.
 
         row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
         current_version = row["version"] if row else 0
@@ -417,9 +448,10 @@ class LibraryIngestJobsDB(BaseDB):
             self._upsert_job(conn, retry)
 
     def delete_job(self, job_id: str) -> None:
+        # Single-statement write: durable at execute() under autocommit
+        # (task-22224); no commit() needed -- it would be a no-op here.
         conn = self._get_connection()
         conn.execute("DELETE FROM ingest_jobs WHERE job_id = ?", (job_id,))
-        conn.commit()
 
     def all_jobs(self) -> list[dict]:
         conn = self._get_connection()

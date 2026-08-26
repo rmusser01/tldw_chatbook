@@ -1009,6 +1009,277 @@ def test_identical_keyed_sync_does_not_invalidate_native_tree(monkeypatch) -> No
     assert {key: node._updates for key, node in nodes.items()} == update_counts
 
 
+def _arm_zero_work_probes(monkeypatch, tree: ConsoleWorkspaceTree) -> list[str]:
+    """Record every reconcile leg a skipped push must never execute."""
+
+    events: list[str] = []
+    original_workspace = WorkspaceTreeNodeData.workspace.__func__
+    original_conversation = WorkspaceTreeNodeData.conversation.__func__
+
+    def recording_workspace(cls, *args, **kwargs):
+        events.append("node-data")
+        return original_workspace(cls, *args, **kwargs)
+
+    def recording_conversation(cls, *args, **kwargs):
+        events.append("node-data")
+        return original_conversation(cls, *args, **kwargs)
+
+    monkeypatch.setattr(
+        WorkspaceTreeNodeData, "workspace", classmethod(recording_workspace)
+    )
+    monkeypatch.setattr(
+        WorkspaceTreeNodeData, "conversation", classmethod(recording_conversation)
+    )
+    monkeypatch.setattr(
+        tree, "_invalidate", lambda: events.append("invalidate")
+    )
+    original_get_node = tree.get_node_at_line
+
+    def recording_get_node(line):
+        events.append("get-node-at-line")
+        return original_get_node(line)
+
+    monkeypatch.setattr(tree, "get_node_at_line", recording_get_node)
+    monkeypatch.setattr(
+        tree, "_update_tooltip", lambda: events.append("update-tooltip")
+    )
+    return events
+
+
+def test_value_equal_projection_push_is_a_zero_work_skip(monkeypatch) -> None:
+    """TASK-22202: the 5 Hz unchanged-tick push does no per-row work at all."""
+
+    tree = _tree()
+    update_counts = {
+        node.data.key: node._updates
+        for node in (
+            *tree.workspace_nodes.values(),
+            *tree.conversation_nodes.values(),
+            *tree.auxiliary_nodes.values(),
+        )
+    }
+    events = _arm_zero_work_probes(monkeypatch, tree)
+
+    # A fresh, value-equal tuple — exactly what a new tick build produces.
+    tree.sync_projection(
+        (
+            _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+            _workspace("w2", "Two", ("c3", "Third")),
+        ),
+        expanded_workspace_ids={"w1"},
+    )
+    assert events == []
+
+    # The identical object — the shared TASK-22201 within-tick build.
+    projection = (
+        _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+        _workspace("w2", "Two", ("c3", "Third")),
+    )
+    tree.sync_projection(projection, expanded_workspace_ids={"w1"})
+    tree.sync_projection(projection, expanded_workspace_ids={"w1"})
+    assert events == []
+    assert {
+        node.data.key: node._updates
+        for node in (
+            *tree.workspace_nodes.values(),
+            *tree.conversation_nodes.values(),
+            *tree.auxiliary_nodes.values(),
+        )
+    } == update_counts
+    assert tree.preferred_expanded_workspace_ids == frozenset({"w1"})
+
+
+def test_changed_projection_push_still_reconciles_after_skips(monkeypatch) -> None:
+    """A real change after any number of skips must reach the native nodes."""
+
+    tree = _tree()
+    for _ in range(3):
+        tree.sync_projection(
+            (
+                _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+
+    changed = replace(
+        _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+        conversations=(
+            replace(
+                _workspace("w1", "One", ("c1", "First")).conversations[0],
+                run_marker="●",
+            ),
+            _workspace("w1", "One", ("c2", "Second")).conversations[0],
+        ),
+    )
+    tree.sync_projection(
+        (changed, _workspace("w2", "Two", ("c3", "Third"))),
+        expanded_workspace_ids={"w1"},
+    )
+    assert tree.conversation_nodes["c1"].label.plain.startswith("●")
+
+    tree.sync_projection(
+        (
+            _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+            _workspace("w2", "Two", ("c3", "Third")),
+        ),
+        expanded_workspace_ids={"w1"},
+    )
+    assert not tree.conversation_nodes["c1"].label.plain.startswith("●")
+
+
+def test_single_conversation_change_invalidates_no_tree_wide_cache(monkeypatch) -> None:
+    """TASK-22202 AC2: a marker change is already bounded, not whole-cache.
+
+    Textual 8.2.8 keys ``Tree._line_cache`` on ``(y, hover, width,
+    self._updates, pseudo_classes, tuple(node._updates for node in
+    line.path))``. ``TreeNode.set_label`` bumps only the NODE's ``_updates``;
+    only structural edits (add/remove/move/expand) reach ``Tree._invalidate``
+    and its tree-wide ``self._updates``. So one changed conversation evicts
+    exactly the lines whose path contains it, and the review's
+    "one changed node blows EVERY cached tree line" premise does not hold for
+    the run-marker/selection updates the 5 Hz tick actually produces.
+    """
+
+    tree = _tree()
+    invalidations: list[None] = []
+    monkeypatch.setattr(tree, "_invalidate", lambda: invalidations.append(None))
+    tree_updates_before = tree._updates
+    untouched_before = {
+        key: node._updates
+        for key, node in (
+            ("workspace:w1", tree.workspace_nodes["w1"]),
+            ("workspace:w2", tree.workspace_nodes["w2"]),
+            ("conversation:c2", tree.conversation_nodes["c2"]),
+            ("conversation:c3", tree.conversation_nodes["c3"]),
+        )
+    }
+    changed = replace(
+        _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+        conversations=(
+            replace(
+                _workspace("w1", "One", ("c1", "First")).conversations[0],
+                run_marker="●",
+            ),
+            _workspace("w1", "One", ("c2", "Second")).conversations[0],
+        ),
+    )
+
+    tree.sync_projection(
+        (changed, _workspace("w2", "Two", ("c3", "Third"))),
+        expanded_workspace_ids={"w1"},
+    )
+
+    assert invalidations == []
+    assert tree._updates == tree_updates_before
+    assert {
+        key: node._updates
+        for key, node in (
+            ("workspace:w1", tree.workspace_nodes["w1"]),
+            ("workspace:w2", tree.workspace_nodes["w2"]),
+            ("conversation:c2", tree.conversation_nodes["c2"]),
+            ("conversation:c3", tree.conversation_nodes["c3"]),
+        )
+    } == untouched_before
+
+
+def test_expanded_ids_change_alone_defeats_the_projection_skip() -> None:
+    """Same projection, different disclosure preferences: must reconcile."""
+
+    tree = _tree()
+    assert tree.workspace_nodes["w2"].is_collapsed
+    tree.sync_projection(
+        (
+            _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+            _workspace("w2", "Two", ("c3", "Third")),
+        ),
+        expanded_workspace_ids={"w1", "w2"},
+    )
+    assert tree.workspace_nodes["w2"].is_expanded
+
+
+def test_search_flip_defeats_the_projection_skip(monkeypatch) -> None:
+    """A search flip changes what a pass does; a stale skip must not survive."""
+
+    tree = _tree()
+    events = _arm_zero_work_probes(monkeypatch, tree)
+    tree.set_search_active(True, forced_workspace_ids={"w2"})
+
+    tree.sync_projection(
+        (
+            _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+            _workspace("w2", "Two", ("c3", "Third")),
+        ),
+        expanded_workspace_ids={"w1"},
+    )
+    assert "node-data" in events
+
+
+@pytest.mark.asyncio
+async def test_disclosure_gesture_invalidates_the_projection_skip() -> None:
+    """A user collapse between equal pushes must not be frozen by the memo.
+
+    The pre-TASK-22202 reconcile re-applied ``expanded_workspace_ids`` on
+    every push, so a stale push carrying the old preferences re-expanded a
+    just-collapsed workspace. The memo must preserve exactly that behavior
+    by refusing to skip once a disclosure gesture happened.
+    """
+
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tree.sync_projection(
+            (
+                _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+        tree.workspace_nodes["w1"].collapse()
+        await pilot.pause()
+        assert tree.workspace_nodes["w1"].is_collapsed
+
+        tree.sync_projection(
+            (
+                _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+        assert tree.workspace_nodes["w1"].is_expanded
+
+
+@pytest.mark.asyncio
+async def test_projection_push_after_removal_is_safe_and_reconciles() -> None:
+    """A stale push landing after Textual retired the Tree must not skip or
+    crash on the cleared owner maps."""
+
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tree.sync_projection(
+            (
+                _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+        await tree.remove()
+        await pilot.pause()
+        assert tree.workspace_nodes == {}
+
+        tree.sync_projection(
+            (
+                _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+        assert set(tree.workspace_nodes) == {"w1", "w2"}
+
+
 def test_keyed_sync_refreshes_only_the_changed_native_label() -> None:
     """A marker/title update does not schedule refreshes for passive siblings."""
 

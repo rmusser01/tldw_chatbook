@@ -137,6 +137,24 @@ class ScheduledTasksDB(BaseDB):
         super().__init__(db_path, client_id, check_integrity_on_startup)
 
     def _get_connection(self) -> sqlite3.Connection:
+        """Open one fresh, caller-closed connection (see class usage).
+
+        task-22224 EXCEPTION -- deliberately keeps the legacy default
+        isolation level instead of ``isolation_level = None`` (the
+        held-connection rule in ``Library_Ingest_Jobs_DB.py``'s module
+        docstring, the store template). This store does not HOLD
+        connections: every caller opens one here and closes it per
+        operation (``closing(...)`` / ``transaction()``'s ``finally``), so
+        an implicit transaction cannot leak across operations and nothing
+        issues an explicit BEGIN outside migration scripts -- the
+        degradation mechanism cannot fire. Write bodies rely on implicit
+        transactions (``transaction()`` has no explicit BEGIN; migrations
+        pair multi-statement spans with ``conn.commit()``), so flipping to
+        autocommit here would strip their atomicity; converting means
+        adding explicit BEGIN and auditing the ~22 ``transaction()`` bodies
+        plus the ``Scheduling/db/migrations`` version stamps -- its own
+        task. Do NOT copy this pattern into a store that holds connections.
+        """
         conn = super()._get_connection()
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL")

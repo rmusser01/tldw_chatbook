@@ -124,6 +124,49 @@ def decode_media_image(content: bytes) -> Any:
     return decoded
 
 
+# task-22208: single-slot memo for the mosaic renderable. The PIL LANCZOS
+# resize plus the per-cell Python mosaic loop is the expensive part of a
+# preview build and it runs synchronously on the event loop; the Reader
+# shows one preview at a time, so one slot suffices. The memo is at the
+# RENDERABLE grain, never the widget: a removed Textual widget cannot be
+# remounted, so every build returns a fresh ``Static`` sharing the cached
+# mosaic ``Text``.
+#
+# Memo key (all inputs of ``mosaic_from_image`` as called below):
+# * the decoded image OBJECT (identity, and the entry holds a strong ref so
+#   an ``id()`` reuse after garbage collection can never alias a new image
+#   onto a stale mosaic) -- a re-decode after cache eviction or a changed
+#   original is a new object and misses;
+# * ``box_cols`` / ``box_lines`` -- a resized Reader box misses.
+# ``fit`` is the "contain" literal and ``monochrome`` is never passed here,
+# so neither varies; the mosaic samples colours from the image itself, so
+# the app theme is deliberately NOT an input. The render MODE is not an
+# input either: it only decides whether this mosaic branch runs at all.
+_MOSAIC_MEMO: tuple[Any, int, int, Any, int, int] | None = None
+
+
+def _mosaic_renderable(image: Any, cols: int, lines: int) -> tuple[Any, int, int]:
+    """Return the memoized (mosaic, width, height) for one image and cell box."""
+    global _MOSAIC_MEMO
+    memo = _MOSAIC_MEMO
+    if (
+        memo is not None
+        and memo[0] is image
+        and memo[1] == cols
+        and memo[2] == lines
+    ):
+        return memo[3], memo[4], memo[5]
+
+    from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
+
+    mosaic = mosaic_from_image(image, cols, lines, fit="contain")
+    rendered_lines = mosaic.plain.splitlines() or [""]
+    width = max(1, max(len(line) for line in rendered_lines))
+    height = max(1, len(rendered_lines))
+    _MOSAIC_MEMO = (image, cols, lines, mosaic, width, height)
+    return mosaic, width, height
+
+
 def build_media_image_widget(
     image: Any,
     *,
@@ -132,6 +175,11 @@ def build_media_image_widget(
     box_lines: int,
 ) -> Widget:
     """Build the existing graphics widget or universal mosaic fallback.
+
+    The mosaic fallback's renderable is memoized by (image object identity,
+    box_cols, box_lines) -- see ``_MOSAIC_MEMO`` for the full key and
+    invalidation inventory (task-22208). The returned WIDGET is always a
+    fresh instance: widgets cannot be remounted after removal.
 
     Args:
         image: Decoded image object.
@@ -165,11 +213,8 @@ def build_media_image_widget(
         except Exception:
             pass
 
-    from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
-
-    mosaic = mosaic_from_image(image, cols, lines, fit="contain")
-    rendered_lines = mosaic.plain.splitlines() or [""]
+    mosaic, mosaic_width, mosaic_height = _mosaic_renderable(image, cols, lines)
     widget = Static(mosaic)
-    widget.styles.width = max(1, max(len(line) for line in rendered_lines))
-    widget.styles.height = max(1, len(rendered_lines))
+    widget.styles.width = mosaic_width
+    widget.styles.height = mosaic_height
     return widget

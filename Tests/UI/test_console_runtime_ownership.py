@@ -687,8 +687,24 @@ def test_actor_pack_recovery_precedes_character_persona_surfaces():
         "recovery is back on the construction path (task-21106 regression)"
     )
 
+    # TASK-22215 moved the deferred-startup kick behind the boot-worker
+    # stagger policy: `_schedule_deferred_startup_work` opens the gate, the
+    # policy names the row, and the app's starter table calls the gate's
+    # `ensure_actor_pack_recovery`. Recovery is still FIRST in that order --
+    # it is a prefetch for a surface that would otherwise run SQLite recovery
+    # on the event loop -- and the behavioral proof that it actually runs
+    # after first paint lives in Tests/UI/test_actor_pack_recovery_seam.py
+    # and Tests/App/test_boot_worker_stagger_policy.py.
+    from tldw_chatbook.Utils.boot_worker_policy import STAGGERED_BOOT_WORKER_KEYS
+
     deferred = inspect.getsource(TldwCli._schedule_deferred_startup_work)
-    assert "ensure_actor_pack_recovery" in deferred, deferred
+    assert "_start_staggered_boot_workers" in deferred, deferred
+    assert STAGGERED_BOOT_WORKER_KEYS[0] == "actor_pack_recovery", (
+        f"recovery must stay first in the staggered boot order; observed "
+        f"{STAGGERED_BOOT_WORKER_KEYS!r}"
+    )
+    starters = inspect.getsource(TldwCli.boot_worker_starters)
+    assert "ensure_actor_pack_recovery" in starters, starters
 
     personas_load = inspect.getsource(PersonasScreen._load_after_mount)
     assert "ensure_actor_pack_recovery" in personas_load, personas_load

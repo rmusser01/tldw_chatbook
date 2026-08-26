@@ -88,7 +88,10 @@ def test_gap_tracks_the_previous_import_cost_and_respects_the_cap(monkeypatch):
     """The gap is `min(previous_cost * ratio, cap)`, not a flat constant.
 
     Driven with a fake clock so the assertion is on the arithmetic, not on
-    how long a real import happens to take on the runner.
+    how long a real import happens to take on the runner. Asserted on the
+    pause CALL rather than on raw `time.sleep` values because the pause
+    slices its sleep (task-22214) -- the arithmetic and the slicing are
+    separate contracts with separate tests.
     """
     app = _build_test_app()
     monkeypatch.setattr(app, "_screen_preimport_pacing", lambda: (1.0, 0.10))
@@ -96,13 +99,13 @@ def test_gap_tracks_the_previous_import_cost_and_respects_the_cap(monkeypatch):
     # Each `load_screen_class()` "costs" the next value in this list.
     costs = [0.005, 0.400, 0.020]
     clock = {"now": 0.0}
-    slept: list[float] = []
+    pauses: list[float] = []
 
     def fake_monotonic() -> float:
         return clock["now"]
 
     monkeypatch.setattr(app_module.time, "monotonic", fake_monotonic)
-    monkeypatch.setattr(app_module.time, "sleep", slept.append)
+    monkeypatch.setattr(app, "_pause_between_preimports", pauses.append)
 
     routes = _cheap_routes(4)
     real_load = type(routes[0]).load_screen_class
@@ -120,7 +123,73 @@ def test_gap_tracks_the_previous_import_cost_and_respects_the_cap(monkeypatch):
     app._preimport_screens(routes)
 
     # 5 ms import -> 5 ms gap; 400 ms import -> capped at 100 ms; 20 ms -> 20 ms.
-    assert slept == pytest.approx([0.005, 0.10, 0.020])
+    assert pauses == pytest.approx([0.005, 0.10, 0.020])
+
+
+# --- task-22214: the cap must not turn the proportional yield into a no-op ---
+
+
+def test_normal_tier_cap_covers_the_heaviest_measured_route():
+    """The gap cap must sit ABOVE any real single-route import cost.
+
+    task-22214: the payload grew until the heaviest route (library, 615 ms on
+    a bytecode-compiling boot, M-series -- slower hardware proportionally
+    worse) dwarfed the then-0.10 s cap, silently flattening the proportional
+    yield into a ~90%-duty near-no-op for exactly the routes that matter.
+    1.0 s is a floor, not the tuned value (2.0 s): it is above every
+    single-route cost measured on fast hardware with margin, so a future
+    "optimization" that quietly restores a sub-second cap reds here and has
+    to bring new measurements.
+    """
+    assert app_module.SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS >= 1.0
+    assert (
+        app_module.SCREEN_PREIMPORT_LOW_CORE_MAX_ROUTE_GAP_SECONDS
+        >= 3.0 * app_module.SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS / 2.0
+    )
+
+
+def test_gap_sleep_is_sliced_to_the_navigation_poll_size(monkeypatch):
+    """A multi-second gap sleeps in poll-sized slices, never one big sleep.
+
+    With the caps at 2.0 s / 6.0 s a single `time.sleep(gap)` would leave a
+    quitting app waiting out the whole gap; sliced, the shutdown check
+    between slices fires within 0.05 s (the 22200 `_interruptible_sleep`
+    precedent).
+    """
+    app = _build_test_app()
+    monkeypatch.setattr(app, "_screen_navigation_in_progress", lambda: False)
+    slept: list[float] = []
+    monkeypatch.setattr(app_module.time, "sleep", slept.append)
+
+    app._pause_between_preimports(0.17)
+
+    poll = app_module.SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS
+    assert sum(slept) == pytest.approx(0.17)
+    assert max(slept) <= poll + 1e-9
+    assert slept == pytest.approx([poll, poll, poll, 0.17 - 3 * poll])
+
+
+def test_shutdown_breaks_out_of_a_long_gap_mid_sleep(monkeypatch):
+    """Quit during a capped-length gap: the thread stops within one slice."""
+    app = _build_test_app()
+    monkeypatch.setattr(app, "_screen_navigation_in_progress", lambda: False)
+
+    slept: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        if len(slept) == 2:
+            app._shutting_down = True
+
+    monkeypatch.setattr(app_module.time, "sleep", fake_sleep)
+
+    app._pause_between_preimports(
+        app_module.SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS
+    )
+
+    # Two slices happened, then the shutdown check stopped the gap AND the
+    # navigation park never ran.
+    assert len(slept) == 2
 
 
 # --- AC #3a: low-core throttle ----------------------------------------------

@@ -177,7 +177,27 @@ class EvalsDB:
         logger.info(f"EvalsDB initialized with path: {self.db_path}")
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get thread-local database connection."""
+        """Get thread-local database connection.
+
+        task-22224 EXCEPTION -- this held connection deliberately keeps the
+        legacy default isolation level instead of ``isolation_level = None``
+        (the held-connection rule in ``Library_Ingest_Jobs_DB.py``'s module
+        docstring, the store template). Every write path in this file relies
+        on Python's implicit transactions via ``with conn:`` bodies, several
+        of them multi-statement (e.g. ``store_result``'s result INSERT plus
+        its completed-samples UPDATE, and ``delete_task``, whose cascade into
+        ``delete_probe_annotations_for_run_groups`` deliberately NESTS
+        ``with conn:`` blocks to share one implicit transaction -- explicit
+        BEGIN cannot nest); there is no explicit-BEGIN transaction
+        manager here, so flipping to autocommit would silently strip their
+        atomicity. The degradation this store risks instead is bounded: no
+        code path issues an explicit BEGIN on this connection, so the
+        borrow/"cannot start a transaction" failure modes cannot fire.
+        Converting this store to the template idiom means giving it an
+        explicit-BEGIN manager and auditing all ~20 ``with conn:`` writes
+        (including un-nesting the nested pair) -- do that as its own task,
+        and do NOT copy this store's pattern into new code.
+        """
         if not hasattr(self._local, "connection"):
             # Convert Path to string if necessary, but keep :memory: as is
             db_path_str = (

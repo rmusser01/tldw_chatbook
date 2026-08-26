@@ -286,3 +286,86 @@ inventory holds.
 - Worktrees left in place for the burn-down: `perf-review-2026-08-24` (pinned review tree),
   `perf-probe-2026-08-24` + `perf-base-2026-08-24` (venvs installed, scratch profiles under
   the session scratchpad are ephemeral — recreate per the Method section).
+
+---
+
+# Close-out amendment (2026-08-26) — what the burn-down proved, and where this document was wrong
+
+All 29 filed tasks (TASK-22200…22228) were implemented, adversarially reviewed or
+controller-verified, and merged to dev on 2026-08-25/26 across 6 single PRs and 6 batch PRs
+(#2077, #2081, #2083, #2084, #2087, #2090/#2091, and batches A/B/C/D/E/F + #2110/#2111).
+
+## Headline measured outcomes
+
+| Surface | Before | After |
+|---|---|---|
+| Library reader, per traversal keystroke (1 MB doc) | 16.9 s | **0.40 s** (22207) |
+| Conversation resume @600 / @2000 msgs | 110 ms / RecursionError | **5.2 ms / 21 ms** (22206) |
+| Console run tick, registry SQL per 5 ticks | 400 | **0** (22201) |
+| Send-path loop stall under a 2 s write-lock holder | 2049 ms | **11 ms** (22205) |
+| Post-upgrade backfill, foreground write mean/max | 153-197 / 462-470 ms | **3.5 / 24 ms** (22200) |
+| Worst keypress, first post-upgrade boot | 625-876 ms | **395-467 ms** (22215) |
+| Avatar on-loop work per resize drag | 152.7 ms | **0.9 ms** (22221) |
+| Composer blink tick (20 KB draft) | 1.58 ms | **0.11 ms** (22218) |
+| Emote encodes per 16k-char reply | 16,000 | **329** (22227) |
+| Match-nav handler (2.5 MB doc) | 52.4 ms | **7.5 ms** (22209) |
+| `import tldw_chatbook.config` closure | 106 modules | **40** + a live circular import killed (22223) |
+
+## Corrections to THIS document (the findings were wrong; the code was measured)
+
+1. **Finding 22202's mechanism is false as written.** "One changed node invalidates every
+   cached tree line" does not hold for what the run tick produces: Textual 8.2.8 keys
+   `Tree._line_cache` per node (`_tree.py:1325-1333`) and `set_label` bumps only that node's
+   `_updates`. Measured over 200 marker toggles: `Tree._invalidate` **0**. Only STRUCTURAL
+   edits invalidate tree-wide, and that cost is **viewport-bounded, not row-bounded**
+   (cold repaint 0.348 ms @50 rows vs 0.351 ms @200 at a 34-row viewport). The shipped fix is
+   the equality fast-path (0.517 → 0.020 ms per unchanged push @200 rows).
+2. **Finding 22228 items 1-2 were noise, and its item 1 fix would have been a pessimization.**
+   `query_one("#id")` takes an id fast path with a per-node cache — **0.3 µs warm** on the
+   475-widget Console — while `query("*")` is a real walk. The prescribed
+   `_console_composer_or_none()` memo measured **slower** (0.7 µs). Four of that task's seven
+   items were declined with measurements; the item that looked smallest (`query("*")` in
+   `_focusable_body_controls`, 87.8 µs) was the only expensive one.
+3. **Finding 22221 named 28 ms of a 215 ms cost.** The discarded-pixels resample was real but
+   minor; the visible mosaic render (187 ms) was the bulk and had to move off the loop too.
+4. **The +140 ms warm-TTI regression figure carries positional-bias doubt.** TASK-22213's A/A
+   control found a ±400 ms noise floor with a systematic second-position advantage in
+   interleaved boot pairs; this review's pairs ran tip-first throughout, so the true regression
+   is **at most** the reported number. The mechanism findings (import-leg growth, pre-importer
+   payload, worker count, CSS bytes) are unaffected — each was confirmed on deterministic axes.
+5. **Finding 22220 named the wrong class**: the cited lines are `InlineLoader`, not
+   `InlineLoadingIndicator` (which was already clean).
+6. **Finding 22211's scrollbar note**: `workbench.size.width` is `content_region` and is
+   scrollbar-sensitive only via an ANCESTOR, not its own scrollbars; a genuine scrollbar
+   appearance never triggers re-resolution at all (benign, pre-existing).
+7. **Finding 22214 confirmed, with an honest limit**: the 0.10 s cap really had turned the
+   proportional yield back into the flat sleep it replaced (requested gaps
+   `[0.0, 0.1, 0.1, …]` → `[0.0, 0.529, 0.245, …]`), but the low-core tier is a **wash** in
+   both cache states — shipped as hardening, not a measured gain.
+8. **Finding 22225 is not a boot-time win**: the added cleanup costs slightly more than the
+   inserts it saves, once. Its value is 2,000 fewer permanent rows and a 114,688 B smaller
+   file on the fresh-upgrade path.
+
+## Follow-ups filed at close-out (TASK-22500…22506)
+
+**22500 is the important one**: the reader body is not virtualized, so a 2.5 MB document
+repaints all 45,000 lines and costs **~1.4-1.5 s per click both before and after** everything
+this burn-down fixed around it — the single largest remaining Library cost. Also filed: 22501
+(`add_conversation` DEFERRED writer dies un-retried, 3/3 repro — this refutes 22200's own
+description), 22502 (cancel-during-CAS wedge), 22503 (`Library/__init__` lazy facade), 22504
+(`console_voice_input` off the first-paint leg), 22505 (8 TieAware full reparses in the
+first-paint window), 22506 (dead `loading_states` module — owner call).
+
+## Process notes worth keeping
+
+- **The dominant pattern held for a third programme running**: a finding tells you where to
+  look, not what to do. Two findings were refuted by measurement, one was 13% of its own cost,
+  four were declined as not worth fixing, and two shipped as honest washes.
+- **Adversarial review earned its cost every time it ran**: 22201's fingerprint could lose its
+  store half with 161 tests green; 22203's geometry gate was vacuous (`layout=False` freezes
+  the stale region, so a CSS unpin could never red it); 22204's avatar-hidden fence clear was
+  load-bearing and uncovered; 22200's abort-poll inside the backoff sleep was unpinned; 22224's
+  reviewer re-censused 319 execute sites from scratch and found zero piecewise-commit windows.
+- **Implementers deleted their own work when it did not earn its place**: 22221 removed a fence
+  that survived mutation rather than ship an unkillable line; 22225's mutation test exposed a
+  hole in its own suite (the v50 cleanup masked a broken v48 seed, leaving all 33 tests green).

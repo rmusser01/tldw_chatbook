@@ -510,7 +510,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 49  # `messages_au` scoped to the FTS-relevant columns (task-21128).
+    _CURRENT_SCHEMA_VERSION = 50  # Console Library policy follows live conversations (task-22225).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3240,6 +3240,17 @@ UPDATE db_schema_version
                 conn.execute("PRAGMA synchronous=NORMAL;")
 
                 conn.execute("PRAGMA foreign_keys = ON;")
+                # task-22224: a HELD connection needs true autocommit (see
+                # Library_Ingest_Jobs_DB.py's module docstring -- the store
+                # template -- for the rule). Under the legacy default, one
+                # bare DML statement auto-BEGINs a DEFERRED transaction that
+                # ``TransactionContextManager`` then silently BORROWS at
+                # depth 0, degrading ``transaction(immediate=True)`` to a
+                # deferred snapshot nothing ever commits. With autocommit,
+                # the manager's explicit BEGIN [IMMEDIATE] is the only
+                # transaction owner; ``commit()``/``rollback()`` outside an
+                # explicit BEGIN are no-ops.
+                conn.isolation_level = None
                 self._local.conn = conn
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}"
@@ -6150,7 +6161,22 @@ UPDATE db_schema_version
         cursor: sqlite3.Cursor,
         auto_retrieve_on_send: int,
     ) -> None:
-        """Seed the final policy for every conversation present at v47."""
+        """Seed the final policy for every LIVE conversation present at v47.
+
+        As shipped this selected ``FROM conversations`` unfiltered, so a
+        profile paid one insert per conversation it had ever held and then
+        stored policy for tombstones forever (task-22225). A soft-deleted
+        conversation cannot use the row: ``ConsoleLibraryPolicyRepository``
+        joins ``conversations`` and fail-closes on ``deleted``, both writers
+        refuse a deleted conversation outright, and the durable-turn commit
+        raises before it reads policy. The row was inert and permanent.
+
+        Editing an applied step is safe here for exactly one reason: it can
+        only change the outcome for a database that has not yet reached v48,
+        and ``_migrate_from_v49_to_v50`` removes the rows from a database that
+        already ran the shipped seed, in the same open. Both populations
+        converge on this predicate. See ADR-079's amendment.
+        """
         cursor.execute(
             """
             INSERT INTO console_conversation_library_policy(
@@ -6160,6 +6186,7 @@ UPDATE db_schema_version
             )
             SELECT id, ?, 1
               FROM conversations
+             WHERE deleted = 0
             """,
             (auto_retrieve_on_send,),
         )
@@ -6404,9 +6431,17 @@ UPDATE db_schema_version
     def _migrate_from_v47_to_v48(self, conn: sqlite3.Connection) -> None:
         """Add device-local Console Library policy and dispatch recovery schema.
 
-        Existing conversations, including soft-deleted rows, receive the one
-        sanitized legacy automatic-retrieval value supplied by the config
-        layer and assistant Library access Allowed.
+        Existing LIVE conversations receive the one sanitized legacy
+        automatic-retrieval value supplied by the config layer and assistant
+        Library access Allowed.
+
+        As shipped this also seeded soft-deleted conversations, which cost one
+        insert per tombstone inside the boot transaction and stored policy
+        nothing could read (task-22225). The predicate was corrected here
+        rather than only forward because that edit can affect ONLY a database
+        that has not yet reached v48; ``_migrate_from_v49_to_v50`` removes the
+        rows an already-migrated database is carrying, so the two populations
+        converge within one open instead of diverging permanently.
 
         The seed is OPTIONAL (task-21441). As shipped, this step raised unless
         the constructor was handed a ``ConsoleLibraryMigrationSeed``, with a
@@ -6582,6 +6617,89 @@ UPDATE db_schema_version
             )
             raise SchemaError(
                 f"Migration from V48 to V49 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v49_to_v50(self, conn: sqlite3.Connection) -> None:
+        """Retire Console Library policy rows with no live conversation.
+
+        The v47->v48 seed wrote one policy row per conversation with no
+        ``deleted`` predicate, so a profile stored policy for every
+        conversation it had ever held and paid one insert per tombstone inside
+        the boot version-bump transaction (task-22225). The seed now excludes
+        soft-deleted conversations; this step is the other half, and the
+        reason editing the applied v48 SQL is honest rather than silent: a
+        database that has not reached v48 never writes the rows, a database
+        that already ran the shipped seed has them removed here, and both end
+        the same open in the same state.
+
+        What the removed rows did: nothing an application could observe.
+        ``ConsoleLibraryPolicyRepository`` joins ``conversations`` and
+        fail-closes to Never/Blocked unless ``deleted = 0``; ``insert`` and
+        ``compare_and_swap`` both refuse a missing or deleted conversation;
+        and ``commit_durable_turn`` raises before it reads policy. Missing
+        policy is likewise an ordinary state -- ``add_conversation`` has never
+        written a row, and the coordinator inserts revision one on demand --
+        so removal cannot strand a live conversation.
+
+        DML only: the file adds no table, index, or trigger, so it needs no
+        ``VALID_TABLES`` or index-census entry. It is idempotent, and it runs
+        inside the step's transaction, so a failure anywhere in the chain
+        rewinds the deletes with the version stamp.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                transaction.
+
+        Raises:
+            SchemaError: If the database is not at v49, the file cannot be
+                read/split, or the guarded version bump does not land.
+        """
+        self._require_migration_entry_version(conn, 49, "V49→V50")
+        logger.info(
+            f"Migrating schema from V49 to V50 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V49→V50",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 50
+                     WHERE schema_name = ?
+                       AND version = 49
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V49→V50] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 50:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V49→V50] Migration version check failed. "
+                    f"Expected 50, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V49→V50] Migration completed successfully for DB: "
+                f"{self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V49→V50] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V49 to V50 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -6781,6 +6899,7 @@ UPDATE db_schema_version
                     46: self._migrate_from_v46_to_v47,
                     47: self._migrate_from_v47_to_v48,
                     48: self._migrate_from_v48_to_v49,
+                    49: self._migrate_from_v49_to_v50,
                 }
 
                 if current_db_version == 0:
@@ -11356,6 +11475,49 @@ UPDATE db_schema_version
             return dict(row) if row else None
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching message ID {message_id}: {e}")
+            raise
+
+    def get_message_by_id_without_blob(
+        self, message_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve one non-deleted message row without hydrating the image BLOB.
+
+        TASK-22226 sibling of ``get_message_by_id``, following the
+        TASK-22206 narrow-projection precedent
+        (``get_message_tree_rows_for_conversation``): the exact same select
+        list EXCEPT the ``image_data`` BLOB, which is replaced by a
+        ``has_image`` flag (0/1) so callers that only need DB-normalized
+        scalars (``version``, timestamps, ``feedback``, ...) never copy
+        megabytes of image bytes out of SQLite. Callers that need the actual
+        bytes hydrate them separately via ``get_message_images_by_ids`` (or
+        ``get_message_by_id``).
+
+        Args:
+            message_id: The string UUID of the message.
+
+        Returns:
+            A dictionary with all ``get_message_by_id`` fields except
+            ``image_data``, plus ``has_image`` (0/1), if the message exists
+            and is not deleted; else None.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = (
+            "SELECT id, conversation_id, parent_message_id, sender, role, content,"
+            " (image_data IS NOT NULL) AS has_image, image_mime_type, timestamp,"
+            " ranking, last_modified, version, client_id, deleted, feedback,"
+            " usage_json, metadata_json, provider_continuation_json,"
+            " assistant_generation_state FROM messages WHERE id = ? AND deleted = 0"
+        )
+        try:
+            cursor = self.execute_query(query, (message_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error fetching message ID {message_id} (no-blob): {e}"
+            )
             raise
 
     def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
@@ -16712,10 +16874,12 @@ UPDATE db_schema_version
 
         try:
             conn = self.get_connection()
-            # Vacuum must be run outside of a transaction
-            conn.isolation_level = None
+            # VACUUM must run outside a transaction. The connection is
+            # permanently in autocommit (isolation_level=None, task-22224),
+            # so no toggle is needed -- the old restore-to-"" here would have
+            # silently flipped this thread's held connection back to legacy
+            # implicit-transaction mode for the rest of its life.
             conn.execute("VACUUM")
-            conn.isolation_level = ""  # Restore default
             logger.info(f"Successfully vacuumed database: {self.db_path_str}")
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
@@ -19475,6 +19639,11 @@ class TransactionContextManager:
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
+            # task-22224: with the held connection in autocommit, this borrow
+            # branch is reachable only when a caller explicitly issued BEGIN
+            # on the connection itself -- the legacy implicit-DEFERRED leak
+            # (bare DML silently degrading transaction(immediate=True) to a
+            # borrowed deferred snapshot) can no longer arm it.
             if self.conn.in_transaction:
                 self.borrows_native_transaction = True
                 self.db._local.transaction_depth = 1

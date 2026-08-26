@@ -621,8 +621,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 360,
-      "diagnostic_digest": "9adf81dc4aab6a5fe01f",
+      "call_count": 364,
+      "diagnostic_digest": "c43e233fb9e5f5c7c29b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1846,8 +1846,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "769552c703844018c3aa",
+      "call_count": 5,
+      "diagnostic_digest": "f450151dc969ffd3b19d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Subscriptions/fts_backfill.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2329,6 +2329,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "f4a9cd3e24b72b8aef18",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/left_rail.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 13,
       "diagnostic_digest": "dbc82a289e52f7a3fbb9",
       "owner": "TASK-494",
@@ -2602,8 +2609,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 121,
-      "diagnostic_digest": "7f100eb23514ca93bba7",
+      "call_count": 122,
+      "diagnostic_digest": "6182760b5f9787838236",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3729,8 +3736,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 352,
-      "diagnostic_digest": "c755564f7fcb64e72e7c",
+      "call_count": 357,
+      "diagnostic_digest": "9f5d2595f76081c8da25",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3966,9 +3973,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 537,
+    "owner_files": 538,
     "persistent_sink_files": 8,
     "task_492_calls": 1241,
-    "task_494_calls": 7344
+    "task_494_calls": 7358
   }
 }
