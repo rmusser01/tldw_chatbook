@@ -68,7 +68,7 @@ def test_continuation_stages_copy_and_deduplicates_items():
     assert appended
     assert original.page_count == 1
     assert candidate.pages == (({"item_id": 2}, {"item_id": 1}), ({"id": "0"},))
-    assert candidate.seen_ids == frozenset({"0", 1, 2})
+    assert candidate.seen_ids == frozenset({0, 1, 2})
     assert not candidate.has_more
 
 
@@ -77,6 +77,15 @@ def test_identity_falls_back_from_empty_item_id_and_preserves_string_ids():
     snapshot = ReaderItemSnapshot.start(query, page([{"item_id": "", "id": "external-a"}, {"id": "external-b"}]))
     assert snapshot.seen_ids == frozenset({"external-a", "external-b"})
     assert snapshot.pages[0] == ({"item_id": "", "id": "external-a"}, {"id": "external-b"})
+
+
+def test_numeric_string_identity_is_canonical_across_item_id_and_id_fields():
+    query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
+    snapshot = ReaderItemSnapshot.start(query, page([{"item_id": "2"}]))
+    candidate, appended = snapshot.with_continuation(page([{"item_id": "", "id": "2"}]))
+    assert not appended
+    assert candidate.page_count == 1
+    assert candidate.seen_ids == frozenset({2})
 
 
 def test_duplicate_only_continuation_advances_traversal_without_blank_page():
