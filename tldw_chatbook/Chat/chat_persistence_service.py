@@ -1094,6 +1094,16 @@ class ChatPersistenceService:
             )
             return False
 
+    def list_full_exchange_keys_for_conversation(
+        self, conversation_id: str
+    ) -> set[tuple[str, str, int]]:
+        """Return queryable Full exchange keys for one conversation."""
+        return self.db.list_full_exchange_keys_for_conversation(conversation_id)
+
+    def delete_full_exchanges_for_conversation(self, conversation_id: str) -> int:
+        """Delete only Full exchange rows for one conversation."""
+        return self.db.delete_full_exchanges_for_conversation(conversation_id)
+
     def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
         """Atomically tombstone one persisted branch and return its versions."""
         current_message = self.db.get_message_by_id(message_id)

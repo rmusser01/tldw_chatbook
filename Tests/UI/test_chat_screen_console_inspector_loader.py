@@ -13,6 +13,9 @@ over the returned loader callable.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from loguru import logger as loguru_logger
 
@@ -24,6 +27,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     capture_to_blob,
 )
 from tldw_chatbook.UI.Screens.chat_screen import (
+    ChatScreen,
     _build_console_inspector_exchanges_loader,
 )
 
@@ -302,3 +306,48 @@ async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
     joined = "\n".join(diagnostics)
     assert "CANARY_BLOB_BYTES_SHOULD_NOT_APPEAR_IN_LOG" not in joined
     assert "Traceback" not in joined
+
+
+def test_inspector_push_captures_immutable_revision_target() -> None:
+    session = SimpleNamespace(
+        id="session-at-open", persisted_conversation_id="conversation-at-open"
+    )
+    store = SimpleNamespace(
+        active_session_id=session.id,
+        sessions=lambda: [session],
+    )
+    capture_revision = Mock(return_value=11)
+    controller = SimpleNamespace(store=store, capture_revision=capture_revision)
+    pushed = Mock()
+    screen = SimpleNamespace(
+        _build_console_inspector_cost_data=lambda: (
+            [],
+            SimpleNamespace(),
+            [],
+            _empty_loader,
+        ),
+        _ensure_console_chat_controller=lambda: controller,
+        _console_active_session_is_ephemeral=lambda: False,
+        app=SimpleNamespace(push_screen=pushed),
+    )
+
+    async def snapshot_factory():
+        return SimpleNamespace()
+
+    ChatScreen._push_console_inspector(
+        screen,
+        initial_tab="inspector-costs",
+        snapshot_factory=snapshot_factory,
+    )
+
+    inspector = pushed.call_args.args[0]
+    store.active_session_id = "session-selected-later"
+    assert inspector._target_session_id == "session-at-open"
+    assert inspector._target_conversation_id == "conversation-at-open"
+    assert inspector._capture_revision_at_open == 11
+    assert inspector._capture_revision_provider() == 11
+    capture_revision.assert_called_with("session-at-open")
+
+
+async def _empty_loader(_native_message_id: str):
+    return []

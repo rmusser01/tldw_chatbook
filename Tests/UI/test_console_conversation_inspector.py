@@ -14,20 +14,19 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import (
     Button,
     Collapsible,
     ContentSwitcher,
     Static,
-    TabPane,
     TextArea,
 )
 from textual.widgets._collapsible import CollapsibleTitle
@@ -1683,3 +1682,91 @@ async def test_late_snapshot_completion_does_not_steal_focus_from_costs_tab() ->
         close_button = modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
         assert app.focused is not close_button
         assert app.focused is row_title
+
+
+@pytest.mark.asyncio
+async def test_stale_capture_revision_blocks_expansion_copy_and_save(
+    monkeypatch,
+) -> None:
+    revision = SimpleNamespace(value=7)
+    cap = _capture(
+        "full-run",
+        0,
+        "2026-08-26T10:00:00Z",
+        "m",
+        request={"system_message": "FULL SECRET"},
+        response={"content": "FULL RESPONSE"},
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    fake_copy = SimpleNamespace(copy=Mock())
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
+    app = InspectorHarness(
+        **_default_kwargs(
+            exchanges_loader=loader,
+            initial_tab=TAB_EXCHANGE,
+            target_session_id="session-at-open",
+            target_conversation_id="conversation-at-open",
+            capture_revision_provider=lambda: revision.value,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _expand_first_exchange_call(pilot, modal)
+        call = modal.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        assert modal._exchange_capture_by_call_key
+
+        revision.value = 8
+
+        assert modal._mount_exchange_call_body(call, "0-0") is False
+        assert modal._copy_exchange_capture("0-0") is False
+        assert modal._save_exchange_capture("0-0") is False
+        assert modal._exchange_capture_by_call_key == {}
+        assert modal._loaded_exchange_call_keys == set()
+        status = modal.query_one("#console-inspector-capture-status", Static)
+        assert "Refresh required" in str(status.renderable)
+
+    fake_copy.copy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_revision_change_during_async_capture_load_discards_result() -> None:
+    revision = SimpleNamespace(value=3)
+    cap = _capture("full-run", 0, "2026-08-26T10:00:00Z", "m")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        revision.value = 4
+        await asyncio.sleep(0)
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            exchanges_loader=loader,
+            initial_tab=TAB_EXCHANGE,
+            target_session_id="session-at-open",
+            target_conversation_id="conversation-at-open",
+            capture_revision_provider=lambda: revision.value,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(
+            pilot,
+            lambda: "Refresh required"
+            in str(
+                modal.query_one(
+                    "#console-inspector-capture-status", Static
+                ).renderable
+            ),
+        )
+
+        assert modal._exchange_capture_by_call_key == {}
+        assert not turn.query(".console-inspector-exchange-call")

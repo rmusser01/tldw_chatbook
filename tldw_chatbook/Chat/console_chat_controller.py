@@ -92,6 +92,7 @@ from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
+    CapturePurgeStaleError,
     CapturePolicyStaleError,
     ConsoleChatSession,
     ConsoleChatStore,
@@ -1838,6 +1839,35 @@ class CapturePolicyMutationStatus(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class CapturePurgeAvailability:
+    can_purge: bool
+    reason_code: str | None = None
+
+
+class CapturePurgeStatus(str, Enum):
+    DELETED = "deleted"
+    BLOCKED = "blocked"
+    STALE = "stale"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePurgeResult:
+    status: CapturePurgeStatus
+    removed_count: int
+    capture_revision: int
+    reason_code: str | None = None
+
+    @classmethod
+    def blocked(cls, revision: int, reason_code: str) -> "CapturePurgeResult":
+        return cls(CapturePurgeStatus.BLOCKED, 0, revision, reason_code)
+
+    @classmethod
+    def deleted(cls, removed_count: int, revision: int) -> "CapturePurgeResult":
+        return cls(CapturePurgeStatus.DELETED, removed_count, revision)
+
+
+@dataclass(frozen=True, slots=True)
 class CapturePolicyMutationResult:
     status: CapturePolicyMutationStatus
     snapshot: CapturePolicySnapshot
@@ -2254,6 +2284,8 @@ class ConsoleChatController:
         self._active_submit_tasks: dict[asyncio.Task, str] = {}
         self._active_submit_preparations: dict[asyncio.Task, str] = {}
         self._active_submit_tasks_lock = threading.RLock()
+        self._capture_quiescence_lock = threading.RLock()
+        self._capture_exchange_flush_sessions: set[str] = set()
         try:
             self._owner_loop: asyncio.AbstractEventLoop | None = (
                 asyncio.get_running_loop()
@@ -2635,6 +2667,113 @@ class ConsoleChatController:
                 else None
             ),
         )
+
+    def capture_revision(self, session_id: str) -> int:
+        """Return the authoritative process-local capture revision."""
+        return self.store.capture_revision(session_id)
+
+    def capture_purge_availability(
+        self, session_id: str
+    ) -> CapturePurgeAvailability:
+        """Report the first bounded writer reason preventing quiescence."""
+        self.store.capture_revision(session_id)
+        with self._capture_quiescence_lock:
+            reason = self._capture_purge_blocker(session_id, include_lease=True)
+            return CapturePurgeAvailability(reason is None, reason)
+
+    def _capture_purge_blocker(
+        self, session_id: str, *, include_lease: bool
+    ) -> str | None:
+        """Return the first bounded writer code for one session."""
+        if include_lease and self.store.capture_quiescent(session_id):
+            return "purge_in_progress"
+        task = self._active_stream_tasks.get(session_id)
+        if task is not None and not task.done():
+            return "primary_writer_active"
+        with self._active_submit_tasks_lock:
+            if session_id in self._active_submit_tasks.values():
+                return "preparation_active"
+        if self.store.preparation_for_session(session_id) is not None:
+            return "preparation_active"
+        checker = getattr(self._agent_bridge, "has_unsettled_children", None)
+        if callable(checker):
+            try:
+                if checker(self._agent_conversation_id(session_id)):
+                    return "fleet_writer_active"
+            except Exception:
+                return "fleet_state_unavailable"
+        if session_id in self._capture_exchange_flush_sessions:
+            return "exchange_flush_active"
+        for message_id in self._fleet_usage_reattach_sources:
+            try:
+                if self.store.session_id_for_message(message_id) == session_id:
+                    return "retained_signals_active"
+            except KeyError:
+                continue
+        return None
+
+    async def purge_full_captures(
+        self, session_id: str, expected_capture_revision: int
+    ) -> CapturePurgeResult:
+        """Logically erase Full captures while every session writer is fenced."""
+        with self._capture_quiescence_lock:
+            revision = self.store.capture_revision(session_id)
+            reason = self._capture_purge_blocker(session_id, include_lease=True)
+            if reason is not None:
+                return CapturePurgeResult.blocked(
+                    revision, reason
+                )
+            if revision != expected_capture_revision:
+                return CapturePurgeResult(
+                    CapturePurgeStatus.STALE,
+                    0,
+                    revision,
+                    "stale_capture_revision",
+                )
+            if not self.store.begin_capture_quiescence(session_id):
+                return CapturePurgeResult.blocked(revision, "purge_in_progress")
+            reason = self._capture_purge_blocker(session_id, include_lease=False)
+            if reason is not None:
+                self.store.end_capture_quiescence(session_id)
+                return CapturePurgeResult.blocked(revision, reason)
+        try:
+            stage = self.store.stage_full_capture_purge(session_id)
+            commit_task = asyncio.create_task(
+                self._run_durable_db_call(self.store.commit_full_capture_purge, stage)
+            )
+            cancelled = False
+            while not commit_task.done():
+                try:
+                    await asyncio.shield(commit_task)
+                except asyncio.CancelledError:
+                    cancelled = True
+            removed = commit_task.result()
+            if cancelled:
+                raise asyncio.CancelledError
+            return CapturePurgeResult.deleted(
+                removed, self.store.capture_revision(session_id)
+            )
+        except CapturePurgeStaleError:
+            return CapturePurgeResult(
+                CapturePurgeStatus.STALE,
+                0,
+                self.store.capture_revision(session_id),
+                "stale_capture_revision",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "capture_purge_failed (exception_type={})", type(exc).__name__
+            )
+            return CapturePurgeResult(
+                CapturePurgeStatus.FAILED,
+                0,
+                self.store.capture_revision(session_id),
+                "persistence_unavailable",
+            )
+        finally:
+            self.store.end_capture_quiescence(session_id)
 
     def set_next_capture_detail(
         self,
@@ -4972,13 +5111,25 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
 
+        owner_key = session_id or self.store.active_session_id
         if self._disposed or (
             self._shutdown_requested.is_set()
             and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         active_task = asyncio.current_task()
-        owner_key = session_id or self.store.active_session_id
+        with self._capture_quiescence_lock:
+            if owner_key is not None and self.store.capture_quiescent(owner_key):
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Stored captures are being updated; retry shortly.",
+                    session_id=owner_key,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
+            if active_task is not None:
+                self._register_submit_task(active_task, owner_key)
         if active_task is None:
             return await self._submit_draft_inner(
                 draft,
@@ -4990,7 +5141,6 @@ class ConsoleChatController:
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
             )
-        self._register_submit_task(active_task, owner_key)
         try:
             return await self._submit_draft_inner(
                 draft,
@@ -14985,7 +15135,20 @@ class ConsoleChatController:
         try:
             captures = list(stream_signals.exchange_captures())
             if captures:
-                self.store.attach_message_exchanges(assistant_message_id, captures)
+                session_id = self.store.session_id_for_message(assistant_message_id)
+                with self._capture_quiescence_lock:
+                    if self.store.capture_quiescent(session_id):
+                        captures = []
+                    else:
+                        self._capture_exchange_flush_sessions.add(session_id)
+                try:
+                    if captures:
+                        self.store.attach_message_exchanges(
+                            assistant_message_id, captures
+                        )
+                finally:
+                    with self._capture_quiescence_lock:
+                        self._capture_exchange_flush_sessions.discard(session_id)
         except Exception as exc:
             logger.bind(
                 message_id=assistant_message_id,

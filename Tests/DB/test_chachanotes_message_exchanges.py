@@ -126,6 +126,108 @@ def test_hard_delete_cascades(db):
     assert count == 0
 
 
+def test_full_exchange_purge_scopes_by_conversation_including_deleted_messages(db):
+    conversation_id = db.add_conversation({"title": "target"})
+    other_conversation_id = db.add_conversation({"title": "other"})
+    message_ids = [
+        db.add_message(
+            {"conversation_id": conversation_id, "sender": "assistant", "content": name}
+        )
+        for name in ("active", "off-path", "abandoned", "soft-deleted")
+    ]
+    other_message_id = db.add_message(
+        {
+            "conversation_id": other_conversation_id,
+            "sender": "assistant",
+            "content": "other",
+        }
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE messages SET deleted = 1, usage_json = ? WHERE id = ?",
+            ('{"total_tokens":7}', message_ids[-1]),
+        )
+
+    for index, message_id in enumerate((*message_ids, other_message_id)):
+        db.append_message_exchanges_local(
+            message_id,
+            [
+                {
+                    "run_tag": f"safe-{index}",
+                    "seq": 0,
+                    "status": "complete",
+                    "abandoned": index == 2,
+                    "capture_detail": "safe",
+                    "capture_blob": f"safe-{index}".encode(),
+                    "created_at": "t",
+                },
+                {
+                    "run_tag": f"full-{index}",
+                    "seq": 0,
+                    "status": "complete",
+                    "abandoned": index == 2,
+                    "capture_detail": "full",
+                    "capture_blob": f"full-{index}".encode(),
+                    "created_at": "t",
+                },
+            ],
+        )
+
+    assert db.list_full_exchange_keys_for_conversation(conversation_id) == {
+        (message_id, f"full-{index}", 0)
+        for index, message_id in enumerate(message_ids)
+    }
+    assert db.delete_full_exchanges_for_conversation(conversation_id) == 4
+
+    for index, message_id in enumerate(message_ids):
+        assert [row["run_tag"] for row in db.get_message_exchanges(message_id)] == [
+            f"safe-{index}"
+        ]
+    assert len(db.get_message_exchanges(other_message_id)) == 2
+    with db.transaction() as cursor:
+        row = cursor.execute(
+            "SELECT deleted, usage_json FROM messages WHERE id = ?", (message_ids[-1],)
+        ).fetchone()
+    assert tuple(row) == (1, '{"total_tokens":7}')
+
+
+def test_full_exchange_delete_rolls_back_atomically(db):
+    message_id = _seed_message(db)
+    rows = [
+        {
+            "run_tag": run_tag,
+            "seq": 0,
+            "status": "complete",
+            "abandoned": False,
+            "capture_detail": "full",
+            "capture_blob": blob,
+            "created_at": "t",
+        }
+        for run_tag, blob in (("first", b"one"), ("second", b"two"))
+    ]
+    db.append_message_exchanges_local(message_id, rows)
+    conversation_id = db.get_message_by_id(message_id)["conversation_id"]
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            CREATE TEMP TRIGGER fail_second_full_delete
+            BEFORE DELETE ON message_exchanges
+            WHEN OLD.run_tag = 'second'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected delete failure');
+            END
+            """
+        )
+
+    with pytest.raises(Exception, match="injected delete failure"):
+        db.delete_full_exchanges_for_conversation(conversation_id)
+
+    assert [
+        (row["run_tag"], row["capture_blob"])
+        for row in db.get_message_exchanges(message_id)
+    ] == [("first", b"one"), ("second", b"two")]
+
+
 def test_schema_version_is_at_least_43(db):
     # Mirrors the house sibling-version test pattern (a local `_version()`
     # helper against db_schema_version -- there is no public accessor).

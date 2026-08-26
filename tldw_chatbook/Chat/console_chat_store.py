@@ -704,6 +704,10 @@ class CapturePolicyStaleError(RuntimeError):
     """A capture-policy write lost its process-local revision race."""
 
 
+class CapturePurgeStaleError(RuntimeError):
+    """A staged capture purge lost its process-local revision race."""
+
+
 @dataclass(frozen=True, slots=True)
 class CapturePolicyState:
     """Process-local capture policy owned by one Console session."""
@@ -714,6 +718,22 @@ class CapturePolicyState:
     policy_revision: int
     capture_revision: int
     save_pending: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StagedCapturePurge:
+    """Precomputed live/cache replacements for one Full-capture purge."""
+
+    session_id: str
+    conversation_id: str | None
+    expected_revision: int
+    durable_keys: frozenset[tuple[str, str, int]]
+    message_swaps: tuple[tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]], ...]
+    blob_cache: dict[str, dict[tuple[str, int, str], bytes]]
+    abandoned_tags: dict[str, set[str]]
+    capture_revisions: Mapping[str, int]
+    session_revision_swaps: tuple[tuple[ConsoleChatSession, int], ...]
+    removed_live_count: int
 
 
 def _utc_now_iso() -> str:
@@ -1125,6 +1145,7 @@ class ConsoleChatStore:
         # disappears some OTHER way is not itself proof this cache's entry
         # for it goes away too.
         self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
+        self._capture_quiescent_sessions: set[str] = set()
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -4408,6 +4429,123 @@ class ConsoleChatStore:
                 capture_revision=session.capture_revision,
                 save_pending=session.capture_policy_save_pending,
             )
+
+    def capture_revision(self, session_id: str) -> int:
+        """Return the current Full-capture invalidation revision."""
+        return self._session_or_raise(session_id).capture_revision
+
+    def begin_capture_quiescence(self, session_id: str) -> bool:
+        """Block exchange attachment/flush for one live session."""
+        self._session_or_raise(session_id)
+        if session_id in self._capture_quiescent_sessions:
+            return False
+        self._capture_quiescent_sessions.add(session_id)
+        return True
+
+    def capture_quiescent(self, session_id: str) -> bool:
+        """Return whether one live session currently rejects capture writers."""
+        return session_id in self._capture_quiescent_sessions
+
+    def end_capture_quiescence(self, session_id: str) -> None:
+        """Release one session's exchange writer fence."""
+        self._capture_quiescent_sessions.discard(session_id)
+
+    def stage_full_capture_purge(self, session_id: str) -> StagedCapturePurge:
+        """Build every replacement needed after a durable Full-row delete."""
+        session = self._session_or_raise(session_id)
+        conversation_id = session.persisted_conversation_id
+        durable_keys: frozenset[tuple[str, str, int]] = frozenset()
+        if not session.ephemeral and conversation_id is not None:
+            reader = getattr(
+                self.persistence, "list_full_exchange_keys_for_conversation", None
+            )
+            if not callable(reader):
+                raise RuntimeError("Full capture inventory is unavailable.")
+            durable_keys = frozenset(reader(conversation_id))
+
+        seen: set[int] = set()
+        messages: list[ConsoleChatMessage] = []
+        for message in self._nodes_by_session.get(session_id, {}).values():
+            if id(message) not in seen:
+                seen.add(id(message))
+                messages.append(message)
+        for _owner, marker in self._tool_markers_by_session.get(session_id, ()):
+            if id(marker) not in seen:
+                seen.add(id(marker))
+                messages.append(marker)
+
+        message_swaps: list[
+            tuple[ConsoleChatMessage, tuple["ExchangeCapture", ...]]
+        ] = []
+        removed_live_count = 0
+        remaining_run_tags: dict[str, set[str]] = {}
+        for message in messages:
+            exchanges = tuple(
+                capture
+                for capture in message.exchanges
+                if capture.capture_detail is not CaptureDetail.FULL
+            )
+            removed_live_count += len(message.exchanges) - len(exchanges)
+            if exchanges != message.exchanges:
+                message_swaps.append((message, exchanges))
+            remaining_run_tags[message.id] = {capture.run_tag for capture in exchanges}
+
+        blob_cache = {
+            message_id: {
+                key: blob
+                for key, blob in cache.items()
+                if key[0] in remaining_run_tags.get(message_id, set())
+            }
+            for message_id, cache in self._exchange_blob_cache.items()
+        }
+        abandoned_tags = {
+            message_id: tags & remaining_run_tags.get(message_id, set())
+            for message_id, tags in self._abandoned_exchange_run_tags.items()
+        }
+        capture_revisions = {
+            candidate.id: (
+                candidate.capture_revision + 1
+                if candidate.id == session_id
+                else candidate.capture_revision
+            )
+            for candidate in self._sessions.values()
+        }
+        return StagedCapturePurge(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            expected_revision=session.capture_revision,
+            durable_keys=durable_keys,
+            message_swaps=tuple(message_swaps),
+            blob_cache=blob_cache,
+            abandoned_tags=abandoned_tags,
+            capture_revisions=capture_revisions,
+            session_revision_swaps=tuple(
+                (candidate, capture_revisions[candidate.id])
+                for candidate in self._sessions.values()
+            ),
+            removed_live_count=removed_live_count,
+        )
+
+    def commit_full_capture_purge(self, stage: StagedCapturePurge) -> int:
+        """Delete durable Full rows, then publish only staged assignments."""
+        session = self._session_or_raise(stage.session_id)
+        if session.capture_revision != stage.expected_revision:
+            raise CapturePurgeStaleError()
+        removed = stage.removed_live_count
+        if not session.ephemeral and stage.conversation_id is not None:
+            deleter = getattr(
+                self.persistence, "delete_full_exchanges_for_conversation", None
+            )
+            if not callable(deleter):
+                raise RuntimeError("Full capture deletion is unavailable.")
+            removed = deleter(stage.conversation_id)
+        self._exchange_blob_cache = stage.blob_cache
+        self._abandoned_exchange_run_tags = stage.abandoned_tags
+        for message, exchanges in stage.message_swaps:
+            message.exchanges = exchanges
+        for target_session, revision in stage.session_revision_swaps:
+            target_session.capture_revision = revision
+        return removed
 
     def hydrate_session_capture_policy(self, session_id: str) -> CapturePolicyState:
         """Hydrate a persisted conversation override into process-local state."""
@@ -8135,6 +8273,8 @@ class ConsoleChatStore:
         harmless.
         """
         message = self._message_or_raise(message_id)
+        if self._message_session_index[message_id] in self._capture_quiescent_sessions:
+            return
         abandoned = message.id in self._variant_restored_message_ids
         merged = {(c.run_tag, c.seq): c for c in message.exchanges}
         for capture in captures:
@@ -9758,6 +9898,9 @@ class ConsoleChatStore:
         or nothing to write bails out silently rather than falling back to
         ``_persist_existing_message``.
         """
+        session_id = self._message_session_index.get(message.id)
+        if session_id in self._capture_quiescent_sessions:
+            return
         if self.persistence is None:
             return
         if message.persisted_message_id is None or not message.exchanges:

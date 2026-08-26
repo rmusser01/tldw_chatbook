@@ -12522,6 +12522,51 @@ UPDATE db_schema_version
                 f"Database error reading message exchanges: {e}"
             ) from e
 
+    def list_full_exchange_keys_for_conversation(
+        self, conversation_id: str
+    ) -> set[tuple[str, str, int]]:
+        """Return every Full exchange key owned by one conversation."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    SELECT exchange.message_id, exchange.run_tag, exchange.seq
+                      FROM message_exchanges AS exchange
+                      JOIN messages AS message ON message.id = exchange.message_id
+                     WHERE message.conversation_id = ?
+                       AND exchange.capture_detail = 'full'
+                    """,
+                    (conversation_id,),
+                )
+                return {
+                    (str(message_id), str(run_tag), int(seq))
+                    for message_id, run_tag, seq in cursor.fetchall()
+                }
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(
+                f"Database error reading Full exchange keys: {e}"
+            ) from e
+
+    def delete_full_exchanges_for_conversation(self, conversation_id: str) -> int:
+        """Atomically delete Full exchanges by immutable conversation id."""
+        try:
+            with self.transaction(immediate=True) as cursor:
+                result = cursor.execute(
+                    """
+                    DELETE FROM message_exchanges
+                     WHERE capture_detail = 'full'
+                       AND message_id IN (
+                           SELECT id FROM messages WHERE conversation_id = ?
+                       )
+                    """,
+                    (conversation_id,),
+                )
+                return int(result.rowcount)
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(
+                f"Database error deleting Full exchanges: {e}"
+            ) from e
+
     def get_next_trajectory_seq(self, conversation_id: str) -> int:
         """Return the next trajectory seq for a conversation (max(seq) + 1).
 

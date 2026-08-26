@@ -7410,6 +7410,21 @@ class ChatScreen(BaseAppScreen):
         rows, totals, turns, exchanges_loader = (
             self._build_console_inspector_cost_data()
         )
+        controller = self._ensure_console_chat_controller()
+        target_session_id = controller.store.active_session_id
+        target_session = next(
+            (
+                session
+                for session in controller.store.sessions()
+                if session.id == target_session_id
+            ),
+            None,
+        )
+        target_conversation_id = (
+            target_session.persisted_conversation_id
+            if target_session is not None
+            else None
+        )
         self.app.push_screen(
             ConsoleConversationInspector(
                 rows=rows,
@@ -7426,6 +7441,17 @@ class ChatScreen(BaseAppScreen):
                 project_instruction_state_factory=project_instruction_state_factory,
                 project_instruction_session_id=project_instruction_session_id,
                 project_instruction_recovery=project_instruction_recovery,
+                target_session_id=target_session_id,
+                target_conversation_id=target_conversation_id,
+                capture_revision_provider=(
+                    (
+                        lambda session_id=target_session_id: controller.capture_revision(
+                            session_id
+                        )
+                    )
+                    if target_session_id is not None
+                    else None
+                ),
             )
         )
 
