@@ -57,8 +57,9 @@ methods below the immutable 17,727 / 593 ceilings.
 
 The final delivery bases after `794ae11521` changed only the repository diagnostic
 inventory (`b53169e1f1`) and citation provenance in the Console chat controller/store
-(`3daa56bf4f`) in this scope; the screen counts, ownership classification, and
-ratchets above remain the final delivery evidence.
+(`3daa56bf4f`), followed by an unrelated backlog task record (`65cf855371`), in
+this scope; the screen counts, ownership classification, and ratchets above remain
+the final delivery evidence.
 
 ## Goals
 
