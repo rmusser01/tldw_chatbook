@@ -172,6 +172,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     tagged_memory_message,
     tagged_visual_memory_message,
@@ -313,6 +314,12 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderThinkingDelta,
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingEnvelope,
+    ThinkingHistoryPolicy,
+    normalize_thinking_history_policy,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
@@ -940,6 +947,15 @@ def _flatten_preflight_messages(
     for message in semantic.flattened_messages():
         row = dict(message)
         owner_id = row.pop(CONTINUATION_OWNER_KEY, None)
+        thinking_owner_id = row.pop(THINKING_OWNER_KEY, None)
+        if (
+            type(owner_id) is str
+            and type(thinking_owner_id) is str
+            and owner_id != thinking_owner_id
+        ):
+            raise ValueError("Provider history owner markers disagree.")
+        if type(owner_id) is not str:
+            owner_id = thinking_owner_id
         if type(owner_id) is str:
             row[NATIVE_MESSAGE_ID_KEY] = owner_id
         flattened.append(row)
@@ -4070,8 +4086,7 @@ class ConsoleChatController:
             return "A run is already running in this tab."
         if self.store.dispatch_recovery_blocks_submission(session_id):
             return (
-                "Finish or discard the pending response before sending another "
-                "message."
+                "Finish or discard the pending response before sending another message."
             )
         busy_ids = self._live_busy_session_ids()
         if len(busy_ids) < self.max_parallel_runs:
@@ -11500,6 +11515,11 @@ class ConsoleChatController:
         """
         chunks: list[str] = []
         async for chunk in self.provider_gateway.stream_chat(resolution, messages):
+            if isinstance(
+                chunk,
+                (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
+            ):
+                continue
             if isinstance(chunk, str) and chunk:
                 chunks.append(chunk)
         return "".join(chunks)
@@ -14195,6 +14215,8 @@ class ConsoleChatController:
         manual_action: bool = False,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Revalidate memory and optionally run one automatic summary call."""
 
@@ -14266,6 +14288,9 @@ class ConsoleChatController:
             continuation_owner_key=(
                 NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
             ),
+            thinking_sidecar=thinking_sidecar,
+            thinking_policy=thinking_policy,
+            thinking_owner_key=(NATIVE_MESSAGE_ID_KEY if thinking_sidecar else None),
         )
         semantic = prepared_before.semantic
         if memory_rows:
@@ -14532,8 +14557,17 @@ class ConsoleChatController:
                             mandatory=planned.plan.remaining_semantic.mandatory,
                             compactable=planned.plan.remaining_semantic.compactable,
                             active_request=planned.plan.remaining_semantic.active_request,
+                            active_thinking_groups=(
+                                planned.plan.remaining_semantic.active_thinking_groups
+                            ),
                             active_continuation_groups=(
                                 planned.plan.remaining_semantic.active_continuation_groups
+                            ),
+                            thinking_policy=(
+                                planned.plan.remaining_semantic.thinking_policy
+                            ),
+                            effective_thinking_policy=(
+                                planned.plan.remaining_semantic.effective_thinking_policy
                             ),
                             tools=planned.plan.remaining_semantic.tools,
                         )
@@ -14559,8 +14593,15 @@ class ConsoleChatController:
                 mandatory=planned.plan.remaining_semantic.mandatory,
                 compactable=planned.plan.remaining_semantic.compactable,
                 active_request=planned.plan.remaining_semantic.active_request,
+                active_thinking_groups=(
+                    planned.plan.remaining_semantic.active_thinking_groups
+                ),
                 active_continuation_groups=(
                     planned.plan.remaining_semantic.active_continuation_groups
+                ),
+                thinking_policy=planned.plan.remaining_semantic.thinking_policy,
+                effective_thinking_policy=(
+                    planned.plan.remaining_semantic.effective_thinking_policy
                 ),
                 tools=planned.plan.remaining_semantic.tools,
             )
@@ -14668,6 +14709,10 @@ class ConsoleChatController:
                 assistant_message_id=assistant_message_id,
                 visible_copy=PROVIDER_CONTINUATION_RECOVERY_REQUIRED,
             )
+        thinking_sidecar = self._provider_thinking_sidecar_for_session(owner_id)
+        thinking_policy = normalize_thinking_history_policy(
+            owner.thinking_history_policy if owner is not None else None
+        )
         # A character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
@@ -14737,8 +14782,8 @@ class ConsoleChatController:
         character_emote_snapshot: CharacterEmoteRunSnapshot | None = None
         if force_plain:
             try:
-                character_emote_snapshot = (
-                    await self._character_emote_snapshot_for_run(owner_id)
+                character_emote_snapshot = await self._character_emote_snapshot_for_run(
+                    owner_id
                 )
             except _CharacterEmoteAuthorityChanged:
                 return self._block_context_preflight(
@@ -14780,6 +14825,8 @@ class ConsoleChatController:
                 ),
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
+                thinking_sidecar=thinking_sidecar,
+                thinking_policy=thinking_policy,
             )
             if context_block is not None:
                 return context_block
@@ -14831,7 +14878,12 @@ class ConsoleChatController:
             for item in continuation_sidecar
             if item.owner_message_id in selected_owner_ids
         )
-        if not continuation_sidecar:
+        thinking_sidecar = tuple(
+            item
+            for item in thinking_sidecar
+            if item.owner_message_id in selected_owner_ids
+        )
+        if not continuation_sidecar and not thinking_sidecar:
             provider_messages = [
                 {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
                 for row in provider_messages
@@ -14901,6 +14953,8 @@ class ConsoleChatController:
                     turn_context=turn_context,
                     continuation_sidecar=continuation_sidecar,
                     continuation_history_target=continuation_target,
+                    thinking_sidecar=thinking_sidecar,
+                    thinking_policy=thinking_policy,
                     preparation_id=preparation_id,
                     generation_token=generation_token,
                 )
@@ -14917,6 +14971,8 @@ class ConsoleChatController:
                 stream_signals=stream_signals,
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
+                thinking_sidecar=thinking_sidecar,
+                thinking_policy=thinking_policy,
                 character_emote_snapshot=character_emote_snapshot,
                 preparation_id=preparation_id,
                 generation_token=generation_token,
@@ -15462,6 +15518,8 @@ class ConsoleChatController:
         stream_signals: ConsoleProviderStreamSignals | None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
         character_emote_snapshot: CharacterEmoteRunSnapshot | None = None,
         preparation_id: str | None = None,
         generation_token: int | None = None,
@@ -15497,6 +15555,11 @@ class ConsoleChatController:
                 continuation_sidecar=continuation_sidecar,
                 continuation_owner_key=(
                     NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+                ),
+                thinking_sidecar=thinking_sidecar,
+                thinking_policy=thinking_policy,
+                thinking_owner_key=(
+                    NATIVE_MESSAGE_ID_KEY if thinking_sidecar else None
                 ),
             )
             dropped_messages = int(
@@ -15540,9 +15603,7 @@ class ConsoleChatController:
             may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
         )
         if generation_token is None:
-            generation_token = self.store.begin_generation_attempt(
-                assistant_message_id
-            )
+            generation_token = self.store.begin_generation_attempt(assistant_message_id)
         if variant_mode:
             self.store.begin_variant_stream(
                 assistant_message_id,
@@ -16132,6 +16193,11 @@ class ConsoleChatController:
                 if cancellation_requested():
                     repaired_chunks.clear()
                     return commit_canceled()
+                if isinstance(
+                    chunk,
+                    (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
+                ):
+                    continue
                 if type(chunk) is not str:
                     repair_output_available = False
                     break
@@ -16200,6 +16266,8 @@ class ConsoleChatController:
         resume_provider_continuation: bool = False,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_history_target: ContinuationRestoreTarget | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
         preparation_id: str | None = None,
         generation_token: int | None = None,
     ) -> ConsoleSubmitResult:
@@ -16411,9 +16479,7 @@ class ConsoleChatController:
             session_id=session_id,
         )
         if generation_token is None:
-            generation_token = self.store.begin_generation_attempt(
-                assistant_message_id
-            )
+            generation_token = self.store.begin_generation_attempt(assistant_message_id)
         if variant_mode:
             self.store.begin_variant_stream(
                 assistant_message_id,
@@ -16662,6 +16728,11 @@ class ConsoleChatController:
                 continuation_target=continuation_history_target,
                 continuation_owner_key=(
                     NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+                ),
+                thinking_sidecar=thinking_sidecar,
+                thinking_policy=thinking_policy,
+                thinking_owner_key=(
+                    NATIVE_MESSAGE_ID_KEY if thinking_sidecar else None
                 ),
                 generation_token=generation_token,
             )
@@ -17335,7 +17406,11 @@ class ConsoleChatController:
         """Return the character identity fence currently owning ``session_id``."""
 
         session = next(
-            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+            (
+                candidate
+                for candidate in self.store.sessions()
+                if candidate.id == session_id
+            ),
             None,
         )
         if session is None or session.assistant_kind != "character":
@@ -17685,6 +17760,20 @@ class ConsoleChatController:
             and isinstance(
                 message.provider_continuation, ProviderContinuationCheckpoint
             )
+        )
+
+    def _provider_thinking_sidecar_for_session(
+        self, session_id: str
+    ) -> tuple[ProviderThinkingSidecar, ...]:
+        """Capture supported thinking envelopes for active-path assistants."""
+
+        active_ids = set(self.store.active_path_message_ids(session_id))
+        return tuple(
+            ProviderThinkingSidecar(message.id, message.thinking)
+            for message in self.store.messages_for_session(session_id)
+            if message.id in active_ids
+            and message.role is ConsoleMessageRole.ASSISTANT
+            and isinstance(message.thinking, ThinkingEnvelope)
         )
 
     def _provider_continuation_history_for_resolution(

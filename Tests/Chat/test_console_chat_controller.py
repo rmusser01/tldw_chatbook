@@ -321,6 +321,37 @@ class ContinuationHistoryGateway(ConsoleProviderGateway):
         yield "ok"
 
 
+class ThinkingHistoryGateway(ContinuationHistoryGateway):
+    async def resolve_for_send(self, selection):
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            model="reasoner",
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+            max_tokens=10,
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="llama_cpp",
+                model="reasoner",
+                endpoint_identity="http://127.0.0.1:9099",
+                egress_class=ConsoleEgressClass.ON_DEVICE,
+            ),
+        )
+
+    def prepare_chat_request(self, resolution, messages, **kwargs):
+        self.prepare_kwargs = kwargs
+        return ConsoleProviderGateway.prepare_chat_request(
+            self,
+            resolution,
+            messages,
+            context_window_override_tokens=10_000,
+            **kwargs,
+        )
+
+
 class WipBlockedGateway:
     async def resolve_for_send(self, selection):
         return type(
@@ -4600,6 +4631,133 @@ async def test_controller_real_gateway_budgets_active_continuation_owner_atomica
     assert store.get_message(old_user.id).content == "old"
     assert store.get_message(owner.id).content == "old answer"
     assert source_snapshot[1].provider_continuation == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_controller_direct_replays_live_session_thinking_policy() -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    session.thinking_history_policy = "include"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old answer",
+    )
+    store._message_or_raise(owner.id).thinking = _terminal_thinking(
+        owner.id,
+        "complete",
+    )
+    gateway = ThinkingHistoryGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepare_kwargs["thinking_policy"] == "include"
+    assert gateway.prepare_kwargs["thinking_sidecar"][0].owner_message_id == owner.id
+    wire = repr(gateway.prepared.messages_payload)
+    assert wire.count("late serialized evidence") == 1
+
+
+@pytest.mark.asyncio
+async def test_controller_agent_replays_same_live_session_thinking_policy(
+    tmp_path,
+) -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    session.thinking_history_policy = "include"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old answer",
+    )
+    store._message_or_raise(owner.id).thinking = _terminal_thinking(
+        owner.id,
+        "complete",
+    )
+    gateway = ThinkingHistoryGateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "thinking-runs.db", client_id="task4"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepare_kwargs["thinking_policy"] == "include"
+    assert gateway.prepare_kwargs["thinking_sidecar"][0].owner_message_id == owner.id
+    wire = repr(gateway.prepared.messages_payload)
+    assert wire.count("late serialized evidence") == 1
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_summary_discards_typed_thinking_without_sidecars() -> None:
+    class AuxiliaryGateway(StreamingGateway):
+        def __init__(self):
+            self.kwargs = None
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.kwargs = kwargs
+            yield ProviderThinkingDelta(
+                text="AUXILIARY-THINKING-CANARY",
+                provider="llama_cpp",
+                model="reasoner",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+            )
+            yield "safe summary"
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="source",
+    )
+    gateway = AuxiliaryGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    summary = await controller._collect_summary_completion(
+        object(),
+        [{"role": "user", "content": "summarize"}],
+    )
+
+    assert summary == "safe summary"
+    assert "AUXILIARY-THINKING-CANARY" not in summary
+    assert gateway.kwargs == {}
+    assert store.get_message(message.id).thinking is None
+
+
+def test_controller_thinking_sidecars_exclude_opaque_application_copy() -> None:
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="visible answer",
+    )
+    store._message_or_raise(
+        owner.id
+    ).opaque_thinking_json = '{"private":"OPAQUE-THINKING-CANARY"}'
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    sidecars = controller._provider_thinking_sidecar_for_session(session.id)
+
+    assert sidecars == ()
+    assert "OPAQUE-THINKING-CANARY" not in repr(sidecars)
 
 
 @pytest.mark.asyncio

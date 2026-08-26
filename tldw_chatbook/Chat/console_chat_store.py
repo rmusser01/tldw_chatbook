@@ -142,9 +142,11 @@ from tldw_chatbook.Chat.message_metadata import (
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingHistoryPolicy,
     ThinkingEnvelope,
     ThinkingStatus,
     dump_thinking_blocks_json,
+    normalize_thinking_history_policy,
     read_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.trajectory import contains_local_path
@@ -858,6 +860,7 @@ class ConsoleChatSession:
     )
     #: Bounded persistence diagnostic for a corrupt/unreadable stored policy.
     context_policy_error: str | None = None
+    thinking_history_policy: ThinkingHistoryPolicy = "auto"
     library_policy_holder: ConsoleLibraryPolicyHolder = field(
         default_factory=_default_library_policy_holder
     )
@@ -919,6 +922,13 @@ class ConsoleChatSession:
     #: writing, which is the whole reason the guard lives at the id and not
     #: at the 43 sites that consult ``self.persistence``.
     ephemeral: bool = False
+
+    def __post_init__(self) -> None:
+        """Normalize nullable/legacy optional thinking replay preference."""
+
+        self.thinking_history_policy = normalize_thinking_history_policy(
+            self.thinking_history_policy
+        )
 
     def local_character_id(self) -> int | None:
         """Return the exact validated local character projection, if any."""
@@ -1382,6 +1392,7 @@ class ConsoleChatStore:
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
+        thinking_history_policy: object = None,
         runtime_backend: str = "local",
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
@@ -1437,6 +1448,9 @@ class ConsoleChatStore:
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
             settings=settings,
             canonical_settings_baseline=canonical_settings_baseline,
+            thinking_history_policy=normalize_thinking_history_policy(
+                thinking_history_policy
+            ),
             runtime_backend=runtime_backend,
             assistant_kind=assistant_kind,
             assistant_id=assistant_id,
@@ -1827,6 +1841,9 @@ class ConsoleChatStore:
             character_id=character_id,
             character_name=character_name,
             project_instruction_state=project_instruction_state,
+            thinking_history_policy=self._durable_thinking_history_policy(
+                str(persisted_conversation_id)
+            ),
             activate=activate,
         )
         try:
@@ -1881,6 +1898,26 @@ class ConsoleChatStore:
                 prior_active_session_id=prior_active_session_id,
             )
             raise
+
+    def _durable_thinking_history_policy(
+        self,
+        conversation_id: str,
+    ) -> ThinkingHistoryPolicy:
+        """Read one normalized conversation-owned replay preference."""
+
+        persistence = self.persistence
+        if persistence is None or persistence.db is None:
+            return "auto"
+        try:
+            conversation = persistence.db.get_conversation_by_id(conversation_id)
+        except Exception:
+            logger.warning("thinking_history_policy_read_failed")
+            return "auto"
+        if not isinstance(conversation, Mapping):
+            return "auto"
+        return normalize_thinking_history_policy(
+            conversation.get("thinking_history_policy")
+        )
 
     def _hydrate_dispatch_recovery(
         self,
@@ -3916,6 +3953,7 @@ class ConsoleChatStore:
                         if session.settings is not None
                         else None
                     ),
+                    "thinking_history_policy": session.thinking_history_policy,
                     "runtime_backend": session.runtime_backend,
                     "assistant_kind": session.assistant_kind,
                     "assistant_id": session.assistant_id,
@@ -9995,6 +10033,7 @@ class ConsoleChatStore:
             system_prompt=session.settings.system_prompt
             if session.settings is not None
             else None,
+            thinking_history_policy=session.thinking_history_policy,
             **identity_kwargs,
         )
         if session.speech_preferences != ConsoleSpeechPreferences():
@@ -10331,6 +10370,7 @@ class ConsoleChatStore:
             "system_prompt": (
                 session.settings.system_prompt if session.settings is not None else None
             ),
+            "thinking_history_policy": session.thinking_history_policy,
             "runtime_backend": session.runtime_backend,
             "assistant_kind": session.assistant_kind,
             "assistant_id": session.assistant_id,

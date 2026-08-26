@@ -52,13 +52,20 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 )
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     PreparedProviderRequest,
     WireStyle,
+    attach_thinking_history,
     build_console_request,
     prepare_provider_request,
     resolve_request_capacity,
     thaw_json,
+)
+from tldw_chatbook.Chat.console_thinking_history import (
+    ProviderThinkingSidecar,
+    ThinkingReplayTarget,
+    resolve_thinking_history,
 )
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
@@ -81,6 +88,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     MAX_THINKING_PROVENANCE_CHARS,
     MAX_THINKING_TEXT_BYTES,
     THINKING_ENVELOPE_VERSION,
+    ThinkingHistoryPolicy,
 )
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -1680,6 +1688,9 @@ class ConsoleProviderGateway:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy | None = None,
+        thinking_owner_key: str | None = None,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -1691,10 +1702,13 @@ class ConsoleProviderGateway:
         if isinstance(messages, PreparedConsoleRequest) and tools is not None:
             raise ValueError("tools are already owned by PreparedConsoleRequest")
         sidecar = tuple(continuation_sidecar)
+        thinking_sidecars = tuple(thinking_sidecar)
         if sidecar and (continuation_target is None or not continuation_owner_key):
             raise ValueError(
                 "continuation target and owner key are required for private history"
             )
+        if thinking_sidecars and not thinking_owner_key:
+            raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None and (
             continuation_target.provider,
             continuation_target.model,
@@ -1731,44 +1745,129 @@ class ConsoleProviderGateway:
             if continuation_target is not None:
                 for group in continuation_groups:
                     validate_continuation_restore(group.checkpoint, continuation_target)
-            semantic = messages
-        elif not sidecar:
+            semantic = (
+                replace(messages, effective_thinking_policy="required")
+                if continuation_groups
+                and messages.effective_thinking_policy != "required"
+                else messages
+            )
+            if thinking_sidecars:
+                assert thinking_owner_key is not None
+                selected_thinking_owner_ids = {
+                    message.get(thinking_owner_key)
+                    for message in semantic.flattened_messages()
+                    if type(message.get(thinking_owner_key)) is str
+                }
+                thinking = resolve_thinking_history(
+                    target=ThinkingReplayTarget(
+                        provider=resolution.execution_key or resolution.provider,
+                        model=resolution.model or "",
+                        protocol=_thinking_protocol(resolution),
+                        disposition=resolution.thinking_stream_disposition,
+                        round_trip_version=resolution.thinking_round_trip_version,
+                    ),
+                    policy=thinking_policy,
+                    sidecars=tuple(
+                        item
+                        for item in thinking_sidecars
+                        if item.owner_message_id in selected_thinking_owner_ids
+                    ),
+                    continuation_required=bool(continuation_groups),
+                )
+                semantic = attach_thinking_history(
+                    semantic,
+                    groups=thinking.groups,
+                    owner_key=thinking_owner_key,
+                    thinking_policy=thinking.saved_policy,
+                    effective_thinking_policy=thinking.effective_policy,
+                )
+        elif not sidecar and not thinking_sidecars:
             if any("provider_continuation" in message for message in messages):
                 raise ValueError(
                     "continuation_target is required for provider continuation history"
                 )
             semantic = build_console_request(messages, tools=tools or ())
         else:
-            assert continuation_target is not None
-            assert continuation_owner_key is not None
-            selected_owner_ids = {
-                message.get(continuation_owner_key)
+            continuation_groups = ()
+            if sidecar:
+                assert continuation_target is not None
+                assert continuation_owner_key is not None
+                selected_owner_ids = {
+                    message.get(continuation_owner_key)
+                    for message in messages
+                    if not is_deleted_history_value(message.get("deleted"))
+                    and type(message.get(continuation_owner_key)) is str
+                }
+                continuation_groups = provider_continuation_owner_groups(
+                    tuple(
+                        item
+                        for item in sidecar
+                        if item.owner_message_id in selected_owner_ids
+                    ),
+                    target=continuation_target,
+                )
+            selected_thinking_owner_ids = {
+                message.get(thinking_owner_key)
                 for message in messages
-                if not is_deleted_history_value(message.get("deleted"))
-                and type(message.get(continuation_owner_key)) is str
+                if thinking_owner_key is not None
+                and not is_deleted_history_value(message.get("deleted"))
+                and type(message.get(thinking_owner_key)) is str
             }
-            selected_sidecar = tuple(
-                item for item in sidecar if item.owner_message_id in selected_owner_ids
+            thinking = resolve_thinking_history(
+                target=ThinkingReplayTarget(
+                    provider=resolution.execution_key or resolution.provider,
+                    model=resolution.model or "",
+                    protocol=_thinking_protocol(resolution),
+                    disposition=resolution.thinking_stream_disposition,
+                    round_trip_version=resolution.thinking_round_trip_version,
+                ),
+                policy=thinking_policy,
+                sidecars=tuple(
+                    item
+                    for item in thinking_sidecars
+                    if item.owner_message_id in selected_thinking_owner_ids
+                ),
+                continuation_required=bool(continuation_groups),
             )
-            continuation_groups = provider_continuation_owner_groups(
-                selected_sidecar, target=continuation_target
-            )
-            owner_ids = {group.owner_message_id for group in continuation_groups}
+            continuation_owner_ids = {
+                group.owner_message_id for group in continuation_groups
+            }
+            thinking_owner_ids = {group.owner_message_id for group in thinking.groups}
             visible_messages: list[dict[str, Any]] = []
             for message in messages:
                 if is_deleted_history_value(message.get("deleted")):
                     continue
                 row = dict(message)
-                owner_id = row.pop(continuation_owner_key, None)
+                continuation_owner_id = (
+                    row.pop(continuation_owner_key, None)
+                    if continuation_owner_key is not None
+                    else None
+                )
+                thinking_owner_id = (
+                    row.pop(thinking_owner_key, None)
+                    if thinking_owner_key is not None
+                    else None
+                )
                 row.pop("provider_continuation", None)
                 row.pop("deleted", None)
-                if type(owner_id) is str and owner_id in owner_ids:
-                    row[CONTINUATION_OWNER_KEY] = owner_id
+                if (
+                    type(continuation_owner_id) is str
+                    and continuation_owner_id in continuation_owner_ids
+                ):
+                    row[CONTINUATION_OWNER_KEY] = continuation_owner_id
+                if (
+                    type(thinking_owner_id) is str
+                    and thinking_owner_id in thinking_owner_ids
+                ):
+                    row[THINKING_OWNER_KEY] = thinking_owner_id
                 visible_messages.append(row)
             semantic = build_console_request(
                 visible_messages,
                 tools=tools or (),
                 continuation_groups=continuation_groups,
+                thinking_groups=thinking.groups,
+                thinking_policy=thinking.saved_policy,
+                effective_thinking_policy=thinking.effective_policy,
             )
 
         capabilities: Mapping[str, Any] = {}

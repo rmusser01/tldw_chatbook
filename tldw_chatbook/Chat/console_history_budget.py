@@ -166,9 +166,7 @@ def count_console_messages_tokens(
             )
             entry = {
                 **message,
-                "content": " ".join(
-                    t for t in texts if isinstance(t, str) and t
-                ),
+                "content": " ".join(t for t in texts if isinstance(t, str) and t),
             }
         else:
             entry = message
@@ -447,12 +445,16 @@ def bound_messages_to_window(
 
     def assemble(drop: int) -> list[dict[str, Any]]:
         removed = set(droppable[:drop])
-        return system_prefix + [
-            message
-            for index, turn in enumerate(kept_turns)
-            if index not in removed
-            for message in turn
-        ] + current_turn
+        return (
+            system_prefix
+            + [
+                message
+                for index, turn in enumerate(kept_turns)
+                if index not in removed
+                for message in turn
+            ]
+            + current_turn
+        )
 
     # Drop oldest whole turns until the payload fits. The token count is
     # monotonically non-increasing as more turns drop (each turn contributes

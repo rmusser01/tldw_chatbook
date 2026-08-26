@@ -140,6 +140,8 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
+from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
@@ -390,9 +392,7 @@ def console_run_budget() -> RunBudget:
     except Exception:  # noqa: BLE001 -- config import must never break a run
         return DEFAULT_CONSOLE_RUN_BUDGET
 
-    def _int(
-        key: str, default: int, minimum: int, maximum: int | None = None
-    ) -> int:
+    def _int(key: str, default: int, minimum: int, maximum: int | None = None) -> int:
         try:
             raw = get_cli_setting("console", key, default)
         except Exception:  # noqa: BLE001
@@ -2211,6 +2211,9 @@ class _StreamingModelAdapter:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        thinking_owner_key: str | None = None,
         thinking_capture: ThinkingCapture | None = None,
         generation_token: int | None = None,
     ):
@@ -2225,6 +2228,9 @@ class _StreamingModelAdapter:
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
         self._continuation_owner_key = continuation_owner_key
+        self._thinking_sidecar = tuple(thinking_sidecar)
+        self._thinking_policy = thinking_policy
+        self._thinking_owner_key = thinking_owner_key
         self._thinking_capture = thinking_capture or ThinkingCapture(
             assistant_owner_id=assistant_message_id
         )
@@ -2382,9 +2388,14 @@ class _StreamingModelAdapter:
                 semantic_messages: list[dict[str, Any]] = []
                 for message in transport_messages:
                     row = dict(message)
-                    owner_id = row.pop(self._continuation_owner_key, None)
+                    owner_id = row.get(self._continuation_owner_key)
                     if type(owner_id) is str and owner_id in owner_ids:
                         row[CONTINUATION_OWNER_KEY] = owner_id
+                    if (
+                        not self._thinking_sidecar
+                        or self._thinking_owner_key != self._continuation_owner_key
+                    ):
+                        row.pop(self._continuation_owner_key, None)
                     semantic_messages.append(row)
                 dispatch_messages = prepare_request(
                     self._resolution,
@@ -2394,9 +2405,14 @@ class _StreamingModelAdapter:
                         continuation_groups=continuation_groups,
                     ),
                     continuation_target=self._continuation_target,
+                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_policy=self._thinking_policy,
+                    thinking_owner_key=self._thinking_owner_key,
                 )
                 stream_kwargs.pop("tools", None)
-            elif self._continuation_sidecar and callable(prepare_request):
+            elif (self._continuation_sidecar or self._thinking_sidecar) and callable(
+                prepare_request
+            ):
                 dispatch_messages = prepare_request(
                     self._resolution,
                     transport_messages,
@@ -2404,6 +2420,9 @@ class _StreamingModelAdapter:
                     continuation_target=self._continuation_target,
                     continuation_sidecar=self._continuation_sidecar,
                     continuation_owner_key=self._continuation_owner_key,
+                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_policy=self._thinking_policy,
+                    thinking_owner_key=self._thinking_owner_key,
                 )
                 stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
@@ -3697,6 +3716,9 @@ class ConsoleAgentBridge:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        thinking_owner_key: str | None = None,
         generation_token: int | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
@@ -4082,9 +4104,7 @@ class ConsoleAgentBridge:
                                     skill_name,
                                     script_path,
                                     list(args),
-                                    output_root=(
-                                        scratch_root / "skill_script_output"
-                                    ),
+                                    output_root=(scratch_root / "skill_script_output"),
                                 )
                             )
                     else:
@@ -4181,6 +4201,9 @@ class ConsoleAgentBridge:
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
             continuation_owner_key=continuation_owner_key,
+            thinking_sidecar=thinking_sidecar,
+            thinking_policy=thinking_policy,
+            thinking_owner_key=thinking_owner_key,
             thinking_capture=thinking_capture,
             generation_token=generation_token,
         )
@@ -5959,7 +5982,9 @@ class ConsoleAgentBridge:
             return False
         try:
             access_scope = (
-                authority.access_scope if authority is not None else contextlib.nullcontext
+                authority.access_scope
+                if authority is not None
+                else contextlib.nullcontext
             )
             with access_scope():
                 log_dir = resolve_existing_log_dir(
@@ -5972,9 +5997,7 @@ class ConsoleAgentBridge:
                     return True
                 from tldw_chatbook.Agents.run_log_search import load_records
 
-                return any(
-                    record.run_id == run_id for record in load_records(log_dir)
-                )
+                return any(record.run_id == run_id for record in load_records(log_dir))
         except Exception:  # noqa: BLE001 -- stale authority fails closed
             return False
 
@@ -6028,7 +6051,9 @@ class ConsoleAgentBridge:
             return ""
         try:
             access_scope = (
-                authority.access_scope if authority is not None else contextlib.nullcontext
+                authority.access_scope
+                if authority is not None
+                else contextlib.nullcontext
             )
             with access_scope():
                 log_dir = resolve_existing_log_dir(

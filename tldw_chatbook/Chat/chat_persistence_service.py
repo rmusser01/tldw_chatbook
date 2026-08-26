@@ -254,6 +254,7 @@ class ChatPersistenceService:
         system_prompt: Optional[str] = None,
         metadata: Mapping[str, object] | str | None = None,
         speech_preferences: ConsoleSpeechPreferences | None = None,
+        thinking_history_policy: str | None = None,
     ) -> str:
         """Create a conversation after validating any workspace authority.
 
@@ -285,6 +286,8 @@ class ChatPersistenceService:
                 string. Malformed or non-object values are rejected before creation.
             speech_preferences: Optional staged Console reply-speech preferences
                 to include in the conversation metadata before returning.
+            thinking_history_policy: Optional normalized conversation replay
+                preference. Null and missing values retain legacy Auto behavior.
 
         Returns:
             Persisted conversation ID.
@@ -318,6 +321,7 @@ class ChatPersistenceService:
             else workspace_id,
             "title": title,
             "system_prompt": system_prompt,
+            "thinking_history_policy": thinking_history_policy,
             "client_id": self.db.client_id,
         }
         if conversation_id is not None:

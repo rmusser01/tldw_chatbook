@@ -183,6 +183,7 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     default_console_session_settings,
 )
+from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from ...Chat.provider_readiness import provider_config_key
@@ -3253,6 +3254,7 @@ class ConsoleSessionController:
                 )
             ),
             "context_policy_overrides": session.context_policy_overrides.to_dict(),
+            "thinking_history_policy": session.thinking_history_policy,
             "updated_at": session.updated_at,
             "runtime_backend": session.runtime_backend,
             "assistant_kind": session.assistant_kind,
@@ -3315,6 +3317,9 @@ class ConsoleSessionController:
             has_user_work=(
                 raw_session.get("has_user_work") is True
                 or bool(raw_session.get("draft"))
+            ),
+            thinking_history_policy=normalize_thinking_history_policy(
+                raw_session.get("thinking_history_policy")
             ),
         )
         todo_store = SessionTodoStore()

@@ -12,9 +12,11 @@ from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
 
 def _conversation_count(db: CharactersRAGDB) -> int:
-    row = db.get_connection().execute(
-        "SELECT COUNT(*) FROM conversations WHERE deleted = 0"
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM conversations WHERE deleted = 0")
+        .fetchone()
+    )
     return int(row[0])
 
 
@@ -74,9 +76,7 @@ def test_policy_survives_close_resume_restart_without_cross_conversation_leak(
     first_db.close_connection()
 
     reopened_db = CharactersRAGDB(path, client_id="reopened")
-    reopened_store = ConsoleChatStore(
-        persistence=ChatPersistenceService(reopened_db)
-    )
+    reopened_store = ConsoleChatStore(persistence=ChatPersistenceService(reopened_db))
     restored_customized = reopened_store.restore_persisted_session(
         title="Customized",
         workspace_id=None,
@@ -132,3 +132,69 @@ def test_corrupt_screen_policy_is_bounded_and_does_not_block_restore() -> None:
     assert restored.title == "Saved"
     assert restored.context_policy_overrides.is_empty
     assert restored.context_policy_error == "invalid_screen_context_policy"
+
+
+def test_temporary_session_normalizes_thinking_history_policy() -> None:
+    store = ConsoleChatStore()
+
+    legacy = store.create_session(ephemeral=True)
+    included = store.create_session(
+        ephemeral=True,
+        thinking_history_policy="include",
+    )
+    invalid = store.create_session(
+        ephemeral=True,
+        thinking_history_policy="required",
+    )
+
+    assert legacy.thinking_history_policy == "auto"
+    assert included.thinking_history_policy == "include"
+    assert invalid.thinking_history_policy == "auto"
+
+
+def test_thinking_history_policy_survives_durable_hydration(tmp_path) -> None:
+    path = tmp_path / "thinking-policy.db"
+    first_db = CharactersRAGDB(path, client_id="first")
+    first_store = ConsoleChatStore(
+        persistence=ChatPersistenceService(first_db),
+    )
+    original = first_store.create_session(
+        title="Thinking policy",
+        thinking_history_policy="exclude",
+    )
+
+    conversation_id = first_store.persist_session_if_needed(original.id)
+
+    assert conversation_id is not None
+    assert (
+        first_db.get_conversation_by_id(conversation_id)["thinking_history_policy"]
+        == "exclude"
+    )
+    first_db.close_connection()
+
+    reopened_db = CharactersRAGDB(path, client_id="reopened")
+    reopened_store = ConsoleChatStore(
+        persistence=ChatPersistenceService(reopened_db),
+    )
+    restored = reopened_store.restore_persisted_session(
+        title="Thinking policy",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=[],
+    )
+
+    assert restored.thinking_history_policy == "exclude"
+    reopened_db.close_connection()
+
+
+def test_screen_state_round_trip_preserves_thinking_history_policy() -> None:
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    original = ConsoleChatSession(thinking_history_policy="include")
+
+    payload = controller._console_session_to_state(original)
+    restored = controller._console_session_from_state(payload)
+    payload["thinking_history_policy"] = "required"
+    invalid = controller._console_session_from_state(payload)
+
+    assert restored.thinking_history_policy == "include"
+    assert invalid.thinking_history_policy == "auto"
