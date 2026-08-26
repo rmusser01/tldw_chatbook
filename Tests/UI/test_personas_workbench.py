@@ -4144,6 +4144,80 @@ class TestConversationsPanel:
             assert resume.disabled is False
             assert str(resume.label) == "Resume chat"
 
+    async def test_conversation_resume_single_flight_survives_browsing_away_and_back(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"},
+                {"id": "conv-2", "title": "Second case"},
+            ],
+        )
+        callbacks = []
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+
+            await pilot.click("#personas-conversation-row-conv-2")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert resume.disabled is False
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+            assert len(callbacks) == 1
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+
+    async def test_conversation_stale_same_target_fallback_keeps_new_attempt_busy(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        callbacks = []
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+            resume = screen.query_one("#personas-conversation-resume", Button)
+
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert len(callbacks) == 1
+            callbacks[0]()
+            assert resume.disabled is False
+            await pilot.pause()
+
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert len(callbacks) == 2
+            callbacks[0]()
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+            callbacks[1]()
+            assert resume.disabled is False
+            assert str(resume.label) == "Resume chat"
+
     async def test_conversation_resume_stale_row_stays_in_roleplay_with_exact_copy(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

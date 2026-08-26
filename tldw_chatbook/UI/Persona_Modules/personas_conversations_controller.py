@@ -65,7 +65,7 @@ class PersonasConversationsController:
         # handler can tell an in-flight load from a completed one.
         self._loaded_conversation_id: str | None = None
         self._failed_conversation_id: str | None = None
-        self._resume_in_flight_conversation_id: str | None = None
+        self._resume_in_flight_attempts: dict[str, object] = {}
 
     def reset(self) -> None:
         self._conversation_rows = {}
@@ -75,7 +75,7 @@ class PersonasConversationsController:
         self._open_conversation_truncated = False
         self._loaded_conversation_id = None
         self._failed_conversation_id = None
-        self._resume_in_flight_conversation_id = None
+        self._resume_in_flight_attempts = {}
 
     # ===== Listing =====
 
@@ -154,11 +154,7 @@ class PersonasConversationsController:
         self._loaded_conversation_id = None
         self._failed_conversation_id = None
         target_id = str(conversation_id).strip()
-        if self._resume_in_flight_conversation_id != target_id:
-            self._resume_in_flight_conversation_id = None
-        self._set_resume_button_busy(
-            self._resume_in_flight_conversation_id == target_id
-        )
+        self._set_resume_button_busy(target_id in self._resume_in_flight_attempts)
         try:
             view = screen.query_one(PersonasConversationTranscriptWidget)
             view.set_title(self._open_conversation_title or "Conversation")
@@ -329,9 +325,10 @@ class PersonasConversationsController:
                 "warning",
             )
             return
-        if self._resume_in_flight_conversation_id == target_id:
+        if target_id in self._resume_in_flight_attempts:
             return
-        self._resume_in_flight_conversation_id = target_id
+        attempt = object()
+        self._resume_in_flight_attempts[target_id] = attempt
         self._set_resume_button_busy(True)
         self.screen.post_message(
             NavigateToScreen(
@@ -340,7 +337,7 @@ class PersonasConversationsController:
             )
         )
         self.screen.set_timer(
-            1.0, partial(self._restore_resume_button, target_id)
+            1.0, partial(self._restore_resume_button, target_id, attempt)
         )
 
     def _set_resume_button_busy(self, busy: bool) -> None:
@@ -352,18 +349,18 @@ class PersonasConversationsController:
         button.disabled = busy
         button.label = "Opening Console…" if busy else "Resume chat"
 
-    def _restore_resume_button(self, target_id: str) -> None:
+    def _restore_resume_button(self, target_id: str, attempt: object) -> None:
         """Release the exact target when navigation leaves Roleplay mounted."""
         screen = self.screen
         if (
-            self._resume_in_flight_conversation_id != target_id
-            or str(self._open_conversation_id or "").strip() != target_id
+            self._resume_in_flight_attempts.get(target_id) is not attempt
             or not screen.is_mounted
             or screen.app.screen is not screen
         ):
             return
-        self._resume_in_flight_conversation_id = None
-        self._set_resume_button_busy(False)
+        del self._resume_in_flight_attempts[target_id]
+        if str(self._open_conversation_id or "").strip() == target_id:
+            self._set_resume_button_busy(False)
 
     def open_in_library(self) -> None:
         """Route the open conversation to Library.
