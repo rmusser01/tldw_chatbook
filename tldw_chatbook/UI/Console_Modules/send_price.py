@@ -1,11 +1,29 @@
-"""Pure formatting for Console's next-send price preview."""
+"""Coordination and formatting for Console's next-send price preview."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleNextSendHistoryProjection
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_cost_tracker import (
+    TokenEstimateCache,
+    token_estimate_signature,
+)
+from tldw_chatbook.Chat.console_display_state import console_prompted_evidence_text
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    _estimate_tokens_locally,
+)
 from tldw_chatbook.Chat.cost_display import format_cost_amount
-from tldw_chatbook.LLM_Calls.pricing_catalog import ModelPricing
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.LLM_Calls.pricing_catalog import (
+    ModelPricing,
+    PricingCatalog,
+    get_pricing_catalog,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +31,107 @@ class ConsoleNextSendPrice:
     """The fully rendered next-request price tooltip."""
 
     tooltip: str
+
+
+class ConsoleSendPriceController:
+    """Read-only coordinator for the next Console request price preview."""
+
+    def __init__(
+        self,
+        *,
+        settings_accessor: Callable[[], ConsoleSessionSettings],
+        chat_store_accessor: Callable[[], ConsoleChatStore | None],
+        provider_history_accessor: Callable[[str], ConsoleNextSendHistoryProjection],
+        pending_launch_accessor: Callable[[], ConsoleLiveWorkLaunch | None],
+        pricing_catalog_accessor: Callable[[], PricingCatalog] = get_pricing_catalog,
+        token_counter: Callable[
+            [list[dict[str, str]], str, str], int
+        ] = _estimate_tokens_locally,
+    ) -> None:
+        self._settings_accessor = settings_accessor
+        self._chat_store_accessor = chat_store_accessor
+        self._provider_history_accessor = provider_history_accessor
+        self._pending_launch_accessor = pending_launch_accessor
+        self._pricing_catalog_accessor = pricing_catalog_accessor
+        self._token_counter = token_counter
+        self._token_cache = TokenEstimateCache(max_entries=1)
+
+    def presentation_for_draft(self, draft_text: str) -> ConsoleNextSendPrice | None:
+        """Return a best-effort next-request estimate for the current draft."""
+        try:
+            settings = self._settings_accessor()
+            provider = settings.provider
+            model = settings.model or ""
+            normalized_provider = provider_config_key(provider)
+
+            store = self._chat_store_accessor()
+            session_id = store.active_session_id if store is not None else None
+            has_draft = bool(str(draft_text or "").strip())
+            if store is None or session_id is None:
+                return (
+                    ConsoleNextSendPrice("Next request: cost unavailable")
+                    if has_draft
+                    else None
+                )
+            try:
+                attachment_count = len(store.pending_attachments(session_id))
+                projection = self._provider_history_accessor(session_id)
+            except KeyError:
+                return (
+                    ConsoleNextSendPrice("Next request: cost unavailable")
+                    if has_draft
+                    else None
+                )
+
+            if not has_draft and attachment_count == 0:
+                return None
+
+            row_pairs = list(projection.rows)
+            if has_draft:
+                row_pairs.append(("user", draft_text))
+            staged_text = console_prompted_evidence_text(
+                self._pending_launch_accessor()
+            )
+            if staged_text.strip():
+                row_pairs.append(("user", staged_text))
+            counter_rows = [
+                {"role": role, "content": content} for role, content in row_pairs
+            ]
+            signature = token_estimate_signature(
+                row_pairs,
+                model,
+                normalized_provider,
+            )
+            try:
+                input_tokens = self._token_cache.estimate(
+                    session_id,
+                    signature,
+                    lambda: self._token_counter(
+                        counter_rows,
+                        model,
+                        normalized_provider,
+                    ),
+                )
+            except Exception:
+                input_tokens = None
+
+            pricing = self._pricing_catalog_accessor().get_pricing(provider, model)
+            return build_next_send_price(
+                input_tokens=input_tokens,
+                max_reply_tokens=settings.max_tokens,
+                pricing=pricing,
+                provider=provider,
+                model=model,
+                attachment_count=attachment_count,
+                historical_media_count=projection.historical_media_count,
+            )
+        except Exception:
+            return ConsoleNextSendPrice("Next request: cost unavailable")
+
+    def tooltip_for_draft(self, draft_text: str) -> str | None:
+        """Return only the rendered tooltip for widget consumption."""
+        presentation = self.presentation_for_draft(draft_text)
+        return presentation.tooltip if presentation is not None else None
 
 
 def _format_input_line(

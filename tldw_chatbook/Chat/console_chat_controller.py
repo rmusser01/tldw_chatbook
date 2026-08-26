@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleControllerActivity,
     ConsoleLifecycleImpact,
+    ConsoleNextSendHistoryProjection,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
@@ -1830,6 +1831,16 @@ class _CharacterEmoteAuthority:
 
 class _CharacterEmoteAuthorityChanged(RuntimeError):
     """The owning character identity changed during the off-thread read."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LightweightProviderHistoryRow:
+    """Pre-serialization provider row retaining only admitted media references."""
+
+    source_message_id: str
+    role: str
+    text: str
+    attachments: tuple[MessageAttachment, ...] = ()
 
 
 class ConsoleChatController:
@@ -16565,6 +16576,28 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    def provider_messages_for_next_send_estimate(
+        self, session_id: str
+    ) -> ConsoleNextSendHistoryProjection:
+        """Project canonical next-send history without mutating or serializing it."""
+        collected = self.store.read_only_messages_for_session(session_id)
+        system_rows = self._leading_system_message(
+            greeting=self._seeded_greeting_text(session_id, collected),
+            session_id=session_id,
+        )
+        history_rows = self._lightweight_provider_message_rows(
+            collected,
+            skip_failed=True,
+            session_id=session_id,
+        )
+        return ConsoleNextSendHistoryProjection(
+            rows=tuple(
+                [(row["role"], row["content"]) for row in system_rows]
+                + [(row.role, row.text) for row in history_rows]
+            ),
+            historical_media_count=sum(len(row.attachments) for row in history_rows),
+        )
+
     def _provider_continuation_sidecar_for_session(
         self, session_id: str
     ) -> tuple[ProviderContinuationSidecar, ...]:
@@ -16674,16 +16707,16 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
-    def _provider_message_payloads(
+    def _lightweight_provider_message_rows(
         self,
         session_messages: list[ConsoleChatMessage],
         *,
         skip_failed: bool,
         use_variant_content: bool = False,
-        annotate_ids: bool = False,
         session_id: str | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[_LightweightProviderHistoryRow]:
+        """Apply provider-history admission without serializing media bytes."""
         selection = (
             turn_context.provider_selection
             if turn_context is not None
@@ -16737,17 +16770,7 @@ class ConsoleChatController:
             allowed_counts[message.id] = take
             budget -= take
 
-        payloads: list[dict[str, Any]] = []
-
-        def _emit(content: Any, source: ConsoleChatMessage) -> None:
-            # Optionally thread the source transcript message's native id onto
-            # the row so the dispatch choke point can anchor `/rewind` summary
-            # compaction by identity (stripped before any provider sees it).
-            row: dict[str, Any] = {"role": source.role.value, "content": content}
-            if annotate_ids:
-                row[NATIVE_MESSAGE_ID_KEY] = source.id
-            payloads.append(row)
-
+        rows: list[_LightweightProviderHistoryRow] = []
         seen_user = False
         for message in session_messages:
             if message.role not in {
@@ -16808,7 +16831,7 @@ class ConsoleChatController:
             )
             take = allowed_counts.get(message.id, 0)
             if take > 0:
-                # Partially-budgeted messages emit their images in POSITION
+                # Partially-budgeted messages retain their images in POSITION
                 # order up to the reserved count (oldest-attached first),
                 # not in reservation order.
                 usable = [
@@ -16816,26 +16839,14 @@ class ConsoleChatController:
                     for attachment in message.attachments
                     if attachment.data is not None
                 ]
-                parts: list[dict[str, Any]] = []
-                if text:
-                    parts.append({"type": "text", "text": text})
-                for attachment in usable[:take]:
-                    # An attachment can reach here with an empty mime_type
-                    # (e.g. a resumed message whose persisted
-                    # image_mime_type column was NULL --
-                    # ``_console_messages_from_conversation_tree`` falls back
-                    # to ``""`` for display purposes). Emitting a bare
-                    # ``data:;base64,...`` URL produces an invalid data URI
-                    # most providers reject outright, so fall back to the
-                    # same default mime the send-time staging path already
-                    # uses (see ``pending.mime_type or "image/png"`` above
-                    # and ``ConsoleChatStore.append_message``).
-                    parts.append(
-                        image_url_part(
-                            attachment.data, attachment.mime_type or "image/png"
-                        )
+                rows.append(
+                    _LightweightProviderHistoryRow(
+                        source_message_id=message.id,
+                        role=message.role.value,
+                        text=text,
+                        attachments=tuple(usable[:take]),
                     )
-                _emit(parts, message)
+                )
                 continue
             if not text:
                 # An image-only user turn whose images all fell outside the
@@ -16853,9 +16864,61 @@ class ConsoleChatController:
                         if len(omitted) == 1
                         else f"[{len(omitted)} images omitted]"
                     )
-                    _emit(placeholder, message)
+                    rows.append(
+                        _LightweightProviderHistoryRow(
+                            source_message_id=message.id,
+                            role=message.role.value,
+                            text=placeholder,
+                        )
+                    )
                 continue
-            _emit(text, message)
+            rows.append(
+                _LightweightProviderHistoryRow(
+                    source_message_id=message.id,
+                    role=message.role.value,
+                    text=text,
+                )
+            )
+        return rows
+
+    def _provider_message_payloads(
+        self,
+        session_messages: list[ConsoleChatMessage],
+        *,
+        skip_failed: bool,
+        use_variant_content: bool = False,
+        annotate_ids: bool = False,
+        session_id: str | None = None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+    ) -> list[dict[str, Any]]:
+        lightweight_rows = self._lightweight_provider_message_rows(
+            session_messages,
+            skip_failed=skip_failed,
+            use_variant_content=use_variant_content,
+            session_id=session_id,
+            turn_context=turn_context,
+        )
+        payloads: list[dict[str, Any]] = []
+        for lightweight in lightweight_rows:
+            content: Any = lightweight.text
+            if lightweight.attachments:
+                parts: list[dict[str, Any]] = []
+                if lightweight.text:
+                    parts.append({"type": "text", "text": lightweight.text})
+                for attachment in lightweight.attachments:
+                    # Resumed rows can have an empty persisted mime type. Keep
+                    # dispatch's existing valid data-URI fallback at the
+                    # serialization boundary, never in the estimate path.
+                    parts.append(
+                        image_url_part(
+                            attachment.data, attachment.mime_type or "image/png"
+                        )
+                    )
+                content = parts
+            row: dict[str, Any] = {"role": lightweight.role, "content": content}
+            if annotate_ids:
+                row[NATIVE_MESSAGE_ID_KEY] = lightweight.source_message_id
+            payloads.append(row)
         return payloads
 
     def _mark_stream_stopped(

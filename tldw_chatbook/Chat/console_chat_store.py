@@ -5267,6 +5267,22 @@ class ConsoleChatStore:
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
 
+    def read_only_messages_for_session(
+        self, session_id: str
+    ) -> list[ConsoleChatMessage]:
+        """Return detached current transcript snapshots without store writes."""
+        self._session_or_raise(session_id)
+        snapshots: list[ConsoleChatMessage] = []
+        for message in self._messages_by_session[session_id]:
+            snapshot = self._snapshot(message)
+            buffer = self._stream_chunks_by_message.get(message.id)
+            if buffer and self._stream_materialized_counts.get(message.id) != len(
+                buffer
+            ):
+                snapshot.content = "".join(buffer)
+            snapshots.append(snapshot)
+        return snapshots
+
     def newest_change_review_run_id(self, session_id: str) -> str | None:
         """Newest ``change_review_run_id`` on the session's active-path view.
 

@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleNextSendHistoryProjection
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.LLM_Calls.pricing_catalog import ModelPricing
-from tldw_chatbook.UI.Console_Modules.send_price import build_next_send_price
+from tldw_chatbook.UI.Console_Modules.send_price import (
+    ConsoleNextSendPrice,
+    ConsoleSendPriceController,
+    build_next_send_price,
+)
 
 
 KNOWN_PRICING = ModelPricing(
@@ -22,6 +37,279 @@ ZERO_PRICING = ModelPricing(
     cache_write_per_mtok=None,
     as_of="2026-08-01",
 )
+
+
+class _Catalog:
+    def __init__(self, pricing=KNOWN_PRICING):
+        self.pricing = pricing
+
+    def get_pricing(self, provider, model):
+        return self.pricing
+
+
+def _controller_fixture(*, rows=(("system", "system"), ("user", "history"))):
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    state = {
+        "settings": ConsoleSessionSettings(
+            provider="anthropic", model="model-a", max_tokens=64
+        ),
+        "projection": ConsoleNextSendHistoryProjection(rows=tuple(rows)),
+        "launch": None,
+    }
+    counter_calls = []
+
+    def counter(messages, model, provider):
+        counter_calls.append((messages, model, provider))
+        return 123
+
+    controller = ConsoleSendPriceController(
+        settings_accessor=lambda: state["settings"],
+        chat_store_accessor=lambda: store,
+        provider_history_accessor=lambda _session_id: state["projection"],
+        pending_launch_accessor=lambda: state["launch"],
+        pricing_catalog_accessor=lambda: _Catalog(),
+        token_counter=counter,
+    )
+    return controller, store, session, state, counter_calls
+
+
+def _staged_launch(text="staged evidence"):
+    bundle = EvidenceBundle(
+        bundle_id="bundle",
+        query="question",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="source",
+                source_type="note",
+                title="Source",
+                snippet=text,
+                authority_label="local",
+                source_owner="local",
+            ),
+        ),
+    )
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Evidence",
+        payload={"evidence_bundle": bundle.to_payload()},
+    )
+
+
+def test_console_send_price_controller_counts_canonical_draft_and_staged_context_once():
+    controller, _store, _session, state, calls = _controller_fixture()
+    state["launch"] = _staged_launch()
+
+    result = controller.presentation_for_draft("  live draft  ")
+
+    assert result is not None
+    assert calls == [
+        (
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "history"},
+                {"role": "user", "content": "  live draft  "},
+                {"role": "user", "content": "staged evidence"},
+            ],
+            "model-a",
+            "anthropic",
+        )
+    ]
+    assert controller.tooltip_for_draft("  live draft  ") == result.tooltip
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "change", ["draft", "provider", "model", "system", "history", "staged"]
+)
+def test_console_send_price_controller_cache_reuses_and_recomputes_full_signature(
+    change,
+):
+    controller, _store, _session, state, calls = _controller_fixture()
+    controller.presentation_for_draft("draft")
+    controller.presentation_for_draft("draft")
+    assert len(calls) == 1
+
+    draft = "draft"
+    if change == "draft":
+        draft = "changed draft"
+    elif change == "provider":
+        state["settings"] = replace(state["settings"], provider="openai")
+    elif change == "model":
+        state["settings"] = replace(state["settings"], model="model-b")
+    elif change == "system":
+        state["projection"] = ConsoleNextSendHistoryProjection(
+            rows=(("system", "changed system"), ("user", "history"))
+        )
+    elif change == "history":
+        state["projection"] = ConsoleNextSendHistoryProjection(
+            rows=(("system", "system"), ("user", "changed history"))
+        )
+    else:
+        state["launch"] = _staged_launch("changed staged")
+
+    controller.presentation_for_draft(draft)
+    assert len(calls) == 2
+
+
+def test_console_send_price_controller_attachment_refresh_does_not_retokenize():
+    controller, store, session, _state, calls = _controller_fixture()
+    first = controller.presentation_for_draft("draft")
+    store.add_pending_attachment(
+        session.id,
+        PendingAttachment(
+            file_path="/tmp/a.png",
+            display_name="a.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"image",
+            mime_type="image/png",
+            original_size=5,
+            processed_size=5,
+        ),
+    )
+    second = controller.presentation_for_draft("draft")
+
+    assert len(calls) == 1
+    assert first is not None and "Attachments:" not in first.tooltip
+    assert second is not None and "Attachments: 1" in second.tooltip
+
+
+def test_console_send_price_controller_reply_limit_refreshes_without_retokenizing():
+    controller, _store, _session, state, calls = _controller_fixture()
+    first = controller.presentation_for_draft("draft")
+    state["settings"] = replace(state["settings"], max_tokens=128)
+
+    second = controller.presentation_for_draft("draft")
+
+    assert len(calls) == 1
+    assert first is not None and "Reply: up to 64 tokens" in first.tooltip
+    assert second is not None and "Reply: up to 128 tokens" in second.tooltip
+
+
+def test_console_send_price_controller_session_change_recomputes_cache_slot():
+    controller, store, _session, _state, calls = _controller_fixture()
+    controller.presentation_for_draft("draft")
+    second_session = store.create_session(ephemeral=True)
+
+    controller.presentation_for_draft("draft")
+
+    assert store.active_session_id == second_session.id
+    assert len(calls) == 2
+
+
+def test_console_send_price_controller_attachment_only_and_blank_empty_behavior():
+    controller, store, session, _state, calls = _controller_fixture(rows=())
+    assert controller.presentation_for_draft("   ") is None
+    store.add_pending_attachment(
+        session.id,
+        PendingAttachment(
+            file_path="/tmp/a.png",
+            display_name="a.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"image",
+            mime_type="image/png",
+            original_size=5,
+            processed_size=5,
+        ),
+    )
+
+    result = controller.presentation_for_draft("   ")
+
+    assert result is not None and "Attachments: 1" in result.tooltip
+    assert calls[-1][0] == []
+
+
+def test_console_send_price_controller_historical_media_stays_out_of_token_rows():
+    controller, _store, _session, state, calls = _controller_fixture()
+    state["projection"] = ConsoleNextSendHistoryProjection(
+        rows=(("user", "image question"),), historical_media_count=2
+    )
+
+    result = controller.presentation_for_draft("draft")
+    state["projection"] = replace(state["projection"], historical_media_count=3)
+    refreshed = controller.presentation_for_draft("draft")
+
+    assert result is not None and "Media context: 2 items" in result.tooltip
+    assert refreshed is not None and "Media context: 3 items" in refreshed.tooltip
+    assert len(calls) == 1
+    assert all("media" not in str(row).lower() for row in calls[-1][0])
+
+
+def test_console_send_price_controller_counter_failure_keeps_detailed_unavailable_copy():
+    controller, store, _session, state, _calls = _controller_fixture()
+    controller = ConsoleSendPriceController(
+        settings_accessor=lambda: state["settings"],
+        chat_store_accessor=lambda: store,
+        provider_history_accessor=lambda _session_id: state["projection"],
+        pending_launch_accessor=lambda: None,
+        pricing_catalog_accessor=lambda: _Catalog(),
+        token_counter=lambda *_args: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = controller.presentation_for_draft("draft")
+
+    assert result is not None
+    assert "Input: token estimate unavailable" in result.tooltip
+    assert "Reply: up to 64 tokens" in result.tooltip
+    assert "anthropic · model-a · rates as of" in result.tooltip
+
+
+def test_console_send_price_controller_missing_store_and_broader_failures_degrade_safely():
+    settings = ConsoleSessionSettings(provider="anthropic", model="model-a")
+    missing = ConsoleSendPriceController(
+        settings_accessor=lambda: settings,
+        chat_store_accessor=lambda: None,
+        provider_history_accessor=lambda _session_id: (
+            ConsoleNextSendHistoryProjection()
+        ),
+        pending_launch_accessor=lambda: None,
+        pricing_catalog_accessor=lambda: _Catalog(),
+        token_counter=lambda *_args: 1,
+    )
+    broken = ConsoleSendPriceController(
+        settings_accessor=lambda: settings,
+        chat_store_accessor=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+        provider_history_accessor=lambda _session_id: (
+            ConsoleNextSendHistoryProjection()
+        ),
+        pending_launch_accessor=lambda: None,
+        pricing_catalog_accessor=lambda: _Catalog(),
+        token_counter=lambda *_args: 1,
+    )
+    catalog_broken = ConsoleSendPriceController(
+        settings_accessor=lambda: settings,
+        chat_store_accessor=lambda: None,
+        provider_history_accessor=lambda _session_id: (
+            ConsoleNextSendHistoryProjection()
+        ),
+        pending_launch_accessor=lambda: None,
+        pricing_catalog_accessor=lambda: (_ for _ in ()).throw(
+            RuntimeError("catalog boom")
+        ),
+        token_counter=lambda *_args: 1,
+    )
+    closed_store = ConsoleChatStore()
+    closed_session = closed_store.create_session(ephemeral=True)
+    closed_store.close_session(closed_session.id)
+    closed = ConsoleSendPriceController(
+        settings_accessor=lambda: settings,
+        chat_store_accessor=lambda: closed_store,
+        provider_history_accessor=lambda _session_id: (
+            (_ for _ in ()).throw(AssertionError("closed session was projected"))
+        ),
+        pending_launch_accessor=lambda: None,
+        pricing_catalog_accessor=lambda: _Catalog(),
+        token_counter=lambda *_args: 1,
+    )
+
+    expected = ConsoleNextSendPrice("Next request: cost unavailable")
+    assert missing.presentation_for_draft("draft") == expected
+    assert closed.presentation_for_draft("draft") == expected
+    assert broken.presentation_for_draft("draft") == expected
+    assert catalog_broken.presentation_for_draft("draft") == expected
 
 
 @pytest.mark.parametrize(
