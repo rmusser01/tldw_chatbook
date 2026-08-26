@@ -301,6 +301,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     #: `recompose=True`: flipping it must update one Static in place, never
     #: rebuild the ListView under the user's cursor.
     new_items_note = reactive("")
+    snapshot_count = reactive(0)
     page_number = reactive(1)
     has_previous = reactive(False)
     has_next = reactive(False)
@@ -316,8 +317,17 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         pill.update(note)
         pill.display = bool(note)
 
+    def watch_snapshot_count(self, count: int) -> None:
+        """Update the frozen snapshot total without rebuilding the pane."""
+        try:
+            label = self.query_one("#items-snapshot-count", Static)
+        except NoMatches:
+            return
+        noun = "item" if count == 1 else "items"
+        label.update(f"{count} {noun} in snapshot")
+
     def show_new_items_pill(self, count: int) -> None:
-        """Post-refresh notice: "N new items" (click reloads + dismisses).
+        """Format the screen-owned arrival count as pill copy.
 
         Args:
             count: How many new items the refresh produced; <= 0 hides the
@@ -330,11 +340,10 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         self.new_items_note = f"{count} new {noun}"
 
     def on_click(self, event) -> None:
-        """A pill click reloads (the Refresh button's own message) + dismisses."""
+        """A pill click requests refresh; success owns its dismissal."""
         widget_id = getattr(getattr(event, "widget", None), "id", None)
         if widget_id == "items-new-items-pill":
             event.stop()
-            self.new_items_note = ""
             self.post_message(RefreshItemsRequested())
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -402,6 +411,11 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             )
             pill.display = bool(self.new_items_note)
             yield pill
+            count_noun = "item" if self.snapshot_count == 1 else "items"
+            yield Static(
+                f"{self.snapshot_count} {count_noun} in snapshot",
+                id="items-snapshot-count",
+            )
 
         rows = self._build_rows()
         # Both the empty state and the list are always mounted, their

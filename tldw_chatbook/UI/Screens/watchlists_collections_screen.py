@@ -706,6 +706,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_page_loading = False
         self._items_snapshot_count = 0
         self._items_pending_arrivals = 0
+        self._items_arrival_generation = 0
         self._items_pending_query_key: tuple[Any, ...] | None = None
         self._pending_tree_scope: TreeScope | None = None
         self._items_retry_message: str | None = None
@@ -1415,6 +1416,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # pushes the resolved labels into the mounted Inspector.
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
         self._apply_tree_data_to_live_surfaces()
+        await self._refresh_items_pending_arrivals()
 
     def _rail_unread_suffix(self) -> str:
         """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
@@ -2402,6 +2404,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             items_pane.has_previous = self._items_page_index > 0
             items_pane.has_next = self._items_has_next
             items_pane.page_loading = self._items_page_loading
+            items_pane.snapshot_count = self._items_snapshot_count
+            items_pane.new_items_note = self._items_arrival_note()
             items_pane.search_results_authoritative = (
                 self._items_search_results_authoritative
             )
@@ -2510,7 +2514,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _push_items_pager_state(self) -> None:
-        """Push screen-owned pagination state into the mounted Read pane."""
+        """Push screen-owned snapshot presentation into the mounted Read pane."""
         try:
             pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
@@ -2519,9 +2523,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.has_previous = self._items_page_index > 0
         pane.has_next = self._items_has_next
         pane.page_loading = self._items_page_loading
+        pane.snapshot_count = self._items_snapshot_count
+        pane.new_items_note = self._items_arrival_note()
         pane.search_results_authoritative = (
             self._items_search_results_authoritative
         )
+
+    def _items_arrival_note(self) -> str:
+        """Return the Reader pill copy for the committed arrival count."""
+        count = self._items_pending_arrivals
+        if count <= 0:
+            return ""
+        noun = "item" if count == 1 else "items"
+        return f"{count} new {noun}"
+
+    async def _refresh_items_pending_arrivals(self) -> bool:
+        """Publish arrivals for the exact committed Reader snapshot only."""
+        snapshot = self._items_snapshot
+        backend = self.runtime_backend
+        section = self.active_section
+        if snapshot is None or backend != "local" or section != "items":
+            return False
+        self._items_arrival_generation += 1
+        generation = self._items_arrival_generation
+        try:
+            count = await self._controller.count_reader_item_arrivals(
+                runtime_backend=backend,
+                snapshot_max_item_id=snapshot.watermark,
+                **snapshot.query.as_kwargs(),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug(
+                "Failed to count watchlist Reader arrivals (exception_type={}).",
+                type(exc).__name__,
+            )
+            return False
+        if (
+            generation != self._items_arrival_generation
+            or self._items_snapshot is not snapshot
+            or self.runtime_backend != backend
+            or self.active_section != section
+        ):
+            return False
+        self._items_pending_arrivals = max(0, int(count))
+        self._push_items_pager_state()
+        return True
 
     def _reset_items_paging_for_context(self, *, loading: bool) -> None:
         """Invalidate parked Reader paging without issuing an item query."""
@@ -12187,18 +12235,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     async def _refresh_all_worker(self) -> None:
-        """The batch half of `r`: launch, aggregate, notify once, pill.
+        """The batch half of `r`: launch, aggregate, notify once, reconcile.
 
         Eligibility reads the normalized source dicts' `active` (already
         `is_active AND NOT paused` -- `normalize_local_subscription_row`),
         so a source auto-paused by repeated failures is skipped, not poked.
-        The "N new items" number is the ALL-sources unread DELTA across the
-        batch -- the same fact the rail counts, per the legend -- not a
-        per-run archaeology. One toast names the batch's shape (checks,
-        new items, failures); the tree counts refresh once, at the end,
-        through the same loader every other writer uses. The in-flight
-        flag is set by the action before this worker is scheduled; the
-        `finally` here is the one reset.
+        The aggregate toast retains its historical all-sources unread delta.
+        The Reader pill does not: the terminal tree reload reconciles it from
+        the committed query and creation watermark, so reading an old row
+        during this batch cannot hide a genuinely new id. The in-flight flag
+        is set by the action before this worker is scheduled; the `finally`
+        here is the one reset.
         """
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -12231,13 +12278,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 message += f" ({len(failed)} failed)"
             if callable(notify):
                 notify(message)
-            if delta:
-                try:
-                    pane = self.query_one("#watchlists-items-pane", ArticleListPane)
-                except NoMatches:
-                    pane = None
-                if pane is not None:
-                    pane.show_new_items_pill(delta)
         finally:
             self._refresh_all_in_flight = False
 

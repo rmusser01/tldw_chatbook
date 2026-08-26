@@ -3752,6 +3752,110 @@ async def test_r_checks_every_active_source_once_and_aggregates():
 
 
 @pytest.mark.asyncio
+async def test_refresh_all_pill_uses_arrivals_not_the_unread_delta():
+    """Reading an old row during a check cannot hide a new arrival."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    source_id = db.add_subscription(
+        name="Active", type="rss", source="https://active.example/f"
+    )
+    old_id = _seed_item(db, source_id, "Existing unread")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+        assert await screen._replace_items_snapshot(reason="initial") is True
+
+        async def _check(*, runtime_backend=None, source_id):
+            db.mark_item_status(old_id, "reviewed")
+            with db.transaction() as conn:
+                for suffix in ("a", "b"):
+                    persist_subscription_item(
+                        conn,
+                        source_id,
+                        {
+                            "url": f"https://feed.test/new-{suffix}/",
+                            "title": f"New {suffix}",
+                            "content_hash": f"hash-arrival-{suffix}",
+                        },
+                        run_id=None,
+                        now=f"2026-08-08T09:00:0{1 if suffix == 'a' else 2}+00:00",
+                    )
+            return {"status": "completed"}
+
+        screen._controller.check_now = _check
+        app.notify = Mock()
+        await pilot.press("r")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if not screen._refresh_all_in_flight:
+                break
+
+        # Live unread moved 1 -> 2, a delta of one, but two ids crossed the
+        # committed creation watermark. The pill reports the latter.
+        assert screen._items_pending_arrivals == 2
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert pane.new_items_note == "2 new items"
+        assert len(screen._loaded_items) == 1
+        assert screen._items_snapshot_count == 1
+
+
+@pytest.mark.asyncio
+async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    active = db.add_subscription(
+        name="Active", type="rss", source="https://active.example/f"
+    )
+    outside = db.add_subscription(
+        name="Outside", type="rss", source="https://outside.example/f"
+    )
+    committed_id = _seed_item(db, active, "Committed")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen._apply_tree_scope(TreeScope(kind="source", source_id=active))
+        assert await screen._replace_items_snapshot(reason="initial") is True
+        snapshot = screen._items_snapshot
+        rows = list(screen._loaded_items)
+
+        db.mark_item_status(committed_id, "reviewed")
+        await screen._load_tree_data().wait()
+        assert screen._items_pending_arrivals == 0
+        assert screen._items_snapshot_count == 1
+
+        _seed_item(db, outside, "Out of scope")
+        assert await screen._refresh_items_pending_arrivals() is True
+        assert screen._items_pending_arrivals == 0
+
+        arrival_id = _seed_item(db, active, "Matching arrival")
+        assert await screen._refresh_items_pending_arrivals() is True
+        assert screen._items_pending_arrivals == 1
+        assert screen._items_snapshot is snapshot
+        assert screen._loaded_items == rows
+        assert screen._items_snapshot_count == 1
+
+        # A later status/star patch only touches rows already admitted to the
+        # committed cache; it cannot smuggle this above-watermark row in.
+        screen._patch_committed_items_after_mutation(
+            arrival_id, status="reviewed", is_flagged=True
+        )
+        assert all(
+            row.get("item_id") != arrival_id
+            for page in screen._items_snapshot.pages
+            for row in page
+        )
+        assert screen._items_pending_arrivals == 1
+        assert screen._items_snapshot_count == 1
+
+
+@pytest.mark.asyncio
 async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
     from unittest.mock import Mock
 
